@@ -40,6 +40,7 @@ import { CURRENT_RENDERER_VERSION, renderMarkdown, validateBody } from "../lib/m
 import { checkRateLimit } from "../lib/ratelimit";
 import { readSession } from "../lib/session";
 import { verifyTurnstile } from "../lib/turnstile";
+import { writeEvent } from "../lib/analytics";
 import {
 	buildTree,
 	type ReactionCount,
@@ -163,7 +164,13 @@ comments.post("/", async (c) => {
 		if (!ts) return c.json({ error: t("err.turnstile.invalid") }, 400);
 
 		const rl = await checkRateLimit(c.env, ipHash);
-		if (!rl.ok) return c.json({ error: t("err.ratelimit") }, 429);
+		if (!rl.ok) {
+			writeEvent(c.env.ANALYTICS, "ratelimit.hit", {
+				outcome: rl.reason ?? null,
+				post_slug: slug,
+			});
+			return c.json({ error: t("err.ratelimit") }, 429);
+		}
 
 		author = await getOrCreateGhost(c.env.DB, ipHash, nameCheck.name);
 		if (author.is_banned) return c.json({ error: t("err.banned") }, 403);
@@ -210,6 +217,11 @@ comments.post("/", async (c) => {
 	// Bust the cached first page. Older pages bypass cache, so there's
 	// nothing else to invalidate.
 	await c.env.TREE_CACHE.delete(`tree:${slug}:first`);
+
+	writeEvent(c.env.ANALYTICS, "comment.posted", {
+		post_slug: slug,
+		provider: author.provider,
+	});
 
 	return c.json({ comment: serializeComment(inserted, author) }, 201);
 });
@@ -364,6 +376,7 @@ comments.patch("/:id", async (c) => {
 		CURRENT_RENDERER_VERSION,
 	);
 	await c.env.TREE_CACHE.delete(`tree:${existing.post_slug}:first`);
+	writeEvent(c.env.ANALYTICS, "comment.edited", { post_slug: existing.post_slug });
 	const updated = await getComment(c.env.DB, id);
 	if (!updated) return c.json({ error: t("err.internal") }, 500);
 	const authorRow = await c.env.DB
@@ -391,6 +404,7 @@ comments.delete("/:id", async (c) => {
 
 	await softDeleteComment(c.env.DB, id);
 	await c.env.TREE_CACHE.delete(`tree:${existing.post_slug}:first`);
+	writeEvent(c.env.ANALYTICS, "comment.deleted", { post_slug: existing.post_slug });
 	return c.json({ ok: true });
 });
 

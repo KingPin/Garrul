@@ -13,6 +13,7 @@ import { getComment, getOrCreateGhost, toggleReaction } from "../db/queries";
 import { clientIp, hashIp } from "../lib/ip-hash";
 import { checkRateLimit } from "../lib/ratelimit";
 import { readSession } from "../lib/session";
+import { writeEvent } from "../lib/analytics";
 import { t } from "../i18n";
 
 const reactions = new Hono<{ Bindings: Bindings }>();
@@ -43,7 +44,13 @@ reactions.post("/", async (c) => {
 
 	const ipHash = await hashIp(clientIp(c.req.raw), c.env.IP_HASH_SECRET);
 	const rl = await checkRateLimit(c.env, ipHash);
-	if (!rl.ok) return c.json({ error: t("err.ratelimit") }, 429);
+	if (!rl.ok) {
+		writeEvent(c.env.ANALYTICS, "ratelimit.hit", {
+			outcome: rl.reason ?? null,
+			post_slug: comment.post_slug,
+		});
+		return c.json({ error: t("err.ratelimit") }, 429);
+	}
 
 	const session = await readSession(c);
 	let userId: string;
@@ -60,6 +67,11 @@ reactions.post("/", async (c) => {
 
 	// Bust the cached first page so reaction counts reflect immediately.
 	await c.env.TREE_CACHE.delete(`tree:${comment.post_slug}:first`);
+
+	writeEvent(c.env.ANALYTICS, "reaction.toggled", {
+		post_slug: comment.post_slug,
+		outcome: result.added ? "added" : "removed",
+	});
 
 	return c.json({ ok: true, added: result.added });
 });

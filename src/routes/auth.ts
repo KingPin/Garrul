@@ -23,6 +23,7 @@ import {
 } from "../lib/oauth";
 import { upsertOauthUser } from "../db/queries";
 import { clearSession, issueSession, readSession } from "../lib/session";
+import { writeEvent } from "../lib/analytics";
 
 const auth = new Hono<{ Bindings: Bindings }>();
 
@@ -81,6 +82,7 @@ auth.get("/:provider/start", async (c) => {
 
 	const redirect = callbackUrl(c.env, c.req.url, provider);
 	const url = buildAuthorizeUrl(provider, clientId, redirect, state);
+	writeEvent(c.env.ANALYTICS, "oauth.start", { provider });
 	return c.redirect(url, 302);
 });
 
@@ -145,6 +147,7 @@ auth.get("/:provider/callback", async (c) => {
 		);
 	} catch (err) {
 		console.error(JSON.stringify({ level: "error", msg: "oauth.token", provider, error: String(err) }));
+		writeEvent(c.env.ANALYTICS, "oauth.failed", { provider, outcome: "token_exchange" });
 		return c.html(finishHtml(payload.return_origin, false, "token_exchange_failed"));
 	}
 
@@ -153,6 +156,7 @@ auth.get("/:provider/callback", async (c) => {
 		profile = await cfg.fetch_profile(accessToken);
 	} catch (err) {
 		console.error(JSON.stringify({ level: "error", msg: "oauth.profile", provider, error: String(err) }));
+		writeEvent(c.env.ANALYTICS, "oauth.failed", { provider, outcome: "profile_fetch" });
 		return c.html(finishHtml(payload.return_origin, false, "profile_fetch_failed"));
 	}
 
@@ -172,6 +176,7 @@ auth.get("/:provider/callback", async (c) => {
 	}
 
 	await issueSession(c, user.id);
+	writeEvent(c.env.ANALYTICS, "oauth.complete", { provider });
 
 	c.header("content-type", "text/html; charset=utf-8");
 	return c.body(finishHtml(payload.return_origin, true));
