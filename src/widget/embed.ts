@@ -14,8 +14,9 @@
  *   1. Mount a Shadow DOM on DOMContentLoaded.
  *   2. Render a skeleton so the slot reserves height within ~50ms.
  *   3. Fetch GET /api/v1/comments?slug=<slug> in parallel.
- *   4. Render the flat list once data arrives.
+ *   4. Render the threaded tree once data arrives.
  *   5. On submit, POST /api/v1/comments. Reload list on success.
+ *   6. "Load more" appends older top-level threads via ?before=<cursor>.
  *
  * XSS posture:
  *   - All untrusted text → textContent (never as parsed HTML).
@@ -29,7 +30,16 @@
  * (docs/THEMING.md).
  */
 
-type CommentDto = {
+type TreeAuthor = {
+	id: string;
+	name: string;
+	provider: string;
+	is_admin: boolean;
+	avatar_svg: string | null;
+	avatar_url: string | null;
+};
+
+type TreeNode = {
 	id: string;
 	parent_id: string | null;
 	body_html: string;
@@ -37,17 +47,17 @@ type CommentDto = {
 	edited_at: number | null;
 	deleted_at: number | null;
 	created_at: number;
-	author: {
-		id: string;
-		name: string;
-		provider: string;
-		is_admin: boolean;
-		avatar_svg: string | null;
-		avatar_url: string | null;
-	};
+	author: TreeAuthor;
+	depth: number;
+	flatten_from: string | null;
+	replies: TreeNode[];
 };
 
-type ListResponse = { post: unknown; comments: CommentDto[] };
+type ListResponse = {
+	post: unknown;
+	threads: TreeNode[];
+	next_cursor: string | null;
+};
 
 const STYLE_CSS = `
 :host {
@@ -84,9 +94,13 @@ const STYLE_CSS = `
 .gr-form button[disabled] { opacity: 0.6; cursor: progress; }
 .gr-error { color: var(--garrul-error, #b91c1c); font-size: 0.9em; }
 .gr-list { display: flex; flex-direction: column; gap: 1rem; }
+.gr-thread { display: flex; flex-direction: column; gap: 0.75rem; }
+.gr-replies { display: flex; flex-direction: column; gap: 0.75rem; margin-top: 0.5rem; padding-left: 1.25rem; border-left: 2px solid var(--garrul-border, #d0d3d8); }
 .gr-comment { display: flex; gap: 0.75rem; }
+.gr-comment[data-flat="1"] .gr-flatten { font-size: 0.85em; color: var(--garrul-muted, #6b7280); margin-right: 0.3em; }
 .gr-avatar { flex: 0 0 auto; width: 40px; height: 40px; border-radius: 50%; overflow: hidden; }
 .gr-avatar svg, .gr-avatar img { width: 100%; height: 100%; display: block; }
+.gr-main { flex: 1; min-width: 0; }
 .gr-meta { display: flex; gap: 0.5rem; align-items: baseline; flex-wrap: wrap; }
 .gr-name { font-weight: 600; }
 .gr-verified {
@@ -100,7 +114,19 @@ const STYLE_CSS = `
 .gr-body { margin: 0.25rem 0 0; }
 .gr-body p { margin: 0.3em 0; }
 .gr-body a { color: var(--garrul-link, #2563eb); }
+.gr-deleted { color: var(--garrul-muted, #6b7280); font-style: italic; }
 .gr-empty { color: var(--garrul-muted, #6b7280); margin: 0; }
+.gr-loadmore {
+	font: inherit;
+	background: transparent;
+	color: var(--garrul-link, #2563eb);
+	border: 1px solid var(--garrul-border, #d0d3d8);
+	border-radius: var(--garrul-radius, 6px);
+	padding: 0.5rem 1rem;
+	cursor: pointer;
+	align-self: center;
+}
+.gr-loadmore[disabled] { opacity: 0.6; cursor: progress; }
 .gr-skel { background: var(--garrul-skel, #e7e9ec); border-radius: 6px; animation: gr-pulse 1.2s ease-in-out infinite; }
 .gr-skel-line { height: 0.9em; }
 .gr-skel-avatar { width: 40px; height: 40px; border-radius: 50%; }
@@ -159,48 +185,64 @@ const buildSkeleton = (): DocumentFragment => {
 	return frag;
 };
 
-const buildAvatar = (c: CommentDto): HTMLElement => {
+const buildAvatar = (a: TreeAuthor): HTMLElement => {
 	const wrap = el("div", "gr-avatar");
-	if (c.author.avatar_url) {
+	if (a.avatar_url) {
 		const img = el("img");
-		img.setAttribute("src", c.author.avatar_url);
+		img.setAttribute("src", a.avatar_url);
 		img.setAttribute("alt", "");
 		wrap.appendChild(img);
-	} else if (c.author.avatar_svg) {
-		wrap.appendChild(parseTrustedHtml(c.author.avatar_svg));
+	} else if (a.avatar_svg) {
+		wrap.appendChild(parseTrustedHtml(a.avatar_svg));
 	}
 	return wrap;
 };
 
-const buildComment = (c: CommentDto): HTMLElement => {
+const buildComment = (n: TreeNode): HTMLElement => {
 	const row = el("div", "gr-comment");
-	row.dataset.id = c.id;
-	row.appendChild(buildAvatar(c));
+	row.dataset.id = n.id;
+	if (n.flatten_from) row.dataset.flat = "1";
+	row.appendChild(buildAvatar(n.author));
 
-	const main = el("div");
-	main.style.flex = "1";
+	const main = el("div", "gr-main");
 
 	const meta = el("div", "gr-meta");
-	meta.appendChild(el("span", "gr-name", c.author.name));
-	if (c.author.provider !== "anon") {
+	meta.appendChild(el("span", "gr-name", n.author.name));
+	if (n.author.provider !== "anon") {
 		meta.appendChild(el("span", "gr-verified", "verified"));
 	}
-	const timeText = `${fmtTime(c.created_at)}${c.edited_at ? " · edited" : ""}`;
+	const timeText = `${fmtTime(n.created_at)}${n.edited_at ? " · edited" : ""}`;
 	meta.appendChild(el("span", "gr-time", timeText));
 
 	const body = el("div", "gr-body");
-	if (c.status === "deleted") {
-		const p = el("p");
-		p.appendChild(Object.assign(document.createElement("em"), { textContent: "[deleted]" }));
+	if (n.status === "deleted") {
+		const p = el("p", "gr-deleted", "[deleted]");
 		body.appendChild(p);
 	} else {
+		if (n.flatten_from) {
+			// Visual hint that this reply was lifted out of a deeper level.
+			const tag = el("span", "gr-flatten", `@${n.flatten_from} `);
+			body.appendChild(tag);
+		}
 		// body_html is sanitized by src/lib/markdown.ts before storage.
-		body.appendChild(parseTrustedHtml(c.body_html));
+		body.appendChild(parseTrustedHtml(n.body_html));
 	}
 
 	main.append(meta, body);
 	row.appendChild(main);
 	return row;
+};
+
+const buildThread = (n: TreeNode): HTMLElement => {
+	const wrap = el("div", "gr-thread");
+	wrap.dataset.id = n.id;
+	wrap.appendChild(buildComment(n));
+	if (n.replies.length > 0) {
+		const replies = el("div", "gr-replies");
+		for (const r of n.replies) replies.appendChild(buildThread(r));
+		wrap.appendChild(replies);
+	}
+	return wrap;
 };
 
 const buildForm = (siteKey: string | null): HTMLFormElement => {
@@ -279,6 +321,24 @@ const renderError = (root: ShadowRoot, message: string) => {
 	root.append(style, wrap);
 };
 
+const fetchPage = async (
+	apiBase: string,
+	slug: string,
+	cursor: string | null,
+): Promise<ListResponse> => {
+	const qs = new URLSearchParams({ slug });
+	if (cursor) qs.set("before", cursor);
+	const res = await fetch(`${apiBase}/api/v1/comments?${qs.toString()}`, {
+		credentials: "include",
+	});
+	if (!res.ok) throw new Error(`HTTP ${res.status}`);
+	return (await res.json()) as ListResponse;
+};
+
+const appendThreads = (list: HTMLElement, threads: TreeNode[]): void => {
+	for (const t of threads) list.appendChild(buildThread(t));
+};
+
 const load = async (
 	root: ShadowRoot,
 	slug: string,
@@ -301,12 +361,7 @@ const load = async (
 
 	let data: ListResponse;
 	try {
-		const res = await fetch(
-			`${apiBase}/api/v1/comments?slug=${encodeURIComponent(slug)}`,
-			{ credentials: "include" },
-		);
-		if (!res.ok) throw new Error(`HTTP ${res.status}`);
-		data = (await res.json()) as ListResponse;
+		data = await fetchPage(apiBase, slug, null);
 	} catch (err) {
 		renderError(root, String(err));
 		return;
@@ -319,12 +374,38 @@ const load = async (
 	const wrap = el("div", "gr-root");
 	const form = buildForm(siteKey);
 	const list = el("div", "gr-list");
-	if (data.comments.length === 0) {
+	if (data.threads.length === 0) {
 		list.appendChild(el("p", "gr-empty", "Be the first to comment."));
 	} else {
-		for (const c of data.comments) list.appendChild(buildComment(c));
+		appendThreads(list, data.threads);
 	}
 	wrap.append(form, list);
+
+	if (data.next_cursor) {
+		const more = el("button", "gr-loadmore", "Load older comments");
+		more.type = "button";
+		let cursor: string | null = data.next_cursor;
+		more.addEventListener("click", async () => {
+			if (!cursor) return;
+			more.disabled = true;
+			try {
+				const page = await fetchPage(apiBase, slug, cursor);
+				appendThreads(list, page.threads);
+				cursor = page.next_cursor;
+				if (cursor) {
+					more.disabled = false;
+				} else {
+					more.remove();
+				}
+			} catch (err) {
+				more.disabled = false;
+				const errBox = el("div", "gr-error", `Could not load more: ${String(err)}`);
+				more.insertAdjacentElement("afterend", errBox);
+			}
+		});
+		wrap.appendChild(more);
+	}
+
 	root.append(style, wrap);
 
 	if (siteKey && !document.querySelector('script[src*="turnstile"]')) {
