@@ -141,6 +141,76 @@ export const getOrCreateGhost = async (
 	};
 };
 
+/**
+ * Upsert an OAuth user keyed on (provider, provider_id). If the row exists,
+ * refresh display fields (name, email, avatar_url) so a user that updated
+ * their GitHub avatar sees it propagate. `is_admin` is promoted to 1 when
+ * the email is in the caller-supplied admin set; it never demotes
+ * automatically — admin revocation is a manual SQL operation.
+ */
+export const upsertOauthUser = async (
+	db: D1Database,
+	provider: string,
+	provider_id: string,
+	name: string,
+	email: string | null,
+	avatar_url: string | null,
+	adminEmails: Set<string>,
+): Promise<User> => {
+	const existing = await db
+		.prepare(
+			`SELECT id, provider, provider_id, name, email, avatar_url,
+			        is_admin, is_banned, created_at
+			 FROM users WHERE provider = ? AND provider_id = ?`,
+		)
+		.bind(provider, provider_id)
+		.first<UserRow>();
+
+	const shouldPromote = email != null && adminEmails.has(email.toLowerCase());
+
+	if (existing) {
+		const nextAdmin = existing.is_admin === 1 || shouldPromote ? 1 : 0;
+		await db
+			.prepare(
+				`UPDATE users
+				    SET name = ?, email = ?, avatar_url = ?, is_admin = ?
+				  WHERE id = ?`,
+			)
+			.bind(name, email, avatar_url, nextAdmin, existing.id)
+			.run();
+		return toUser({
+			...existing,
+			name,
+			email,
+			avatar_url,
+			is_admin: nextAdmin,
+		});
+	}
+
+	const id = ulid();
+	const now = Date.now();
+	const is_admin = shouldPromote ? 1 : 0;
+	await db
+		.prepare(
+			`INSERT INTO users (id, provider, provider_id, name, email,
+			                    avatar_url, is_admin, is_banned, created_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+		)
+		.bind(id, provider, provider_id, name, email, avatar_url, is_admin, now)
+		.run();
+	return {
+		id,
+		provider,
+		provider_id,
+		name,
+		email,
+		avatar_url,
+		is_admin: is_admin === 1,
+		is_banned: false,
+		created_at: now,
+	};
+};
+
 export const getUser = async (
 	db: D1Database,
 	id: string,

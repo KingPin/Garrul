@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { health } from "./routes/health";
 import { comments } from "./routes/api.comments";
 import { config } from "./routes/api.config";
+import { auth } from "./routes/auth";
 import { embed } from "./routes/embed";
 import { requestLogger } from "./lib/log";
 import { corsAndCsrf } from "./lib/cors";
@@ -27,6 +28,7 @@ export type Bindings = {
 	GH_CLIENT_SECRET: string;
 	GOOGLE_CLIENT_ID: string;
 	GOOGLE_CLIENT_SECRET: string;
+	OAUTH_CALLBACK_BASE: string;
 	RESEND_API_KEY: string;
 	WEBHOOK_URL: string;
 };
@@ -40,6 +42,7 @@ app.use("/api/*", sessionMiddleware());
 app.route("/api/v1/health", health);
 app.route("/api/v1/comments", comments);
 app.route("/api/v1/config", config);
+app.route("/api/v1/auth", auth);
 app.route("/", embed);
 
 app.get("/", (c) =>

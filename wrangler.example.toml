@@ -23,6 +23,10 @@ EDIT_WINDOW_MINUTES = "15"
 ALLOWED_ORIGINS = "https://yourblog.example.com"
 ADMIN_EMAILS = "you@example.com"
 EMAIL_PROVIDER = "resend"
+# OAuth callback base — must match the redirect URI you registered with
+# each provider (e.g. https://comments.example.com/api/v1/auth/github/callback).
+# Leave unset in dev; the worker falls back to the request origin.
+OAUTH_CALLBACK_BASE = "https://comments.example.com"
 
 # Secrets (set via `wrangler secret put`, NOT in this file):
 #   wrangler secret put JWT_SECRET            # cookie signing for anon edit tokens
