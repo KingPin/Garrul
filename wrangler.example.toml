@@ -1,0 +1,64 @@
+# Copy this file to wrangler.toml and fill in the IDs.
+# wrangler.toml is gitignored (it holds your real binding IDs).
+# Secrets are NOT in this file — set them with:
+#   wrangler secret put <NAME>
+# For local dev, put secrets in .dev.vars (gitignored). See .dev.vars.example.
+
+name = "garrul"
+main = "src/index.ts"
+compatibility_date = "2025-11-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Recommended: point at your custom subdomain (e.g. comments.example.com).
+# Falling back to <name>.workers.dev works but causes third-party-cookie
+# friction in some browsers — see docs.
+# routes = [
+#   { pattern = "comments.example.com", custom_domain = true }
+# ]
+
+# Used for build-time embed.js inlining of the API base URL.
+[vars]
+ENV = "production"
+EDIT_WINDOW_MINUTES = "15"
+ALLOWED_ORIGINS = "https://yourblog.example.com"
+ADMIN_EMAILS = "you@example.com"
+EMAIL_PROVIDER = "resend"
+
+# Secrets (set via `wrangler secret put`, NOT in this file):
+#   wrangler secret put JWT_SECRET            # cookie signing for anon edit tokens
+#   wrangler secret put IP_HASH_SECRET        # BLAKE3 IP hashing pepper
+#   wrangler secret put TURNSTILE_SITE_KEY
+#   wrangler secret put TURNSTILE_SECRET
+#   wrangler secret put GH_CLIENT_ID
+#   wrangler secret put GH_CLIENT_SECRET
+#   wrangler secret put GOOGLE_CLIENT_ID
+#   wrangler secret put GOOGLE_CLIENT_SECRET
+#   wrangler secret put RESEND_API_KEY
+#   wrangler secret put WEBHOOK_URL           # optional, fire-and-forget POST on new comment
+
+[[d1_databases]]
+binding = "DB"
+database_name = "garrul-db"
+database_id = "PASTE_FROM_WRANGLER_D1_CREATE"
+
+[[kv_namespaces]]
+binding = "RATE_LIMITS"
+id = "PASTE_FROM_WRANGLER_KV_CREATE"
+
+[[kv_namespaces]]
+binding = "OAUTH_STATE"
+id = "PASTE_FROM_WRANGLER_KV_CREATE"
+
+[[kv_namespaces]]
+binding = "SESSIONS"
+id = "PASTE_FROM_WRANGLER_KV_CREATE"
+
+[[kv_namespaces]]
+binding = "TREE_CACHE"
+id = "PASTE_FROM_WRANGLER_KV_CREATE"
+
+# Workers Analytics Engine — write-side metrics (comment-posted, rate-limit-hit, etc.).
+# Free tier covers small operators easily.
+[[analytics_engine_datasets]]
+binding = "ANALYTICS"
+dataset = "garrul_events"
