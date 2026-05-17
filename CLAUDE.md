@@ -54,7 +54,7 @@ Random 32-byte session ID in an HttpOnly cookie, KV-looked-up. No JWT. KV `SESSI
 Server-side identicons for anonymous (deterministic from `user.id`, inline SVG). Provider avatar URL for OAuth. **No Gravatar.**
 
 ### IP handling
-Never log or store raw IPs. Hash via BLAKE3 with `IP_HASH_SECRET` and store the hash. `src/lib/ip-hash.ts` is the single entry point.
+Never log or store raw IPs. Hash via HMAC-SHA-256 with `IP_HASH_SECRET` as the key (Workers don't ship BLAKE3 natively). `src/lib/ip-hash.ts` is the single entry point.
 
 ### Migrations
 Forward-only SQL files in `src/db/migrations/NNNN_name.sql`. The `_migrations` table tracks applied. `npm run migrate` is idempotent. Never edit a migration that has been applied to prod.
