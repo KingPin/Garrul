@@ -17,6 +17,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "migrate": "tsx src/db/migrate.ts",
+    "rerender": "tsx scripts/rerender.ts",
     "tail": "wrangler tail"
   },
   "dependencies": {
