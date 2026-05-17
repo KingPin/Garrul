@@ -1,6 +1,9 @@
 import { Hono } from "hono";
 import { health } from "./routes/health";
+import { comments } from "./routes/api.comments";
 import { requestLogger } from "./lib/log";
+import { corsAndCsrf } from "./lib/cors";
+import { sessionMiddleware } from "./lib/session";
 
 export type Bindings = {
 	DB: D1Database;
@@ -29,8 +32,11 @@ export type Bindings = {
 const app = new Hono<{ Bindings: Bindings }>();
 
 app.use("*", requestLogger());
+app.use("/api/*", corsAndCsrf());
+app.use("/api/*", sessionMiddleware());
 
 app.route("/api/v1/health", health);
+app.route("/api/v1/comments", comments);
 
 app.get("/", (c) =>
 	c.text(
