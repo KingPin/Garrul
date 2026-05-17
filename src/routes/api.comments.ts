@@ -41,6 +41,7 @@ import { checkRateLimit } from "../lib/ratelimit";
 import { readSession } from "../lib/session";
 import { verifyTurnstile } from "../lib/turnstile";
 import { writeEvent } from "../lib/analytics";
+import { fireWebhook } from "../lib/webhook";
 import {
 	buildTree,
 	type ReactionCount,
@@ -222,6 +223,13 @@ comments.post("/", async (c) => {
 		post_slug: slug,
 		provider: author.provider,
 	});
+	fireWebhook(c.env, c.executionCtx, {
+		event: "comment.posted",
+		comment_id: inserted.id,
+		post_slug: slug,
+		user_id: author.id,
+		ts: inserted.created_at,
+	});
 
 	return c.json({ comment: serializeComment(inserted, author) }, 201);
 });
@@ -377,6 +385,13 @@ comments.patch("/:id", async (c) => {
 	);
 	await c.env.TREE_CACHE.delete(`tree:${existing.post_slug}:first`);
 	writeEvent(c.env.ANALYTICS, "comment.edited", { post_slug: existing.post_slug });
+	fireWebhook(c.env, c.executionCtx, {
+		event: "comment.edited",
+		comment_id: id,
+		post_slug: existing.post_slug,
+		user_id: existing.user_id,
+		ts: Date.now(),
+	});
 	const updated = await getComment(c.env.DB, id);
 	if (!updated) return c.json({ error: t("err.internal") }, 500);
 	const authorRow = await c.env.DB
@@ -405,6 +420,13 @@ comments.delete("/:id", async (c) => {
 	await softDeleteComment(c.env.DB, id);
 	await c.env.TREE_CACHE.delete(`tree:${existing.post_slug}:first`);
 	writeEvent(c.env.ANALYTICS, "comment.deleted", { post_slug: existing.post_slug });
+	fireWebhook(c.env, c.executionCtx, {
+		event: "comment.deleted",
+		comment_id: id,
+		post_slug: existing.post_slug,
+		user_id: existing.user_id,
+		ts: Date.now(),
+	});
 	return c.json({ ok: true });
 });
 

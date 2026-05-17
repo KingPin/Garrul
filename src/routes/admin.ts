@@ -27,6 +27,7 @@ import {
 	adminListComments,
 	adminListUsers,
 	adminStats,
+	getComment,
 	getUser,
 	setUserBanned,
 	updateCommentStatus,
@@ -35,6 +36,7 @@ import {
 	type CommentStatus,
 	type User,
 } from "../db/queries";
+import { fireWebhook, type WebhookEvent } from "../lib/webhook";
 
 const admin = new Hono<{ Bindings: Bindings }>();
 
@@ -492,7 +494,28 @@ admin.post("/api/comments/:id", async (c) => {
 		default:
 			return c.json({ error: "invalid_action" }, 400);
 	}
+	const existing = await getComment(c.env.DB, id);
+	if (!existing) return c.json({ error: "not_found" }, 404);
 	await updateCommentStatus(c.env.DB, id, newStatus);
+	// Bust the cached first page so the moderation result is visible.
+	await c.env.TREE_CACHE.delete(`tree:${existing.post_slug}:first`);
+	const webhookEvent: WebhookEvent | null =
+		newStatus === "approved"
+			? "comment.approved"
+			: newStatus === "spam"
+				? "comment.spam"
+				: newStatus === "deleted"
+					? "comment.deleted"
+					: null;
+	if (webhookEvent) {
+		fireWebhook(c.env, c.executionCtx, {
+			event: webhookEvent,
+			comment_id: id,
+			post_slug: existing.post_slug,
+			user_id: existing.user_id,
+			ts: Date.now(),
+		});
+	}
 	return c.json({ ok: true, id, status: newStatus });
 });
 
