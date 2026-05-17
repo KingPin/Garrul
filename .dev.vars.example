@@ -1,0 +1,23 @@
+# Copy this file to .dev.vars for local `wrangler dev`.
+# .dev.vars is gitignored. NEVER commit real secrets.
+
+# Always required (placeholders OK for local dev where the feature is unused).
+JWT_SECRET="dev-jwt-secret-change-me"
+IP_HASH_SECRET="dev-ip-hash-pepper-change-me"
+
+# Turnstile (use Cloudflare's "always passes" testing keys for local dev).
+# https://developers.cloudflare.com/turnstile/troubleshooting/testing/
+TURNSTILE_SITE_KEY="1x00000000000000000000AA"
+TURNSTILE_SECRET="1x0000000000000000000000000000000AA"
+
+# OAuth — leave blank locally unless testing the OAuth flow.
+GH_CLIENT_ID=""
+GH_CLIENT_SECRET=""
+GOOGLE_CLIENT_ID=""
+GOOGLE_CLIENT_SECRET=""
+
+# Email — Resend default. Leave blank to disable notification sends locally.
+RESEND_API_KEY=""
+
+# Optional fire-and-forget webhook on new comment.
+WEBHOOK_URL=""
