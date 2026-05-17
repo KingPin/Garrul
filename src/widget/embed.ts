@@ -59,6 +59,15 @@ type ListResponse = {
 	next_cursor: string | null;
 };
 
+type Me = {
+	id: string;
+	provider: string;
+	name: string;
+	email: string | null;
+	avatar_url: string | null;
+	is_admin: boolean;
+} | null;
+
 const STYLE_CSS = `
 :host {
 	all: initial;
@@ -127,6 +136,27 @@ const STYLE_CSS = `
 	align-self: center;
 }
 .gr-loadmore[disabled] { opacity: 0.6; cursor: progress; }
+.gr-signin { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+.gr-signin button {
+	font: inherit;
+	background: var(--garrul-input-bg, #fff);
+	color: var(--garrul-fg, #1a1a1a);
+	border: 1px solid var(--garrul-border, #d0d3d8);
+	border-radius: var(--garrul-radius, 6px);
+	padding: 0.4rem 0.8rem;
+	cursor: pointer;
+}
+.gr-signed { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; color: var(--garrul-muted, #6b7280); font-size: 0.9em; }
+.gr-signed .gr-signed-name { color: var(--garrul-fg, #1a1a1a); font-weight: 600; }
+.gr-signed button {
+	font: inherit;
+	background: transparent;
+	color: var(--garrul-link, #2563eb);
+	border: none;
+	padding: 0;
+	cursor: pointer;
+	text-decoration: underline;
+}
 .gr-skel { background: var(--garrul-skel, #e7e9ec); border-radius: 6px; animation: gr-pulse 1.2s ease-in-out infinite; }
 .gr-skel-line { height: 0.9em; }
 .gr-skel-avatar { width: 40px; height: 40px; border-radius: 50%; }
@@ -245,23 +275,72 @@ const buildThread = (n: TreeNode): HTMLElement => {
 	return wrap;
 };
 
-const buildForm = (siteKey: string | null): HTMLFormElement => {
+const buildAuthBlock = (
+	me: Me,
+	apiBase: string,
+	onSignedIn: () => void,
+	onSignedOut: () => void,
+): HTMLElement => {
+	if (me) {
+		const wrap = el("div", "gr-signed");
+		wrap.appendChild(el("span", undefined, "Posting as "));
+		wrap.appendChild(el("span", "gr-signed-name", `@${me.name}`));
+		if (me.provider !== "anon") {
+			wrap.appendChild(el("span", "gr-verified", "verified"));
+		}
+		const out = el("button", undefined, "Sign out");
+		out.type = "button";
+		out.addEventListener("click", async () => {
+			out.disabled = true;
+			try {
+				await fetch(`${apiBase}/api/v1/auth/signout`, {
+					method: "POST",
+					credentials: "include",
+					headers: { "content-type": "application/json" },
+					body: "{}",
+				});
+			} catch {
+				// signout is best-effort; the cookie clears server-side and
+				// reload will pick up the new state regardless.
+			}
+			onSignedOut();
+		});
+		wrap.appendChild(out);
+		return wrap;
+	}
+
+	const wrap = el("div", "gr-signin");
+	wrap.appendChild(el("span", undefined, "Sign in to get a verified badge:"));
+	for (const p of ["github", "google"] as const) {
+		const btn = el("button", undefined, p === "github" ? "GitHub" : "Google");
+		btn.type = "button";
+		btn.addEventListener("click", () => startOauth(p, apiBase, onSignedIn));
+		wrap.appendChild(btn);
+	}
+	return wrap;
+};
+
+const buildForm = (siteKey: string | null, signedIn: boolean): HTMLFormElement => {
 	const form = document.createElement("form");
 	form.className = "gr-form";
 	form.autocomplete = "off";
 
-	const name = el("input");
-	name.className = "gr-name-input";
-	name.name = "name";
-	name.type = "text";
-	name.placeholder = "Your name";
-	name.required = true;
+	if (!signedIn) {
+		const name = el("input");
+		name.className = "gr-name-input";
+		name.name = "name";
+		name.type = "text";
+		name.placeholder = "Your name";
+		name.required = true;
+		form.appendChild(name);
+	}
 
 	const body = el("textarea");
 	body.className = "gr-body-input";
 	body.name = "body";
 	body.placeholder = "Add a comment…";
 	body.required = true;
+	form.appendChild(body);
 
 	const honey = el("input");
 	honey.className = "gr-honeypot";
@@ -270,6 +349,15 @@ const buildForm = (siteKey: string | null): HTMLFormElement => {
 	honey.tabIndex = -1;
 	honey.setAttribute("aria-hidden", "true");
 	honey.autocomplete = "off";
+	form.appendChild(honey);
+
+	// Turnstile only renders for anonymous posts. Signed-in posts skip it
+	// server-side, so don't include the widget either.
+	if (siteKey && !signedIn) {
+		const t = el("div", "cf-turnstile");
+		t.setAttribute("data-sitekey", siteKey);
+		form.appendChild(t);
+	}
 
 	const submit = el("button", undefined, "Post comment");
 	submit.type = "submit";
@@ -277,16 +365,40 @@ const buildForm = (siteKey: string | null): HTMLFormElement => {
 	const errBox = el("div", "gr-error");
 	errBox.hidden = true;
 
-	form.append(name, body, honey);
-
-	if (siteKey) {
-		const t = el("div", "cf-turnstile");
-		t.setAttribute("data-sitekey", siteKey);
-		form.appendChild(t);
-	}
-
 	form.append(submit, errBox);
 	return form;
+};
+
+const startOauth = (
+	provider: "github" | "google",
+	apiBase: string,
+	onSuccess: () => void,
+): void => {
+	const ret = encodeURIComponent(window.location.origin);
+	const url = `${apiBase}/api/v1/auth/${provider}/start?return=${ret}`;
+	const popup = window.open(
+		url,
+		"garrul-oauth",
+		"width=520,height=640,menubar=no,toolbar=no",
+	);
+	const handler = (e: MessageEvent): void => {
+		const apiOrigin = new URL(apiBase).origin;
+		// Accept the message only from the API origin AND from our popup window
+		// (e.source check is best-effort — popup is null in some browsers when
+		// cross-origin). The shape check is the real defense.
+		if (e.origin !== apiOrigin) return;
+		const data = e.data as { type?: string; ok?: boolean } | null;
+		if (!data || data.type !== "garrul:auth") return;
+		window.removeEventListener("message", handler);
+		if (data.ok) onSuccess();
+	};
+	window.addEventListener("message", handler);
+	if (!popup) {
+		// Popup blocked — fall back to top-level redirect. The browser will
+		// land back at /callback which sets the cookie + closes; the user
+		// then has to navigate back manually. Documented behavior.
+		window.location.href = url;
+	}
 };
 
 const init = () => {
@@ -339,6 +451,19 @@ const appendThreads = (list: HTMLElement, threads: TreeNode[]): void => {
 	for (const t of threads) list.appendChild(buildThread(t));
 };
 
+const fetchMe = async (apiBase: string): Promise<Me> => {
+	try {
+		const res = await fetch(`${apiBase}/api/v1/auth/me`, {
+			credentials: "include",
+		});
+		if (!res.ok) return null;
+		const json = (await res.json()) as { user: Me };
+		return json.user;
+	} catch {
+		return null;
+	}
+};
+
 const load = async (
 	root: ShadowRoot,
 	slug: string,
@@ -359,27 +484,33 @@ const load = async (
 		// (the server will reject anonymous POSTs in that case).
 	}
 
-	let data: ListResponse;
-	try {
-		data = await fetchPage(apiBase, slug, null);
-	} catch (err) {
-		renderError(root, String(err));
+	const [me, dataResult] = await Promise.all([
+		fetchMe(apiBase),
+		fetchPage(apiBase, slug, null).catch((err: unknown) => err),
+	]);
+	if (dataResult instanceof Error) {
+		renderError(root, String(dataResult));
 		return;
 	}
+	const data = dataResult as ListResponse;
 
 	root.replaceChildren();
 	const style = el("style");
 	style.textContent = STYLE_CSS;
 
 	const wrap = el("div", "gr-root");
-	const form = buildForm(siteKey);
+	const reload = () => {
+		void load(root, slug, apiBase, host);
+	};
+	const authBlock = buildAuthBlock(me, apiBase, reload, reload);
+	const form = buildForm(siteKey, me != null);
 	const list = el("div", "gr-list");
 	if (data.threads.length === 0) {
 		list.appendChild(el("p", "gr-empty", "Be the first to comment."));
 	} else {
 		appendThreads(list, data.threads);
 	}
-	wrap.append(form, list);
+	wrap.append(authBlock, form, list);
 
 	if (data.next_cursor) {
 		const more = el("button", "gr-loadmore", "Load older comments");
@@ -437,7 +568,8 @@ const submit = async (
 	const submitBtn = form.querySelector("button[type=submit]") as HTMLButtonElement | null;
 	if (submitBtn) submitBtn.disabled = true;
 
-	const name = (form.querySelector(".gr-name-input") as HTMLInputElement).value;
+	const nameInput = form.querySelector(".gr-name-input") as HTMLInputElement | null;
+	const name = nameInput?.value ?? "";
 	const body = (form.querySelector(".gr-body-input") as HTMLTextAreaElement).value;
 	const honeypot = (form.querySelector(".gr-honeypot") as HTMLInputElement).value;
 
