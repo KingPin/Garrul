@@ -14,7 +14,16 @@
  * expiry. To revoke a session, delete the KV entry; the cookie becomes
  * inert immediately.
  */
-import type { Context, MiddlewareHandler } from "hono";
+import type { MiddlewareHandler } from "hono";
+
+// Structural shape of the bits of a Hono context this module uses. Defining
+// it structurally (instead of `Context<{Bindings:Env}>`) keeps callers free
+// to add Variables / sub-paths without TS invariance fights.
+type SessionCtx = {
+	env: Env;
+	req: { header(name: string): string | undefined };
+	header(name: string, value: string, options?: { append?: boolean }): void;
+};
 
 const COOKIE_NAME = "garrul_sess";
 const SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
@@ -67,7 +76,7 @@ const buildSetCookie = (
 };
 
 export const issueSession = async (
-	c: Context<{ Bindings: Env }>,
+	c: SessionCtx,
 	userId: string,
 ): Promise<string> => {
 	const sid = newSessionId();
@@ -84,12 +93,12 @@ export const issueSession = async (
 	return sid;
 };
 
-export const clearSession = (c: Context<{ Bindings: Env }>): void => {
+export const clearSession = (c: SessionCtx): void => {
 	c.header("Set-Cookie", buildSetCookie("", 0, c.env), { append: true });
 };
 
 export const readSession = async (
-	c: Context<{ Bindings: Env }>,
+	c: SessionCtx,
 ): Promise<{ sid: string; user_id: string } | null> => {
 	const sid = parseCookie(c.req.header("cookie"), COOKIE_NAME);
 	if (!sid) return null;
