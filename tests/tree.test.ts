@@ -111,6 +111,36 @@ describe("buildTree — depth cap", () => {
 	});
 });
 
+describe("buildTree — reactions", () => {
+	it("attaches reaction counts + mine flag to the matching node", () => {
+		const rows = [mk("root", null, 100), mk("child", "root", 200)];
+		const reactionsById = new Map<string, { kind: string; count: number; mine: boolean }[]>();
+		reactionsById.set("root", [
+			{ kind: "like", count: 3, mine: true },
+			{ kind: "love", count: 1, mine: false },
+		]);
+		reactionsById.set("child", [{ kind: "laugh", count: 2, mine: false }]);
+		const { threads } = buildTree(
+			rows,
+			usersById(author("u1")),
+			reactionsById,
+		);
+		expect(threads[0]!.reactions).toEqual([
+			{ kind: "like", count: 3, mine: true },
+			{ kind: "love", count: 1, mine: false },
+		]);
+		expect(threads[0]!.replies[0]!.reactions).toEqual([
+			{ kind: "laugh", count: 2, mine: false },
+		]);
+	});
+
+	it("defaults reactions to empty when the map is omitted", () => {
+		const rows = [mk("root", null, 100)];
+		const { threads } = buildTree(rows, usersById(author("u1")));
+		expect(threads[0]!.reactions).toEqual([]);
+	});
+});
+
 describe("buildTree — deleted-parent semantics", () => {
 	it("keeps a deleted parent as placeholder when a live reply exists", () => {
 		const rows = [

@@ -26,6 +26,8 @@ import {
 	getPost,
 	insertComment,
 	listCommentsForPost,
+	listReactionsForPost,
+	listUserReactionsOnPost,
 	softDeleteComment,
 	updateCommentBody,
 	upsertPost,
@@ -38,7 +40,12 @@ import { CURRENT_RENDERER_VERSION, renderMarkdown, validateBody } from "../lib/m
 import { checkRateLimit } from "../lib/ratelimit";
 import { readSession } from "../lib/session";
 import { verifyTurnstile } from "../lib/turnstile";
-import { buildTree, type TreeAuthor, type TreeNode } from "../lib/tree";
+import {
+	buildTree,
+	type ReactionCount,
+	type TreeAuthor,
+	type TreeNode,
+} from "../lib/tree";
 import { t } from "../i18n";
 
 const TOP_LEVEL_PAGE = 100;
@@ -267,11 +274,14 @@ comments.get("/", async (c) => {
 	if (!SLUG_RE.test(slug)) return c.json({ error: t("err.post.invalid") }, 400);
 
 	const cursor = decodeCursor(c.req.query("before") ?? null);
+	const session = await readSession(c);
 
-	// Fast path: first page is cached in KV. We only cache the first page —
-	// older pages are rare and not worth the cache footprint.
+	// Fast path: first page is cached in KV for anonymous viewers only.
+	// Signed-in viewers see per-user "mine" flags on reactions, so they
+	// bypass the cache. (KV cache hit-rate stays high on the public reader
+	// path, which dominates traffic.)
 	const cacheKey = `tree:${slug}:first`;
-	if (!cursor) {
+	if (!cursor && !session) {
 		const cached = await c.env.TREE_CACHE.get(cacheKey, "json");
 		if (cached) return c.json(cached);
 	}
@@ -280,7 +290,22 @@ comments.get("/", async (c) => {
 	const rows = await listCommentsForPost(c.env.DB, slug);
 	const authors = await loadAuthors(c.env.DB, rows);
 
-	const { threads: allThreads } = buildTree(rows, authors);
+	const reactionRows = await listReactionsForPost(c.env.DB, slug);
+	const mineSet = session
+		? await listUserReactionsOnPost(c.env.DB, slug, session.user_id)
+		: new Set<string>();
+	const reactionsById = new Map<string, ReactionCount[]>();
+	for (const r of reactionRows) {
+		const list = reactionsById.get(r.comment_id) ?? [];
+		list.push({
+			kind: r.kind,
+			count: r.count,
+			mine: mineSet.has(`${r.comment_id}|${r.kind}`),
+		});
+		reactionsById.set(r.comment_id, list);
+	}
+
+	const { threads: allThreads } = buildTree(rows, authors, reactionsById);
 
 	// Newest-first top-level ordering. The tree builder returns ASC so we
 	// reverse here; the widget pages with ?before=<oldest_id_on_page>.
@@ -297,7 +322,7 @@ comments.get("/", async (c) => {
 
 	const payload: ListPayload = { post, threads: page, next_cursor };
 
-	if (!cursor) {
+	if (!cursor && !session) {
 		// Write-through cache. expirationTtl is in seconds.
 		await c.env.TREE_CACHE.put(cacheKey, JSON.stringify(payload), {
 			expirationTtl: TREE_CACHE_TTL,

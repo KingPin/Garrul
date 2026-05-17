@@ -345,6 +345,96 @@ export const updateCommentBody = async (
 		.run();
 };
 
+/**
+ * Toggle a (comment_id, user_id, kind) reaction. Returns the new state:
+ *   { added: true }  — the row was inserted (user just reacted)
+ *   { added: false } — the row existed and was deleted (user un-reacted)
+ *
+ * One round-trip via INSERT … ON CONFLICT … DO NOTHING + a follow-up
+ * delete when the conflict path fires. D1 doesn't surface ROW_CHANGED
+ * reliably across versions, so we use changes() from the run() metadata.
+ */
+export const toggleReaction = async (
+	db: D1Database,
+	comment_id: string,
+	user_id: string,
+	kind: string,
+): Promise<{ added: boolean }> => {
+	const now = Date.now();
+	const ins = await db
+		.prepare(
+			`INSERT INTO reactions (comment_id, user_id, kind, created_at)
+			 VALUES (?, ?, ?, ?)
+			 ON CONFLICT(comment_id, user_id, kind) DO NOTHING`,
+		)
+		.bind(comment_id, user_id, kind, now)
+		.run();
+	if (ins.meta.changes && ins.meta.changes > 0) {
+		return { added: true };
+	}
+	await db
+		.prepare(
+			`DELETE FROM reactions
+			 WHERE comment_id = ? AND user_id = ? AND kind = ?`,
+		)
+		.bind(comment_id, user_id, kind)
+		.run();
+	return { added: false };
+};
+
+export type ReactionSummary = {
+	comment_id: string;
+	kind: string;
+	count: number;
+};
+
+/**
+ * Aggregate reactions for every comment on a post: (comment_id, kind, count).
+ * Caller pivots to per-comment buckets.
+ */
+export const listReactionsForPost = async (
+	db: D1Database,
+	post_slug: string,
+): Promise<ReactionSummary[]> => {
+	const result = await db
+		.prepare(
+			`SELECT r.comment_id, r.kind, COUNT(*) AS count
+			 FROM reactions r
+			 JOIN comments c ON c.id = r.comment_id
+			 WHERE c.post_slug = ?
+			 GROUP BY r.comment_id, r.kind`,
+		)
+		.bind(post_slug)
+		.all<{ comment_id: string; kind: string; count: number }>();
+	return result.results ?? [];
+};
+
+/**
+ * Returns the set of (comment_id, kind) pairs the given user has reacted
+ * with on the given post. Returned as `comment_id|kind` strings so the
+ * caller can do an O(1) presence check.
+ */
+export const listUserReactionsOnPost = async (
+	db: D1Database,
+	post_slug: string,
+	user_id: string,
+): Promise<Set<string>> => {
+	const result = await db
+		.prepare(
+			`SELECT r.comment_id, r.kind
+			 FROM reactions r
+			 JOIN comments c ON c.id = r.comment_id
+			 WHERE c.post_slug = ? AND r.user_id = ?`,
+		)
+		.bind(post_slug, user_id)
+		.all<{ comment_id: string; kind: string }>();
+	const out = new Set<string>();
+	for (const row of result.results ?? []) {
+		out.add(`${row.comment_id}|${row.kind}`);
+	}
+	return out;
+};
+
 export const softDeleteComment = async (
 	db: D1Database,
 	id: string,
