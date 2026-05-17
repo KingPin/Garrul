@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<title>Garrul — iframe example</title>
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<style>
+		body { font-family: system-ui, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; }
+		h1 { margin-top: 0; }
+		hr { border: none; border-top: 1px solid #e5e7eb; margin: 2rem 0; }
+		#garrul-iframe {
+			width: 100%;
+			border: 0;
+			display: block;
+			/* The initial height covers the skeleton; the inline script
+			   below replaces it with the real content height. */
+			min-height: 400px;
+		}
+	</style>
+</head>
+<body>
+	<h1>Iframe embed demo</h1>
+	<p>This example mounts Garrul via <code>&lt;iframe&gt;</code> instead of
+	the script-tag widget. Same comments, same UI — the iframe just hosts
+	the widget for sites that can't add inline JS (strict CSP, sandboxed
+	CMSes, etc).</p>
+
+	<hr>
+
+	<iframe
+		id="garrul-iframe"
+		src="http://localhost:8787/embed/welcome?title=Iframe%20demo&amp;url=http%3A%2F%2Flocalhost%3A5173%2Fexamples%2Fiframe%2F"
+		title="Comments"
+		loading="lazy"
+		referrerpolicy="no-referrer"></iframe>
+
+	<script>
+		// Auto-resize the iframe to match the inner widget's content height.
+		// The iframe posts `{type:"garrul:height", height}` whenever its
+		// content resizes; we mirror that onto the iframe element.
+		(function () {
+			var f = document.getElementById("garrul-iframe");
+			var apiOrigin = new URL(f.src).origin;
+			window.addEventListener("message", function (e) {
+				if (e.origin !== apiOrigin) return;
+				var data = e.data;
+				if (!data || data.type !== "garrul:height") return;
+				if (typeof data.height !== "number") return;
+				f.style.height = data.height + "px";
+			});
+		})();
+	</script>
+</body>
+</html>
