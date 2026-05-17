@@ -435,6 +435,144 @@ export const listUserReactionsOnPost = async (
 	return out;
 };
 
+/**
+ * Admin: page through comments by status, newest first. Cursor is the
+ * created_at,id pair of the last row from the previous page.
+ */
+export const adminListComments = async (
+	db: D1Database,
+	status: CommentStatus | "all",
+	limit: number,
+	cursorCreatedAt: number | null,
+	cursorId: string | null,
+): Promise<Comment[]> => {
+	const statusFilter = status === "all" ? "" : "AND status = ?";
+	const sql = cursorCreatedAt != null && cursorId != null
+		? `SELECT id, post_slug, parent_id, user_id, body_md, body_html,
+		          renderer_version, status, edited_at, deleted_at,
+		          ip_hash, user_agent, created_at
+		     FROM comments
+		    WHERE (created_at, id) < (?, ?) ${statusFilter}
+		    ORDER BY created_at DESC, id DESC
+		    LIMIT ?`
+		: `SELECT id, post_slug, parent_id, user_id, body_md, body_html,
+		          renderer_version, status, edited_at, deleted_at,
+		          ip_hash, user_agent, created_at
+		     FROM comments
+		    WHERE 1=1 ${statusFilter}
+		    ORDER BY created_at DESC, id DESC
+		    LIMIT ?`;
+	const stmt = db.prepare(sql);
+	const binds: (number | string)[] =
+		cursorCreatedAt != null && cursorId != null
+			? status === "all"
+				? [cursorCreatedAt, cursorId, limit]
+				: [cursorCreatedAt, cursorId, status, limit]
+			: status === "all"
+				? [limit]
+				: [status, limit];
+	const result = await stmt.bind(...binds).all<Comment>();
+	return result.results ?? [];
+};
+
+export const updateCommentStatus = async (
+	db: D1Database,
+	id: string,
+	status: CommentStatus,
+): Promise<void> => {
+	const now = Date.now();
+	// deleted_at is set when transitioning to 'deleted', cleared otherwise.
+	const deletedAt = status === "deleted" ? now : null;
+	await db
+		.prepare(
+			`UPDATE comments
+			    SET status = ?, deleted_at = ?
+			  WHERE id = ?`,
+		)
+		.bind(status, deletedAt, id)
+		.run();
+};
+
+/**
+ * Admin: page through users, newest first. `search` matches on name OR
+ * email (case-insensitive prefix). Pass null to list everyone.
+ */
+export const adminListUsers = async (
+	db: D1Database,
+	search: string | null,
+	limit: number,
+	cursorCreatedAt: number | null,
+	cursorId: string | null,
+): Promise<User[]> => {
+	const pattern = search ? `${search.toLowerCase()}%` : null;
+	const filter = pattern ? "AND (LOWER(name) LIKE ? OR LOWER(email) LIKE ?)" : "";
+	const sql = cursorCreatedAt != null && cursorId != null
+		? `SELECT id, provider, provider_id, name, email, avatar_url,
+		          is_admin, is_banned, created_at
+		     FROM users
+		    WHERE (created_at, id) < (?, ?) ${filter}
+		    ORDER BY created_at DESC, id DESC
+		    LIMIT ?`
+		: `SELECT id, provider, provider_id, name, email, avatar_url,
+		          is_admin, is_banned, created_at
+		     FROM users
+		    WHERE 1=1 ${filter}
+		    ORDER BY created_at DESC, id DESC
+		    LIMIT ?`;
+	const binds: (string | number)[] = [];
+	if (cursorCreatedAt != null && cursorId != null) {
+		binds.push(cursorCreatedAt, cursorId);
+	}
+	if (pattern) binds.push(pattern, pattern);
+	binds.push(limit);
+	const result = await db
+		.prepare(sql)
+		.bind(...binds)
+		.all<UserRow>();
+	return (result.results ?? []).map(toUser);
+};
+
+export const setUserBanned = async (
+	db: D1Database,
+	id: string,
+	banned: boolean,
+): Promise<void> => {
+	await db
+		.prepare(`UPDATE users SET is_banned = ? WHERE id = ?`)
+		.bind(banned ? 1 : 0, id)
+		.run();
+};
+
+export type AdminStats = {
+	total_comments: number;
+	pending_comments: number;
+	spam_comments: number;
+	total_users: number;
+	banned_users: number;
+};
+
+export const adminStats = async (db: D1Database): Promise<AdminStats> => {
+	const row = await db
+		.prepare(
+			`SELECT
+			   (SELECT COUNT(*) FROM comments)                          AS total_comments,
+			   (SELECT COUNT(*) FROM comments WHERE status = 'pending') AS pending_comments,
+			   (SELECT COUNT(*) FROM comments WHERE status = 'spam')    AS spam_comments,
+			   (SELECT COUNT(*) FROM users)                             AS total_users,
+			   (SELECT COUNT(*) FROM users WHERE is_banned = 1)         AS banned_users`,
+		)
+		.first<AdminStats>();
+	return (
+		row ?? {
+			total_comments: 0,
+			pending_comments: 0,
+			spam_comments: 0,
+			total_users: 0,
+			banned_users: 0,
+		}
+	);
+};
+
 export const softDeleteComment = async (
 	db: D1Database,
 	id: string,

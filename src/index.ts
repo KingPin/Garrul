@@ -6,6 +6,7 @@ import { reactions } from "./routes/api.reactions";
 import { auth } from "./routes/auth";
 import { embed } from "./routes/embed";
 import { iframe } from "./routes/embed-iframe";
+import { admin } from "./routes/admin";
 import { requestLogger } from "./lib/log";
 import { corsAndCsrf } from "./lib/cors";
 import { sessionMiddleware } from "./lib/session";
@@ -48,6 +49,7 @@ app.route("/api/v1/config", config);
 app.route("/api/v1/auth", auth);
 app.route("/", embed);
 app.route("/embed", iframe);
+app.route("/admin", admin);
 
 app.get("/", (c) =>
 	c.text(
