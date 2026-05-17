@@ -1,6 +1,8 @@
 import { Hono } from "hono";
 import { health } from "./routes/health";
 import { comments } from "./routes/api.comments";
+import { config } from "./routes/api.config";
+import { embed } from "./routes/embed";
 import { requestLogger } from "./lib/log";
 import { corsAndCsrf } from "./lib/cors";
 import { sessionMiddleware } from "./lib/session";
@@ -37,6 +39,8 @@ app.use("/api/*", sessionMiddleware());
 
 app.route("/api/v1/health", health);
 app.route("/api/v1/comments", comments);
+app.route("/api/v1/config", config);
+app.route("/", embed);
 
 app.get("/", (c) =>
 	c.text(

@@ -5,6 +5,7 @@ node_modules/
 dist/
 build/
 *.tsbuildinfo
+src/widget/embed.bundled.ts
 
 # Wrangler / Cloudflare local state
 .wrangler/
