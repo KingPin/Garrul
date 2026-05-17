@@ -16,6 +16,7 @@
     "build": "wrangler deploy --dry-run --outdir=dist",
     "prebuild": "npm run build:embed",
     "build:embed": "tsx scripts/build-embed.ts",
+    "size": "npm run build:embed && tsx scripts/check-bundle-size.ts",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.widget.json",
     "pretypecheck": "npm run build:embed",
     "lint": "echo 'lint placeholder — wire up biome or eslint later' && exit 0",
