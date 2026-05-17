@@ -1,0 +1,71 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+
+# Wrangler / Cloudflare local state
+.wrangler/
+.dev.vars
+.dev.vars.local
+.miniflare/
+wrangler.toml
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Test / coverage
+coverage/
+.nyc_output/
+.vitest/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS noise
+.DS_Store
+Thumbs.db
+desktop.ini
+ehthumbs.db
+Icon?
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*.swn
+*~
+.history/
+.fleet/
+*.sublime-project
+*.sublime-workspace
+
+# AI tools and assistants (not shared in repo)
+.claude/
+.cursor/
+.aider*
+.continue/
+.codeium/
+.copilot/
+.windsurf/
+
+# AI-generated planning / design artifacts (kept local, not committed)
+lets-talk-about-rolling-recursive-oasis.md
+plans/
+PLAN.md
+SOURCE-DESIGN.md
+*.brainstorm.md
+NOTES.md
+
+# Lockfiles from package managers we don't use
+yarn.lock
+pnpm-lock.yaml
