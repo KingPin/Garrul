@@ -38,7 +38,11 @@ import { CURRENT_RENDERER_VERSION, renderMarkdown, validateBody } from "../lib/m
 import { checkRateLimit } from "../lib/ratelimit";
 import { readSession } from "../lib/session";
 import { verifyTurnstile } from "../lib/turnstile";
+import { buildTree, type TreeAuthor, type TreeNode } from "../lib/tree";
 import { t } from "../i18n";
+
+const TOP_LEVEL_PAGE = 100;
+const TREE_CACHE_TTL = 300; // seconds; busted on every write, so a long TTL is fine
 
 type SessionVars = {
 	userId: string | null;
@@ -196,29 +200,27 @@ comments.post("/", async (c) => {
 		user_agent: c.req.header("user-agent") ?? null,
 	});
 
-	// Bust tree cache (M4 will populate). We delete unconditionally so the
-	// cache layer doesn't need to know about insert paths.
-	await c.env.TREE_CACHE.delete(`tree:${slug}`);
+	// Bust the cached first page. Older pages bypass cache, so there's
+	// nothing else to invalidate.
+	await c.env.TREE_CACHE.delete(`tree:${slug}:first`);
 
 	return c.json({ comment: serializeComment(inserted, author) }, 201);
 });
 
-comments.get("/", async (c) => {
-	const slug = (c.req.query("slug") ?? "").trim();
-	if (!slug) return c.json({ error: t("err.post.required") }, 400);
-	if (!SLUG_RE.test(slug)) return c.json({ error: t("err.post.invalid") }, 400);
-
-	const post = await getPost(c.env.DB, slug);
-	const rows = await listCommentsForPost(c.env.DB, slug);
-
-	if (rows.length === 0) {
-		return c.json({ post, comments: [] });
-	}
-
-	// Batch-load all referenced authors in one query.
+/**
+ * Builds a TreeAuthor map by loading every user referenced by `rows` in
+ * one batch SELECT. Anonymous ghosts have no avatar_url, so the route
+ * also fills in an inline identicon SVG so the widget doesn't need to
+ * make a per-author request.
+ */
+const loadAuthors = async (
+	db: D1Database,
+	rows: Comment[],
+): Promise<Map<string, TreeAuthor>> => {
+	if (rows.length === 0) return new Map();
 	const userIds = Array.from(new Set(rows.map((r) => r.user_id)));
 	const placeholders = userIds.map(() => "?").join(",");
-	const authorRows = await c.env.DB
+	const result = await db
 		.prepare(
 			`SELECT id, provider, provider_id, name, email, avatar_url,
 			        is_admin, is_banned, created_at
@@ -226,20 +228,83 @@ comments.get("/", async (c) => {
 		)
 		.bind(...userIds)
 		.all<UserRow>();
-	const authorsById = new Map<string, User>();
-	for (const u of authorRows.results ?? []) {
-		authorsById.set(u.id, rowToUser(u));
+	const out = new Map<string, TreeAuthor>();
+	for (const u of result.results ?? []) {
+		const user = rowToUser(u);
+		out.set(user.id, {
+			id: user.id,
+			name: user.name,
+			provider: user.provider,
+			is_admin: user.is_admin,
+			avatar_url: user.avatar_url,
+			avatar_svg: user.avatar_url ? null : identiconSvg(user.id),
+		});
+	}
+	return out;
+};
+
+type ListPayload = {
+	post: Awaited<ReturnType<typeof getPost>>;
+	threads: TreeNode[];
+	next_cursor: string | null;
+};
+
+/**
+ * Cursor format: just the ULID of the oldest top-level thread on the
+ * current page. Top-level threads are sorted DESC by created_at, so the
+ * next page is `WHERE id < cursor_id`. Using the ULID (which is a
+ * lexicographically-comparable time-prefixed ID) sidesteps the
+ * timestamp-collision edge case.
+ */
+const decodeCursor = (raw: string | null): string | null => {
+	if (!raw) return null;
+	return /^[0-9A-HJKMNP-TV-Z]{26}$/.test(raw) ? raw : null;
+};
+
+comments.get("/", async (c) => {
+	const slug = (c.req.query("slug") ?? "").trim();
+	if (!slug) return c.json({ error: t("err.post.required") }, 400);
+	if (!SLUG_RE.test(slug)) return c.json({ error: t("err.post.invalid") }, 400);
+
+	const cursor = decodeCursor(c.req.query("before") ?? null);
+
+	// Fast path: first page is cached in KV. We only cache the first page —
+	// older pages are rare and not worth the cache footprint.
+	const cacheKey = `tree:${slug}:first`;
+	if (!cursor) {
+		const cached = await c.env.TREE_CACHE.get(cacheKey, "json");
+		if (cached) return c.json(cached);
 	}
 
-	const serialized = rows
-		.map((r) => {
-			const author = authorsById.get(r.user_id);
-			if (!author) return null;
-			return serializeComment(r, author);
-		})
-		.filter((x): x is NonNullable<typeof x> => x !== null);
+	const post = await getPost(c.env.DB, slug);
+	const rows = await listCommentsForPost(c.env.DB, slug);
+	const authors = await loadAuthors(c.env.DB, rows);
 
-	return c.json({ post, comments: serialized });
+	const { threads: allThreads } = buildTree(rows, authors);
+
+	// Newest-first top-level ordering. The tree builder returns ASC so we
+	// reverse here; the widget pages with ?before=<oldest_id_on_page>.
+	allThreads.reverse();
+
+	// Apply cursor: slice threads with id < cursor.
+	const startIdx = cursor
+		? allThreads.findIndex((t) => t.id < cursor)
+		: 0;
+	const sliceFrom = startIdx < 0 ? allThreads.length : startIdx;
+	const page = allThreads.slice(sliceFrom, sliceFrom + TOP_LEVEL_PAGE);
+	const more = allThreads.length > sliceFrom + TOP_LEVEL_PAGE;
+	const next_cursor = more ? (page[page.length - 1]?.id ?? null) : null;
+
+	const payload: ListPayload = { post, threads: page, next_cursor };
+
+	if (!cursor) {
+		// Write-through cache. expirationTtl is in seconds.
+		await c.env.TREE_CACHE.put(cacheKey, JSON.stringify(payload), {
+			expirationTtl: TREE_CACHE_TTL,
+		});
+	}
+
+	return c.json(payload);
 });
 
 comments.patch("/:id", async (c) => {
@@ -273,7 +338,7 @@ comments.patch("/:id", async (c) => {
 		body_html,
 		CURRENT_RENDERER_VERSION,
 	);
-	await c.env.TREE_CACHE.delete(`tree:${existing.post_slug}`);
+	await c.env.TREE_CACHE.delete(`tree:${existing.post_slug}:first`);
 	const updated = await getComment(c.env.DB, id);
 	if (!updated) return c.json({ error: t("err.internal") }, 500);
 	const authorRow = await c.env.DB
@@ -300,7 +365,7 @@ comments.delete("/:id", async (c) => {
 	}
 
 	await softDeleteComment(c.env.DB, id);
-	await c.env.TREE_CACHE.delete(`tree:${existing.post_slug}`);
+	await c.env.TREE_CACHE.delete(`tree:${existing.post_slug}:first`);
 	return c.json({ ok: true });
 });
 
