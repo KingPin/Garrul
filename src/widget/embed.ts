@@ -548,6 +548,8 @@ const buildComment = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 const buildThread = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	const wrap = el("div", "gr-thread");
 	wrap.dataset.id = n.id;
+	// Anchor id for the /c/:id permalink redirect to scroll into view.
+	wrap.id = `garrul-comment-${n.id}`;
 	wrap.appendChild(buildComment(n, ctx));
 	if (n.replies.length > 0) {
 		const replies = el("div", "gr-replies");
@@ -838,6 +840,16 @@ const load = async (
 	}
 
 	root.append(style, wrap);
+
+	// Scroll a permalink target (#garrul-comment-<id>) into view once the
+	// tree is in the DOM. Browsers don't auto-scroll to anchors inside a
+	// shadow root, so we have to do it manually.
+	if (window.location.hash.startsWith("#garrul-comment-")) {
+		const target = root.getElementById(window.location.hash.slice(1));
+		if (target) {
+			target.scrollIntoView({ block: "center", behavior: "smooth" });
+		}
+	}
 
 	if (siteKey && !document.querySelector('script[src*="turnstile"]')) {
 		const s = document.createElement("script");

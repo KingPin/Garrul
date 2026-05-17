@@ -326,6 +326,57 @@ export const listCommentsForPost = async (
 	return result.results ?? [];
 };
 
+/**
+ * Latest N approved comments for a post, joined with author name, for
+ * the per-post RSS feed.
+ */
+export const listLatestApprovedComments = async (
+	db: D1Database,
+	post_slug: string,
+	limit: number,
+): Promise<(Comment & { author_name: string })[]> => {
+	const result = await db
+		.prepare(
+			`SELECT c.id, c.post_slug, c.parent_id, c.user_id, c.body_md, c.body_html,
+			        c.renderer_version, c.status, c.edited_at, c.deleted_at,
+			        c.ip_hash, c.user_agent, c.created_at, u.name AS author_name
+			   FROM comments c
+			   JOIN users u ON u.id = c.user_id
+			  WHERE c.post_slug = ? AND c.status = 'approved'
+			  ORDER BY c.created_at DESC, c.id DESC
+			  LIMIT ?`,
+		)
+		.bind(post_slug, limit)
+		.all<Comment & { author_name: string }>();
+	return result.results ?? [];
+};
+
+/**
+ * Approved comment counts for multiple slugs in one round-trip.
+ * Returns a Map keyed by slug; missing/zero slugs are not present.
+ */
+export const countApprovedCommentsBySlugs = async (
+	db: D1Database,
+	slugs: string[],
+): Promise<Map<string, number>> => {
+	if (slugs.length === 0) return new Map();
+	const placeholders = slugs.map(() => "?").join(",");
+	const result = await db
+		.prepare(
+			`SELECT post_slug, COUNT(*) AS count
+			   FROM comments
+			  WHERE status = 'approved' AND post_slug IN (${placeholders})
+			  GROUP BY post_slug`,
+		)
+		.bind(...slugs)
+		.all<{ post_slug: string; count: number }>();
+	const out = new Map<string, number>();
+	for (const row of result.results ?? []) {
+		out.set(row.post_slug, row.count);
+	}
+	return out;
+};
+
 export const updateCommentBody = async (
 	db: D1Database,
 	id: string,
