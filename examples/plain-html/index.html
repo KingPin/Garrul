@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<title>Garrul — plain-HTML example</title>
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<style>
+		body { font-family: system-ui, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; }
+		h1 { margin-top: 0; }
+		hr { border: none; border-top: 1px solid #e5e7eb; margin: 2rem 0; }
+		.host-bleed-check {
+			/* Aggressive host CSS to verify Shadow DOM isolation —
+			   the widget should be visually unaffected. */
+			color: hotpink;
+			font-family: "Comic Sans MS", cursive !important;
+			background: yellow;
+			padding: 0.5rem;
+		}
+	</style>
+</head>
+<body>
+	<h1>Garrul demo post</h1>
+	<p>This file is just for local development. Run <code>npm run dev</code>,
+	then open <code>examples/plain-html/index.html</code> with any static
+	server pointing at the project root (or just <code>file://</code>) and
+	the widget below mounts against <code>http://localhost:8787</code>.</p>
+
+	<div class="host-bleed-check">
+		If you can see hot-pink Comic Sans here but the widget below looks
+		normal — Shadow DOM isolation works. ✓
+	</div>
+
+	<hr>
+
+	<h2>Comments</h2>
+	<div
+		id="garrul"
+		data-slug="welcome"
+		data-api="http://localhost:8787"
+		data-title="Garrul demo post"
+		data-url="http://localhost:5173/examples/plain-html/"
+	></div>
+
+	<script src="http://localhost:8787/embed.js" defer></script>
+</body>
+</html>
