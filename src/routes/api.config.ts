@@ -15,8 +15,12 @@ import type { Bindings } from "../index";
 const config = new Hono<{ Bindings: Bindings }>();
 
 config.get("/", (c) => {
+	const minutes = Number.parseInt(c.env.EDIT_WINDOW_MINUTES, 10);
+	const edit_window_minutes =
+		Number.isFinite(minutes) && minutes > 0 ? minutes : 5;
 	return c.json({
 		turnstile_site_key: c.env.TURNSTILE_SITE_KEY || null,
+		edit_window_minutes,
 	});
 });
 

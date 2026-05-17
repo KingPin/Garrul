@@ -39,6 +39,8 @@ type TreeAuthor = {
 	avatar_url: string | null;
 };
 
+type ReactionCount = { kind: string; count: number; mine: boolean };
+
 type TreeNode = {
 	id: string;
 	parent_id: string | null;
@@ -50,6 +52,7 @@ type TreeNode = {
 	author: TreeAuthor;
 	depth: number;
 	flatten_from: string | null;
+	reactions: ReactionCount[];
 	replies: TreeNode[];
 };
 
@@ -124,6 +127,51 @@ const STYLE_CSS = `
 .gr-body p { margin: 0.3em 0; }
 .gr-body a { color: var(--garrul-link, #2563eb); }
 .gr-deleted { color: var(--garrul-muted, #6b7280); font-style: italic; }
+.gr-actions { display: flex; gap: 0.75rem; margin-top: 0.35rem; font-size: 0.85em; }
+.gr-actions button {
+	font: inherit;
+	background: transparent;
+	color: var(--garrul-muted, #6b7280);
+	border: none;
+	padding: 0;
+	cursor: pointer;
+}
+.gr-actions button:hover { color: var(--garrul-link, #2563eb); }
+.gr-reactions { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-top: 0.4rem; }
+.gr-reaction {
+	font: inherit;
+	background: var(--garrul-input-bg, #fff);
+	color: var(--garrul-fg, #1a1a1a);
+	border: 1px solid var(--garrul-border, #d0d3d8);
+	border-radius: 999px;
+	padding: 0.05em 0.55em;
+	font-size: 0.85em;
+	cursor: pointer;
+	line-height: 1.5;
+}
+.gr-reaction[data-mine="1"] {
+	background: var(--garrul-badge-bg, #e0e7ff);
+	color: var(--garrul-badge-fg, #1e3a8a);
+	border-color: var(--garrul-accent, #2563eb);
+}
+.gr-reaction-count { margin-left: 0.25em; font-variant-numeric: tabular-nums; }
+.gr-reply-form { margin-top: 0.5rem; display: flex; flex-direction: column; gap: 0.4rem; }
+.gr-reply-form textarea { min-height: 4em; }
+.gr-reply-form .gr-reply-actions { display: flex; gap: 0.5rem; }
+.gr-reply-form .gr-reply-actions button {
+	font: inherit;
+	border-radius: var(--garrul-radius, 6px);
+	padding: 0.4rem 0.9rem;
+	cursor: pointer;
+	border: 1px solid var(--garrul-border, #d0d3d8);
+	background: var(--garrul-input-bg, #fff);
+	color: var(--garrul-fg, #1a1a1a);
+}
+.gr-reply-form .gr-reply-actions button[type="submit"] {
+	background: var(--garrul-accent, #2563eb);
+	color: var(--garrul-accent-fg, #fff);
+	border-color: var(--garrul-accent, #2563eb);
+}
 .gr-empty { color: var(--garrul-muted, #6b7280); margin: 0; }
 .gr-loadmore {
 	font: inherit;
@@ -228,7 +276,235 @@ const buildAvatar = (a: TreeAuthor): HTMLElement => {
 	return wrap;
 };
 
-const buildComment = (n: TreeNode): HTMLElement => {
+type WidgetCtx = {
+	apiBase: string;
+	slug: string;
+	host: HTMLElement;
+	root: ShadowRoot;
+	me: Me;
+	editWindowMs: number;
+	reload: () => void;
+};
+
+const REACTION_KINDS: { kind: string; emoji: string }[] = [
+	{ kind: "like", emoji: "👍" },
+	{ kind: "love", emoji: "❤️" },
+	{ kind: "laugh", emoji: "😂" },
+	{ kind: "hmm", emoji: "🤔" },
+	{ kind: "cry", emoji: "😢" },
+];
+
+const reactionsByKind = (rs: ReactionCount[]): Map<string, ReactionCount> => {
+	const m = new Map<string, ReactionCount>();
+	for (const r of rs) m.set(r.kind, r);
+	return m;
+};
+
+const buildReactions = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
+	const wrap = el("div", "gr-reactions");
+	const map = reactionsByKind(n.reactions);
+	for (const { kind, emoji } of REACTION_KINDS) {
+		const r = map.get(kind);
+		const count = r?.count ?? 0;
+		const mine = r?.mine ?? false;
+		// Hide zero-count kinds unless the viewer is signed in (so signed-in
+		// users can react with a kind nobody else has used yet). Anonymous
+		// readers see only used kinds.
+		if (count === 0 && !ctx.me) continue;
+		const btn = el("button", "gr-reaction");
+		btn.type = "button";
+		btn.dataset.kind = kind;
+		if (mine) btn.dataset.mine = "1";
+		btn.appendChild(document.createTextNode(emoji));
+		if (count > 0) {
+			btn.appendChild(el("span", "gr-reaction-count", String(count)));
+		}
+		btn.addEventListener("click", async () => {
+			btn.disabled = true;
+			try {
+				const res = await fetch(`${ctx.apiBase}/api/v1/reactions`, {
+					method: "POST",
+					credentials: "include",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify({ comment_id: n.id, kind }),
+				});
+				if (!res.ok) {
+					btn.disabled = false;
+					return;
+				}
+				ctx.reload();
+			} catch {
+				btn.disabled = false;
+			}
+		});
+		wrap.appendChild(btn);
+	}
+	return wrap;
+};
+
+const buildActions = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): HTMLElement => {
+	const row = el("div", "gr-actions");
+
+	if (n.depth < 4 && n.status !== "deleted") {
+		const replyBtn = el("button", undefined, "Reply");
+		replyBtn.type = "button";
+		replyBtn.addEventListener("click", () => {
+			if (main.querySelector(".gr-reply-form")) return;
+			main.appendChild(buildReplyForm(n, ctx));
+		});
+		row.appendChild(replyBtn);
+	}
+
+	const isOwn =
+		ctx.me != null && n.author.id === ctx.me.id && n.status !== "deleted";
+	const withinWindow = Date.now() - n.created_at < ctx.editWindowMs;
+	if (isOwn && withinWindow) {
+		const editBtn = el("button", undefined, "Edit");
+		editBtn.type = "button";
+		editBtn.addEventListener("click", () => {
+			openEditor(n, ctx, main);
+		});
+		row.appendChild(editBtn);
+	}
+	if (isOwn) {
+		const delBtn = el("button", undefined, "Delete");
+		delBtn.type = "button";
+		delBtn.addEventListener("click", async () => {
+			// Plain confirm is the smallest robust UX; the widget doesn't
+			// ship its own modal layer to keep the bundle small.
+			if (!window.confirm("Delete this comment?")) return;
+			try {
+				const res = await fetch(
+					`${ctx.apiBase}/api/v1/comments/${encodeURIComponent(n.id)}`,
+					{ method: "DELETE", credentials: "include" },
+				);
+				if (res.ok) ctx.reload();
+			} catch {
+				// no-op; reload not triggered
+			}
+		});
+		row.appendChild(delBtn);
+	}
+
+	return row;
+};
+
+const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
+	const bodyEl = main.querySelector(".gr-body");
+	if (!bodyEl) return;
+	const wrap = el("form", "gr-reply-form");
+	wrap.setAttribute("data-mode", "edit");
+	const ta = el("textarea");
+	ta.value = ""; // Plain-text rewrite would require body_md from the server;
+	// here we just let the user retype. To round-trip the source markdown,
+	// the API should also return body_md for the author within the edit
+	// window. (Tracked as a follow-up; the server-side update endpoint
+	// already accepts raw markdown.)
+	ta.placeholder = "Edit your comment…";
+	ta.required = true;
+	const actions = el("div", "gr-reply-actions");
+	const save = el("button", undefined, "Save");
+	save.type = "submit";
+	const cancel = el("button", undefined, "Cancel");
+	cancel.type = "button";
+	cancel.addEventListener("click", () => wrap.remove());
+	actions.append(save, cancel);
+	wrap.append(ta, actions);
+	wrap.addEventListener("submit", async (e) => {
+		e.preventDefault();
+		save.disabled = true;
+		try {
+			const res = await fetch(
+				`${ctx.apiBase}/api/v1/comments/${encodeURIComponent(n.id)}`,
+				{
+					method: "PATCH",
+					credentials: "include",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify({ body: ta.value }),
+				},
+			);
+			if (res.ok) ctx.reload();
+			else save.disabled = false;
+		} catch {
+			save.disabled = false;
+		}
+	});
+	bodyEl.insertAdjacentElement("afterend", wrap);
+};
+
+const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
+	const wrap = el("form", "gr-reply-form");
+	const ta = el("textarea");
+	ta.placeholder = `Reply to @${parent.author.name}…`;
+	ta.required = true;
+
+	let nameInput: HTMLInputElement | null = null;
+	if (!ctx.me) {
+		nameInput = el("input");
+		nameInput.type = "text";
+		nameInput.placeholder = "Your name";
+		nameInput.required = true;
+		wrap.appendChild(nameInput);
+	}
+	wrap.appendChild(ta);
+
+	const actions = el("div", "gr-reply-actions");
+	const submit = el("button", undefined, "Post reply");
+	submit.type = "submit";
+	const cancel = el("button", undefined, "Cancel");
+	cancel.type = "button";
+	cancel.addEventListener("click", () => wrap.remove());
+	actions.append(submit, cancel);
+	wrap.appendChild(actions);
+
+	const errBox = el("div", "gr-error");
+	errBox.hidden = true;
+	wrap.appendChild(errBox);
+
+	wrap.addEventListener("submit", async (e) => {
+		e.preventDefault();
+		submit.disabled = true;
+		errBox.hidden = true;
+		errBox.textContent = "";
+		const turnstileToken =
+			(document.querySelector(
+				'input[name="cf-turnstile-response"]',
+			) as HTMLInputElement | null)?.value ?? "";
+		try {
+			const res = await fetch(`${ctx.apiBase}/api/v1/comments`, {
+				method: "POST",
+				credentials: "include",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({
+					slug: ctx.slug,
+					name: nameInput?.value ?? "",
+					body: ta.value,
+					parent_id: parent.id,
+					turnstile_token: turnstileToken,
+					website: "",
+					post_title: ctx.host.dataset.title ?? null,
+					post_url: ctx.host.dataset.url ?? null,
+				}),
+			});
+			const json = (await res.json()) as { error?: string };
+			if (!res.ok) {
+				errBox.textContent = json.error ?? `HTTP ${res.status}`;
+				errBox.hidden = false;
+				submit.disabled = false;
+				return;
+			}
+			ctx.reload();
+		} catch (err) {
+			errBox.textContent = String(err);
+			errBox.hidden = false;
+			submit.disabled = false;
+		}
+	});
+
+	return wrap;
+};
+
+const buildComment = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	const row = el("div", "gr-comment");
 	row.dataset.id = n.id;
 	if (n.flatten_from) row.dataset.flat = "1";
@@ -259,17 +535,23 @@ const buildComment = (n: TreeNode): HTMLElement => {
 	}
 
 	main.append(meta, body);
+
+	if (n.status !== "deleted") {
+		main.appendChild(buildReactions(n, ctx));
+	}
+	main.appendChild(buildActions(n, ctx, main));
+
 	row.appendChild(main);
 	return row;
 };
 
-const buildThread = (n: TreeNode): HTMLElement => {
+const buildThread = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	const wrap = el("div", "gr-thread");
 	wrap.dataset.id = n.id;
-	wrap.appendChild(buildComment(n));
+	wrap.appendChild(buildComment(n, ctx));
 	if (n.replies.length > 0) {
 		const replies = el("div", "gr-replies");
-		for (const r of n.replies) replies.appendChild(buildThread(r));
+		for (const r of n.replies) replies.appendChild(buildThread(r, ctx));
 		wrap.appendChild(replies);
 	}
 	return wrap;
@@ -447,8 +729,12 @@ const fetchPage = async (
 	return (await res.json()) as ListResponse;
 };
 
-const appendThreads = (list: HTMLElement, threads: TreeNode[]): void => {
-	for (const t of threads) list.appendChild(buildThread(t));
+const appendThreads = (
+	list: HTMLElement,
+	threads: TreeNode[],
+	ctx: WidgetCtx,
+): void => {
+	for (const t of threads) list.appendChild(buildThread(t, ctx));
 };
 
 const fetchMe = async (apiBase: string): Promise<Me> => {
@@ -471,13 +757,18 @@ const load = async (
 	host: HTMLElement,
 ) => {
 	let siteKey: string | null = null;
+	let editWindowMinutes = 5;
 	try {
 		const cfgRes = await fetch(`${apiBase}/api/v1/config`, {
 			credentials: "include",
 		});
 		if (cfgRes.ok) {
-			const cfg = (await cfgRes.json()) as { turnstile_site_key?: string };
+			const cfg = (await cfgRes.json()) as {
+				turnstile_site_key?: string;
+				edit_window_minutes?: number;
+			};
 			siteKey = cfg.turnstile_site_key ?? null;
+			editWindowMinutes = cfg.edit_window_minutes ?? 5;
 		}
 	} catch {
 		// /api/v1/config is optional; the widget still renders without Turnstile
@@ -502,13 +793,22 @@ const load = async (
 	const reload = () => {
 		void load(root, slug, apiBase, host);
 	};
+	const ctx: WidgetCtx = {
+		apiBase,
+		slug,
+		host,
+		root,
+		me,
+		editWindowMs: editWindowMinutes * 60_000,
+		reload,
+	};
 	const authBlock = buildAuthBlock(me, apiBase, reload, reload);
 	const form = buildForm(siteKey, me != null);
 	const list = el("div", "gr-list");
 	if (data.threads.length === 0) {
 		list.appendChild(el("p", "gr-empty", "Be the first to comment."));
 	} else {
-		appendThreads(list, data.threads);
+		appendThreads(list, data.threads, ctx);
 	}
 	wrap.append(authBlock, form, list);
 
@@ -521,7 +821,7 @@ const load = async (
 			more.disabled = true;
 			try {
 				const page = await fetchPage(apiBase, slug, cursor);
-				appendThreads(list, page.threads);
+				appendThreads(list, page.threads, ctx);
 				cursor = page.next_cursor;
 				if (cursor) {
 					more.disabled = false;
