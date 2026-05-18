@@ -17,10 +17,13 @@ billing, your data stays in your account.
 - **Admin UI** for moderation queue + user management
 - **Webhook out** on every comment event
 
-## Quick start
+## Install
 
-You'll need a Cloudflare account with Workers + D1 + KV enabled, and a
-domain (Cloudflare-managed or `*.workers.dev`).
+Deploying to production takes ~20 minutes the first time. Step-by-step
+guide — prerequisites, OAuth setup, Turnstile, custom domain, remote
+migrations, deploy, smoke test — lives in [`INSTALL.md`](INSTALL.md).
+
+For a quick local poke-around once you've installed deps:
 
 ```bash
 git clone https://github.com/KingPin/Garrul.git comments
@@ -28,8 +31,7 @@ cd comments
 npm install
 cp wrangler.example.toml wrangler.toml
 cp .dev.vars.example .dev.vars
-./scripts/setup.sh        # creates D1 + KV bindings, prompts for secrets
-npm run migrate           # applies SQL migrations
+npm run migrate           # local Miniflare DB
 npm run dev               # http://localhost:8787
 ```
 
@@ -39,49 +41,6 @@ Drop the widget into any page:
 <div id="garrul" data-slug="hello-world" data-api="https://comments.example.com"></div>
 <script src="https://comments.example.com/embed.js" defer></script>
 ```
-
-That's it.
-
-## Deployment
-
-```bash
-npm run deploy            # wrangler deploy
-```
-
-**Custom domain (strongly recommended).** Workers on
-`*.workers.dev` cause third-party-cookie friction in Safari and Brave.
-Map a subdomain — typically `comments.<yourdomain>` — under `routes`
-in `wrangler.toml`:
-
-```toml
-routes = [{ pattern = "comments.example.com", custom_domain = true }]
-```
-
-Then update `OAUTH_CALLBACK_BASE` and `PUBLIC_BASE_URL` to match.
-
-## Configuration
-
-All settings live in `wrangler.toml` (`[vars]`) for non-secrets, and
-`wrangler secret put NAME` for secrets. See `wrangler.example.toml`
-for the full list with comments.
-
-| Variable                   | Required | Notes                                              |
-| -------------------------- | -------- | -------------------------------------------------- |
-| `ALLOWED_ORIGINS`          | yes      | Comma-separated list of sites allowed to embed     |
-| `ADMIN_EMAILS`             | yes      | Comma-separated; matching OAuth signups auto-admin |
-| `OAUTH_CALLBACK_BASE`      | yes\*    | `https://comments.example.com` (matches OAuth app) |
-| `PUBLIC_BASE_URL`          | yes\*    | Same as above; used in digest emails               |
-| `TURNSTILE_SITE_KEY/SECRET`| yes\*\*  | Cloudflare Turnstile keys                          |
-| `GH_CLIENT_ID/SECRET`      | optional | Enable GitHub sign-in                              |
-| `GOOGLE_CLIENT_ID/SECRET`  | optional | Enable Google sign-in                              |
-| `EMAIL_PROVIDER=resend`    | optional | Set with `RESEND_API_KEY` + `EMAIL_FROM`           |
-| `WEBHOOK_URL`              | optional | Fire-and-forget POST on comment events             |
-| `EDIT_WINDOW_MINUTES`      | optional | Default 15                                         |
-| `IP_HASH_SECRET`           | yes      | Pepper for HMAC IP hashing (no raw IP storage)     |
-| `JWT_SECRET`               | yes      | Cookie signing                                     |
-
-\* Required if you use OAuth or email digests respectively.
-\*\* Required for anonymous commenting; signed-in users skip Turnstile.
 
 ## Embedding
 
@@ -171,7 +130,7 @@ See [`docs/troubleshooting.md`](docs/troubleshooting.md). Common things:
   been visited top-level — the widget falls back to a top-level
   redirect. Documented in detail in the troubleshooting page.
 - **`*.workers.dev` warnings**: don't use `*.workers.dev` in
-  production. Map a custom subdomain (see "Deployment").
+  production. Map a custom subdomain (see [`INSTALL.md`](INSTALL.md)).
 
 ## Contributing
 
