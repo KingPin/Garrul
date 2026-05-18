@@ -24,6 +24,8 @@
     "test:watch": "vitest",
     "migrate": "tsx src/db/migrate.ts",
     "rerender": "tsx scripts/rerender.ts",
+    "seed-demo": "tsx scripts/seed-demo.ts",
+    "db:export": "bash scripts/db-export.sh",
     "tail": "wrangler tail"
   },
   "dependencies": {
