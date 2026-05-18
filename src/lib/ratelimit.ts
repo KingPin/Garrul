@@ -53,23 +53,17 @@ const writeBucket = async (
 	await kv.put(key, JSON.stringify(stamps), { expirationTtl: ttlSec });
 };
 
-const checkAndRecord = async (
+const readWindow = async (
 	kv: KVNamespace,
 	ipHash: string,
 	kind: "short" | "long",
 	cfg: { max: number; windowSec: number },
 	now: number,
-): Promise<boolean> => {
+): Promise<{ key: string; stamps: number[]; allowed: boolean }> => {
 	const key = bucketKey(kind, ipHash);
-	const windowMs = cfg.windowSec * 1000;
-	const cutoff = now - windowMs;
+	const cutoff = now - cfg.windowSec * 1000;
 	const stamps = (await readBucket(kv, key)).filter((t) => t > cutoff);
-	if (stamps.length >= cfg.max) {
-		return false;
-	}
-	stamps.push(now);
-	await writeBucket(kv, key, stamps, cfg.windowSec);
-	return true;
+	return { key, stamps, allowed: stamps.length < cfg.max };
 };
 
 export const checkRateLimit = async (
@@ -78,9 +72,18 @@ export const checkRateLimit = async (
 	cfg: LimitConfig = DEFAULTS,
 ): Promise<{ ok: boolean; reason?: "short" | "long" }> => {
 	const now = Date.now();
-	const shortOk = await checkAndRecord(env.RATE_LIMITS, ipHash, "short", cfg.short, now);
-	if (!shortOk) return { ok: false, reason: "short" };
-	const longOk = await checkAndRecord(env.RATE_LIMITS, ipHash, "long", cfg.long, now);
-	if (!longOk) return { ok: false, reason: "long" };
+	// Check both windows in read-only mode first. If either is over budget,
+	// return early without writing — otherwise a long-window block would
+	// also burn the short-window budget, and a user fighting the long limit
+	// would lose their short budget too.
+	const s = await readWindow(env.RATE_LIMITS, ipHash, "short", cfg.short, now);
+	if (!s.allowed) return { ok: false, reason: "short" };
+	const l = await readWindow(env.RATE_LIMITS, ipHash, "long", cfg.long, now);
+	if (!l.allowed) return { ok: false, reason: "long" };
+	// Both windows have room — record this request in both.
+	s.stamps.push(now);
+	l.stamps.push(now);
+	await writeBucket(env.RATE_LIMITS, s.key, s.stamps, cfg.short.windowSec);
+	await writeBucket(env.RATE_LIMITS, l.key, l.stamps, cfg.long.windowSec);
 	return { ok: true };
 };
