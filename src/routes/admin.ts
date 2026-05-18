@@ -37,6 +37,7 @@ import {
 	type User,
 } from "../db/queries";
 import { fireWebhook, type WebhookEvent } from "../lib/webhook";
+import { sanitizeForEmail as resanitizeBodyHtml } from "../lib/markdown";
 
 const admin = new Hono<{ Bindings: Bindings }>();
 
@@ -239,7 +240,7 @@ const renderQueue = (
     <div><code>${escapeHtml(c.post_slug)}</code></div>
     <div class="muted" style="font-size:0.75rem">${escapeHtml(c.id)}</div>
   </td>
-  <td class="row-body"><div class="md">${c.body_html}</div></td>
+  <td class="row-body"><div class="md">${resanitizeBodyHtml(c.body_html)}</div></td>
   <td class="actions">
     <button :disabled="busy" @click="busy=true; act('${c.id}','approve').finally(()=>busy=false)">Approve</button>
     <button :disabled="busy" class="bad" @click="busy=true; act('${c.id}','spam').finally(()=>busy=false)">Spam</button>

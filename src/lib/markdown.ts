@@ -77,6 +77,38 @@ export const renderMarkdown = (src: string): string => {
 	return typeof html === "string" ? html.trim() : "";
 };
 
+/**
+ * Defense-in-depth pass over already-rendered body_html before it lands
+ * in a transactional email. Strips every attribute except `href` on anchor
+ * tags (and re-checks the href scheme), and drops any tag outside a small
+ * email-safe allowlist. Email clients have a different threat model than
+ * browsers; some pass through attribute handlers we never emit. This keeps
+ * the digest minimal.
+ */
+const EMAIL_ALLOWED_TAGS = new Set([
+	"p", "br", "em", "strong", "code", "pre", "blockquote",
+	"ul", "ol", "li", "a",
+]);
+
+export const sanitizeForEmail = (html: string): string => {
+	if (!html) return "";
+	return html.replace(
+		/<\/?([a-zA-Z][a-zA-Z0-9]*)\b([^>]*)>/g,
+		(full: string, rawTag: string, rawAttrs: string) => {
+			const tag = rawTag.toLowerCase();
+			if (!EMAIL_ALLOWED_TAGS.has(tag)) return "";
+			const isClose = full.startsWith("</");
+			if (isClose) return `</${tag}>`;
+			if (tag !== "a") return `<${tag}>`;
+			const hrefMatch = /\bhref\s*=\s*("([^"]*)"|'([^']*)')/i.exec(rawAttrs);
+			const href = hrefMatch ? (hrefMatch[2] ?? hrefMatch[3] ?? "") : "";
+			if (!href || !URL_ALLOWLIST.test(href)) return "<a>";
+			const safeHref = escapeHtml(href);
+			return `<a href="${safeHref}" rel="nofollow ugc noopener" target="_blank">`;
+		},
+	);
+};
+
 export const validateBody = (
 	src: string,
 ): { ok: true; body: string } | { ok: false; key: "err.body.required" | "err.body.too_long"; max?: number } => {

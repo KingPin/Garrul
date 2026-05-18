@@ -300,6 +300,52 @@ export const getComment = async (
 };
 
 /**
+ * Batch-fetch comments by ID. Used by the digest job to avoid N+1 lookups
+ * when rendering one digest with M comments.
+ */
+export const getCommentsByIds = async (
+	db: D1Database,
+	ids: string[],
+): Promise<Map<string, Comment>> => {
+	if (ids.length === 0) return new Map();
+	const placeholders = ids.map(() => "?").join(",");
+	const result = await db
+		.prepare(
+			`SELECT id, post_slug, parent_id, user_id, body_md, body_html,
+			        renderer_version, status, edited_at, deleted_at,
+			        ip_hash, user_agent, created_at
+			   FROM comments WHERE id IN (${placeholders})`,
+		)
+		.bind(...ids)
+		.all<Comment>();
+	const out = new Map<string, Comment>();
+	for (const row of result.results ?? []) out.set(row.id, row);
+	return out;
+};
+
+/**
+ * Batch-fetch users by ID. Companion to getCommentsByIds for the digest job.
+ */
+export const getUsersByIds = async (
+	db: D1Database,
+	ids: string[],
+): Promise<Map<string, User>> => {
+	if (ids.length === 0) return new Map();
+	const placeholders = ids.map(() => "?").join(",");
+	const result = await db
+		.prepare(
+			`SELECT id, provider, provider_id, name, email, avatar_url,
+			        is_admin, is_banned, created_at
+			   FROM users WHERE id IN (${placeholders})`,
+		)
+		.bind(...ids)
+		.all<UserRow>();
+	const out = new Map<string, User>();
+	for (const row of result.results ?? []) out.set(row.id, toUser(row));
+	return out;
+};
+
+/**
  * Fetch all visible (non-spam, non-deleted-without-replies) comments for a
  * post. Caller assembles the tree; this just returns a flat ordered list.
  *

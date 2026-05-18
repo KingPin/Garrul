@@ -18,14 +18,15 @@
  * line is a permalink to /c/<id> which redirects to the post page anchor.
  */
 import {
-	getComment,
+	getCommentsByIds,
 	getPost,
-	getUser,
+	getUsersByIds,
 	listPendingDigests,
 	markNotificationsSent,
 	updateSubscriptionLastNotified,
 } from "../db/queries";
 import { sendEmail } from "./email";
+import { sanitizeForEmail } from "./markdown";
 
 type DigestEnv = {
 	DB: D1Database;
@@ -89,15 +90,32 @@ export const runDigest = async (env: DigestEnv, now: number = Date.now()): Promi
 
 	for (const d of digests) {
 		const post = await getPost(env.DB, d.post_slug);
+		// Batch the per-digest lookups: one query for all comments referenced
+		// by this digest, then one for all unique authors. Avoids N+1 inside
+		// the per-subscriber loop on a busy thread.
+		const commentsById = await getCommentsByIds(env.DB, d.comment_ids);
+		const userIds = Array.from(
+			new Set(
+				d.comment_ids
+					.map((cid) => commentsById.get(cid))
+					.filter((c): c is NonNullable<typeof c> => c != null && c.status === "approved")
+					.map((c) => c.user_id),
+			),
+		);
+		const usersById = await getUsersByIds(env.DB, userIds);
 		const items: { author: string; commentId: string; html: string; createdAt: number }[] = [];
 		for (const cid of d.comment_ids) {
-			const comment = await getComment(env.DB, cid);
+			const comment = commentsById.get(cid);
 			if (!comment || comment.status !== "approved") continue;
-			const author = await getUser(env.DB, comment.user_id);
+			const author = usersById.get(comment.user_id);
 			items.push({
 				author: author?.name ?? "Anonymous",
 				commentId: comment.id,
-				html: comment.body_html,
+				// Re-sanitize for email: stored body_html is already sanitized for
+				// browser rendering, but email clients have a different threat
+				// model (some strip scripts, others execute attribute handlers).
+				// Strip everything except inline text formatting + safe anchors.
+				html: sanitizeForEmail(comment.body_html),
 				createdAt: comment.created_at,
 			});
 		}

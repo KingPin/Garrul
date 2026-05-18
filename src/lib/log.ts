@@ -44,10 +44,17 @@ const newRequestId = (): string => {
 	return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 };
 
+const REQUEST_ID_RE = /^[a-zA-Z0-9_-]{1,64}$/;
+
 export const requestLogger = (): MiddlewareHandler => {
 	return async (c, next) => {
+		// Incoming x-request-id is reflected back in our response header and
+		// echoed into every log line. Reject anything that isn't a short opaque
+		// token so a caller can't inject newlines / log-forgery payloads or
+		// HTTP-header smuggling characters via the response.
 		const incoming = c.req.header("x-request-id");
-		const requestId = incoming ?? newRequestId();
+		const requestId =
+			incoming && REQUEST_ID_RE.test(incoming) ? incoming : newRequestId();
 		const ctx: LogContext = {
 			requestId,
 			method: c.req.method,

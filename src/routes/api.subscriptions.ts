@@ -23,6 +23,8 @@ import {
 	markSubscriptionUnsubscribed,
 	upsertSubscription,
 } from "../db/queries";
+import { clientIp, hashIp } from "../lib/ip-hash";
+import { checkRateLimit } from "../lib/ratelimit";
 import { t } from "../i18n";
 
 const subscriptions = new Hono<{ Bindings: Bindings }>();
@@ -36,6 +38,18 @@ const randomToken = (): string => {
 };
 
 subscriptions.post("/", async (c) => {
+	// Rate-limit before any DB work. Subscribing is otherwise free for
+	// anyone with a valid email shape and a post slug, so without this
+	// the endpoint is an enumeration / spam vector.
+	const ipHash = await hashIp(clientIp(c.req.raw), c.env.IP_HASH_SECRET);
+	const rl = await checkRateLimit(c.env, ipHash);
+	if (!rl.ok) {
+		return c.json(
+			{ error: t("err.ratelimit"), reason: rl.reason ?? null },
+			429,
+		);
+	}
+
 	const body = await c.req.json<{
 		post_slug?: string;
 		email?: string;
@@ -86,7 +100,9 @@ const escape = (s: string): string =>
 	s
 		.replace(/&/g, "&amp;")
 		.replace(/</g, "&lt;")
-		.replace(/>/g, "&gt;");
+		.replace(/>/g, "&gt;")
+		.replace(/"/g, "&quot;")
+		.replace(/'/g, "&#39;");
 
 const unsubscribeHtml = (message: string): string => `
 <!doctype html>
