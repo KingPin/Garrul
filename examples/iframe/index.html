@@ -27,19 +27,29 @@
 
 	<hr>
 
+	<!--
+		The iframe needs the parent origin to safely postMessage height
+		updates (we don't broadcast to "*"). Easiest way: build the src
+		on the client and pass `parent_origin` as a query param.
+	-->
 	<iframe
 		id="garrul-iframe"
-		src="http://localhost:8787/embed/welcome?title=Iframe%20demo&amp;url=http%3A%2F%2Flocalhost%3A5173%2Fexamples%2Fiframe%2F"
 		title="Comments"
 		loading="lazy"
 		referrerpolicy="no-referrer"></iframe>
 
 	<script>
-		// Auto-resize the iframe to match the inner widget's content height.
-		// The iframe posts `{type:"garrul:height", height}` whenever its
-		// content resizes; we mirror that onto the iframe element.
 		(function () {
 			var f = document.getElementById("garrul-iframe");
+			var src = new URL("http://localhost:8787/embed/welcome");
+			src.searchParams.set("title", "Iframe demo");
+			src.searchParams.set("url", window.location.href);
+			src.searchParams.set("parent_origin", window.location.origin);
+			f.src = src.toString();
+
+			// Auto-resize the iframe to match the inner widget's content height.
+			// The iframe posts `{type:"garrul:height", height}` whenever its
+			// content resizes; we mirror that onto the iframe element.
 			var apiOrigin = new URL(f.src).origin;
 			window.addEventListener("message", function (e) {
 				if (e.origin !== apiOrigin) return;

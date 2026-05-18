@@ -470,7 +470,7 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 		errBox.hidden = true;
 		errBox.textContent = "";
 		const turnstileToken =
-			(document.querySelector(
+			(wrap.querySelector(
 				'input[name="cf-turnstile-response"]',
 			) as HTMLInputElement | null)?.value ?? "";
 		try {
@@ -689,6 +689,12 @@ const startOauth = (
 ): void => {
 	const ret = encodeURIComponent(window.location.origin);
 	const url = `${apiBase}/api/v1/auth/${provider}/start?return=${ret}`;
+	// We intentionally do NOT pass `noopener` here: the OAuth callback page
+	// posts a `garrul:auth` message back via `window.opener.postMessage`, and
+	// `noopener` would null `window.opener` in the popup AND make this call
+	// return `null` (defeating the popup-blocked fallback below). Cross-origin
+	// `opener.location` writes are blocked by modern browsers for cross-origin
+	// popups, so the opener relationship is safe in practice.
 	const popup = window.open(
 		url,
 		"garrul-oauth",
@@ -781,7 +787,43 @@ const fetchMe = async (apiBase: string): Promise<Me> => {
 	}
 };
 
+// Squash overlapping load() invocations: if a load is in flight when a
+// second one is requested (e.g. the user reacts and submits quickly), we
+// just flag a follow-up and re-run once after the current one finishes.
+// Prevents two concurrent root.replaceChildren() calls racing each other.
+const loadState = new WeakMap<
+	ShadowRoot,
+	{ running: boolean; queued: boolean }
+>();
+
 const load = async (
+	root: ShadowRoot,
+	slug: string,
+	apiBase: string,
+	host: HTMLElement,
+): Promise<void> => {
+	let st = loadState.get(root);
+	if (!st) {
+		st = { running: false, queued: false };
+		loadState.set(root, st);
+	}
+	if (st.running) {
+		st.queued = true;
+		return;
+	}
+	st.running = true;
+	try {
+		await loadOnce(root, slug, apiBase, host);
+	} finally {
+		st.running = false;
+		if (st.queued) {
+			st.queued = false;
+			await load(root, slug, apiBase, host);
+		}
+	}
+};
+
+const loadOnce = async (
 	root: ShadowRoot,
 	slug: string,
 	apiBase: string,

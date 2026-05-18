@@ -37,28 +37,65 @@ const escapeAttr = (s: string): string =>
 		.replace(/</g, "&lt;")
 		.replace(/>/g, "&gt;");
 
+const TURNSTILE_ORIGIN = "https://challenges.cloudflare.com";
+
+const allowedOriginSet = (env: Bindings): Set<string> => {
+	const list = (env.ALLOWED_ORIGINS ?? "")
+		.split(",")
+		.map((s) => s.trim())
+		.filter(Boolean);
+	return new Set(list);
+};
+
+const safeApiOrigin = (raw: string): string | null => {
+	if (!/^https?:\/\//i.test(raw)) return null;
+	try {
+		return new URL(raw).origin;
+	} catch {
+		return null;
+	}
+};
+
 iframe.get("/:slug", (c) => {
 	const slug = c.req.param("slug");
 	if (!slug || slug.length > 200) return c.text("invalid slug", 400);
 
 	const url = new URL(c.req.url);
-	const apiOverride = c.req.query("api");
-	const apiBase = apiOverride && /^https?:\/\//i.test(apiOverride)
-		? apiOverride
-		: `${url.protocol}//${url.host}`;
+	const selfOrigin = `${url.protocol}//${url.host}`;
+	// `?api=` lets operators point at a different Worker, but the override
+	// must be in ALLOWED_ORIGINS — otherwise an attacker could craft a link
+	// that loads attacker-controlled JS into the iframe (which we'd then
+	// allow via the CSP we build below).
+	const apiOverrideRaw = c.req.query("api");
+	const overrideOrigin = apiOverrideRaw ? safeApiOrigin(apiOverrideRaw) : null;
+	const allowed = allowedOriginSet(c.env);
+	const apiBase =
+		overrideOrigin && allowed.has(overrideOrigin)
+			? overrideOrigin
+			: selfOrigin;
 
 	const title = c.req.query("title") ?? "";
 	const pageUrl = c.req.query("url") ?? "";
 	const theme = c.req.query("theme") ?? "auto";
 
-	// CSP: the only third-party origin we contact is apiBase (for embed.js
-	// and the API calls the widget makes from inside). frame-ancestors is
-	// intentionally open — operators choose where this gets embedded.
-	const apiOrigin = new URL(apiBase).origin;
+	// Validate parent_origin for the postMessage target (prefer query param,
+	// fall back to document.referrer's origin on the client). Caller can pass
+	// e.g. ?parent_origin=https://yourblog.example.com.
+	const parentOriginRaw = c.req.query("parent_origin");
+	const parentOrigin =
+		parentOriginRaw && safeApiOrigin(parentOriginRaw) === parentOriginRaw
+			? parentOriginRaw
+			: "";
+
+	// CSP: third-party origins we contact are apiBase (embed.js + API calls)
+	// and Turnstile (anonymous bot check). frame-ancestors is intentionally
+	// open — operators choose where this gets embedded.
+	const apiOrigin = apiBase;
 	const csp = [
 		"default-src 'none'",
-		`script-src ${apiOrigin} 'unsafe-inline'`,
-		`connect-src ${apiOrigin}`,
+		`script-src ${apiOrigin} ${TURNSTILE_ORIGIN} 'unsafe-inline'`,
+		`connect-src ${apiOrigin} ${TURNSTILE_ORIGIN}`,
+		`frame-src ${TURNSTILE_ORIGIN}`,
 		"style-src 'unsafe-inline'",
 		"img-src data: https:",
 		"font-src data:",
@@ -88,6 +125,16 @@ iframe.get("/:slug", (c) => {
 <script>
 (function () {
   if (window.parent === window) return;
+  var parentOrigin = ${JSON.stringify(parentOrigin)};
+  if (!parentOrigin) {
+    // Derive from document.referrer (only set if the parent navigated us here,
+    // which is the common case). Wildcard is intentionally NOT used as a
+    // fallback — we'd rather not post than post to anyone.
+    try {
+      if (document.referrer) parentOrigin = new URL(document.referrer).origin;
+    } catch (_) {}
+  }
+  if (!parentOrigin) return;
   var lastHeight = 0;
   var post = function () {
     var h = Math.max(
@@ -96,7 +143,7 @@ iframe.get("/:slug", (c) => {
     );
     if (h === lastHeight) return;
     lastHeight = h;
-    window.parent.postMessage({ type: "garrul:height", height: h }, "*");
+    window.parent.postMessage({ type: "garrul:height", height: h }, parentOrigin);
   };
   // Initial + ResizeObserver covers most cases. MutationObserver catches
   // Shadow DOM widget updates that don't trigger a body resize (e.g. the
