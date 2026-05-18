@@ -93,6 +93,9 @@ const STYLE_CSS = `
 }
 .gr-form textarea { min-height: 6em; resize: vertical; }
 .gr-form .gr-honeypot { position: absolute; left: -9999px; top: -9999px; }
+.gr-form .gr-notify { display: flex; align-items: center; gap: 0.4rem; font-size: 0.9em; cursor: pointer; }
+.gr-form .gr-notify .gr-notify-cb { width: auto; }
+.gr-form .gr-email-input[hidden] { display: none; }
 .gr-form button {
 	font: inherit;
 	background: var(--garrul-accent, #2563eb);
@@ -635,6 +638,32 @@ const buildForm = (siteKey: string | null, signedIn: boolean): HTMLFormElement =
 	honey.autocomplete = "off";
 	form.appendChild(honey);
 
+	// Notify-me opt-in. Anonymous: an email field appears alongside the
+	// checkbox. Signed-in: we already have their email so just the box.
+	const notifyWrap = el("label", "gr-notify");
+	const notifyCb = el("input") as HTMLInputElement;
+	notifyCb.type = "checkbox";
+	notifyCb.className = "gr-notify-cb";
+	notifyCb.name = "notify";
+	const notifyText = document.createTextNode(" Email me on new replies");
+	notifyWrap.append(notifyCb, notifyText);
+	form.appendChild(notifyWrap);
+
+	if (!signedIn) {
+		const emailInput = el("input") as HTMLInputElement;
+		emailInput.className = "gr-email-input";
+		emailInput.name = "email";
+		emailInput.type = "email";
+		emailInput.placeholder = "you@example.com";
+		emailInput.autocomplete = "email";
+		emailInput.hidden = true;
+		notifyCb.addEventListener("change", () => {
+			emailInput.hidden = !notifyCb.checked;
+			emailInput.required = notifyCb.checked;
+		});
+		form.appendChild(emailInput);
+	}
+
 	// Turnstile only renders for anonymous posts. Signed-in posts skip it
 	// server-side, so don't include the widget either.
 	if (siteKey && !signedIn) {
@@ -914,6 +943,23 @@ const submit = async (
 			if (submitBtn) submitBtn.disabled = false;
 			return;
 		}
+
+		// Fire-and-forget subscription — failure here doesn't roll back
+		// the comment. The widget already has both inputs handy.
+		const notifyCb = form.querySelector(".gr-notify-cb") as HTMLInputElement | null;
+		const emailInput = form.querySelector(".gr-email-input") as HTMLInputElement | null;
+		if (notifyCb?.checked) {
+			const email = emailInput?.value.trim() ?? "";
+			if (email) {
+				void fetch(`${apiBase}/api/v1/subscribe`, {
+					method: "POST",
+					credentials: "include",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify({ post_slug: slug, email }),
+				}).catch(() => {});
+			}
+		}
+
 		await load(root, slug, apiBase, host);
 	} catch (err) {
 		if (errEl) {

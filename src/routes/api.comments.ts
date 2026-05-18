@@ -21,10 +21,12 @@
 import { Hono } from "hono";
 import type { Bindings } from "../index";
 import {
+	enqueueNotification,
 	getOrCreateGhost,
 	getComment,
 	getPost,
 	insertComment,
+	listActiveSubscriptionsForPost,
 	listCommentsForPost,
 	listReactionsForPost,
 	listUserReactionsOnPost,
@@ -230,6 +232,19 @@ comments.post("/", async (c) => {
 		user_id: author.id,
 		ts: inserted.created_at,
 	});
+
+	// Enqueue notifications for every active subscriber, except the
+	// author themselves (signed-in case — match on email; anonymous
+	// authors have no email so they're never accidentally notified).
+	const fanout = (async () => {
+		const subs = await listActiveSubscriptionsForPost(c.env.DB, slug);
+		const authorEmail = author.email?.toLowerCase() ?? null;
+		for (const sub of subs) {
+			if (authorEmail && sub.email === authorEmail) continue;
+			await enqueueNotification(c.env.DB, sub.id, inserted.id);
+		}
+	})();
+	if (c.executionCtx) c.executionCtx.waitUntil(fanout);
 
 	return c.json({ comment: serializeComment(inserted, author) }, 201);
 });

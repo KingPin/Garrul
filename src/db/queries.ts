@@ -639,6 +639,202 @@ export const softDeleteComment = async (
 		.run();
 };
 
+export type Subscription = {
+	id: string;
+	post_slug: string;
+	email: string;
+	token: string;
+	created_at: number;
+	unsubscribed_at: number | null;
+	last_notified_at: number | null;
+};
+
+/**
+ * Upsert a subscription for (post_slug, email). If the row exists and was
+ * previously unsubscribed, it is re-activated (unsubscribed_at cleared)
+ * and a fresh token is issued so the old unsubscribe link can't reuse.
+ */
+export const upsertSubscription = async (
+	db: D1Database,
+	post_slug: string,
+	email: string,
+	token: string,
+): Promise<Subscription> => {
+	const now = Date.now();
+	const id = ulid();
+	await db
+		.prepare(
+			`INSERT INTO subscriptions
+			   (id, post_slug, email, token, created_at, unsubscribed_at, last_notified_at)
+			 VALUES (?, ?, ?, ?, ?, NULL, NULL)
+			 ON CONFLICT(post_slug, email) DO UPDATE SET
+			   token = excluded.token,
+			   unsubscribed_at = NULL`,
+		)
+		.bind(id, post_slug, email.toLowerCase(), token, now)
+		.run();
+	const row = await db
+		.prepare(
+			`SELECT id, post_slug, email, token, created_at,
+			        unsubscribed_at, last_notified_at
+			   FROM subscriptions
+			  WHERE post_slug = ? AND email = ?`,
+		)
+		.bind(post_slug, email.toLowerCase())
+		.first<Subscription>();
+	if (!row) throw new Error("upsertSubscription: not found after insert");
+	return row;
+};
+
+export const getSubscriptionByToken = async (
+	db: D1Database,
+	token: string,
+): Promise<Subscription | null> => {
+	return await db
+		.prepare(
+			`SELECT id, post_slug, email, token, created_at,
+			        unsubscribed_at, last_notified_at
+			   FROM subscriptions WHERE token = ?`,
+		)
+		.bind(token)
+		.first<Subscription>();
+};
+
+export const markSubscriptionUnsubscribed = async (
+	db: D1Database,
+	id: string,
+): Promise<void> => {
+	const now = Date.now();
+	await db
+		.prepare(`UPDATE subscriptions SET unsubscribed_at = ? WHERE id = ?`)
+		.bind(now, id)
+		.run();
+};
+
+export const listActiveSubscriptionsForPost = async (
+	db: D1Database,
+	post_slug: string,
+): Promise<Subscription[]> => {
+	const result = await db
+		.prepare(
+			`SELECT id, post_slug, email, token, created_at,
+			        unsubscribed_at, last_notified_at
+			   FROM subscriptions
+			  WHERE post_slug = ? AND unsubscribed_at IS NULL`,
+		)
+		.bind(post_slug)
+		.all<Subscription>();
+	return result.results ?? [];
+};
+
+export const enqueueNotification = async (
+	db: D1Database,
+	subscription_id: string,
+	comment_id: string,
+): Promise<void> => {
+	const id = ulid();
+	const now = Date.now();
+	await db
+		.prepare(
+			`INSERT INTO notifications (id, subscription_id, comment_id, created_at, sent_at)
+			 VALUES (?, ?, ?, ?, NULL)`,
+		)
+		.bind(id, subscription_id, comment_id, now)
+		.run();
+};
+
+export type PendingDigest = {
+	subscription_id: string;
+	email: string;
+	token: string;
+	post_slug: string;
+	notification_ids: string[];
+	comment_ids: string[];
+};
+
+/**
+ * Group pending notifications by subscription. Returns one digest per
+ * subscriber with their queued notifications. Each digest is the
+ * cron job's atomic unit: send the email, then mark the listed
+ * notification_ids as sent.
+ *
+ * `older_than` filters out notifications newer than the debounce window
+ * so a burst of replies coalesces into the next cron tick.
+ */
+export const listPendingDigests = async (
+	db: D1Database,
+	older_than: number,
+	limit: number,
+): Promise<PendingDigest[]> => {
+	const result = await db
+		.prepare(
+			`SELECT n.id          AS notification_id,
+			        n.comment_id  AS comment_id,
+			        s.id          AS subscription_id,
+			        s.email       AS email,
+			        s.token       AS token,
+			        s.post_slug   AS post_slug
+			   FROM notifications n
+			   JOIN subscriptions s ON s.id = n.subscription_id
+			  WHERE n.sent_at IS NULL
+			    AND n.created_at < ?
+			    AND s.unsubscribed_at IS NULL
+			  ORDER BY n.created_at ASC`,
+		)
+		.bind(older_than)
+		.all<{
+			notification_id: string;
+			comment_id: string;
+			subscription_id: string;
+			email: string;
+			token: string;
+			post_slug: string;
+		}>();
+	const groups = new Map<string, PendingDigest>();
+	for (const row of result.results ?? []) {
+		let g = groups.get(row.subscription_id);
+		if (!g) {
+			g = {
+				subscription_id: row.subscription_id,
+				email: row.email,
+				token: row.token,
+				post_slug: row.post_slug,
+				notification_ids: [],
+				comment_ids: [],
+			};
+			groups.set(row.subscription_id, g);
+		}
+		g.notification_ids.push(row.notification_id);
+		g.comment_ids.push(row.comment_id);
+		if (groups.size >= limit) break;
+	}
+	return Array.from(groups.values());
+};
+
+export const markNotificationsSent = async (
+	db: D1Database,
+	ids: string[],
+): Promise<void> => {
+	if (ids.length === 0) return;
+	const now = Date.now();
+	const placeholders = ids.map(() => "?").join(",");
+	await db
+		.prepare(`UPDATE notifications SET sent_at = ? WHERE id IN (${placeholders})`)
+		.bind(now, ...ids)
+		.run();
+};
+
+export const updateSubscriptionLastNotified = async (
+	db: D1Database,
+	id: string,
+): Promise<void> => {
+	const now = Date.now();
+	await db
+		.prepare(`UPDATE subscriptions SET last_notified_at = ? WHERE id = ?`)
+		.bind(now, id)
+		.run();
+};
+
 /**
  * Page through comments whose renderer_version is below `target`. Used by
  * scripts/rerender.ts. Returns (id, body_md) only; the script re-renders and

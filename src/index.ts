@@ -10,6 +10,8 @@ import { admin } from "./routes/admin";
 import { feed } from "./routes/feed";
 import { counts } from "./routes/api.counts";
 import { permalink } from "./routes/permalink";
+import { subscriptions } from "./routes/api.subscriptions";
+import { runDigest } from "./lib/digest";
 import { requestLogger } from "./lib/log";
 import { corsAndCsrf } from "./lib/cors";
 import { sessionMiddleware } from "./lib/session";
@@ -36,6 +38,8 @@ export type Bindings = {
 	GOOGLE_CLIENT_SECRET: string;
 	OAUTH_CALLBACK_BASE: string;
 	RESEND_API_KEY: string;
+	EMAIL_FROM: string;
+	PUBLIC_BASE_URL: string;
 	WEBHOOK_URL: string;
 };
 
@@ -50,6 +54,7 @@ app.route("/api/v1/comments", comments);
 app.route("/api/v1/reactions", reactions);
 app.route("/api/v1/config", config);
 app.route("/api/v1/counts", counts);
+app.route("/api/v1/subscribe", subscriptions);
 app.route("/api/v1/auth", auth);
 app.route("/feed", feed);
 app.route("/c", permalink);
@@ -78,4 +83,17 @@ app.onError((err, c) => {
 	return c.json({ error: "internal_error" }, 500);
 });
 
-export default app;
+// Cron entry — wired in wrangler.toml under [triggers].crons.
+// We export the worker as a fetch+scheduled object so Cloudflare's
+// scheduler can call us. The fetch handler is the Hono app; the
+// scheduled handler kicks off a single digest pass.
+export default {
+	fetch: app.fetch,
+	scheduled: async (
+		_event: ScheduledEvent,
+		env: Bindings,
+		ctx: ExecutionContext,
+	): Promise<void> => {
+		ctx.waitUntil(runDigest(env));
+	},
+};
