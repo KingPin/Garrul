@@ -1,5 +1,9 @@
 # Garrul
 
+[![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-db61a2?logo=github)](https://github.com/sponsors/KingPin)
+[![Ko-fi](https://img.shields.io/badge/Ko--fi-Buy_me_a_coffee-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/kingpinx)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+
 Self-hosted comments for static sites and blogs. Runs on Cloudflare
 Workers + D1 + KV + Turnstile. One Worker per site, no per-comment
 billing, your data stays in your account.
