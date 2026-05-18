@@ -192,7 +192,21 @@ comments.post("/", async (c) => {
 	}
 
 	// Make sure the post row exists so the FK on comments resolves.
-	await upsertPost(c.env.DB, slug, body.post_title ?? null, body.post_url ?? null);
+	// Validate the supplied post_url scheme: only http/https. Anything else
+	// (`javascript:`, `data:`, scheme-relative, garbage) is dropped to null
+	// so the permalink redirect can't be used as an open-redirect gadget.
+	let postUrl: string | null = null;
+	if (body.post_url) {
+		try {
+			const u = new URL(body.post_url);
+			if (u.protocol === "https:" || u.protocol === "http:") {
+				postUrl = body.post_url;
+			}
+		} catch {
+			// drop
+		}
+	}
+	await upsertPost(c.env.DB, slug, body.post_title ?? null, postUrl);
 
 	// Parent must exist and live on the same post.
 	let parent_id: string | null = null;
@@ -428,8 +442,20 @@ comments.delete("/:id", async (c) => {
 
 	const session = await readSession(c);
 	const sessionUserId = session?.user_id;
-	if (!sessionUserId || sessionUserId !== existing.user_id) {
+	if (!sessionUserId) {
 		return c.json({ error: t("err.delete.not_author") }, 403);
+	}
+	if (sessionUserId !== existing.user_id) {
+		// Admin override: allow admins to delete any comment via the public
+		// API, mirroring the moderation queue's delete action. Editing
+		// other users' comments is intentionally still author-only.
+		const caller = await c.env.DB
+			.prepare(`SELECT is_admin FROM users WHERE id = ?`)
+			.bind(sessionUserId)
+			.first<{ is_admin: number }>();
+		if (!caller || caller.is_admin !== 1) {
+			return c.json({ error: t("err.delete.not_author") }, 403);
+		}
 	}
 
 	await softDeleteComment(c.env.DB, id);

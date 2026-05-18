@@ -33,6 +33,20 @@ permalink.get("/:id", async (c) => {
 	const post = await getPost(c.env.DB, comment.post_slug);
 	if (!post || !post.url) return c.text("post URL not set", 404);
 
+	// Validate the stored post URL: it came from the embed widget's
+	// data-url attribute (caller-supplied), so we re-check the scheme
+	// here to avoid acting as an open redirect to `javascript:`, `data:`,
+	// or scheme-relative `//evil.example.com` targets.
+	let parsed: URL;
+	try {
+		parsed = new URL(post.url);
+	} catch {
+		return c.text("post URL invalid", 404);
+	}
+	if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+		return c.text("post URL invalid", 404);
+	}
+
 	const target = `${post.url}${post.url.includes("#") ? "&" : "#"}garrul-comment-${id}`;
 	c.header("cache-control", "public, max-age=300");
 	return c.redirect(target, 302);
