@@ -25,6 +25,11 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
+      # wrangler.toml is gitignored (it holds real binding IDs). The dry-run
+      # build below doesn't talk to the API, but wrangler 4 still requires a
+      # config file or it falls back to framework auto-detection and errors.
+      # The example file's placeholder IDs are accepted by --dry-run.
+      - run: cp wrangler.example.toml wrangler.toml
       # Enforce the same gates CI runs so a release tag can't ship
       # a broken or oversized embed bundle.
       - run: npm run lint
