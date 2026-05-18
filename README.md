@@ -111,6 +111,15 @@ The iframe page posts content height to the parent via
 `postMessage({type:"garrul:height", height})`. See
 `examples/iframe/index.html` for a ~10-line auto-resize listener.
 
+### Per-platform integration snippets
+
+- [Astro](examples/astro/README.md) — content-collection slug + shared `<Comments>` component
+- [WordPress](examples/wordpress/README.md) — child-theme partial + disabling native WP comments
+- [Hugo](examples/hugo/README.md) — `comments.html` partial wired off `.File.ContentBaseName`
+- [Jekyll](examples/jekyll/README.md) — `_includes/comments.html` keyed on `page.slug`
+- [Plain HTML](examples/plain-html/index.html) — minimal copy-paste page
+- [Iframe](examples/iframe/index.html) — auto-resize listener for CSP-strict hosts
+
 ## Theming
 
 The widget mounts in Shadow DOM, so host-page CSS doesn't leak in. To
