@@ -125,7 +125,9 @@ Exempt by design (no `Origin` header reaches them):
 
 Server-side build-time fetchers (SSGs that read comments at deploy time)
 will now get 403s. Workaround: consume `GET /feed/:slug` (Atom, ungated)
-until the planned API-keys system ships.
+until the planned API-keys system ships — design lives in
+[`docs/api-keys-design.md`](docs/api-keys-design.md) (not implemented in
+v1).
 
 ## Privacy
 
