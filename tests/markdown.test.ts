@@ -8,8 +8,11 @@ import { describe, it, expect } from "vitest";
 import {
 	CURRENT_RENDERER_VERSION,
 	renderMarkdown,
+	sanitizeForEmail,
 	validateBody,
 } from "../src/lib/markdown";
+
+const MAX_BODY_CHARS = 10_000;
 
 describe("renderMarkdown — output safety", () => {
 	it("drops raw HTML tags", () => {
@@ -76,11 +79,74 @@ describe("renderMarkdown — output safety", () => {
 	});
 
 	it("truncates body past MAX_BODY_CHARS", () => {
-		const long = "a".repeat(15_000);
+		const long = "a".repeat(MAX_BODY_CHARS * 2);
 		const out = renderMarkdown(long);
-		// The output is sanitized + paragraph-wrapped, but it MUST be smaller
-		// than the un-truncated input would be.
-		expect(out.length).toBeLessThan(15_000);
+		// The renderer slices the input to MAX_BODY_CHARS BEFORE parsing,
+		// so the count of "a" characters in the output must equal the cap
+		// exactly — not "less than what we sent in," which was the old
+		// (very weak) assertion.
+		const aCount = (out.match(/a/g) ?? []).length;
+		expect(aCount).toBe(MAX_BODY_CHARS);
+	});
+
+	it("strips vbscript: links", () => {
+		const out = renderMarkdown("[x](vbscript:msgbox(1))");
+		expect(out).not.toMatch(/href="vbscript:/i);
+	});
+
+	it("strips scheme-relative // links (no scheme means not in allowlist)", () => {
+		const out = renderMarkdown("[x](//evil.example.com)");
+		expect(out).not.toMatch(/href="\/\//);
+	});
+
+	it("strips entity-encoded javascript: URLs", () => {
+		// marked decodes entities before our scheme check; allowlist must
+		// still catch the decoded form.
+		const out = renderMarkdown("[x](&#106;avascript:alert(1))");
+		expect(out).not.toMatch(/href="[^"]*[jJ]avascript:/i);
+	});
+
+	it("ignores raw <img onerror> in markdown source", () => {
+		const out = renderMarkdown('<img src=x onerror="alert(1)">');
+		expect(out).not.toContain("<img");
+		expect(out).not.toContain("onerror");
+	});
+
+	it("ignores inline event handlers in raw HTML", () => {
+		const out = renderMarkdown('<a href="x" onclick="alert(1)">x</a>');
+		expect(out).not.toMatch(/onclick/i);
+	});
+});
+
+describe("sanitizeForEmail", () => {
+	it("preserves allowed tags + escaped href on <a>", () => {
+		const out = sanitizeForEmail('<p>hi <a href="https://a.b">x</a></p>');
+		expect(out).toContain("<p>");
+		expect(out).toContain('href="https://a.b"');
+	});
+
+	it("strips style attributes from <p>", () => {
+		const out = sanitizeForEmail('<p style="color:red">hi</p>');
+		expect(out).not.toContain("style");
+		expect(out).toContain("<p>");
+	});
+
+	it("strips event handlers from <a>", () => {
+		const out = sanitizeForEmail('<a href="https://a.b" onclick="x">y</a>');
+		expect(out).not.toMatch(/onclick/i);
+		expect(out).toContain('href="https://a.b"');
+	});
+
+	it("drops javascript: hrefs entirely", () => {
+		const out = sanitizeForEmail('<a href="javascript:alert(1)">x</a>');
+		expect(out).not.toMatch(/javascript:/i);
+		expect(out).toContain("<a>");
+	});
+
+	it("drops tags outside the email allowlist", () => {
+		const out = sanitizeForEmail("<script>alert(1)</script><h1>x</h1>");
+		expect(out).not.toContain("<script");
+		expect(out).not.toContain("<h1");
 	});
 
 	it("renderer version is a positive integer", () => {
