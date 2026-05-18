@@ -9,6 +9,13 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Cancel any in-flight CI run for the same ref when a new push lands.
+# Saves minutes on rapid pushes and avoids the "second push lands first"
+# race that shows a stale red check on the latest commit.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     if: ${{ github.event.repository.private == false || github.event_name == 'workflow_dispatch' }}

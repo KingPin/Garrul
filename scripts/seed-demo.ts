@@ -20,7 +20,15 @@ import {
 import { ulid } from "../src/lib/ulid";
 
 const DB_NAME = "garrul-db";
-const remoteFlag = process.argv.includes("--remote") ? "--remote" : "--local";
+const isRemote = process.argv.includes("--remote");
+const remoteFlag = isRemote ? "--remote" : "--local";
+if (!isRemote) {
+	console.warn(
+		"[seed-demo] running against LOCAL D1 (Miniflare). " +
+			"Pass --remote to seed the deployed instance (intended for the " +
+			"maintainer's demo only — wipes existing welcome-post comments).",
+	);
+}
 const POST_SLUG = "welcome";
 const POST_TITLE = "Welcome to Garrul";
 const POST_URL = "https://garrul.com/welcome";

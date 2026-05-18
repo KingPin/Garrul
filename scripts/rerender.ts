@@ -24,7 +24,15 @@ import {
 
 const DB_NAME = "garrul-db";
 const PAGE_SIZE = 100;
-const remoteFlag = process.argv.includes("--remote") ? "--remote" : "--local";
+const isRemote = process.argv.includes("--remote");
+const remoteFlag = isRemote ? "--remote" : "--local";
+
+if (!isRemote) {
+	console.warn(
+		"[rerender] running against LOCAL D1 (Miniflare). " +
+			"Pass --remote to target production.",
+	);
+}
 
 type StaleRow = {
 	id: string;

@@ -49,8 +49,15 @@ confirm_route
 create_d1() {
 	echo
 	echo "Creating D1 database 'garrul-db'..."
-	out=$(wrangler d1 create garrul-db 2>&1 || true)
+	set +e
+	out=$(wrangler d1 create garrul-db 2>&1)
+	rc=$?
+	set -e
 	echo "$out"
+	if [ $rc -ne 0 ] && ! echo "$out" | grep -qE 'already exists|D1_ERROR.*name'; then
+		echo "error: wrangler d1 create failed (exit $rc). Fix the above and re-run." >&2
+		exit $rc
+	fi
 	id=$(echo "$out" | grep -Eo 'database_id = "[a-f0-9-]+"' | head -1 | sed 's/database_id = "//;s/"//')
 	if [ -z "$id" ]; then
 		echo "warning: could not auto-extract database_id; copy it into wrangler.toml manually." >&2
@@ -65,8 +72,15 @@ create_kv() {
 	local binding="$1"
 	echo
 	echo "Creating KV namespace '$binding'..."
-	out=$(wrangler kv namespace create "$binding" 2>&1 || true)
+	set +e
+	out=$(wrangler kv namespace create "$binding" 2>&1)
+	rc=$?
+	set -e
 	echo "$out"
+	if [ $rc -ne 0 ] && ! echo "$out" | grep -q 'already exists'; then
+		echo "error: wrangler kv namespace create $binding failed (exit $rc). Fix the above and re-run." >&2
+		exit $rc
+	fi
 	id=$(echo "$out" | grep -Eo 'id = "[a-f0-9]+"' | head -1 | sed 's/id = "//;s/"//')
 	if [ -z "$id" ]; then
 		echo "warning: could not auto-extract id for $binding; copy manually." >&2
@@ -100,8 +114,8 @@ echo
 echo "=== Production secrets ==="
 echo "These prompt one at a time. Skip any you don't have yet."
 
-put_secret JWT_SECRET            "random 32+ char string for cookie signing"
-put_secret IP_HASH_SECRET        "random 32+ char pepper for BLAKE3 IP hashing"
+put_secret JWT_SECRET            "random 32+ char string (reserved for future JWT use; sessions are KV-backed)"
+put_secret IP_HASH_SECRET        "random 32+ char pepper for HMAC-SHA-256 IP hashing"
 put_secret TURNSTILE_SITE_KEY    "from dash.cloudflare.com → Turnstile"
 put_secret TURNSTILE_SECRET      "from dash.cloudflare.com → Turnstile"
 put_secret GH_CLIENT_ID          "from github.com/settings/developers"
