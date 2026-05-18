@@ -27,7 +27,12 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
+      # wrangler.toml is gitignored; wrangler 4's framework auto-detect
+      # errors without one. The example file's placeholder IDs are fine
+      # for --dry-run (no API calls). Keeps CI symmetric with release.yml.
+      - run: cp wrangler.example.toml wrangler.toml
       - run: npm run lint
       - run: npm run typecheck
       - run: npm test
+      - run: npm run build
       - run: npm run size
