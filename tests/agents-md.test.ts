@@ -73,6 +73,15 @@ describe("GET /AGENTS.md", () => {
     expect(body).not.toContain("other.example");
   });
 
+  it("falls back to Host when CANONICAL_URL is malformed", async () => {
+    const res = await fetchAgents("/AGENTS.md", {
+      host: "comments.fallback.example",
+      env: { CANONICAL_URL: "not-a-url" },
+    });
+    const body = await res.text();
+    expect(body).toContain("comments.fallback.example");
+  });
+
   it("sets Cache-Control: public, max-age=300", async () => {
     const res = await fetchAgents("/AGENTS.md");
     expect(res.headers.get("cache-control")).toBe("public, max-age=300");
