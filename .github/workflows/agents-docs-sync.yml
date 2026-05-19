@@ -1,0 +1,69 @@
+name: AGENTS docs sync
+
+# Fails a PR if it changes watched source paths without touching either
+# AGENTS file. Add the `agents-docs-ok` label to a PR to skip this check
+# when the diff genuinely doesn't affect the docs (refactors, deps, etc.).
+
+on:
+  pull_request:
+    branches: ["**"]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    # Match the gating pattern documented in CLAUDE.md: every workflow
+    # is dark while the repo is private; flip on automatically when public.
+    if: ${{ github.event.repository.private == false }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Skip if PR carries the agents-docs-ok label
+        id: label
+        env:
+          PR_LABELS: ${{ toJson(github.event.pull_request.labels) }}
+        run: |
+          if echo "$PR_LABELS" | grep -q '"name": "agents-docs-ok"'; then
+            echo "skipped=true" >> "$GITHUB_OUTPUT"
+            echo "Label agents-docs-ok present — skipping AGENTS docs sync check."
+          else
+            echo "skipped=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check AGENTS docs sync
+        if: steps.label.outputs.skipped != 'true'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          CHANGED=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")
+          echo "Changed files in this PR:"
+          echo "$CHANGED"
+          echo ""
+
+          # Watched source paths — changes here usually mean the AGENTS files need updates.
+          WATCH_REGEX='^(src/widget/|src/routes/embed\.ts|src/routes/api\.comments\.ts|src/db/migrations/|INSTALL\.md|wrangler\.example\.toml|\.dev\.vars\.example)'
+          AGENTS_REGEX='^(AGENTS\.md|AGENTS-OPERATE\.md)$'
+
+          WATCHED_HIT=$(echo "$CHANGED" | grep -E "$WATCH_REGEX" || true)
+          AGENTS_HIT=$(echo "$CHANGED" | grep -E "$AGENTS_REGEX" || true)
+
+          if [ -n "$WATCHED_HIT" ] && [ -z "$AGENTS_HIT" ]; then
+            echo "::error::This PR changes watched source paths without updating either AGENTS file."
+            echo "Watched paths touched:"
+            echo "$WATCHED_HIT" | sed 's/^/  - /'
+            echo ""
+            echo "Update AGENTS.md and/or AGENTS-OPERATE.md to match, or add the"
+            echo "\`agents-docs-ok\` label to this PR if the change genuinely doesn't"
+            echo "affect either guide (refactor, dep bump, test-only change, etc.)."
+            exit 1
+          fi
+
+          echo "AGENTS docs sync check passed."
