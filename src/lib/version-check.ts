@@ -1,11 +1,14 @@
 /**
  * Passive "update available" check for the admin UI.
  *
- * The Worker checks the GitHub releases API at most once per 24h per cold
- * isolate (cached in TREE_CACHE under the `meta:` prefix). The check is
- * gated on /admin/* requests — public traffic never triggers a GitHub
- * fetch. Failures are swallowed silently; a `null`-marker is cached for
- * 1h so we don't hammer the API when it's unreachable.
+ * The Worker checks the GitHub releases API at most once per 24h, shared
+ * across all isolates via the TREE_CACHE KV namespace (key `meta:latest-
+ * release`). The check is gated on /admin/* requests — public traffic
+ * never triggers a GitHub fetch. The refresh runs through
+ * `executionCtx.waitUntil` so an admin request is never blocked on the
+ * network round-trip. Failures are logged via `log.warn`
+ * (`version_check.failed` / `version_check.malformed`) and a `null`-marker
+ * is cached for 1h so we don't hammer the API when it's unreachable.
  *
  * Optional GITHUB_TOKEN env var raises the unauth 60/hr rate limit if
  * shared Cloudflare egress IPs put us close to the cap.
@@ -189,21 +192,27 @@ export const peekCachedLatestVersion = async (
 };
 
 /**
- * Middleware that ensures the cache is fresh on admin requests and emits
- * a warn log when the deployed Worker is behind. Wired in routes/admin.ts.
+ * Middleware that triggers a (cache-aware) refresh of the latest-release
+ * info on admin requests, then proceeds. The refresh is dispatched via
+ * `executionCtx.waitUntil` so we never block the request on a GitHub
+ * fetch — the banner reads `peekCachedLatestVersion` and naturally
+ * surfaces the new info on the *next* admin hit. Wired in routes/admin.ts.
  */
 export const versionCheckMiddleware = (): MiddlewareHandler<{
 	Bindings: Env;
 }> => {
 	return async (c, next) => {
-		const info = await getCachedLatestVersion(c.env);
-		if (info && info.behind) {
-			log.warn("version_check.behind", {
-				current: info.current,
-				latest: info.latest,
-				url: info.url,
-			});
-		}
+		const refresh = async () => {
+			const info = await getCachedLatestVersion(c.env);
+			if (info && info.behind) {
+				log.warn("version_check.behind", {
+					current: info.current,
+					latest: info.latest,
+					url: info.url,
+				});
+			}
+		};
+		c.executionCtx.waitUntil(refresh());
 		await next();
 	};
 };

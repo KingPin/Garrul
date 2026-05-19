@@ -48,6 +48,7 @@ const makeWranglerMock = (): typeof wranglerModule => ({
 	appendKvBlock: vi.fn(),
 	appendD1Block: vi.fn(),
 	npmRun: vi.fn(),
+	npmCi: vi.fn(),
 	appendUpgradeLog: vi.fn(),
 });
 
@@ -103,6 +104,7 @@ describe("upgrade dry-run", () => {
 		expect(wranglerMock.appendKvBlock).not.toHaveBeenCalled();
 		expect(wranglerMock.appendD1Block).not.toHaveBeenCalled();
 		expect(wranglerMock.npmRun).not.toHaveBeenCalled();
+		expect(wranglerMock.npmCi).not.toHaveBeenCalled();
 		expect(wranglerMock.appendUpgradeLog).not.toHaveBeenCalled();
 		expect(gitMock.fetchTags).not.toHaveBeenCalled();
 		expect(gitMock.checkout).not.toHaveBeenCalled();
@@ -138,5 +140,27 @@ describe("upgrade dry-run", () => {
 			"garrul",
 			"v0.0.2",
 		);
+	});
+
+	it("hard-errors when --version is passed without an argument", async () => {
+		await expect(
+			main(["--dry-run", "--version"], {
+				wrangler: wranglerMock,
+				git: gitMock,
+				fetchLatest,
+				fetchTargetManifest,
+			}),
+		).rejects.toThrow(/--version requires a tag argument/);
+	});
+
+	it("hard-errors when --version's argument is another flag", async () => {
+		await expect(
+			main(["--dry-run", "--version", "--yes"], {
+				wrangler: wranglerMock,
+				git: gitMock,
+				fetchLatest,
+				fetchTargetManifest,
+			}),
+		).rejects.toThrow(/--version requires a tag argument/);
 	});
 });

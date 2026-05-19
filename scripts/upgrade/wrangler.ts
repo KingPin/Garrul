@@ -202,6 +202,18 @@ export const npmRun = (script: string, extraArgs: string[] = []): void => {
 };
 
 /**
+ * Install deps for an upgrade. Prefers `npm ci` for reproducibility, falls
+ * back to `npm install` if there's no lockfile (e.g. shallow clone). This
+ * is intentionally NOT routed through `npmRun` — `npm run install` runs
+ * a package script named "install", not the install subcommand.
+ */
+export const npmCi = (repoRoot: string): void => {
+	const lockfile = join(repoRoot, "package-lock.json");
+	const sub = existsSync(lockfile) ? "ci" : "install";
+	run("npm", [sub], { inheritStdio: true });
+};
+
+/**
  * Append one JSON line to .garrul-upgrade-log.json (gitignored, audit only).
  */
 export const appendUpgradeLog = (

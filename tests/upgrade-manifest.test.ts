@@ -91,4 +91,57 @@ describe("validateManifest", () => {
 		};
 		expect(() => validateManifest(bad)).toThrow(ManifestError);
 	});
+
+	it("rejects malformed addedIn on secret entries", () => {
+		const bad = {
+			...validRaw,
+			secrets: [{ name: "X", required: true, addedIn: "not-a-version" }],
+		};
+		expect(() => validateManifest(bad)).toThrow(/valid semver/);
+	});
+
+	it("rejects malformed addedIn on kv/d1/analytics entries", () => {
+		expect(() =>
+			validateManifest({
+				...validRaw,
+				kvNamespaces: [
+					{ binding: "K", required: true, addedIn: "nope" },
+				],
+			}),
+		).toThrow(/valid semver/);
+		expect(() =>
+			validateManifest({
+				...validRaw,
+				d1Databases: [
+					{
+						binding: "DB",
+						databaseName: "garrul-db",
+						required: true,
+						addedIn: "1.x",
+					},
+				],
+			}),
+		).toThrow(/valid semver/);
+		expect(() =>
+			validateManifest({
+				...validRaw,
+				analyticsDatasets: [
+					{
+						binding: "A",
+						dataset: "d",
+						required: false,
+						addedIn: "v",
+					},
+				],
+			}),
+		).toThrow(/valid semver/);
+	});
+
+	it("accepts a well-formed addedIn semver", () => {
+		const m = validateManifest({
+			...validRaw,
+			secrets: [{ name: "X", required: true, addedIn: "v1.2.3" }],
+		});
+		expect(m.secrets[0]?.addedIn).toBe("v1.2.3");
+	});
 });

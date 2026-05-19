@@ -182,6 +182,19 @@ const requireSemver = (
 	return s;
 };
 
+const optionalSemver = (
+	parent: Record<string, unknown>,
+	key: string,
+	path: string,
+): SemVer | undefined => {
+	const s = optionalString(parent, key, path);
+	if (s === undefined) return undefined;
+	if (!parseSemver(s)) {
+		throw new ManifestError(`${path}.${key} is not a valid semver: ${s}`);
+	}
+	return s;
+};
+
 const validateSecret = (raw: unknown, i: number): SecretEntry => {
 	if (!isObject(raw)) throw new ManifestError(`secrets[${i}] must be object`);
 	const entry: SecretEntry = {
@@ -190,7 +203,7 @@ const validateSecret = (raw: unknown, i: number): SecretEntry => {
 	};
 	const desc = optionalString(raw, "description", `secrets[${i}]`);
 	if (desc !== undefined) entry.description = desc;
-	const addedIn = optionalString(raw, "addedIn", `secrets[${i}]`);
+	const addedIn = optionalSemver(raw, "addedIn", `secrets[${i}]`);
 	if (addedIn !== undefined) entry.addedIn = addedIn;
 	return entry;
 };
@@ -204,7 +217,7 @@ const validateKv = (raw: unknown, i: number): KvEntry => {
 	};
 	const desc = optionalString(raw, "description", `kvNamespaces[${i}]`);
 	if (desc !== undefined) entry.description = desc;
-	const addedIn = optionalString(raw, "addedIn", `kvNamespaces[${i}]`);
+	const addedIn = optionalSemver(raw, "addedIn", `kvNamespaces[${i}]`);
 	if (addedIn !== undefined) entry.addedIn = addedIn;
 	return entry;
 };
@@ -219,7 +232,7 @@ const validateD1 = (raw: unknown, i: number): D1Entry => {
 	};
 	const desc = optionalString(raw, "description", `d1Databases[${i}]`);
 	if (desc !== undefined) entry.description = desc;
-	const addedIn = optionalString(raw, "addedIn", `d1Databases[${i}]`);
+	const addedIn = optionalSemver(raw, "addedIn", `d1Databases[${i}]`);
 	if (addedIn !== undefined) entry.addedIn = addedIn;
 	return entry;
 };
@@ -234,7 +247,7 @@ const validateAnalytics = (raw: unknown, i: number): AnalyticsEntry => {
 	};
 	const desc = optionalString(raw, "description", `analyticsDatasets[${i}]`);
 	if (desc !== undefined) entry.description = desc;
-	const addedIn = optionalString(raw, "addedIn", `analyticsDatasets[${i}]`);
+	const addedIn = optionalSemver(raw, "addedIn", `analyticsDatasets[${i}]`);
 	if (addedIn !== undefined) entry.addedIn = addedIn;
 	return entry;
 };

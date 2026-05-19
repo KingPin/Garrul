@@ -51,6 +51,7 @@ const errResponse = (status: number) =>
 
 describe("version-check", () => {
 	let fetchMock: ReturnType<typeof vi.fn>;
+	const originalFetch = globalThis.fetch;
 
 	beforeEach(() => {
 		warnSpy.mockClear();
@@ -59,6 +60,7 @@ describe("version-check", () => {
 	});
 
 	afterEach(() => {
+		globalThis.fetch = originalFetch;
 		vi.restoreAllMocks();
 	});
 

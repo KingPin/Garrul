@@ -72,8 +72,14 @@ const parseFlags = (argv: string[]): Flags => {
 		rerender: argv.includes("--rerender"),
 	};
 	const vIdx = argv.indexOf("--version");
-	if (vIdx >= 0 && vIdx + 1 < argv.length) {
-		flags.version = argv[vIdx + 1] as string;
+	if (vIdx >= 0) {
+		const next = vIdx + 1 < argv.length ? argv[vIdx + 1] : undefined;
+		if (next === undefined || next.startsWith("--")) {
+			throw new Error(
+				"--version requires a tag argument, e.g. --version v0.2.0",
+			);
+		}
+		flags.version = next;
 	}
 	return flags;
 };
@@ -231,7 +237,7 @@ const applyPlan = async (
 	stepOk(targetTag);
 
 	step("Installing dependencies (npm ci)…");
-	wrangler.npmRun("install"); // npm ci would be ideal; fall back to install if no lockfile
+	wrangler.npmCi(REPO_ROOT);
 	stepOk();
 
 	let migratedNames: string[] = [];
