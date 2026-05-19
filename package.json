@@ -4,6 +4,10 @@
   "private": true,
   "description": "Self-hosted comment system on Cloudflare Workers + D1 + KV",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/KingPin/Garrul"
+  },
   "type": "module",
   "engines": {
     "node": ">=22"
@@ -17,7 +21,7 @@
     "prebuild": "npm run build:assets",
     "build:embed": "tsx scripts/build-embed.ts",
     "build:agents": "tsx scripts/build-agents-md.ts",
-    "build:assets": "npm run build:embed && npm run build:agents",
+    "build:assets": "npm run build:embed && npm run build:agents && npm run build:version",
     "size": "npm run build:embed && tsx scripts/check-bundle-size.ts",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.widget.json",
     "pretypecheck": "npm run build:assets",
@@ -28,6 +32,10 @@
     "rerender": "tsx scripts/rerender.ts",
     "seed-demo": "tsx scripts/seed-demo.ts",
     "db:export": "bash scripts/db-export.sh",
+    "upgrade": "tsx scripts/upgrade.ts",
+    "manifest:build": "tsx scripts/upgrade/build-manifest.ts",
+    "manifest:check": "tsx scripts/upgrade/build-manifest.ts --check",
+    "build:version": "tsx scripts/build-version.ts",
     "tail": "wrangler tail"
   },
   "dependencies": {

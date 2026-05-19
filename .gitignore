@@ -7,6 +7,10 @@ build/
 *.tsbuildinfo
 src/widget/embed.bundled.ts
 src/agents.bundled.ts
+src/lib/version.gen.ts
+
+# Upgrade audit log (operator-local)
+.garrul-upgrade-log.json
 
 # Wrangler / Cloudflare local state
 .wrangler/

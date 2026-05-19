@@ -38,6 +38,11 @@ import {
 } from "../db/queries";
 import { fireWebhook, type WebhookEvent } from "../lib/webhook";
 import { sanitizeForEmail as resanitizeBodyHtml } from "../lib/markdown";
+import {
+	peekCachedLatestVersion,
+	versionCheckMiddleware,
+	type UpdateInfo,
+} from "../lib/version-check";
 
 const admin = new Hono<{ Bindings: Bindings }>();
 
@@ -118,7 +123,29 @@ const ADMIN_CSP = [
 	"frame-ancestors 'none'",
 ].join("; ");
 
-const layout = (title: string, body: string, currentUser: User): string => `
+const renderUpdateBanner = (info: UpdateInfo | null): string => {
+	if (!info || !info.behind) return "";
+	const tag = escapeHtml(info.latest);
+	const url = escapeHtml(info.url);
+	const key = `garrul.dismissed.update.${info.latest}`;
+	return `
+<div x-data="{ shown: localStorage.getItem(${JSON.stringify(key)}) !== '1' }"
+     x-show="shown"
+     class="banner update">
+  <span>Update available: <strong>${tag}</strong> —
+    <a href="${url}" target="_blank" rel="noopener">release notes</a>.
+    Run <code>npm run upgrade</code>.</span>
+  <button @click="localStorage.setItem(${JSON.stringify(key)},'1'); shown=false"
+          aria-label="Dismiss update notice">Dismiss</button>
+</div>`;
+};
+
+const layout = (
+	title: string,
+	body: string,
+	currentUser: User,
+	updateInfo: UpdateInfo | null,
+): string => `
 <!doctype html>
 <html lang="en">
 <head>
@@ -177,9 +204,17 @@ const layout = (title: string, body: string, currentUser: User): string => `
   .pager { display: flex; justify-content: space-between; margin-top: 1rem; }
   code { background: var(--bg); padding: 0.1rem 0.3rem; border-radius: 3px;
          font-family: ui-monospace, monospace; font-size: 0.85em; }
+  .banner { display: flex; gap: 1rem; align-items: center; justify-content: space-between;
+            padding: 0.6rem 1rem; border-bottom: 1px solid var(--border); font-size: 0.9rem; }
+  .banner.update { background: #2a1f08; color: #f7d77a; border-bottom-color: #4a3a14; }
+  .banner.update a { color: #ffd57a; text-decoration: underline; }
+  .banner.update code { background: rgba(0,0,0,0.25); color: inherit; }
+  .banner.update button { background: transparent; color: inherit; border-color: #4a3a14; }
+  .banner.update button:hover { border-color: #f7d77a; }
 </style>
 </head>
 <body>
+${renderUpdateBanner(updateInfo)}
 <header>
   <h1>Garrul Admin</h1>
   <nav>
@@ -393,11 +428,14 @@ admin.use("*", async (c, next) => {
 	await next();
 });
 
+admin.use("*", versionCheckMiddleware());
+
 admin.get("/", async (c) => {
 	const user = await requireAdmin(c);
 	if (user instanceof Response) return user;
 	const stats = await adminStats(c.env.DB);
-	return c.html(layout("Dashboard", renderDashboard(stats), user));
+	const updateInfo = await peekCachedLatestVersion(c.env);
+	return c.html(layout("Dashboard", renderDashboard(stats), user, updateInfo));
 });
 
 admin.get("/queue", async (c) => {
@@ -434,7 +472,10 @@ admin.get("/queue", async (c) => {
 	const nextCursor =
 		rows.length > 50 && last ? `${last.created_at}|${last.id}` : null;
 
-	return c.html(layout("Queue", renderQueue(trimmed, status, nextCursor), user));
+	const updateInfo = await peekCachedLatestVersion(c.env);
+	return c.html(
+		layout("Queue", renderQueue(trimmed, status, nextCursor), user, updateInfo),
+	);
 });
 
 admin.get("/users", async (c) => {
@@ -461,13 +502,17 @@ admin.get("/users", async (c) => {
 	const last = trimmed[trimmed.length - 1];
 	const nextCursor =
 		rows.length > 50 && last ? `${last.created_at}|${last.id}` : null;
-	return c.html(layout("Users", renderUsers(trimmed, q, nextCursor), user));
+	const updateInfo = await peekCachedLatestVersion(c.env);
+	return c.html(
+		layout("Users", renderUsers(trimmed, q, nextCursor), user, updateInfo),
+	);
 });
 
 admin.get("/settings", async (c) => {
 	const user = await requireAdmin(c);
 	if (user instanceof Response) return user;
-	return c.html(layout("Settings", renderSettings(c.env), user));
+	const updateInfo = await peekCachedLatestVersion(c.env);
+	return c.html(layout("Settings", renderSettings(c.env), user, updateInfo));
 });
 
 type CommentAction = "approve" | "spam" | "delete" | "restore";

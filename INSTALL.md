@@ -229,19 +229,55 @@ See `wrangler.example.toml` for the full template with inline comments.
 
 ## Updating
 
+The one-liner:
+
 ```bash
-git pull
-npm install
+npm run upgrade
+```
+
+That command pulls the latest tag, compares your live Worker against
+the target version's `release-manifest.json`, prints a plan, asks you
+to confirm, then applies it: create any missing KV/D1 bindings,
+prompt for new secrets, run forward-only migrations, deploy.
+
+Useful flags:
+
+| Flag                    | Effect                                                        |
+| ----------------------- | ------------------------------------------------------------- |
+| `--dry-run`             | Print the plan only. No git, wrangler, or deploy side effects. |
+| `--version vX.Y.Z`      | Target a specific tag instead of "latest release."            |
+| `--yes`                 | Non-interactive (CI). Refuses if any secret is missing — they need a value you must type. |
+| `--allow-dirty`         | Proceed even if `git status` is non-empty.                    |
+| `--skip-migrations`     | Skip `npm run migrate -- --remote`.                           |
+| `--skip-deploy`         | Stop after migrations. Useful when staging a deploy by hand.  |
+| `--rerender`            | Run `npm run rerender -- --remote` after deploy (if the renderer version bumped). |
+
+The admin UI (`/admin`) shows a dismissible banner when a newer
+release is available; the check is cached in KV for 24h and only fires
+on admin requests.
+
+**If you prefer to step through manually:**
+
+```bash
+git fetch --tags
+git checkout vX.Y.Z
+npm ci
 npm run migrate -- --remote   # only if new migrations landed
 npm run deploy
+npm run rerender -- --remote  # only if the renderer version bumped
 ```
 
-If a release bumps the markdown renderer version, stored comments
-are re-rendered lazily on read. To re-render eagerly:
+**Failure modes worth knowing:**
 
-```bash
-npm run rerender
-```
+- Migration applied, deploy failed → migrations are forward-only and
+  already committed; the previous Worker keeps serving traffic. Fix
+  the deploy issue and re-run `npm run deploy`, or
+  `wrangler rollback` to the prior deployment. Do **not** hand-revert
+  the schema — Garrul migrations are additive.
+- Missing secret with `--yes` → the orchestrator refuses, because a
+  non-interactive value would have to be inlined (and that leaks via
+  shell history / CI logs). Run interactively or set the secret first
+  with `wrangler secret put NAME`.
 
 ## Troubleshooting
 

@@ -34,5 +34,9 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
       - run: npm test
+      # Gate: the committed release-manifest.json must match what the
+      # generator derives from the source tree. Catches drift between
+      # Bindings/secrets/migrations and the declared upgrade contract.
+      - run: npm run manifest:check
       - run: npm run build
       - run: npm run size
