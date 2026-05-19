@@ -97,6 +97,68 @@ varies. One-line summary of where to put it and how to fill `data-slug`
 Full runnable starters for each framework live in `examples/` (one
 directory per stack).
 
+### Lazy-loading (recommended for read-heavy hosts)
+
+The eager `<script defer>` snippet above triggers three Worker
+requests per pageview on mount (`/api/v1/config`, `/api/v1/auth/me`,
+`/api/v1/comments?slug=…`) before the reader has scrolled. On a blog
+or docs site where most visitors bounce above the comments section,
+that is the bulk of Cloudflare Worker usage.
+
+**Default to deferring the script load via `IntersectionObserver`**
+when the comments section is below the fold. Replace the
+`<script src="…/embed.js" defer>` line with this loader, leaving the
+`#garrul` `<div>` exactly as-is:
+
+```html
+<script>
+  (function () {
+    var mount = document.getElementById("garrul");
+    if (!mount) return;
+    var loaded = false;
+    function load() {
+      if (loaded) return;
+      loaded = true;
+      var s = document.createElement("script");
+      s.src = "{{INSTANCE_URL}}/embed.js";
+      s.defer = true;
+      document.body.appendChild(s);
+    }
+    if ("IntersectionObserver" in window) {
+      var io = new IntersectionObserver(function (entries) {
+        if (entries.some(function (e) { return e.isIntersecting; })) {
+          io.disconnect();
+          load();
+        }
+      }, { rootMargin: "500px 0px" });
+      io.observe(mount);
+    } else {
+      load();
+    }
+  })();
+</script>
+```
+
+When **not** to use the lazy loader:
+
+- The comments section is above the fold — the observer fires
+  immediately and you've saved nothing.
+- The integrator explicitly wants comments visible to crawlers in the
+  rendered HTML of the post page. The per-post RSS feed
+  (`/feed/:slug`) and per-comment permalinks (`/c/:id`) remain
+  crawler-visible either way, but the comment tree inline with the
+  post is only present when the script has run.
+
+**Do NOT recommend click-to-load** (a "Load comments" button that only
+mounts the widget on click) unless the integrator explicitly asks for
+it and has accepted the trade-offs. It looks like comments are
+disabled, hides existing discussion from lurkers, suppresses the
+social proof that drives new replies, and removes comment content
+from the rendered page entirely. The `examples/lazy-load/README.md`
+section "Click-to-load (only if you really need it)" documents the
+pattern and its caveats — point integrators there rather than
+emitting the snippet by default.
+
 ## 4. Configuration options
 
 Every attribute the widget reads from the `#garrul` host element

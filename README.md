@@ -91,6 +91,19 @@ The iframe page posts content height to the parent via
 - [Plain HTML](examples/plain-html/index.html) — minimal copy-paste page
 - [Iframe](examples/iframe/index.html) — auto-resize listener for CSP-strict hosts
 
+### Lazy-loading (saving Worker invocations)
+
+By default the widget fires three Worker requests on page load
+(`/api/v1/config`, `/api/v1/auth/me`, `/api/v1/comments?slug=…`),
+before the reader has scrolled. On read-heavy blogs that's most of
+your Cloudflare usage spent on bouncers.
+
+See [`examples/lazy-load`](examples/lazy-load/README.md) for two
+deferred-loading patterns: a scroll-into-view loader (recommended —
+zero cost for bouncers, seamless for engaged readers) and a
+click-to-load button (more savings, but documented caveats around
+discussion visibility and engagement).
+
 ### Using an AI assistant?
 
 Garrul ships an AI-targeted integration guide at `AGENTS.md` in this
