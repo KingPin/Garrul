@@ -38,6 +38,21 @@ PUBLIC_BASE_URL = "https://comments.example.com"
 # Leave unset in dev; the worker falls back to the request origin.
 OAUTH_CALLBACK_BASE = "https://comments.example.com"
 
+# Anti-spam (all optional; OFF by default). See docs/ANTISPAM.md.
+# Pluggable content classifier — "akismet" or "workers-ai". Leave unset for none.
+# SPAM_PROVIDER = "akismet"
+# SPAM_PROVIDER = "workers-ai"
+#
+# Lightweight in-core heuristics. Unset = off. Tripped signals flag the
+# comment to status='pending' (admin queue) — never a silent drop.
+# SPAM_LINK_THRESHOLD = "3"            # flag if > N URLs in body
+# SPAM_HONEYPOT_MIN_MS = "1500"        # flag if form submitted faster than N ms
+# SPAM_FIRST_COMMENT_MODERATE = "true" # first comment from a new author → pending
+#
+# For SPAM_PROVIDER = "workers-ai", also add this binding:
+# [ai]
+# binding = "AI"
+
 # Notification digest job runs every 15 minutes; tune to taste.
 # Comments newer than 5 minutes are debounced so a reply burst coalesces
 # into a single email per subscriber.
@@ -55,6 +70,9 @@ crons = ["*/15 * * * *"]
 #   wrangler secret put GOOGLE_CLIENT_SECRET
 #   wrangler secret put RESEND_API_KEY
 #   wrangler secret put WEBHOOK_URL           # optional, fire-and-forget POST on new comment
+#   wrangler secret put SPAM_FORM_TS_SECRET   # HMAC key for signed form-timestamp tokens (set when SPAM_HONEYPOT_MIN_MS is used)
+#   wrangler secret put AKISMET_API_KEY       # required when SPAM_PROVIDER = "akismet"
+#   wrangler secret put AKISMET_SITE_URL      # public site URL for Akismet (e.g. https://yourblog.example.com)
 
 [[d1_databases]]
 binding = "DB"
