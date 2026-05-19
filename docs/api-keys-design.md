@@ -62,7 +62,7 @@ CREATE TABLE api_keys (
   key_hash    TEXT NOT NULL UNIQUE,              -- sha256(raw_key)
   label       TEXT NOT NULL,                     -- human label, e.g. "ssg-builder"
   origin_bound TEXT,                             -- nullable; if set, request Origin must match
-  scopes      TEXT NOT NULL,                     -- comma-separated, e.g. "read:comments,read:counts"
+  scopes      TEXT NOT NULL,                     -- comma-separated, e.g. "read:comments,write:comments"
   created_at  INTEGER NOT NULL,                  -- unix ms
   last_used_at INTEGER,                          -- unix ms, updated on each successful auth
   revoked_at  INTEGER                            -- nullable; non-null = revoked
@@ -91,7 +91,21 @@ Comma-separated string column for simplicity. Initial vocabulary:
 | `read:config` | GET `/api/v1/config` |
 | `admin` | All admin routes (rarely issued; prefer session-based admin) |
 
-The middleware checks `scopes.includes(required_scope)` per route.
+**Scope check semantics.** Parse the column into a token set first,
+then check exact membership — never substring-match the raw string.
+Otherwise a future narrow scope like `read:comments_private` would
+silently grant `read:comments`.
+
+```ts
+// Right:
+const granted = new Set(row.scopes.split(",").map((s) => s.trim()));
+if (!granted.has(requiredScope)) return 403;
+
+// Wrong: substring match — a token "read:comments_extra" would satisfy
+// the check for "read:comments".
+if (!row.scopes.includes(requiredScope)) return 403;
+```
+
 Per-route required scopes are declared via Hono route metadata when
 the keys feature ships.
 
