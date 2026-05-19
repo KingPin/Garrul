@@ -107,6 +107,28 @@ your local archive.
 - **Re-render**: bumping the markdown sanitizer? Run
   `npm run rerender` to re-render stored comments in place.
 
+## Access control
+
+Your instance is gated by `ALLOWED_ORIGINS` (set in `wrangler.toml`,
+comma-separated, no wildcards). Every request under `/api/*` — including
+plain GET reads of comment trees, counts, and config — must carry an
+`Origin` header matching the allowlist. Browser fetches from your own
+sites send `Origin` automatically and continue to work; direct curl /
+scraper hits to `/api/v1/*` now return `403 err.origin.forbidden`.
+
+Exempt by design (no `Origin` header reaches them):
+
+- `GET /api/v1/health` — uptime probes
+- `GET /api/v1/auth/:provider/{start,callback}` — OAuth top-level navigation
+- `GET /feed/:slug`, `GET /c/:id`, `GET /embed/:slug`, `GET /embed.js` —
+  outside the `/api/*` gate; intentionally public
+
+Server-side build-time fetchers (SSGs that read comments at deploy time)
+will now get 403s. Workaround: consume `GET /feed/:slug` (Atom, ungated)
+until the planned API-keys system ships — design lives in
+[`docs/api-keys-design.md`](docs/api-keys-design.md) (not implemented in
+v1).
+
 ## Privacy
 
 Garrul stores:
