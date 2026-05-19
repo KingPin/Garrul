@@ -28,32 +28,32 @@
     },
     {
       "name": "GH_CLIENT_ID",
-      "required": true,
+      "required": false,
       "addedIn": "0.0.1"
     },
     {
       "name": "GH_CLIENT_SECRET",
-      "required": true,
+      "required": false,
       "addedIn": "0.0.1"
     },
     {
       "name": "GOOGLE_CLIENT_ID",
-      "required": true,
+      "required": false,
       "addedIn": "0.0.1"
     },
     {
       "name": "GOOGLE_CLIENT_SECRET",
-      "required": true,
+      "required": false,
       "addedIn": "0.0.1"
     },
     {
       "name": "RESEND_API_KEY",
-      "required": true,
+      "required": false,
       "addedIn": "0.0.1"
     },
     {
       "name": "WEBHOOK_URL",
-      "required": true,
+      "required": false,
       "addedIn": "0.0.1"
     }
   ],
