@@ -200,6 +200,32 @@ describe("corsAndCsrf — Origin allowlist on /api/*", () => {
 			});
 			expect(r.kind).toBe("blocked");
 		});
+
+		it("carve-out is GET-only — POST /api/v1/health with no Origin → 403", async () => {
+			const r = await runMiddleware(mw, {
+				method: "POST",
+				path: "/api/v1/health",
+			});
+			expect(r.kind).toBe("blocked");
+			if (r.kind !== "blocked") return;
+			expect(r.status).toBe(403);
+		});
+
+		it("carve-out is GET-only — POST /api/v1/auth/github/start with no Origin → 403", async () => {
+			const r = await runMiddleware(mw, {
+				method: "POST",
+				path: "/api/v1/auth/github/start",
+			});
+			expect(r.kind).toBe("blocked");
+		});
+
+		it("carve-out is GET-only — PATCH /api/v1/auth/google/callback with no Origin → 403", async () => {
+			const r = await runMiddleware(mw, {
+				method: "PATCH",
+				path: "/api/v1/auth/google/callback",
+			});
+			expect(r.kind).toBe("blocked");
+		});
 	});
 
 	describe("Dev mode escape hatch", () => {

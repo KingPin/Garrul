@@ -38,8 +38,8 @@ const matches = (origin: string, allowed: Set<string>): boolean => {
 	return allowed.has(origin);
 };
 
-const isCarveOut = (path: string): boolean =>
-	CARVE_OUT_PATHS.some((re) => re.test(path));
+const isCarveOut = (method: string, path: string): boolean =>
+	method === "GET" && CARVE_OUT_PATHS.some((re) => re.test(path));
 
 export const corsAndCsrf = (): MiddlewareHandler => {
 	return async (c, next) => {
@@ -70,9 +70,12 @@ export const corsAndCsrf = (): MiddlewareHandler => {
 
 		// Origin allowlist applies to ALL methods under /api/*, including GET.
 		// Carve-outs (health, OAuth start/callback) bypass because they
-		// legitimately receive no Origin header. Dev mode bypasses entirely
-		// so curl + local clients work without juggling Origin headers.
-		if (!isCarveOut(path) && !isDev) {
+		// legitimately receive no Origin header — but only for GET, the
+		// method they're actually invoked with. A future POST/PATCH on a
+		// carve-out path must NOT silently bypass the gate. Dev mode
+		// bypasses entirely so curl + local clients work without juggling
+		// Origin headers.
+		if (!isCarveOut(c.req.method, path) && !isDev) {
 			if (!origin || !matches(origin, allowed)) {
 				return c.json({ error: "err.origin.forbidden" }, 403);
 			}
