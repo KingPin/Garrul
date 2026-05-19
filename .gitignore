@@ -6,6 +6,7 @@ dist/
 build/
 *.tsbuildinfo
 src/widget/embed.bundled.ts
+src/agents.bundled.ts
 
 # Wrangler / Cloudflare local state
 .wrangler/
