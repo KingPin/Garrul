@@ -2,9 +2,9 @@
 title: Garrul — AI Integration Guide
 audience: AI coding assistant helping a developer EMBED Garrul comments on their site
 canonical_url: https://garrul.com/AGENTS.md
-self_url: {{INSTANCE_URL}}/AGENTS.md
+self_url: "{{INSTANCE_URL}}/AGENTS.md"
 repo: https://github.com/KingPin/Garrul
-version: {{VERSION}}
+version: "{{VERSION}}"
 ---
 
 ## 1. What Garrul is
