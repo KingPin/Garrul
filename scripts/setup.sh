@@ -20,17 +20,21 @@ if ! command -v wrangler >/dev/null 2>&1; then
 fi
 
 if [ -f wrangler.toml ]; then
-	read -r -p "wrangler.toml already exists. Overwrite? [y/N] " resp
-	case "$resp" in
-		y|Y|yes|YES) ;;
-		*) echo "aborted."; exit 0 ;;
-	esac
+	echo "✓ found existing wrangler.toml — keeping your edits"
+	echo "  (D1/KV creation and secret prompts are idempotent and safe to re-run)"
+else
+	cp wrangler.example.toml wrangler.toml
+	echo "✓ copied wrangler.example.toml → wrangler.toml"
 fi
 
-cp wrangler.example.toml wrangler.toml
-echo "✓ copied wrangler.example.toml → wrangler.toml"
-
 confirm_route() {
+	# If the [[routes]] block is no longer fully commented out, assume the
+	# user has configured (or deliberately removed) it and skip the prompt.
+	if ! grep -qE '^[[:space:]]*#[[:space:]]*routes[[:space:]]*=' wrangler.toml; then
+		echo
+		echo "✓ routes section appears configured — skipping prompt"
+		return
+	fi
 	echo
 	echo "RECOMMENDATION: use a custom subdomain (e.g. comments.yourdomain.com)"
 	echo "for the Worker route. *.workers.dev subdomains cause third-party-cookie"
