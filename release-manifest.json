@@ -1,6 +1,6 @@
 {
-  "version": "0.0.1",
-  "minPreviousVersion": "0.0.1",
+  "version": "1.1.0",
+  "minPreviousVersion": "1.0.0",
   "renderer": {
     "version": 1,
     "eagerRerender": false
@@ -9,74 +9,74 @@
     {
       "name": "JWT_SECRET",
       "required": true,
-      "addedIn": "0.0.1"
+      "addedIn": "1.0.0"
     },
     {
       "name": "IP_HASH_SECRET",
       "required": true,
-      "addedIn": "0.0.1"
+      "addedIn": "1.0.0"
     },
     {
       "name": "TURNSTILE_SITE_KEY",
       "required": true,
-      "addedIn": "0.0.1"
+      "addedIn": "1.0.0"
     },
     {
       "name": "TURNSTILE_SECRET",
       "required": true,
-      "addedIn": "0.0.1"
+      "addedIn": "1.0.0"
     },
     {
       "name": "GH_CLIENT_ID",
       "required": false,
-      "addedIn": "0.0.1"
+      "addedIn": "1.0.0"
     },
     {
       "name": "GH_CLIENT_SECRET",
       "required": false,
-      "addedIn": "0.0.1"
+      "addedIn": "1.0.0"
     },
     {
       "name": "GOOGLE_CLIENT_ID",
       "required": false,
-      "addedIn": "0.0.1"
+      "addedIn": "1.0.0"
     },
     {
       "name": "GOOGLE_CLIENT_SECRET",
       "required": false,
-      "addedIn": "0.0.1"
+      "addedIn": "1.0.0"
     },
     {
       "name": "RESEND_API_KEY",
       "required": false,
-      "addedIn": "0.0.1"
+      "addedIn": "1.0.0"
     },
     {
       "name": "WEBHOOK_URL",
       "required": false,
-      "addedIn": "0.0.1"
+      "addedIn": "1.0.0"
     }
   ],
   "kvNamespaces": [
     {
       "binding": "RATE_LIMITS",
       "required": true,
-      "addedIn": "0.0.1"
+      "addedIn": "1.0.0"
     },
     {
       "binding": "OAUTH_STATE",
       "required": true,
-      "addedIn": "0.0.1"
+      "addedIn": "1.0.0"
     },
     {
       "binding": "SESSIONS",
       "required": true,
-      "addedIn": "0.0.1"
+      "addedIn": "1.0.0"
     },
     {
       "binding": "TREE_CACHE",
       "required": true,
-      "addedIn": "0.0.1"
+      "addedIn": "1.0.0"
     }
   ],
   "d1Databases": [
@@ -84,7 +84,7 @@
       "binding": "DB",
       "databaseName": "garrul-db",
       "required": true,
-      "addedIn": "0.0.1"
+      "addedIn": "1.0.0"
     }
   ],
   "analyticsDatasets": [
@@ -92,7 +92,7 @@
       "binding": "ANALYTICS",
       "dataset": "garrul_events",
       "required": false,
-      "addedIn": "0.0.1"
+      "addedIn": "1.0.0"
     }
   ],
   "migrations": [

@@ -10,8 +10,8 @@ import type * as gitModule from "../scripts/upgrade/git";
 import type { Manifest } from "../scripts/upgrade/manifest";
 
 const fakeTargetManifest: Manifest = {
-	version: "0.0.2",
-	minPreviousVersion: "0.0.1",
+	version: "1.2.0",
+	minPreviousVersion: "1.0.0",
 	renderer: { version: 1, eagerRerender: false },
 	secrets: [
 		{ name: "JWT_SECRET", required: true },
@@ -61,8 +61,8 @@ const makeGitMock = (): typeof gitModule => ({
 });
 
 const fetchLatest = vi.fn(async () => ({
-	tag: "v0.0.2",
-	url: "https://github.com/kingpin/garrul/releases/tag/v0.0.2",
+	tag: "v1.2.0",
+	url: "https://github.com/kingpin/garrul/releases/tag/v1.2.0",
 }));
 const fetchTargetManifest = vi.fn(
 	async (): Promise<Manifest> => structuredClone(fakeTargetManifest),
@@ -122,12 +122,12 @@ describe("upgrade dry-run", () => {
 		expect(fetchTargetManifest).toHaveBeenCalledWith(
 			"kingpin",
 			"garrul",
-			"v0.0.2",
+			"v1.2.0",
 		);
 	});
 
 	it("targets the version passed via --version, skipping GitHub", async () => {
-		await main(["--dry-run", "--version", "v0.0.2"], {
+		await main(["--dry-run", "--version", "v1.2.0"], {
 			wrangler: wranglerMock,
 			git: gitMock,
 			fetchLatest,
@@ -138,7 +138,7 @@ describe("upgrade dry-run", () => {
 		expect(fetchTargetManifest).toHaveBeenCalledWith(
 			"kingpin",
 			"garrul",
-			"v0.0.2",
+			"v1.2.0",
 		);
 	});
 
