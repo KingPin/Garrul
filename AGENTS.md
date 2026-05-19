@@ -105,7 +105,7 @@ Every attribute the widget reads from the `#garrul` host element
 | Attribute    | Required | Notes                                                                                       |
 | ------------ | -------- | ------------------------------------------------------------------------------------------- |
 | `data-slug`  | yes      | Stable thread identifier. Missing slug renders an error in the host element.                |
-| `data-api`   | no       | Worker origin override. Defaults to the origin of the script tag (`<script src>`).          |
+| `data-api`   | no       | Worker origin override. Defaults to the origin of the script tag (`<script src>`). Set this explicitly when loading `embed.js` via a bundler or async import (anywhere `document.currentScript` may be null at execution time). |
 | `data-title` | no       | Post title; sent on first comment create, surfaces in admin and notification emails.        |
 | `data-url`   | no       | Canonical permalink; sent on first comment create, used in RSS and notification emails.     |
 
@@ -351,7 +351,7 @@ If the host site sets a CSP, allow the Worker origin in:
 
 The widget itself only renders the current page's thread. For an index
 or archive page that needs counts next to each post link, hit
-`GET {{INSTANCE_URL}}/api/v1/counts?posts=slug-a,slug-b,slug-c` and
+`GET {{INSTANCE_URL}}/api/v1/counts?slugs=slug-a,slug-b,slug-c` and
 replace your link badges client-side. WordPress's native
 `comments_number()` will NOT include Garrul comments.
 
