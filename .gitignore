@@ -66,6 +66,7 @@ PLAN.md
 SOURCE-DESIGN.md
 *.brainstorm.md
 NOTES.md
+docs/superpowers/
 
 # Lockfiles from package managers we don't use
 yarn.lock
