@@ -232,7 +232,23 @@ ${body}
 </body>
 </html>`;
 
-const renderDashboard = (stats: AdminStats): string => `
+const spamSummary = (env: Bindings): string => {
+	const provider = env.SPAM_PROVIDER || "off";
+	const heuristics: string[] = [];
+	if (env.SPAM_HONEYPOT_MIN_MS && env.SPAM_FORM_TS_SECRET) {
+		heuristics.push(`honeypot-timing(${env.SPAM_HONEYPOT_MIN_MS}ms)`);
+	}
+	if (env.SPAM_LINK_THRESHOLD) {
+		heuristics.push(`link-threshold(>${env.SPAM_LINK_THRESHOLD})`);
+	}
+	if (env.SPAM_FIRST_COMMENT_MODERATE === "true") {
+		heuristics.push("first-comment-moderation");
+	}
+	const heuristicsLabel = heuristics.length > 0 ? heuristics.join(", ") : "none";
+	return `provider=<code>${escapeHtml(provider)}</code> · heuristics=<code>${escapeHtml(heuristicsLabel)}</code>`;
+};
+
+const renderDashboard = (stats: AdminStats, env: Bindings): string => `
 <div class="card">
   <h2>Overview</h2>
   <div class="stat-grid">
@@ -242,6 +258,7 @@ const renderDashboard = (stats: AdminStats): string => `
     <div class="stat"><div class="v">${stats.total_users}</div><div class="l">users</div></div>
     <div class="stat"><div class="v">${stats.banned_users}</div><div class="l">banned</div></div>
   </div>
+  <p class="muted">Anti-spam: ${spamSummary(env)}. See <a href="/admin/settings">Settings</a> to change.</p>
 </div>
 <div class="card">
   <h3>Quick actions</h3>
@@ -383,6 +400,13 @@ const renderSettings = (env: Bindings): string => {
 		["GOOGLE_CLIENT_ID", env.GOOGLE_CLIENT_ID ? "(set)" : "(unset)"],
 		["OAUTH_CALLBACK_BASE", env.OAUTH_CALLBACK_BASE ?? "(falls back to request origin)"],
 		["EMAIL_PROVIDER", env.EMAIL_PROVIDER ?? "(unset)"],
+		["SPAM_PROVIDER", env.SPAM_PROVIDER || "(unset)"],
+		["AKISMET_API_KEY", env.AKISMET_API_KEY ? "(set)" : "(unset)"],
+		["AKISMET_SITE_URL", env.AKISMET_SITE_URL ?? "(unset)"],
+		["SPAM_LINK_THRESHOLD", env.SPAM_LINK_THRESHOLD ?? "(unset)"],
+		["SPAM_HONEYPOT_MIN_MS", env.SPAM_HONEYPOT_MIN_MS ?? "(unset)"],
+		["SPAM_FIRST_COMMENT_MODERATE", env.SPAM_FIRST_COMMENT_MODERATE ?? "(unset)"],
+		["SPAM_FORM_TS_SECRET", env.SPAM_FORM_TS_SECRET ? "(set)" : "(unset)"],
 	];
 	const body = rows
 		.map(([k, v]) => `<tr><td><code>${k}</code></td><td>${escapeHtml(v)}</td></tr>`)
@@ -435,7 +459,7 @@ admin.get("/", async (c) => {
 	if (user instanceof Response) return user;
 	const stats = await adminStats(c.env.DB);
 	const updateInfo = await peekCachedLatestVersion(c.env);
-	return c.html(layout("Dashboard", renderDashboard(stats), user, updateInfo));
+	return c.html(layout("Dashboard", renderDashboard(stats, c.env), user, updateInfo));
 });
 
 admin.get("/queue", async (c) => {
