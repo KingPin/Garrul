@@ -71,7 +71,7 @@ end-to-end before improvising. Operator-side shape:
 7. `npm run deploy` — uploads the Worker and provisions the custom
    domain.
 8. Smoke-test: `curl -fsSL https://comments.yourdomain.com/api/v1/health`
-   → `{"ok":true,...}`.
+   → `{"status":"ok","service":"garrul","time":"..."}`.
 
 The most common deploy failures are "forgot to set a secret" (step 4)
 and "migrated locally but not remotely" (step 6).
@@ -292,7 +292,7 @@ own archive (e.g. nightly cron on their workstation). For programmatic
 exports beyond `.sql`, use `wrangler d1 export <db>`.
 
 **KV considerations.** Don't bother backing up KV: `RATE_LIMITS` is
-ephemeral; `OAUTH_STATE` has sub-minute TTL; `SESSIONS` loss just
+ephemeral; `OAUTH_STATE` has a 10-minute TTL; `SESSIONS` loss just
 forces re-sign-in; `TREE_CACHE` rebuilds on next read.
 
 ## 12. Upgrades
