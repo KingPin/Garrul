@@ -28,6 +28,11 @@ EMAIL_FROM = "Garrul <comments@example.com>"
 # Public base URL of this worker, used for /c/:id permalinks inside digest emails
 # and for unsubscribe links. Same value as OAUTH_CALLBACK_BASE in most setups.
 PUBLIC_BASE_URL = "https://comments.example.com"
+# Optional. The public URL of this instance (e.g. "https://comments.example.com").
+# Only set this if the Worker sits behind a proxy or custom domain where the
+# inbound `Host` header doesn't match your canonical address. Used by the
+# /AGENTS.md route to produce ready-to-paste embed snippets for AI assistants.
+# CANONICAL_URL = "https://comments.example.com"
 # OAuth callback base — must match the redirect URI you registered with
 # each provider (e.g. https://comments.example.com/api/v1/auth/github/callback).
 # Leave unset in dev; the worker falls back to the request origin.

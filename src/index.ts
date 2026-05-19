@@ -40,6 +40,7 @@ export type Bindings = {
 	RESEND_API_KEY: string;
 	EMAIL_FROM: string;
 	PUBLIC_BASE_URL: string;
+	CANONICAL_URL?: string;
 	WEBHOOK_URL: string;
 };
 
