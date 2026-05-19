@@ -45,6 +45,14 @@ import { verifyTurnstile } from "../lib/turnstile";
 import { writeEvent } from "../lib/analytics";
 import { fireWebhook } from "../lib/webhook";
 import {
+	countLinks,
+	isFirstComment,
+	signFormTimestamp,
+	verifyFormTimestamp,
+} from "../lib/spam/heuristics";
+import { checkSpam } from "../lib/spam";
+import type { CommentStatus } from "../db/queries";
+import {
 	buildTree,
 	type ReactionCount,
 	type TreeAuthor,
@@ -88,6 +96,7 @@ type CreateBody = {
 	turnstile_token?: string;
 	post_title?: string | null;
 	post_url?: string | null;
+	form_ts?: string;
 	[HONEYPOT_FIELD]?: string;
 };
 
@@ -123,6 +132,80 @@ const serializeComment = (c: Comment, author: User) => {
 			avatar_url: author.avatar_url,
 		},
 	};
+};
+
+/**
+ * Mint a signed HMAC timestamp so the widget can prove how long the form was
+ * displayed before submission. Verified server-side when
+ * `SPAM_HONEYPOT_MIN_MS` is configured; otherwise the token is ignored.
+ *
+ * 404s when no secret is configured — the widget always asks for a token but
+ * tolerates a missing one (the existing field-honeypot still applies).
+ */
+comments.get("/form-token", async (c) => {
+	const secret = c.env.SPAM_FORM_TS_SECRET;
+	if (!secret) return c.json({ error: "not_found" }, 404);
+	const token = await signFormTimestamp(Date.now(), secret);
+	return c.json({ token });
+});
+
+/**
+ * Run the configured anti-spam signals against a candidate comment and
+ * decide whether it goes in as `approved` or `pending`. Each signal is
+ * gated by its own env var. Admins skip the check entirely. Heuristics
+ * run first and short-circuit the (potentially paid) classifier call.
+ */
+const evaluateSpam = async (
+	env: Bindings,
+	author: User,
+	bodyMd: string,
+	postUrl: string | null,
+	userAgent: string | null,
+	formTs: string | undefined,
+): Promise<{ status: CommentStatus; reasons: string[] }> => {
+	if (author.is_admin) return { status: "approved", reasons: [] };
+	const reasons: string[] = [];
+
+	const minMs = Number.parseInt(env.SPAM_HONEYPOT_MIN_MS ?? "", 10);
+	if (Number.isFinite(minMs) && minMs > 0 && env.SPAM_FORM_TS_SECRET) {
+		const v = await verifyFormTimestamp(
+			formTs,
+			env.SPAM_FORM_TS_SECRET,
+			Date.now(),
+			minMs,
+		);
+		if (v.flag) reasons.push(v.reason ?? "form_ts");
+	}
+
+	const linkThreshold = Number.parseInt(env.SPAM_LINK_THRESHOLD ?? "", 10);
+	if (Number.isFinite(linkThreshold) && linkThreshold >= 0) {
+		const n = countLinks(bodyMd);
+		if (n > linkThreshold) reasons.push(`link_count:${n}`);
+	}
+
+	let isFirst = false;
+	if (env.SPAM_FIRST_COMMENT_MODERATE === "true") {
+		isFirst = await isFirstComment(env.DB, author.id);
+		if (isFirst) reasons.push("first_comment");
+	}
+
+	// Skip the classifier call when a heuristic already flagged — the
+	// outcome is already `pending` and the call may cost money/latency.
+	if (reasons.length === 0 && env.SPAM_PROVIDER) {
+		const verdict = await checkSpam(env, {
+			body_md: bodyMd,
+			author_name: author.name,
+			author_email: author.email,
+			user_agent: userAgent,
+			post_url: postUrl,
+			is_first_comment: isFirst,
+		});
+		if (verdict?.spam) reasons.push(verdict.reason ?? "classifier");
+	}
+
+	return reasons.length > 0
+		? { status: "pending", reasons }
+		: { status: "approved", reasons: [] };
 };
 
 comments.post("/", async (c) => {
@@ -219,6 +302,27 @@ comments.post("/", async (c) => {
 		parent_id = parent.id;
 	}
 
+	const userAgent = c.req.header("user-agent") ?? null;
+	const verdict = await evaluateSpam(
+		c.env,
+		author,
+		bodyCheck.body,
+		postUrl,
+		userAgent,
+		body.form_ts,
+	);
+	if (verdict.reasons.length > 0) {
+		console.log(
+			JSON.stringify({
+				level: "info",
+				msg: "spam.flagged",
+				reasons: verdict.reasons,
+				post_slug: slug,
+				provider: author.provider,
+			}),
+		);
+	}
+
 	const body_html = renderMarkdown(bodyCheck.body);
 	const inserted = await insertComment(c.env.DB, {
 		post_slug: slug,
@@ -227,17 +331,20 @@ comments.post("/", async (c) => {
 		body_md: bodyCheck.body,
 		body_html,
 		renderer_version: CURRENT_RENDERER_VERSION,
+		status: verdict.status,
 		ip_hash: ipHash,
-		user_agent: c.req.header("user-agent") ?? null,
+		user_agent: userAgent,
 	});
 
 	// Bust the cached first page. Older pages bypass cache, so there's
-	// nothing else to invalidate.
+	// nothing else to invalidate. Pending comments don't appear in the
+	// public tree but the cache key is the same; busting is still correct.
 	await c.env.TREE_CACHE.delete(`tree:${slug}:first`);
 
 	writeEvent(c.env.ANALYTICS, "comment.posted", {
 		post_slug: slug,
 		provider: author.provider,
+		outcome: verdict.status,
 	});
 	fireWebhook(c.env, c.executionCtx, {
 		event: "comment.posted",
@@ -247,18 +354,18 @@ comments.post("/", async (c) => {
 		ts: inserted.created_at,
 	});
 
-	// Enqueue notifications for every active subscriber, except the
-	// author themselves (signed-in case — match on email; anonymous
-	// authors have no email so they're never accidentally notified).
-	const fanout = (async () => {
-		const subs = await listActiveSubscriptionsForPost(c.env.DB, slug);
-		const authorEmail = author.email?.toLowerCase() ?? null;
-		for (const sub of subs) {
-			if (authorEmail && sub.email === authorEmail) continue;
-			await enqueueNotification(c.env.DB, sub.id, inserted.id);
-		}
-	})();
-	if (c.executionCtx) c.executionCtx.waitUntil(fanout);
+	// Pending comments don't notify subscribers — admins approve first.
+	if (verdict.status === "approved") {
+		const fanout = (async () => {
+			const subs = await listActiveSubscriptionsForPost(c.env.DB, slug);
+			const authorEmail = author.email?.toLowerCase() ?? null;
+			for (const sub of subs) {
+				if (authorEmail && sub.email === authorEmail) continue;
+				await enqueueNotification(c.env.DB, sub.id, inserted.id);
+			}
+		})();
+		if (c.executionCtx) c.executionCtx.waitUntil(fanout);
+	}
 
 	return c.json({ comment: serializeComment(inserted, author) }, 201);
 });
