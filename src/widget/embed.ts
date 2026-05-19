@@ -927,6 +927,25 @@ const loadOnce = async (
 		s.src = "https://challenges.cloudflare.com/turnstile/v0/api.js";
 		s.async = true;
 		s.defer = true;
+		// The host page's CSP can block this load (the script lives on the
+		// host's document, not in the widget's Shadow DOM). Without this
+		// handler the user just sees a form with no captcha, types a comment,
+		// and gets a confusing "Spam check failed" on submit.
+		s.onerror = () => {
+			const tsBox = form.querySelector(".cf-turnstile") as HTMLElement | null;
+			if (!tsBox) return; // signed-in path doesn't render Turnstile
+			tsBox.hidden = true;
+			const submitBtn = form.querySelector(
+				"button[type=submit]",
+			) as HTMLButtonElement | null;
+			if (submitBtn) submitBtn.disabled = true;
+			const errEl = form.querySelector(".gr-error") as HTMLElement | null;
+			if (errEl) {
+				errEl.textContent =
+					"Anti-spam check couldn't load — the host page's CSP may be blocking https://challenges.cloudflare.com. Site owner: see Garrul's troubleshooting docs.";
+				errEl.hidden = false;
+			}
+		};
 		document.head.appendChild(s);
 	}
 
