@@ -5,6 +5,7 @@ import { config } from "./routes/api.config";
 import { reactions } from "./routes/api.reactions";
 import { auth } from "./routes/auth";
 import { embed } from "./routes/embed";
+import { agents } from "./routes/agents";
 import { iframe } from "./routes/embed-iframe";
 import { admin } from "./routes/admin";
 import { feed } from "./routes/feed";
@@ -60,6 +61,7 @@ app.route("/api/v1/auth", auth);
 app.route("/feed", feed);
 app.route("/c", permalink);
 app.route("/", embed);
+app.route("/", agents);
 app.route("/embed", iframe);
 app.route("/admin", admin);
 
