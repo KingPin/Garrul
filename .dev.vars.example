@@ -21,3 +21,9 @@ RESEND_API_KEY=""
 
 # Optional fire-and-forget webhook on new comment.
 WEBHOOK_URL=""
+
+# Optional: GitHub token for the "update available" check on /admin/*.
+# Unauthenticated GitHub API allows 60 req/hr per IP; Cloudflare egress IPs
+# are shared across colos so a token raises the cap. Read-only `public_repo`
+# scope is sufficient. Set via `wrangler secret put GITHUB_TOKEN` in prod.
+GITHUB_TOKEN=""

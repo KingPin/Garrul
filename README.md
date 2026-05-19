@@ -23,6 +23,9 @@ Deploying to production takes ~20 minutes the first time. Step-by-step
 guide — prerequisites, OAuth setup, Turnstile, custom domain, remote
 migrations, deploy, smoke test — lives in [`INSTALL.md`](INSTALL.md).
 
+Upgrading from a previous release: `npm run upgrade` — see
+[`INSTALL.md#updating`](INSTALL.md#updating).
+
 For a quick local poke-around once you've installed deps:
 
 ```bash

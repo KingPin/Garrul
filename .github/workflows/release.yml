@@ -35,11 +35,18 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
       - run: npm test
+      # Gate: refuse to cut a tagged release if release-manifest.json
+      # doesn't match the source tree — operators rely on it for upgrades.
+      - run: npm run manifest:check
       - run: npm run build
       - run: npm run size
       - uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true
+          # release-manifest.json is the upgrade contract for self-hosters.
+          # The orchestrator primarily fetches it from raw.githubusercontent
+          # (no auth), but attaching it to the release gives a fallback URL.
           files: |
             dist/embed.js
             dist/embed.js.map
+            release-manifest.json
