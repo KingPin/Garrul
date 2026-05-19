@@ -114,12 +114,32 @@ put_secret() {
 	esac
 }
 
+# Auto-generate a 32-byte base64 random secret and stream it to wrangler.
+# Falls back to interactive entry if openssl is unavailable.
+put_random_secret() {
+	local name="$1"
+	local hint="$2"
+	if ! command -v openssl >/dev/null 2>&1; then
+		put_secret "$name" "$hint"
+		return
+	fi
+	echo
+	read -r -p "Auto-generate $name? ($hint) [Y/n] " resp
+	case "$resp" in
+		n|N|no|NO) echo "  skipped — set later with: wrangler secret put $name" ;;
+		*)
+			openssl rand -base64 32 | wrangler secret put "$name"
+			echo "  ✓ generated and stored (never written to disk)"
+			;;
+	esac
+}
+
 echo
 echo "=== Production secrets ==="
 echo "These prompt one at a time. Skip any you don't have yet."
 
-put_secret JWT_SECRET            "random 32+ char string (reserved for future JWT use; sessions are KV-backed)"
-put_secret IP_HASH_SECRET        "random 32+ char pepper for HMAC-SHA-256 IP hashing"
+put_random_secret JWT_SECRET     "auto-generated 32-byte secret; reserved for future JWT use (sessions are KV-backed)"
+put_random_secret IP_HASH_SECRET "auto-generated 32-byte HMAC pepper for IP hashing — generate once and keep it"
 put_secret TURNSTILE_SITE_KEY    "from dash.cloudflare.com → Turnstile"
 put_secret TURNSTILE_SECRET      "from dash.cloudflare.com → Turnstile"
 put_secret GH_CLIENT_ID          "from github.com/settings/developers"
