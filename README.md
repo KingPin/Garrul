@@ -60,6 +60,15 @@ Drop the widget into any page:
 <script src="https://comments.example.com/embed.js" defer></script>
 ```
 
+If your host page sets a Content-Security-Policy and you've enabled
+Turnstile, the host CSP must also allow `https://challenges.cloudflare.com`
+on `script-src`, `connect-src`, and `frame-src` — the bot-check script
+loads into the host document, not the widget's Shadow DOM. See the
+troubleshooting entry "Posting a comment fails with 'Spam check failed'"
+in [docs/troubleshooting.md](docs/troubleshooting.md) for the full
+directives, or use the iframe variant below to keep your host CSP
+untouched.
+
 ### Iframe (CSP-strict hosts)
 
 ```html

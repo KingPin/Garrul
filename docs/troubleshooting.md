@@ -51,6 +51,37 @@ Two options:
 2. Use the iframe variant (`/embed/:slug`) instead — it has its own
    CSP and won't touch yours.
 
+### Posting a comment fails with "Spam check failed. Refresh and try again."
+
+The Turnstile (anti-spam) widget never loaded, so the form submitted
+without a token and the API rejected it. The browser console usually
+shows a CSP violation referencing
+`https://challenges.cloudflare.com/turnstile/v0/api.js`.
+
+The script-tag embed loads Turnstile into the **host page's** document,
+so the host page's CSP must allow it. Add `https://challenges.cloudflare.com`
+to all three directives:
+
+```
+script-src  ... https://challenges.cloudflare.com;
+connect-src ... https://challenges.cloudflare.com;
+frame-src   ... https://challenges.cloudflare.com;
+```
+
+`script-src` lets the loader execute, `connect-src` lets the client
+talk back to Cloudflare during the challenge, and `frame-src` lets it
+render the challenge iframe.
+
+If you can't relax the host CSP, switch to the iframe variant
+(`/embed/:slug`) — it sets its own CSP that already permits Turnstile,
+so the host CSP doesn't need to change. See the "Iframe (CSP-strict
+hosts)" section in the README.
+
+If you intentionally disabled Turnstile by leaving `TURNSTILE_SITE_KEY`
+unset, this error shouldn't appear — verify `/api/v1/config` returns
+no `turnstile_site_key` and that the widget is loading the current
+`embed.js` (Cloudflare caches it for ~24h at the edge).
+
 ## OAuth
 
 ### "Sign in" popup opens then closes with no effect
