@@ -201,6 +201,34 @@ describe("corsAndCsrf — Origin allowlist on /api/*", () => {
 			expect(r.kind).toBe("blocked");
 		});
 
+		it("carve-out match rejects sub-paths — /api/v1/health/sub does NOT bypass", async () => {
+			const r = await runMiddleware(mw, {
+				method: "GET",
+				path: "/api/v1/health/sub",
+			});
+			expect(r.kind).toBe("blocked");
+			if (r.kind !== "blocked") return;
+			expect(r.status).toBe(403);
+		});
+
+		it("carve-out match rejects sub-paths — /api/v1/auth/github/start/admin does NOT bypass", async () => {
+			const r = await runMiddleware(mw, {
+				method: "GET",
+				path: "/api/v1/auth/github/start/admin",
+			});
+			expect(r.kind).toBe("blocked");
+			if (r.kind !== "blocked") return;
+			expect(r.status).toBe(403);
+		});
+
+		it("carve-out tolerates trailing slash — GET /api/v1/health/ still bypasses", async () => {
+			const r = await runMiddleware(mw, {
+				method: "GET",
+				path: "/api/v1/health/",
+			});
+			expect(r.kind).toBe("passed");
+		});
+
 		it("carve-out is GET-only — POST /api/v1/health with no Origin → 403", async () => {
 			const r = await runMiddleware(mw, {
 				method: "POST",

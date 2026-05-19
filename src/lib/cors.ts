@@ -18,10 +18,15 @@
  */
 import type { MiddlewareHandler } from "hono";
 
+// Anchored at both ends — an optional trailing slash is allowed for
+// path-normalization tolerance, but sub-paths like
+// `/api/v1/auth/github/start/admin` must NOT silently bypass the
+// Origin gate (defense-in-depth against future routes accidentally
+// inheriting carve-out behavior).
 const CARVE_OUT_PATHS: readonly RegExp[] = [
-	/^\/api\/v1\/health(\/|$)/,
-	/^\/api\/v1\/auth\/[^/]+\/start(\/|$)/,
-	/^\/api\/v1\/auth\/[^/]+\/callback(\/|$)/,
+	/^\/api\/v1\/health\/?$/,
+	/^\/api\/v1\/auth\/[^/]+\/start\/?$/,
+	/^\/api\/v1\/auth\/[^/]+\/callback\/?$/,
 ];
 
 const parseAllowed = (raw: string | undefined): Set<string> => {
