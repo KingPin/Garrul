@@ -108,6 +108,7 @@ const STYLE_CSS = `
 }
 .gr-form button[disabled] { opacity: 0.6; cursor: progress; }
 .gr-error { color: var(--garrul-error, #b91c1c); font-size: 0.9em; }
+.gr-error.is-notice { color: var(--garrul-notice, #1e6091); }
 .gr-list { display: flex; flex-direction: column; gap: 1rem; }
 .gr-thread { display: flex; flex-direction: column; gap: 0.75rem; }
 .gr-replies { display: flex; flex-direction: column; gap: 0.75rem; margin-top: 0.5rem; padding-left: 1.25rem; border-left: 2px solid var(--garrul-border, #d0d3d8); }
@@ -287,6 +288,30 @@ type WidgetCtx = {
 	me: Me;
 	editWindowMs: number;
 	reload: () => void;
+};
+
+/**
+ * Fetch the signed form-render timestamp from the server (once per page
+ * load). When anti-spam timing is disabled the route 404s and we return
+ * an empty string — the server then ignores the absent `form_ts`. The
+ * promise is cached so reply forms and the top-level form share one fetch.
+ */
+let formTokenPromise: Promise<string> | null = null;
+const getFormToken = (apiBase: string): Promise<string> => {
+	if (formTokenPromise) return formTokenPromise;
+	formTokenPromise = (async () => {
+		try {
+			const res = await fetch(`${apiBase}/api/v1/comments/form-token`, {
+				credentials: "include",
+			});
+			if (!res.ok) return "";
+			const json = (await res.json()) as { token?: string };
+			return json.token ?? "";
+		} catch {
+			return "";
+		}
+	})();
+	return formTokenPromise;
 };
 
 const REACTION_KINDS: { kind: string; emoji: string }[] = [
@@ -474,6 +499,7 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 				'input[name="cf-turnstile-response"]',
 			) as HTMLInputElement | null)?.value ?? "";
 		try {
+			const formTs = await getFormToken(ctx.apiBase);
 			const res = await fetch(`${ctx.apiBase}/api/v1/comments`, {
 				method: "POST",
 				credentials: "include",
@@ -485,14 +511,26 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 					parent_id: parent.id,
 					turnstile_token: turnstileToken,
 					website: "",
+					form_ts: formTs,
 					post_title: ctx.host.dataset.title ?? null,
 					post_url: ctx.host.dataset.url ?? null,
 				}),
 			});
-			const json = (await res.json()) as { error?: string };
+			const json = (await res.json()) as {
+				error?: string;
+				comment?: { status?: string };
+			};
 			if (!res.ok) {
 				errBox.textContent = json.error ?? `HTTP ${res.status}`;
 				errBox.hidden = false;
+				submit.disabled = false;
+				return;
+			}
+			if (json.comment?.status === "pending") {
+				errBox.textContent = "Comment submitted — awaiting moderation.";
+				errBox.classList.add("is-notice");
+				errBox.hidden = false;
+				ta.value = "";
 				submit.disabled = false;
 				return;
 			}
@@ -981,6 +1019,7 @@ const submit = async (
 	const turnstileToken = tokenInput?.value ?? "";
 
 	try {
+		const formTs = await getFormToken(apiBase);
 		const res = await fetch(`${apiBase}/api/v1/comments`, {
 			method: "POST",
 			credentials: "include",
@@ -991,16 +1030,34 @@ const submit = async (
 				body,
 				turnstile_token: turnstileToken,
 				website: honeypot,
+				form_ts: formTs,
 				post_title: host.dataset.title ?? null,
 				post_url: host.dataset.url ?? null,
 			}),
 		});
-		const json = (await res.json()) as { error?: string };
+		const json = (await res.json()) as {
+			error?: string;
+			comment?: { status?: string };
+		};
 		if (!res.ok) {
 			if (errEl) {
 				errEl.textContent = json.error ?? `HTTP ${res.status}`;
 				errEl.hidden = false;
 			}
+			if (submitBtn) submitBtn.disabled = false;
+			return;
+		}
+
+		if (json.comment?.status === "pending") {
+			if (errEl) {
+				errEl.textContent = "Comment submitted — awaiting moderation.";
+				errEl.classList.add("is-notice");
+				errEl.hidden = false;
+			}
+			const bodyInput = form.querySelector(
+				".gr-body-input",
+			) as HTMLTextAreaElement | null;
+			if (bodyInput) bodyInput.value = "";
 			if (submitBtn) submitBtn.disabled = false;
 			return;
 		}
