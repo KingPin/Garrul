@@ -79,6 +79,19 @@ The iframe page posts content height to the parent via
 - [Plain HTML](examples/plain-html/index.html) — minimal copy-paste page
 - [Iframe](examples/iframe/index.html) — auto-resize listener for CSP-strict hosts
 
+### Using an AI assistant?
+
+Garrul ships an AI-targeted integration guide at `AGENTS.md` in this
+repo. Once your instance is deployed it's also served at
+`https://<your-garrul-host>/AGENTS.md` with embed snippets pre-filled
+for your instance. Point your AI at either URL (use `?format=txt` if
+your AI prefers plain text), and it'll have everything it needs to
+embed Garrul on your site without re-deriving the data attributes,
+slug conventions, or theming variables from source.
+
+Self-hosters: `AGENTS-OPERATE.md` is the operator-side counterpart
+(install, secrets, `ALLOWED_ORIGINS`, migrations).
+
 ## Theming
 
 The widget mounts in Shadow DOM, so host-page CSS doesn't leak in. To

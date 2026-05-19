@@ -33,6 +33,8 @@ docs/                   # THEMING.md, privacy-policy.template.md, tos.template.m
 .github/workflows/      # ci.yml, release.yml
 ```
 
+- `AGENTS.md`, `AGENTS-OPERATE.md` — AI assistant integration / operations guides. `AGENTS.md` is also served by the Worker at `/AGENTS.md` with light host templating.
+
 ## Conventions
 
 ### API versioning

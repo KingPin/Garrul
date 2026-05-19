@@ -7,6 +7,10 @@ Workers. If you just want to poke at it locally, see the
 Estimated time: **20–30 minutes** the first time, most of it
 spent waiting for DNS and clicking through OAuth consent screens.
 
+> **Using an AI assistant for install?** `AGENTS-OPERATE.md` at the
+> repo root is purpose-built for AI coding assistants helping you
+> stand up a Garrul Worker — point your AI at it.
+
 ## Prerequisites
 
 - A **Cloudflare account** (free plan is fine for small operators).
