@@ -291,14 +291,22 @@ type WidgetCtx = {
 };
 
 /**
- * Fetch the signed form-render timestamp from the server (once per page
- * load). When anti-spam timing is disabled the route 404s and we return
- * an empty string — the server then ignores the absent `form_ts`. The
- * promise is cached so reply forms and the top-level form share one fetch.
+ * Fetch the signed form-render timestamp from the server. The token
+ * carries the wall-clock at mint time, so the honeypot-timing heuristic
+ * only works if we mint *when the form first appears*, not when the
+ * user clicks submit (otherwise `elapsed` is just network latency).
+ *
+ * Call `prefetchFormToken(apiBase)` at form-render to start the fetch,
+ * then `getFormToken(apiBase)` inside the submit handler to await the
+ * already-in-flight (or resolved) promise. The promise is cached at
+ * module scope so reply forms and the top-level form share one fetch.
+ *
+ * When anti-spam timing is disabled the route 404s and we resolve to
+ * an empty string — the server then ignores the absent `form_ts`.
  */
 let formTokenPromise: Promise<string> | null = null;
-const getFormToken = (apiBase: string): Promise<string> => {
-	if (formTokenPromise) return formTokenPromise;
+const prefetchFormToken = (apiBase: string): void => {
+	if (formTokenPromise) return;
 	formTokenPromise = (async () => {
 		try {
 			const res = await fetch(`${apiBase}/api/v1/comments/form-token`, {
@@ -311,7 +319,10 @@ const getFormToken = (apiBase: string): Promise<string> => {
 			return "";
 		}
 	})();
-	return formTokenPromise;
+};
+const getFormToken = (apiBase: string): Promise<string> => {
+	prefetchFormToken(apiBase);
+	return formTokenPromise as Promise<string>;
 };
 
 const REACTION_KINDS: { kind: string; emoji: string }[] = [
@@ -461,6 +472,9 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 };
 
 const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
+	// Mint the timing token now so the honeypot-timing heuristic has
+	// real elapsed seconds to measure when the user eventually submits.
+	prefetchFormToken(ctx.apiBase);
 	const wrap = el("form", "gr-reply-form");
 	const ta = el("textarea");
 	ta.placeholder = `Reply to @${parent.author.name}…`;
@@ -914,6 +928,9 @@ const loadOnce = async (
 		reload,
 	};
 	const authBlock = buildAuthBlock(me, apiBase, reload, reload);
+	// Mint the timing token now so the honeypot-timing heuristic has
+	// real elapsed seconds to measure when the user eventually submits.
+	prefetchFormToken(apiBase);
 	const form = buildForm(siteKey, me != null);
 	const list = el("div", "gr-list");
 	if (data.threads.length === 0) {
