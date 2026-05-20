@@ -799,6 +799,15 @@ export const getSubscriptionByConfirmToken = async (
 		.first<Subscription>();
 };
 
+// We deliberately do NOT clear `confirm_token` here. Mail clients
+// (Gmail, Outlook, corporate link-scanners) routinely prefetch every
+// URL in an inbound email — if the first GET nulled the token, the
+// human's later click would land on a 404 "link expired" page even
+// though the address was already confirmed by the bot's prefetch.
+// Leaving the token alive makes the GET handler idempotent: the
+// re-click finds the row, sees confirmed_at is set, and renders the
+// success page again. The token never grants more than the same
+// (already-exercised) confirm capability, so leaving it valid is safe.
 export const confirmSubscription = async (
 	db: D1Database,
 	id: string,
@@ -807,8 +816,8 @@ export const confirmSubscription = async (
 	await db
 		.prepare(
 			`UPDATE subscriptions
-			    SET confirmed_at = ?, confirm_token = NULL
-			  WHERE id = ?`,
+			    SET confirmed_at = ?
+			  WHERE id = ? AND confirmed_at IS NULL`,
 		)
 		.bind(now, id)
 		.run();
