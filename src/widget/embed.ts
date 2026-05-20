@@ -508,6 +508,7 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 		submit.disabled = true;
 		errBox.hidden = true;
 		errBox.textContent = "";
+		errBox.classList.remove("is-notice");
 		const turnstileToken =
 			(wrap.querySelector(
 				'input[name="cf-turnstile-response"]',
@@ -1021,6 +1022,7 @@ const submit = async (
 	if (errEl) {
 		errEl.hidden = true;
 		errEl.textContent = "";
+		errEl.classList.remove("is-notice");
 	}
 	const submitBtn = form.querySelector("button[type=submit]") as HTMLButtonElement | null;
 	if (submitBtn) submitBtn.disabled = true;
