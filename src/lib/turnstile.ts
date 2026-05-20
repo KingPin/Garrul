@@ -11,8 +11,14 @@
  * The hostname check matters because a Turnstile sitekey is not bound
  * to a single domain — Cloudflare lets operators list multiple. Without
  * the check, a token solved on any site sharing the operator's sitekey
- * would be accepted here. We compare `data.hostname` against the host
- * of the incoming request URL.
+ * would be accepted here.
+ *
+ * `data.hostname` reflects the page that SOLVED the challenge — for the
+ * Garrul widget that's the host page embedding the comment widget, not
+ * this Worker. Callers must therefore derive expectedHostname from the
+ * request Origin (after validating Origin against ALLOWED_ORIGINS) — not
+ * from the request URL. See routes/api.comments.ts for the canonical
+ * call site.
  *
  * In dev, Cloudflare provides "always passes" test keys — see
  * .dev.vars.example for the values. The test keys return their own
