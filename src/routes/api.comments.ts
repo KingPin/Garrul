@@ -136,15 +136,20 @@ const serializeComment = (c: Comment, author: User) => {
 
 /**
  * Mint a signed HMAC timestamp so the widget can prove how long the form was
- * displayed before submission. Verified server-side when
- * `SPAM_HONEYPOT_MIN_MS` is configured; otherwise the token is ignored.
+ * displayed before submission. Verified server-side when both
+ * `SPAM_HONEYPOT_MIN_MS` and `SPAM_FORM_TS_SECRET` are configured.
  *
- * 404s when no secret is configured — the widget always asks for a token but
- * tolerates a missing one (the existing field-honeypot still applies).
+ * 404s when either is missing — the widget always asks for a token but
+ * tolerates a missing one (the existing field-honeypot still applies),
+ * and we don't want to expose an endpoint that signs tokens nothing
+ * will ever check.
  */
 comments.get("/form-token", async (c) => {
 	const secret = c.env.SPAM_FORM_TS_SECRET;
-	if (!secret) return c.json({ error: "not_found" }, 404);
+	const minMs = Number.parseInt(c.env.SPAM_HONEYPOT_MIN_MS ?? "", 10);
+	if (!secret || !Number.isFinite(minMs) || minMs <= 0) {
+		return c.json({ error: "not_found" }, 404);
+	}
 	const token = await signFormTimestamp(Date.now(), secret);
 	return c.json({ token });
 });
