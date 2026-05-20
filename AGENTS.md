@@ -331,6 +331,13 @@ is on by default. From the end-user perspective:
    `/api/v1/comments`. The Worker verifies the Turnstile token, then
    creates a "ghost" user record keyed by the submitted name + hashed
    IP, and stores the comment under that ghost author.
+4. If the operator has enabled any **optional anti-spam layers**
+   (timing honeypot, link-count threshold, first-comment moderation,
+   Akismet, or Cloudflare Workers AI), a flagged comment is created
+   with `status='pending'` instead of `approved`. The widget surfaces
+   an "awaiting moderation" notice and the comment is hidden from the
+   public tree until an admin approves it from `/admin/queue`. None of
+   these layers are on by default; see `docs/ANTISPAM.md`.
 
 Anonymous authors have **no email**, so they're never accidentally
 notified on reply threads. They also have no provider avatar; instead

@@ -191,6 +191,27 @@ testing keys (`1x00000000...AA` for both). Without both values set the
 anonymous form blocks on posting. There is no "anonymous off" toggle
 in v1.
 
+### Optional extra anti-spam layers
+
+Three lightweight heuristics and a pluggable content classifier are
+available on top of Turnstile. **All off by default.** Flagged comments
+flip to `status='pending'` and land in the admin queue rather than
+being silently dropped.
+
+- `SPAM_HONEYPOT_MIN_MS` + `SPAM_FORM_TS_SECRET` — flag submissions
+  that arrive faster than wall-clock `N` ms after the form rendered.
+- `SPAM_LINK_THRESHOLD` — flag comments containing more than `N`
+  http(s)/mailto links.
+- `SPAM_FIRST_COMMENT_MODERATE=true` — every commenter's first-ever
+  comment goes to pending until you approve once.
+- `SPAM_PROVIDER` — set to `akismet` or `workers-ai` to enable a
+  content classifier (each has its own required secrets/bindings).
+
+See [`docs/ANTISPAM.md`](./docs/ANTISPAM.md) for the full layer
+breakdown, privacy tradeoffs (Akismet sends comment content off
+Cloudflare; Workers AI keeps it on-network), and recommended starter
+configs.
+
 ## 8. OAuth providers
 
 Two providers in v1: GitHub and Google. Generic OIDC is v2 backlog. The

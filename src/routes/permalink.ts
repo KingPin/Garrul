@@ -26,7 +26,11 @@ permalink.get("/:id", async (c) => {
 
 	const comment = await getComment(c.env.DB, id);
 	if (!comment) return c.text("not found", 404);
-	if (comment.status === "deleted" || comment.status === "spam") {
+	if (
+		comment.status === "deleted" ||
+		comment.status === "spam" ||
+		comment.status === "pending"
+	) {
 		return c.text("not found", 404);
 	}
 

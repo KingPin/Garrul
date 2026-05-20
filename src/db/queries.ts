@@ -346,13 +346,11 @@ export const getUsersByIds = async (
 };
 
 /**
- * Fetch all visible (non-spam, non-deleted-without-replies) comments for a
- * post. Caller assembles the tree; this just returns a flat ordered list.
- *
- * `deleted` comments ARE returned — the route layer replaces body_html with a
- * `[deleted]` placeholder iff the comment has surviving children, otherwise
- * filters it out entirely. Doing the visibility logic here would require an
- * extra query for child-existence per node.
+ * Fetch publicly visible comments for a post. Excludes `spam` and
+ * `pending` — both are stored in D1 and visible in the admin queue,
+ * but never leak via the public tree. Returned `deleted` comments are
+ * kept so the tree builder can preserve chain ancestry; their body_html
+ * is blanked at render time.
  */
 export const listCommentsForPost = async (
 	db: D1Database,
@@ -364,7 +362,7 @@ export const listCommentsForPost = async (
 			        renderer_version, status, edited_at, deleted_at,
 			        ip_hash, user_agent, created_at
 			 FROM comments
-			 WHERE post_slug = ? AND status != 'spam'
+			 WHERE post_slug = ? AND status NOT IN ('spam', 'pending')
 			 ORDER BY created_at ASC, id ASC`,
 		)
 		.bind(post_slug)

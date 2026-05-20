@@ -108,6 +108,7 @@ const STYLE_CSS = `
 }
 .gr-form button[disabled] { opacity: 0.6; cursor: progress; }
 .gr-error { color: var(--garrul-error, #b91c1c); font-size: 0.9em; }
+.gr-error.is-notice { color: var(--garrul-notice, #1e6091); }
 .gr-list { display: flex; flex-direction: column; gap: 1rem; }
 .gr-thread { display: flex; flex-direction: column; gap: 0.75rem; }
 .gr-replies { display: flex; flex-direction: column; gap: 0.75rem; margin-top: 0.5rem; padding-left: 1.25rem; border-left: 2px solid var(--garrul-border, #d0d3d8); }
@@ -289,6 +290,46 @@ type WidgetCtx = {
 	reload: () => void;
 };
 
+/**
+ * Fetch the signed form-render timestamp from the server. The token
+ * carries the wall-clock at mint time, so the honeypot-timing heuristic
+ * only works if we mint *when the form first appears*, not when the
+ * user clicks submit (otherwise `elapsed` is just network latency).
+ *
+ * Call `prefetchFormToken(apiBase)` at form-render to start the fetch,
+ * then `getFormToken(apiBase)` inside the submit handler to await the
+ * already-in-flight (or resolved) promise. The promise is cached at
+ * module scope so reply forms and the top-level form share one fetch.
+ *
+ * Assumes one widget mount per document — the bundle hard-codes
+ * `getElementById("garrul")`, so a second mount with a different
+ * `apiBase` would silently reuse the first's token. If that mounting
+ * model changes, scope this cache to the widget context instead.
+ *
+ * When anti-spam timing is disabled the route 404s and we resolve to
+ * an empty string — the server then ignores the absent `form_ts`.
+ */
+let formTokenPromise: Promise<string> | null = null;
+const prefetchFormToken = (apiBase: string): void => {
+	if (formTokenPromise) return;
+	formTokenPromise = (async () => {
+		try {
+			const res = await fetch(`${apiBase}/api/v1/comments/form-token`, {
+				credentials: "include",
+			});
+			if (!res.ok) return "";
+			const json = (await res.json()) as { token?: string };
+			return json.token ?? "";
+		} catch {
+			return "";
+		}
+	})();
+};
+const getFormToken = (apiBase: string): Promise<string> => {
+	prefetchFormToken(apiBase);
+	return formTokenPromise as Promise<string>;
+};
+
 const REACTION_KINDS: { kind: string; emoji: string }[] = [
 	{ kind: "like", emoji: "👍" },
 	{ kind: "love", emoji: "❤️" },
@@ -436,6 +477,9 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 };
 
 const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
+	// Mint the timing token now so the honeypot-timing heuristic has
+	// real elapsed seconds to measure when the user eventually submits.
+	prefetchFormToken(ctx.apiBase);
 	const wrap = el("form", "gr-reply-form");
 	const ta = el("textarea");
 	ta.placeholder = `Reply to @${parent.author.name}…`;
@@ -469,11 +513,13 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 		submit.disabled = true;
 		errBox.hidden = true;
 		errBox.textContent = "";
+		errBox.classList.remove("is-notice");
 		const turnstileToken =
 			(wrap.querySelector(
 				'input[name="cf-turnstile-response"]',
 			) as HTMLInputElement | null)?.value ?? "";
 		try {
+			const formTs = await getFormToken(ctx.apiBase);
 			const res = await fetch(`${ctx.apiBase}/api/v1/comments`, {
 				method: "POST",
 				credentials: "include",
@@ -485,14 +531,26 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 					parent_id: parent.id,
 					turnstile_token: turnstileToken,
 					website: "",
+					form_ts: formTs,
 					post_title: ctx.host.dataset.title ?? null,
 					post_url: ctx.host.dataset.url ?? null,
 				}),
 			});
-			const json = (await res.json()) as { error?: string };
+			const json = (await res.json()) as {
+				error?: string;
+				comment?: { status?: string };
+			};
 			if (!res.ok) {
 				errBox.textContent = json.error ?? `HTTP ${res.status}`;
 				errBox.hidden = false;
+				submit.disabled = false;
+				return;
+			}
+			if (json.comment?.status === "pending") {
+				errBox.textContent = "Comment submitted — awaiting moderation.";
+				errBox.classList.add("is-notice");
+				errBox.hidden = false;
+				ta.value = "";
 				submit.disabled = false;
 				return;
 			}
@@ -876,6 +934,9 @@ const loadOnce = async (
 		reload,
 	};
 	const authBlock = buildAuthBlock(me, apiBase, reload, reload);
+	// Mint the timing token now so the honeypot-timing heuristic has
+	// real elapsed seconds to measure when the user eventually submits.
+	prefetchFormToken(apiBase);
 	const form = buildForm(siteKey, me != null);
 	const list = el("div", "gr-list");
 	if (data.threads.length === 0) {
@@ -966,6 +1027,7 @@ const submit = async (
 	if (errEl) {
 		errEl.hidden = true;
 		errEl.textContent = "";
+		errEl.classList.remove("is-notice");
 	}
 	const submitBtn = form.querySelector("button[type=submit]") as HTMLButtonElement | null;
 	if (submitBtn) submitBtn.disabled = true;
@@ -981,6 +1043,7 @@ const submit = async (
 	const turnstileToken = tokenInput?.value ?? "";
 
 	try {
+		const formTs = await getFormToken(apiBase);
 		const res = await fetch(`${apiBase}/api/v1/comments`, {
 			method: "POST",
 			credentials: "include",
@@ -991,16 +1054,34 @@ const submit = async (
 				body,
 				turnstile_token: turnstileToken,
 				website: honeypot,
+				form_ts: formTs,
 				post_title: host.dataset.title ?? null,
 				post_url: host.dataset.url ?? null,
 			}),
 		});
-		const json = (await res.json()) as { error?: string };
+		const json = (await res.json()) as {
+			error?: string;
+			comment?: { status?: string };
+		};
 		if (!res.ok) {
 			if (errEl) {
 				errEl.textContent = json.error ?? `HTTP ${res.status}`;
 				errEl.hidden = false;
 			}
+			if (submitBtn) submitBtn.disabled = false;
+			return;
+		}
+
+		if (json.comment?.status === "pending") {
+			if (errEl) {
+				errEl.textContent = "Comment submitted — awaiting moderation.";
+				errEl.classList.add("is-notice");
+				errEl.hidden = false;
+			}
+			const bodyInput = form.querySelector(
+				".gr-body-input",
+			) as HTMLTextAreaElement | null;
+			if (bodyInput) bodyInput.value = "";
 			if (submitBtn) submitBtn.disabled = false;
 			return;
 		}

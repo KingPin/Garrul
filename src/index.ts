@@ -43,6 +43,15 @@ export type Bindings = {
 	PUBLIC_BASE_URL: string;
 	CANONICAL_URL?: string;
 	WEBHOOK_URL: string;
+	// Anti-spam (all optional; each feature opts in when its env var is set).
+	SPAM_PROVIDER?: string;
+	AKISMET_API_KEY?: string;
+	AKISMET_SITE_URL?: string;
+	AI?: Ai;
+	SPAM_LINK_THRESHOLD?: string;
+	SPAM_HONEYPOT_MIN_MS?: string;
+	SPAM_FIRST_COMMENT_MODERATE?: string;
+	SPAM_FORM_TS_SECRET?: string;
 };
 
 const app = new Hono<{ Bindings: Bindings }>();
