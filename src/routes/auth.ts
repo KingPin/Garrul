@@ -33,8 +33,17 @@ import {
 } from "../lib/session";
 import { writeEvent } from "../lib/analytics";
 
-const OAUTH_BIND_COOKIE = "garrul_oauth_b";
+// Per-flow cookie naming: the suffix is the first 8 hex chars of the
+// (48-hex-char) state token, which gives 32 bits of disambiguation
+// between concurrent OAuth flows in the same browser. Without this,
+// two tabs would clobber a single global cookie and only the most-
+// recently-started flow could complete; the other tab's /callback
+// would always fail with "invalid state".
+const OAUTH_BIND_COOKIE_PREFIX = "garrul_oauth_b_";
 const OAUTH_BIND_TTL_SECONDS = 600;
+
+const bindCookieName = (state: string): string =>
+	`${OAUTH_BIND_COOKIE_PREFIX}${state.slice(0, 8)}`;
 
 const auth = new Hono<{ Bindings: Bindings }>();
 
@@ -101,7 +110,7 @@ auth.get("/:provider/start", async (c) => {
 	c.header(
 		"Set-Cookie",
 		buildShortCookie(
-			OAUTH_BIND_COOKIE,
+			bindCookieName(state),
 			browser_token,
 			OAUTH_BIND_TTL_SECONDS,
 			c.env,
@@ -163,9 +172,10 @@ auth.get("/:provider/callback", async (c) => {
 	const state = c.req.query("state");
 	if (!code || !state) return c.text("missing code/state", 400);
 
+	const cookieName = bindCookieName(state);
 	const payload = await consumeState(c.env.OAUTH_STATE, state);
 	if (!payload || payload.provider !== provider) {
-		c.header("Set-Cookie", clearShortCookie(OAUTH_BIND_COOKIE, c.env), {
+		c.header("Set-Cookie", clearShortCookie(cookieName, c.env), {
 			append: true,
 		});
 		return c.text("invalid state", 400);
@@ -174,21 +184,22 @@ auth.get("/:provider/callback", async (c) => {
 	// Double-submit binding: the cookie set at /start must match the value
 	// stored in the consumed state payload. Same generic error message as
 	// above — don't tell the attacker which check failed.
-	const browserToken = parseCookie(c.req.header("cookie"), OAUTH_BIND_COOKIE);
+	const browserToken = parseCookie(c.req.header("cookie"), cookieName);
 	if (
 		!payload.browser_token ||
 		!browserToken ||
 		browserToken !== payload.browser_token
 	) {
-		c.header("Set-Cookie", clearShortCookie(OAUTH_BIND_COOKIE, c.env), {
+		c.header("Set-Cookie", clearShortCookie(cookieName, c.env), {
 			append: true,
 		});
 		return c.text("invalid state", 400);
 	}
 
-	// Clear the binding cookie on every path past this point — it's served
-	// its purpose for this flow.
-	c.header("Set-Cookie", clearShortCookie(OAUTH_BIND_COOKIE, c.env), {
+	// Clear this flow's binding cookie on every path past this point. Other
+	// concurrent flows' cookies are scoped to their own state suffix and
+	// remain intact.
+	c.header("Set-Cookie", clearShortCookie(cookieName, c.env), {
 		append: true,
 	});
 
