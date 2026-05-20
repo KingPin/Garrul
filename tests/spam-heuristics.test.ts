@@ -85,6 +85,15 @@ describe("signFormTimestamp / verifyFormTimestamp", () => {
 		expect(v.flag).toBe(true);
 		expect(v.reason).toBe("form_ts.future");
 	});
+
+	it("flags a token older than one hour (max-age cap)", async () => {
+		const t0 = 1_000_000;
+		const token = await signFormTimestamp(t0, SECRET);
+		const oneHourPlus = t0 + 60 * 60 * 1000 + 1;
+		const v = await verifyFormTimestamp(token, SECRET, oneHourPlus, 1000);
+		expect(v.flag).toBe(true);
+		expect(v.reason).toBe("form_ts.too_old");
+	});
 });
 
 // Minimal D1 stub that returns null for the "is there any row" probe

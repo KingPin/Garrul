@@ -10,6 +10,12 @@
 
 const encoder = new TextEncoder();
 
+// Upper bound on form-token lifetime, applied by verifyFormTimestamp.
+// Stops a scripted attacker from minting one token, waiting `minMs`, and
+// then reusing it indefinitely. One hour comfortably covers a human
+// reading + composing a long reply.
+const FORM_TS_MAX_AGE_MS = 60 * 60 * 1000;
+
 /**
  * HMAC-SHA-256 of the timestamp (ms since epoch) using SPAM_FORM_TS_SECRET.
  * Token format: "<ms>.<hex-sig>". Verification recomputes the sig and checks
@@ -87,6 +93,9 @@ export const verifyFormTimestamp = async (
 	// Negative elapsed = clock skew or replayed-from-future. Treat as flag.
 	if (elapsed < 0) return { flag: true, reason: "form_ts.future" };
 	if (elapsed < minMs) return { flag: true, reason: "form_ts.too_fast" };
+	if (elapsed > FORM_TS_MAX_AGE_MS) {
+		return { flag: true, reason: "form_ts.too_old" };
+	}
 	return { flag: false };
 };
 
