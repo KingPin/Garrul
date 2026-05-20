@@ -55,6 +55,41 @@
       "name": "WEBHOOK_URL",
       "required": false,
       "addedIn": "1.0.0"
+    },
+    {
+      "name": "SPAM_PROVIDER",
+      "required": false,
+      "addedIn": "1.1.1"
+    },
+    {
+      "name": "AKISMET_API_KEY",
+      "required": false,
+      "addedIn": "1.1.1"
+    },
+    {
+      "name": "AKISMET_SITE_URL",
+      "required": false,
+      "addedIn": "1.1.1"
+    },
+    {
+      "name": "SPAM_LINK_THRESHOLD",
+      "required": false,
+      "addedIn": "1.1.1"
+    },
+    {
+      "name": "SPAM_HONEYPOT_MIN_MS",
+      "required": false,
+      "addedIn": "1.1.1"
+    },
+    {
+      "name": "SPAM_FIRST_COMMENT_MODERATE",
+      "required": false,
+      "addedIn": "1.1.1"
+    },
+    {
+      "name": "SPAM_FORM_TS_SECRET",
+      "required": false,
+      "addedIn": "1.1.1"
     }
   ],
   "kvNamespaces": [
