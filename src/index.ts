@@ -84,6 +84,33 @@ app.use("*", async (c, next) => {
 	await next();
 });
 
+// Global security headers. Cheap to set and shrinks the attack surface
+// independent of which route serves the response. Admin's stricter CSP
+// in src/routes/admin.ts is set after this and is not affected.
+//   - HSTS: a year-long preload-eligible policy. Harmless on
+//     localhost (browsers ignore on non-HTTPS hosts).
+//   - Referrer-Policy / Permissions-Policy: minimize cross-site leakage
+//     and disable invasive opt-out features.
+//   - X-Content-Type-Options: belt-and-braces against MIME sniffing on
+//     served JSON/JS.
+//   - X-Frame-Options: DENY everywhere except /embed/*, which is the
+//     iframe surface host sites legitimately frame. /embed.js (the
+//     script bundle) lives at the root, not under /embed/, so it
+//     correctly gets DENY (scripts aren't framable anyway).
+app.use("*", async (c, next) => {
+	await next();
+	c.header("strict-transport-security", "max-age=63072000; includeSubDomains; preload");
+	c.header("referrer-policy", "no-referrer");
+	c.header(
+		"permissions-policy",
+		"interest-cohort=(), browsing-topics=()",
+	);
+	c.header("x-content-type-options", "nosniff");
+	if (!c.req.path.startsWith("/embed/")) {
+		c.header("x-frame-options", "DENY");
+	}
+});
+
 app.use("/api/*", corsAndCsrf());
 app.use("/api/*", sessionMiddleware());
 
