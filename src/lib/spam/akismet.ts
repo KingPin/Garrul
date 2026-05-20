@@ -32,7 +32,9 @@ export const checkAkismet = async (
 	form.set("blog", cfg.siteUrl);
 	form.set("comment_type", "comment");
 	form.set("comment_author", input.author_name);
-	if (input.author_email) form.set("comment_author_email", input.author_email);
+	// Privacy posture: author_email is deliberately omitted so OAuth users'
+	// email addresses don't egress to Automattic, consistent with the
+	// constant-IP choice below. Documented in docs/ANTISPAM.md.
 	form.set("comment_content", input.body_md);
 	if (input.post_url) form.set("permalink", input.post_url);
 	if (input.user_agent) form.set("user_agent", input.user_agent);

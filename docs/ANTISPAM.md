@@ -66,7 +66,7 @@ wrangler secret put AKISMET_API_KEY     # your Akismet API key
 wrangler secret put AKISMET_SITE_URL    # public site URL, e.g. https://yourblog.example.com
 ```
 
-**Privacy tradeoff.** Akismet receives the comment body, the author's display name, and the post URL. Garrul deliberately does **not** forward the raw client IP (it would conflict with the `ip-hash` design) — instead a constant placeholder is sent. This trims accuracy a little, but keeps Garrul's privacy posture intact.
+**Privacy tradeoff.** Akismet receives the comment body, the author's display name, and the post URL. Garrul deliberately does **not** forward the raw client IP (a constant placeholder is sent instead) or the OAuth-user email address. This trims accuracy a little, but keeps Garrul's privacy posture intact.
 
 If you turn this on, **update your privacy policy** (template at [`docs/privacy-policy.template.md`](./privacy-policy.template.md)) to disclose that comment content is sent to Automattic. Akismet also requires a commercial license for paid sites — check their terms.
 
