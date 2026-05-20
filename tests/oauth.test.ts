@@ -14,6 +14,7 @@ import {
 	isProvider,
 	issueState,
 	PROVIDERS,
+	randomHex,
 } from "../src/lib/oauth";
 
 class StubKV {
@@ -51,12 +52,14 @@ describe("issueState / consumeState", () => {
 			provider: "github",
 			return_origin: "https://blog.example.com",
 			created_at: 1700000000000,
+			browser_token: "abc123",
 		});
 		const got = await consumeState(store, state);
 		expect(got).toEqual({
 			provider: "github",
 			return_origin: "https://blog.example.com",
 			created_at: 1700000000000,
+			browser_token: "abc123",
 		});
 	});
 
@@ -65,6 +68,7 @@ describe("issueState / consumeState", () => {
 			provider: "google",
 			return_origin: "https://x.test",
 			created_at: 1,
+			browser_token: "tok",
 		});
 		expect(await consumeState(store, state)).not.toBeNull();
 		expect(await consumeState(store, state)).toBeNull();
@@ -72,6 +76,28 @@ describe("issueState / consumeState", () => {
 
 	it("returns null for unknown state", async () => {
 		expect(await consumeState(store, "nope")).toBeNull();
+	});
+
+	it("carries browser_token through KV roundtrip", async () => {
+		const tok = randomHex(16);
+		const state = await issueState(store, {
+			provider: "github",
+			return_origin: "https://x.test",
+			created_at: 2,
+			browser_token: tok,
+		});
+		const got = await consumeState(store, state);
+		expect(got?.browser_token).toBe(tok);
+	});
+});
+
+describe("randomHex", () => {
+	it("produces hex of requested byte length", () => {
+		const h = randomHex(16);
+		expect(h).toMatch(/^[0-9a-f]{32}$/);
+	});
+	it("produces distinct values across calls", () => {
+		expect(randomHex(16)).not.toBe(randomHex(16));
 	});
 });
 

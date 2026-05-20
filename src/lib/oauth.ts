@@ -132,10 +132,24 @@ const randomState = (): string => {
 	return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 };
 
+export const randomHex = (n: number): string => {
+	const bytes = new Uint8Array(n);
+	crypto.getRandomValues(bytes);
+	return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+};
+
 export type StatePayload = {
 	provider: ProviderId;
 	return_origin: string;
 	created_at: number;
+	// Random per-flow token also written to a `garrul_oauth_b` cookie at
+	// /start. /callback requires the cookie value to match — without this,
+	// an attacker could trick a victim's browser into completing the
+	// callback with the attacker's code+state, planting the attacker's
+	// session (RFC 6749 §10.12 login-CSRF). Required for callers from
+	// /api/v1/auth/:provider/start; pre-existing state payloads in KV
+	// from before this column shipped may lack it.
+	browser_token?: string;
 };
 
 const STATE_TTL = 600; // 10 minutes

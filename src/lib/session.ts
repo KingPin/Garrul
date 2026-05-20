@@ -44,7 +44,10 @@ const newSessionId = (): string => {
 	return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 };
 
-const parseCookie = (header: string | undefined, name: string): string | null => {
+export const parseCookie = (
+	header: string | undefined,
+	name: string,
+): string | null => {
 	if (!header) return null;
 	for (const part of header.split(";")) {
 		const eq = part.indexOf("=");
@@ -74,6 +77,39 @@ const buildSetCookie = (
 	}
 	return parts.join("; ");
 };
+
+/**
+ * Short-lived auxiliary cookie used by the OAuth state-binding double-
+ * submit check (`garrul_oauth_b`). Scoped tightly to /api/v1/auth so it
+ * is sent only on the start → callback round-trip, and uses SameSite=Lax
+ * because the callback is a top-level same-site GET from the provider
+ * (SameSite=Strict would not deliver after the cross-site redirect).
+ */
+export const buildShortCookie = (
+	name: string,
+	value: string,
+	maxAgeSeconds: number,
+	env: { ENV: string },
+	path = "/api/v1/auth",
+): string => {
+	const parts = [
+		`${name}=${value}`,
+		`Path=${path}`,
+		`Max-Age=${maxAgeSeconds}`,
+		"HttpOnly",
+		"SameSite=Lax",
+	];
+	if (env.ENV !== "dev") {
+		parts.push("Secure");
+	}
+	return parts.join("; ");
+};
+
+export const clearShortCookie = (
+	name: string,
+	env: { ENV: string },
+	path = "/api/v1/auth",
+): string => buildShortCookie(name, "", 0, env, path);
 
 export const issueSession = async (
 	c: SessionCtx,

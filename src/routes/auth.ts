@@ -20,10 +20,21 @@ import {
 	exchangeCodeForToken,
 	isProvider,
 	issueState,
+	randomHex,
 } from "../lib/oauth";
 import { upsertOauthUser } from "../db/queries";
-import { clearSession, issueSession, readSession } from "../lib/session";
+import {
+	buildShortCookie,
+	clearSession,
+	clearShortCookie,
+	issueSession,
+	parseCookie,
+	readSession,
+} from "../lib/session";
 import { writeEvent } from "../lib/analytics";
+
+const OAUTH_BIND_COOKIE = "garrul_oauth_b";
+const OAUTH_BIND_TTL_SECONDS = 600;
 
 const auth = new Hono<{ Bindings: Bindings }>();
 
@@ -74,11 +85,29 @@ auth.get("/:provider/start", async (c) => {
 		// rawReturn was malformed; leave return_origin empty.
 	}
 
+	// Double-submit cookie binds the OAuth flow to this browser. /callback
+	// requires the cookie value to equal the payload value; without it an
+	// attacker can mint state+code in their own session and trick a victim's
+	// browser into completing the callback, planting the attacker's
+	// session on the victim (RFC 6749 §10.12 login-CSRF).
+	const browser_token = randomHex(16);
 	const state = await issueState(c.env.OAUTH_STATE, {
 		provider,
 		return_origin,
 		created_at: Date.now(),
+		browser_token,
 	});
+
+	c.header(
+		"Set-Cookie",
+		buildShortCookie(
+			OAUTH_BIND_COOKIE,
+			browser_token,
+			OAUTH_BIND_TTL_SECONDS,
+			c.env,
+		),
+		{ append: true },
+	);
 
 	const redirect = callbackUrl(c.env, c.req.url, provider);
 	const url = buildAuthorizeUrl(provider, clientId, redirect, state);
@@ -87,15 +116,28 @@ auth.get("/:provider/start", async (c) => {
 });
 
 const finishHtml = (return_origin: string, ok: boolean, msg = ""): string => {
-	// Inline HTML — no user-controlled data flows into the HTML body. The
-	// JSON.stringify calls ensure the only dynamic pieces (return_origin /
-	// msg) are emitted as safe JS string literals.
+	// When return_origin wasn't validated against ALLOWED_ORIGINS (e.g. the
+	// caller didn't pass `?return=` or passed an unrecognized origin), we
+	// have no safe target to postMessage to. Previously we fell back to
+	// `targetOrigin="*"` which leaks the auth-completion message to whatever
+	// happens to be the opener. Render a static page instead — the popup
+	// closes itself and the parent infers state via /auth/me on focus.
+	if (!return_origin) {
+		return `<!doctype html>
+<html><head><meta charset="utf-8"><title>Garrul</title></head>
+<body>
+<p>${ok ? "Signed in. You can close this window." : "Sign-in failed."}</p>
+<script>setTimeout(function(){ window.close(); }, 250);</script>
+</body></html>`;
+	}
+	// return_origin is a validated, allow-listed string here; JSON.stringify
+	// emits it as a safe JS string literal.
 	const payload = JSON.stringify({
 		type: "garrul:auth",
 		ok,
 		message: msg,
 	});
-	const targetOrigin = JSON.stringify(return_origin || "*");
+	const targetOrigin = JSON.stringify(return_origin);
 	return `<!doctype html>
 <html><head><meta charset="utf-8"><title>Garrul</title></head>
 <body>
@@ -123,8 +165,32 @@ auth.get("/:provider/callback", async (c) => {
 
 	const payload = await consumeState(c.env.OAUTH_STATE, state);
 	if (!payload || payload.provider !== provider) {
+		c.header("Set-Cookie", clearShortCookie(OAUTH_BIND_COOKIE, c.env), {
+			append: true,
+		});
 		return c.text("invalid state", 400);
 	}
+
+	// Double-submit binding: the cookie set at /start must match the value
+	// stored in the consumed state payload. Same generic error message as
+	// above — don't tell the attacker which check failed.
+	const browserToken = parseCookie(c.req.header("cookie"), OAUTH_BIND_COOKIE);
+	if (
+		!payload.browser_token ||
+		!browserToken ||
+		browserToken !== payload.browser_token
+	) {
+		c.header("Set-Cookie", clearShortCookie(OAUTH_BIND_COOKIE, c.env), {
+			append: true,
+		});
+		return c.text("invalid state", 400);
+	}
+
+	// Clear the binding cookie on every path past this point — it's served
+	// its purpose for this flow.
+	c.header("Set-Cookie", clearShortCookie(OAUTH_BIND_COOKIE, c.env), {
+		append: true,
+	});
 
 	const cfg = PROVIDERS[provider];
 	const env = c.env as unknown as Record<string, string | undefined>;
