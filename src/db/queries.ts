@@ -142,11 +142,21 @@ export const getOrCreateGhost = async (
 };
 
 /**
- * Upsert an OAuth user keyed on (provider, provider_id). If the row exists,
- * refresh display fields (name, email, avatar_url) so a user that updated
- * their GitHub avatar sees it propagate. `is_admin` is promoted to 1 when
- * the email is in the caller-supplied admin set; it never demotes
- * automatically — admin revocation is a manual SQL operation.
+ * Upsert an OAuth user keyed on (provider, provider_id).
+ *
+ * On UPDATE we refresh non-security-sensitive display fields (name +
+ * avatar_url) so an updated GitHub display name / avatar propagates.
+ * We deliberately don't touch `email` or `is_admin` on UPDATE:
+ *   - `email` is set once at create-time. Refreshing it from each token's
+ *     profile means a compromised or relaxed provider can rewrite the
+ *     email stored against an existing account, which has knock-on
+ *     consequences (admin promotion via ADMIN_EMAILS, subscription
+ *     fast-path matching).
+ *   - `is_admin` is promoted only at create-time when the verified email
+ *     matches ADMIN_EMAILS. Auto-promotion on every login means the
+ *     operator can't safely demote an admin by editing ADMIN_EMAILS —
+ *     the next login would re-promote them. Demotion (and out-of-band
+ *     promotion) is now a manual SQL operation.
  */
 export const upsertOauthUser = async (
 	db: D1Database,
@@ -166,27 +176,23 @@ export const upsertOauthUser = async (
 		.bind(provider, provider_id)
 		.first<UserRow>();
 
-	const shouldPromote = email != null && adminEmails.has(email.toLowerCase());
-
 	if (existing) {
-		const nextAdmin = existing.is_admin === 1 || shouldPromote ? 1 : 0;
 		await db
 			.prepare(
 				`UPDATE users
-				    SET name = ?, email = ?, avatar_url = ?, is_admin = ?
+				    SET name = ?, avatar_url = ?
 				  WHERE id = ?`,
 			)
-			.bind(name, email, avatar_url, nextAdmin, existing.id)
+			.bind(name, avatar_url, existing.id)
 			.run();
 		return toUser({
 			...existing,
 			name,
-			email,
 			avatar_url,
-			is_admin: nextAdmin,
 		});
 	}
 
+	const shouldPromote = email != null && adminEmails.has(email.toLowerCase());
 	const id = ulid();
 	const now = Date.now();
 	const is_admin = shouldPromote ? 1 : 0;
