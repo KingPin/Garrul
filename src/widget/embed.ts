@@ -301,6 +301,11 @@ type WidgetCtx = {
  * already-in-flight (or resolved) promise. The promise is cached at
  * module scope so reply forms and the top-level form share one fetch.
  *
+ * Assumes one widget mount per document — the bundle hard-codes
+ * `getElementById("garrul")`, so a second mount with a different
+ * `apiBase` would silently reuse the first's token. If that mounting
+ * model changes, scope this cache to the widget context instead.
+ *
  * When anti-spam timing is disabled the route 404s and we resolve to
  * an empty string — the server then ignores the absent `form_ts`.
  */
