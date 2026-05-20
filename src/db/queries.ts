@@ -691,36 +691,69 @@ export type Subscription = {
 	created_at: number;
 	unsubscribed_at: number | null;
 	last_notified_at: number | null;
+	confirm_token: string | null;
+	confirmed_at: number | null;
 };
 
 /**
- * Upsert a subscription for (post_slug, email). If the row exists and was
- * previously unsubscribed, it is re-activated (unsubscribed_at cleared)
- * and a fresh token is issued so the old unsubscribe link can't reuse.
+ * Upsert a subscription for (post_slug, email).
+ *
+ * `auto_confirm` is passed by the route only when the caller is a logged-in
+ * user submitting their own provider-verified email — that path skips the
+ * email-loop because the user has already proved control of the inbox.
+ *
+ * Re-subscribing the same address:
+ *   - rotates the unsubscribe `token` and clears `unsubscribed_at` so the
+ *     row is live again,
+ *   - leaves `confirmed_at` alone if it was already set (you don't have to
+ *     re-confirm an already-confirmed address — but you DO have to confirm
+ *     a never-confirmed re-attempt; we rotate `confirm_token` for that case).
  */
 export const upsertSubscription = async (
 	db: D1Database,
 	post_slug: string,
 	email: string,
 	token: string,
+	confirm_token: string | null,
+	auto_confirm: boolean,
 ): Promise<Subscription> => {
 	const now = Date.now();
 	const id = ulid();
+	const confirmed_at_on_insert = auto_confirm ? now : null;
 	await db
 		.prepare(
 			`INSERT INTO subscriptions
-			   (id, post_slug, email, token, created_at, unsubscribed_at, last_notified_at)
-			 VALUES (?, ?, ?, ?, ?, NULL, NULL)
+			   (id, post_slug, email, token, created_at,
+			    unsubscribed_at, last_notified_at,
+			    confirm_token, confirmed_at)
+			 VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?)
 			 ON CONFLICT(post_slug, email) DO UPDATE SET
 			   token = excluded.token,
-			   unsubscribed_at = NULL`,
+			   unsubscribed_at = NULL,
+			   -- only refresh confirm_token if the row is still unconfirmed;
+			   -- if already confirmed we don't reset it (preserves one-shot).
+			   confirm_token = CASE WHEN subscriptions.confirmed_at IS NULL
+			                        THEN excluded.confirm_token
+			                        ELSE subscriptions.confirm_token END,
+			   confirmed_at  = CASE WHEN excluded.confirmed_at IS NOT NULL
+			                        THEN excluded.confirmed_at
+			                        ELSE subscriptions.confirmed_at END`,
 		)
-		.bind(id, post_slug, email.toLowerCase(), token, now)
+		.bind(
+			id,
+			post_slug,
+			email.toLowerCase(),
+			token,
+			now,
+			confirm_token,
+			confirmed_at_on_insert,
+		)
 		.run();
 	const row = await db
 		.prepare(
 			`SELECT id, post_slug, email, token, created_at,
-			        unsubscribed_at, last_notified_at
+			        unsubscribed_at, last_notified_at,
+			        confirm_token, confirmed_at
 			   FROM subscriptions
 			  WHERE post_slug = ? AND email = ?`,
 		)
@@ -737,11 +770,56 @@ export const getSubscriptionByToken = async (
 	return await db
 		.prepare(
 			`SELECT id, post_slug, email, token, created_at,
-			        unsubscribed_at, last_notified_at
+			        unsubscribed_at, last_notified_at,
+			        confirm_token, confirmed_at
 			   FROM subscriptions WHERE token = ?`,
 		)
 		.bind(token)
 		.first<Subscription>();
+};
+
+export const getSubscriptionByConfirmToken = async (
+	db: D1Database,
+	confirm_token: string,
+): Promise<Subscription | null> => {
+	return await db
+		.prepare(
+			`SELECT id, post_slug, email, token, created_at,
+			        unsubscribed_at, last_notified_at,
+			        confirm_token, confirmed_at
+			   FROM subscriptions WHERE confirm_token = ?`,
+		)
+		.bind(confirm_token)
+		.first<Subscription>();
+};
+
+export const confirmSubscription = async (
+	db: D1Database,
+	id: string,
+): Promise<void> => {
+	const now = Date.now();
+	await db
+		.prepare(
+			`UPDATE subscriptions
+			    SET confirmed_at = ?, confirm_token = NULL
+			  WHERE id = ?`,
+		)
+		.bind(now, id)
+		.run();
+};
+
+export const countPendingSubscriptionsForEmail = async (
+	db: D1Database,
+	email: string,
+): Promise<number> => {
+	const row = await db
+		.prepare(
+			`SELECT COUNT(*) AS n FROM subscriptions
+			  WHERE email = ? AND confirmed_at IS NULL`,
+		)
+		.bind(email.toLowerCase())
+		.first<{ n: number }>();
+	return row?.n ?? 0;
 };
 
 export const markSubscriptionUnsubscribed = async (
@@ -762,9 +840,12 @@ export const listActiveSubscriptionsForPost = async (
 	const result = await db
 		.prepare(
 			`SELECT id, post_slug, email, token, created_at,
-			        unsubscribed_at, last_notified_at
+			        unsubscribed_at, last_notified_at,
+			        confirm_token, confirmed_at
 			   FROM subscriptions
-			  WHERE post_slug = ? AND unsubscribed_at IS NULL`,
+			  WHERE post_slug = ?
+			    AND unsubscribed_at IS NULL
+			    AND confirmed_at IS NOT NULL`,
 		)
 		.bind(post_slug)
 		.all<Subscription>();
@@ -823,6 +904,7 @@ export const listPendingDigests = async (
 			  WHERE n.sent_at IS NULL
 			    AND n.created_at < ?
 			    AND s.unsubscribed_at IS NULL
+			    AND s.confirmed_at IS NOT NULL
 			  ORDER BY n.created_at ASC`,
 		)
 		.bind(older_than)
