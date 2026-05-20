@@ -254,7 +254,10 @@ comments.post("/", async (c) => {
 		const ts = await verifyTurnstile(
 			body.turnstile_token,
 			c.env.TURNSTILE_SECRET,
-			clientIp(c.req.raw),
+			{
+				clientIp: clientIp(c.req.raw),
+				expectedHostname: new URL(c.req.url).hostname,
+			},
 		);
 		if (!ts) return c.json({ error: t("err.turnstile.invalid") }, 400);
 
