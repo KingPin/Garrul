@@ -233,13 +233,18 @@ ${body}
 </html>`;
 
 const spamSummary = (env: Bindings): string => {
+	// Match the same gating evaluateSpam uses at runtime, otherwise the
+	// dashboard would claim a layer is active when its value is invalid
+	// (e.g. SPAM_LINK_THRESHOLD='NaN', SPAM_HONEYPOT_MIN_MS='0').
 	const provider = env.SPAM_PROVIDER || "off";
 	const heuristics: string[] = [];
-	if (env.SPAM_HONEYPOT_MIN_MS && env.SPAM_FORM_TS_SECRET) {
-		heuristics.push(`honeypot-timing(${env.SPAM_HONEYPOT_MIN_MS}ms)`);
+	const minMs = Number.parseInt(env.SPAM_HONEYPOT_MIN_MS ?? "", 10);
+	if (Number.isFinite(minMs) && minMs > 0 && env.SPAM_FORM_TS_SECRET) {
+		heuristics.push(`honeypot-timing(${minMs}ms)`);
 	}
-	if (env.SPAM_LINK_THRESHOLD) {
-		heuristics.push(`link-threshold(>${env.SPAM_LINK_THRESHOLD})`);
+	const linkThreshold = Number.parseInt(env.SPAM_LINK_THRESHOLD ?? "", 10);
+	if (Number.isFinite(linkThreshold) && linkThreshold >= 0) {
+		heuristics.push(`link-threshold(>${linkThreshold})`);
 	}
 	if (env.SPAM_FIRST_COMMENT_MODERATE === "true") {
 		heuristics.push("first-comment-moderation");
