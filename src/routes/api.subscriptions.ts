@@ -111,6 +111,16 @@ subscriptions.post("/", async (c) => {
 		}
 	}
 
+	// Fail closed when the operator hasn't configured outbound email.
+	// Without these we'd persist a pending row that the user can never
+	// confirm (no email sent), and after five attempts the pending-cap
+	// would lock the address out entirely.
+	const publicBase = c.env.PUBLIC_BASE_URL;
+	const from = c.env.EMAIL_FROM;
+	if (!autoConfirm && (!publicBase || !from)) {
+		return c.json({ error: t("err.internal") }, 503);
+	}
+
 	const unsubscribeToken = randomToken();
 	const confirm_token = autoConfirm ? null : randomToken();
 	const sub = await upsertSubscription(
@@ -125,26 +135,28 @@ subscriptions.post("/", async (c) => {
 	// Send confirmation email only when actually needed. If the upsert
 	// found an already-confirmed row we don't email either — the user is
 	// effectively re-confirming an existing subscription, nothing to do.
-	if (!autoConfirm && sub.confirmed_at == null && sub.confirm_token) {
+	if (
+		!autoConfirm &&
+		sub.confirmed_at == null &&
+		sub.confirm_token &&
+		publicBase &&
+		from
+	) {
 		const post = await getPost(c.env.DB, post_slug);
-		const publicBase = c.env.PUBLIC_BASE_URL;
-		const from = c.env.EMAIL_FROM;
-		if (publicBase && from) {
-			const confirmUrl = `${publicBase}/api/v1/subscribe/confirm/${sub.confirm_token}`;
-			const html = renderConfirmEmailHtml({
-				postTitle: post?.title ?? post_slug,
-				confirmUrl,
-			});
-			await sendEmail(c.env, {
-				to: email,
-				from,
-				subject: t("email.confirm.subject").replace(
-					"{title}",
-					post?.title ?? post_slug,
-				),
-				html,
-			});
-		}
+		const confirmUrl = `${publicBase}/api/v1/subscribe/confirm/${sub.confirm_token}`;
+		const html = renderConfirmEmailHtml({
+			postTitle: post?.title ?? post_slug,
+			confirmUrl,
+		});
+		await sendEmail(c.env, {
+			to: email,
+			from,
+			subject: t("email.confirm.subject").replace(
+				"{title}",
+				post?.title ?? post_slug,
+			),
+			html,
+		});
 	}
 
 	return c.json({
