@@ -116,7 +116,7 @@ const requireAdmin = async (c: Ctx): Promise<User | Response> => {
 //   curl -fsSL https://cdn.jsdelivr.net/npm/alpinejs@<ver>/dist/cdn.min.js \
 //     | openssl dgst -sha384 -binary | openssl base64 -A
 const ALPINE_SRI =
-	"sha384-BxpSbjbDhVKwnC1UfcjsNEuMuxg4af5IXOaSi1Iq5rASQ/9a7uslhEXbP9UI/fXo";
+	"sha384-FxN6XxFaqDSoGG1u6scwGEqFdf/pFjJb/sVY20A7X5BG/P6fomHJ23B8saWNIkrv";
 
 const ADMIN_CSP = [
 	"default-src 'self'",
