@@ -1,35 +1,52 @@
 /**
- * POST /api/v1/subscribe        { post_slug, email }
- * GET  /api/v1/unsubscribe/:token
+ * POST /api/v1/subscribe                { post_slug, email }
+ * GET  /api/v1/subscribe/confirm/:token
+ * GET  /api/v1/subscribe/unsubscribe/:token
  *
  * Subscription model:
  *   - One row per (post_slug, email). Re-subscribing the same address
- *     re-activates the row and rotates its token (the old unsubscribe
- *     link becomes inert).
- *   - Token is 32 random bytes hex-encoded. We don't sign it with
+ *     re-activates the row and rotates its unsubscribe token (the old
+ *     unsubscribe link becomes inert).
+ *   - Tokens are 32 random bytes hex-encoded. We don't sign them with
  *     JWT_SECRET because storage + lookup is just as cheap and avoids
  *     a class of "I forgot to invalidate the secret" bugs.
  *
- * No double-opt-in for v1. The email address is collected at the moment
- * the user posts a comment (or ticks a box on the form) so deliverability
- * spam complaints are bounded — we never email people who didn't ask.
- * If self-hosters want strict double-opt-in later it goes here.
+ * Double-opt-in (added 2026-05-20):
+ *   - `confirm_token` + `confirmed_at` columns gate the row from receiving
+ *     digests. POST stores `confirmed_at = NULL` and emails the confirm
+ *     link. GET /confirm/:token sets `confirmed_at = now`.
+ *   - Fast path: when a logged-in user submits their own email AND the
+ *     session user is provider-verified (github/google), we auto-confirm.
+ *     The user already proved control of the inbox to the provider, so a
+ *     second loop adds friction without security.
+ *   - A per-email pending cap (5) prevents amplifying the confirmation
+ *     email itself into a mailbomb — without it an attacker could forge
+ *     5 confirm-emails per minute per IP without consuming any of them.
  */
 import { Hono } from "hono";
 import type { Bindings } from "../index";
 import {
+	confirmSubscription,
+	countPendingSubscriptionsForEmail,
 	getPost,
+	getSubscriptionByConfirmToken,
 	getSubscriptionByToken,
+	getUser,
 	markSubscriptionUnsubscribed,
 	upsertSubscription,
 } from "../db/queries";
 import { clientIp, hashIp } from "../lib/ip-hash";
 import { checkRateLimit } from "../lib/ratelimit";
+import { renderConfirmEmailHtml } from "../lib/digest";
+import { sendEmail } from "../lib/email";
+import { readSession } from "../lib/session";
 import { t } from "../i18n";
 
 const subscriptions = new Hono<{ Bindings: Bindings }>();
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const PENDING_PER_EMAIL_CAP = 5;
+const PROVIDER_VERIFIED = new Set(["github", "google"]);
 
 const randomToken = (): string => {
 	const bytes = new Uint8Array(32);
@@ -65,13 +82,114 @@ subscriptions.post("/", async (c) => {
 		return c.json({ error: "invalid_email" }, 400);
 	}
 
-	// We don't require the post to exist (a comment may not have arrived
-	// yet on this slug) but we DO accept the subscription either way.
-	// If the slug is wholly unknown later, no notifications will fire.
-	const token = randomToken();
-	const sub = await upsertSubscription(c.env.DB, post_slug, email, token);
+	// Fast-path auto-confirm: logged-in user submitting their own
+	// provider-verified email. Provider already vouched for inbox control.
+	let autoConfirm = false;
+	const session = await readSession(c);
+	if (session) {
+		const user = await getUser(c.env.DB, session.user_id);
+		if (
+			user &&
+			user.email &&
+			user.email.toLowerCase() === email &&
+			PROVIDER_VERIFIED.has(user.provider)
+		) {
+			autoConfirm = true;
+		}
+	}
 
-	return c.json({ ok: true, subscription_id: sub.id });
+	// Bound never-confirmed rows per email to keep the confirmation email
+	// itself from being weaponized as a mailbomb. The cap is generous so
+	// real users juggling threads aren't rejected.
+	if (!autoConfirm) {
+		const pending = await countPendingSubscriptionsForEmail(c.env.DB, email);
+		if (pending >= PENDING_PER_EMAIL_CAP) {
+			return c.json(
+				{ error: t("err.ratelimit"), reason: "pending_limit_exceeded" },
+				429,
+			);
+		}
+	}
+
+	// Fail closed when the operator hasn't configured outbound email.
+	// Without these we'd persist a pending row that the user can never
+	// confirm (no email sent), and after five attempts the pending-cap
+	// would lock the address out entirely.
+	const publicBase = c.env.PUBLIC_BASE_URL;
+	const from = c.env.EMAIL_FROM;
+	if (!autoConfirm && (!publicBase || !from)) {
+		return c.json({ error: t("err.internal") }, 503);
+	}
+
+	const unsubscribeToken = randomToken();
+	const confirm_token = autoConfirm ? null : randomToken();
+	const sub = await upsertSubscription(
+		c.env.DB,
+		post_slug,
+		email,
+		unsubscribeToken,
+		confirm_token,
+		autoConfirm,
+	);
+
+	// Send confirmation email only when actually needed. If the upsert
+	// found an already-confirmed row we don't email either — the user is
+	// effectively re-confirming an existing subscription, nothing to do.
+	if (
+		!autoConfirm &&
+		sub.confirmed_at == null &&
+		sub.confirm_token &&
+		publicBase &&
+		from
+	) {
+		const post = await getPost(c.env.DB, post_slug);
+		const confirmUrl = `${publicBase}/api/v1/subscribe/confirm/${sub.confirm_token}`;
+		const html = renderConfirmEmailHtml({
+			postTitle: post?.title ?? post_slug,
+			confirmUrl,
+		});
+		await sendEmail(c.env, {
+			to: email,
+			from,
+			subject: t("email.confirm.subject").replace(
+				"{title}",
+				post?.title ?? post_slug,
+			),
+			html,
+		});
+	}
+
+	return c.json({
+		ok: true,
+		subscription_id: sub.id,
+		status: sub.confirmed_at != null ? "confirmed" : "pending",
+		message:
+			sub.confirmed_at != null
+				? t("ui.subscribe.confirmed")
+				: t("ui.subscribe.pending"),
+	});
+});
+
+subscriptions.get("/confirm/:token", async (c) => {
+	const token = c.req.param("token");
+	if (!token) return c.text("missing token", 400);
+
+	const sub = await getSubscriptionByConfirmToken(c.env.DB, token);
+	if (!sub) {
+		return c.html(pageHtml("Link expired or already used."));
+	}
+
+	if (sub.confirmed_at == null) {
+		await confirmSubscription(c.env.DB, sub.id);
+	}
+
+	const post = await getPost(c.env.DB, sub.post_slug);
+	const postLabel = post?.title ?? sub.post_slug;
+	return c.html(
+		pageHtml(
+			`You're confirmed for comment notifications on "${escape(postLabel)}".`,
+		),
+	);
 });
 
 subscriptions.get("/unsubscribe/:token", async (c) => {
@@ -80,7 +198,7 @@ subscriptions.get("/unsubscribe/:token", async (c) => {
 
 	const sub = await getSubscriptionByToken(c.env.DB, token);
 	if (!sub) {
-		return c.html(unsubscribeHtml("Link expired or already used."));
+		return c.html(pageHtml("Link expired or already used."));
 	}
 
 	if (sub.unsubscribed_at == null) {
@@ -90,7 +208,7 @@ subscriptions.get("/unsubscribe/:token", async (c) => {
 	const post = await getPost(c.env.DB, sub.post_slug);
 	const postLabel = post?.title ?? sub.post_slug;
 	return c.html(
-		unsubscribeHtml(
+		pageHtml(
 			`You're unsubscribed from comment notifications for "${escape(postLabel)}".`,
 		),
 	);
@@ -104,12 +222,12 @@ const escape = (s: string): string =>
 		.replace(/"/g, "&quot;")
 		.replace(/'/g, "&#39;");
 
-const unsubscribeHtml = (message: string): string => `
+const pageHtml = (message: string): string => `
 <!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Unsubscribed — Garrul</title>
+<title>Garrul</title>
 <style>
   body { font-family: system-ui, -apple-system, Segoe UI, sans-serif;
          max-width: 440px; margin: 4rem auto; padding: 0 1rem;
@@ -118,7 +236,7 @@ const unsubscribeHtml = (message: string): string => `
 </style>
 </head>
 <body>
-<h1>Unsubscribed</h1>
+<h1>Garrul</h1>
 <p>${message}</p>
 </body>
 </html>`;

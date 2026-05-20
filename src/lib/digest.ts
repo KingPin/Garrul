@@ -48,6 +48,24 @@ const escape = (s: string | null | undefined): string => {
 		.replace(/"/g, "&quot;");
 };
 
+export const renderConfirmEmailHtml = (params: {
+	postTitle: string;
+	confirmUrl: string;
+}): string => {
+	return `<!doctype html><html><body style="font-family:system-ui,sans-serif;max-width:560px;margin:auto;padding:24px;color:#111827;">
+<h1 style="font-size:18px;margin:0 0 12px;">Confirm your subscription</h1>
+<p>You're being asked to confirm a subscription to reply notifications for
+<strong>${escape(params.postTitle)}</strong>.</p>
+<p>If this wasn't you, ignore this email — without the confirmation click
+below, no further messages will be sent to this address for this thread.</p>
+<p style="margin-top:20px;"><a href="${params.confirmUrl}"
+   style="background:#111827;color:#fff;padding:10px 16px;border-radius:6px;
+   text-decoration:none;display:inline-block;">Confirm subscription</a></p>
+<p style="margin-top:20px;font-size:12px;color:#6b7280;">Or paste this link
+into your browser:<br>${escape(params.confirmUrl)}</p>
+</body></html>`;
+};
+
 const renderDigestHtml = (params: {
 	postTitle: string;
 	publicBase: string;

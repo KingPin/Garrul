@@ -37,6 +37,13 @@ export const en = {
 	"ui.deleted": "[deleted]",
 	"ui.edited_suffix": "(edited)",
 	"ui.verified": "verified",
+	"ui.subscribe.pending": "Check your inbox to confirm your subscription.",
+	"ui.subscribe.confirmed": "Subscription confirmed.",
+
+	// Subscription confirmation email
+	"email.confirm.subject": "Confirm your subscription to comments on {title}",
+	"email.confirm.preheader":
+		"Click the link inside to start receiving reply notifications.",
 } as const;
 
 export type StringKey = keyof typeof en;

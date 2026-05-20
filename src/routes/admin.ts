@@ -111,12 +111,25 @@ const requireAdmin = async (c: Ctx): Promise<User | Response> => {
 	return user;
 };
 
+// SRI for the Alpine.js build the admin layout loads from jsdelivr. If
+// the version in the <script> tag changes, regenerate this with:
+//   curl -fsSL https://cdn.jsdelivr.net/npm/alpinejs@<ver>/dist/cdn.min.js \
+//     | openssl dgst -sha384 -binary | openssl base64 -A
+const ALPINE_SRI =
+	"sha384-FxN6XxFaqDSoGG1u6scwGEqFdf/pFjJb/sVY20A7X5BG/P6fomHJ23B8saWNIkrv";
+
 const ADMIN_CSP = [
 	"default-src 'self'",
-	// 'unsafe-eval' is required by Alpine.js's x-data expression evaluator.
-	// Confined to /admin/* via this header; the public API + widget pages
-	// keep their stricter CSP.
-	"script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net",
+	// 'unsafe-eval' is required by Alpine.js's x-data expression evaluator
+	// (Alpine compiles directive expressions at runtime). Confined to
+	// /admin/* via this header; the public API + widget pages keep their
+	// stricter CSP.
+	//
+	// 'unsafe-inline' is intentionally absent: Alpine attribute directives
+	// (x-data="...", @click="...") are governed by 'unsafe-eval' not
+	// 'unsafe-inline', and the admin layout has no inline <script> tags.
+	// The pinned + SRI-verified Alpine CDN load is the only script source.
+	"script-src 'self' 'unsafe-eval' https://cdn.jsdelivr.net",
 	"style-src 'self' 'unsafe-inline'",
 	"img-src 'self' data: https:",
 	"connect-src 'self'",
@@ -228,7 +241,10 @@ ${renderUpdateBanner(updateInfo)}
 <main>
 ${body}
 </main>
-<script src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.5/dist/cdn.min.js" defer></script>
+<script src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.5/dist/cdn.min.js"
+        integrity="${ALPINE_SRI}"
+        crossorigin="anonymous"
+        defer></script>
 </body>
 </html>`;
 

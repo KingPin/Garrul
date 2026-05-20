@@ -57,6 +57,76 @@ export type Bindings = {
 const app = new Hono<{ Bindings: Bindings }>();
 
 app.use("*", requestLogger());
+
+// Fail-closed guard against a misconfigured deployment serving with
+// ENV=dev: that value relaxes cookie attributes (drops Secure, switches
+// from SameSite=None to Lax) and bypasses the Origin allowlist on
+// state-changing routes. Wrangler's `dev` workflow is the only intended
+// caller; if ENV=dev ever leaks into a non-local host, refuse to serve
+// so the operator sees the misconfiguration instead of silently weakened
+// security. Response body is intentionally empty — telling a probing
+// attacker "this server is in dev mode" is itself a leak.
+const isLocalDevHost = (host: string): boolean => {
+	if (
+		host === "localhost" ||
+		host === "::1" ||
+		host === "[::1]" ||
+		host === "host.docker.internal"
+	) {
+		return true;
+	}
+	// Whole 127/8 loopback range, not just .0.0.1 — operators bind to
+	// 127.0.0.2 etc. for isolated dev instances.
+	if (/^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host)) return true;
+	// RFC 6761 reserved local TLDs.
+	if (host.endsWith(".localhost") || host.endsWith(".local")) return true;
+	if (host.endsWith(".test")) return true;
+	return false;
+};
+app.use("*", async (c, next) => {
+	if (c.env.ENV === "dev") {
+		const host = new URL(c.req.url).hostname;
+		if (!isLocalDevHost(host)) {
+			console.error(
+				JSON.stringify({
+					level: "error",
+					msg: "ENV=dev on non-local host; refusing to serve",
+					host,
+				}),
+			);
+			return c.body(null, 500);
+		}
+	}
+	await next();
+});
+
+// Global security headers. Cheap to set and shrinks the attack surface
+// independent of which route serves the response. Admin's stricter CSP
+// in src/routes/admin.ts is set after this and is not affected.
+//   - HSTS: a year-long preload-eligible policy. Harmless on
+//     localhost (browsers ignore on non-HTTPS hosts).
+//   - Referrer-Policy / Permissions-Policy: minimize cross-site leakage
+//     and disable invasive opt-out features.
+//   - X-Content-Type-Options: belt-and-braces against MIME sniffing on
+//     served JSON/JS.
+//   - X-Frame-Options: DENY everywhere except /embed/*, which is the
+//     iframe surface host sites legitimately frame. /embed.js (the
+//     script bundle) lives at the root, not under /embed/, so it
+//     correctly gets DENY (scripts aren't framable anyway).
+app.use("*", async (c, next) => {
+	await next();
+	c.header("strict-transport-security", "max-age=63072000; includeSubDomains; preload");
+	c.header("referrer-policy", "no-referrer");
+	c.header(
+		"permissions-policy",
+		"interest-cohort=(), browsing-topics=()",
+	);
+	c.header("x-content-type-options", "nosniff");
+	if (!c.req.path.startsWith("/embed/")) {
+		c.header("x-frame-options", "DENY");
+	}
+});
+
 app.use("/api/*", corsAndCsrf());
 app.use("/api/*", sessionMiddleware());
 

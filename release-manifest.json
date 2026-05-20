@@ -132,7 +132,8 @@
   ],
   "migrations": [
     "0001_init.sql",
-    "0002_notifications.sql"
+    "0002_notifications.sql",
+    "0003_subscription_confirm.sql"
   ],
   "breakingChanges": []
 }
