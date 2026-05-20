@@ -27,6 +27,11 @@ const CARVE_OUT_PATHS: readonly RegExp[] = [
 	/^\/api\/v1\/health\/?$/,
 	/^\/api\/v1\/auth\/[^/]+\/start\/?$/,
 	/^\/api\/v1\/auth\/[^/]+\/callback\/?$/,
+	// Email-link top-level GETs from mail clients have no Origin header.
+	// The token in the URL is the unguessable capability — Origin check
+	// would add nothing here and would break every email click.
+	/^\/api\/v1\/subscribe\/confirm\/[^/]+\/?$/,
+	/^\/api\/v1\/subscribe\/unsubscribe\/[^/]+\/?$/,
 ];
 
 const parseAllowed = (raw: string | undefined): Set<string> => {
