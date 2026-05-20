@@ -49,7 +49,14 @@ export const checkAkismet = async (
 			`https://${cfg.apiKey}.rest.akismet.com/1.1/comment-check`,
 			{
 				method: "POST",
-				headers: { "content-type": "application/x-www-form-urlencoded" },
+				headers: {
+					"content-type": "application/x-www-form-urlencoded",
+					// App-identifying UA per Akismet's API contract — they
+					// use it for rate-limit bucketing and abuse reporting.
+					// Without it every Garrul instance shares the default
+					// Workers UA with every other CF Worker.
+					"user-agent": "Garrul/1 | Akismet/1.1",
+				},
 				body: form.toString(),
 			},
 		);
