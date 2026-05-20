@@ -41,7 +41,6 @@ export const checkAkismet = async (
 	// neutral placeholder so the request passes Akismet's required-fields
 	// check; the model is robust to a uniform constant.
 	form.set("user_ip", "127.0.0.1");
-	if (input.is_first_comment) form.set("is_test", "0");
 
 	try {
 		const res = await fetch(
