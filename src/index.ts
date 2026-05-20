@@ -64,21 +64,37 @@ app.use("*", requestLogger());
 // state-changing routes. Wrangler's `dev` workflow is the only intended
 // caller; if ENV=dev ever leaks into a non-local host, refuse to serve
 // so the operator sees the misconfiguration instead of silently weakened
-// security.
+// security. Response body is intentionally empty — telling a probing
+// attacker "this server is in dev mode" is itself a leak.
+const isLocalDevHost = (host: string): boolean => {
+	if (
+		host === "localhost" ||
+		host === "::1" ||
+		host === "[::1]" ||
+		host === "host.docker.internal"
+	) {
+		return true;
+	}
+	// Whole 127/8 loopback range, not just .0.0.1 — operators bind to
+	// 127.0.0.2 etc. for isolated dev instances.
+	if (/^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host)) return true;
+	// RFC 6761 reserved local TLDs.
+	if (host.endsWith(".localhost") || host.endsWith(".local")) return true;
+	if (host.endsWith(".test")) return true;
+	return false;
+};
 app.use("*", async (c, next) => {
 	if (c.env.ENV === "dev") {
 		const host = new URL(c.req.url).hostname;
-		const isLocal =
-			host === "localhost" ||
-			host === "127.0.0.1" ||
-			host === "::1" ||
-			host.endsWith(".localhost") ||
-			host.endsWith(".local");
-		if (!isLocal) {
-			return c.json(
-				{ error: "dev_mode_not_local" },
-				500,
+		if (!isLocalDevHost(host)) {
+			console.error(
+				JSON.stringify({
+					level: "error",
+					msg: "ENV=dev on non-local host; refusing to serve",
+					host,
+				}),
 			);
+			return c.body(null, 500);
 		}
 	}
 	await next();
