@@ -188,10 +188,14 @@ const evaluateSpam = async (
 		if (n > linkThreshold) reasons.push(`link_count:${n}`);
 	}
 
+	// Compute is_first_comment if either the moderate-on-first heuristic
+	// or the classifier is enabled — classifiers use it as a feature even
+	// when the operator hasn't asked us to auto-moderate on it.
+	const moderateFirst = env.SPAM_FIRST_COMMENT_MODERATE === "true";
 	let isFirst = false;
-	if (env.SPAM_FIRST_COMMENT_MODERATE === "true") {
+	if (moderateFirst || env.SPAM_PROVIDER) {
 		isFirst = await isFirstComment(env.DB, author.id);
-		if (isFirst) reasons.push("first_comment");
+		if (moderateFirst && isFirst) reasons.push("first_comment");
 	}
 
 	// Skip the classifier call when a heuristic already flagged — the
