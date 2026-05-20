@@ -13,7 +13,7 @@ These don't need configuration; they ship with every Garrul instance:
 
 ## Optional layers
 
-All four heuristics + the classifier adapter flip a flagged comment to `status='pending'` so it lands in the admin queue at `/admin/queue?status=pending`. **Nothing is ever silently dropped.** You decide whether to approve.
+All three heuristics + the classifier adapter flip a flagged comment to `status='pending'` so it lands in the admin queue at `/admin/queue?status=pending`. **Nothing is ever silently dropped.** You decide whether to approve.
 
 ### 1. Honeypot timing (`SPAM_HONEYPOT_MIN_MS`)
 

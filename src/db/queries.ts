@@ -346,10 +346,11 @@ export const getUsersByIds = async (
 };
 
 /**
- * Fetch publicly visible comments for a post. Excludes `spam` (silent drop)
- * and `pending` (admin-queue-only — never leaks via the public tree).
- * Returned `deleted` comments are kept so the tree builder can preserve
- * chain ancestry; their body_html is blanked at render time.
+ * Fetch publicly visible comments for a post. Excludes `spam` and
+ * `pending` — both are stored in D1 and visible in the admin queue,
+ * but never leak via the public tree. Returned `deleted` comments are
+ * kept so the tree builder can preserve chain ancestry; their body_html
+ * is blanked at render time.
  */
 export const listCommentsForPost = async (
 	db: D1Database,

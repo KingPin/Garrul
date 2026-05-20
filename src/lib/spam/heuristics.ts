@@ -93,8 +93,10 @@ export const verifyFormTimestamp = async (
 /**
  * Count URL-like substrings in the markdown body. Anything matching
  * `http(s)://` or `mailto:` schemes counts — matches the renderer allowlist
- * in src/lib/markdown.ts. Bare-text URLs that the renderer auto-links also
- * count (gfm autolink rule).
+ * in src/lib/markdown.ts. Scheme-less domains (e.g. `www.example.com`)
+ * are NOT counted; if a spammer relies on the gfm autolinker to make a
+ * bare domain clickable, this signal misses it, but the rendered HTML
+ * will still go through the strict sanitizer.
  */
 const URL_RE = /\b(?:https?:\/\/|mailto:)\S+/gi;
 export const countLinks = (bodyMd: string): number => {
