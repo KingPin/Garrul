@@ -57,6 +57,33 @@ export type Bindings = {
 const app = new Hono<{ Bindings: Bindings }>();
 
 app.use("*", requestLogger());
+
+// Fail-closed guard against a misconfigured deployment serving with
+// ENV=dev: that value relaxes cookie attributes (drops Secure, switches
+// from SameSite=None to Lax) and bypasses the Origin allowlist on
+// state-changing routes. Wrangler's `dev` workflow is the only intended
+// caller; if ENV=dev ever leaks into a non-local host, refuse to serve
+// so the operator sees the misconfiguration instead of silently weakened
+// security.
+app.use("*", async (c, next) => {
+	if (c.env.ENV === "dev") {
+		const host = new URL(c.req.url).hostname;
+		const isLocal =
+			host === "localhost" ||
+			host === "127.0.0.1" ||
+			host === "::1" ||
+			host.endsWith(".localhost") ||
+			host.endsWith(".local");
+		if (!isLocal) {
+			return c.json(
+				{ error: "dev_mode_not_local" },
+				500,
+			);
+		}
+	}
+	await next();
+});
+
 app.use("/api/*", corsAndCsrf());
 app.use("/api/*", sessionMiddleware());
 
