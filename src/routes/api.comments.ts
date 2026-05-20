@@ -269,6 +269,14 @@ comments.post("/", async (c) => {
 		if (!expectedHostname) {
 			return c.json({ error: t("err.turnstile.invalid") }, 400);
 		}
+		// Cloudflare's "always passes" dev test keys return a fixed
+		// data.hostname of "example.com" regardless of where the widget
+		// actually rendered. Override expectedHostname under ENV=dev so
+		// local wrangler dev (origin=localhost) keeps exercising the
+		// hostname check end-to-end without being rejected.
+		if (c.env.ENV === "dev") {
+			expectedHostname = "example.com";
+		}
 		const ts = await verifyTurnstile(
 			body.turnstile_token,
 			c.env.TURNSTILE_SECRET,
