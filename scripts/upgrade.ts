@@ -311,12 +311,14 @@ export const main = async (
 		git?: typeof gitModule;
 		fetchLatest?: typeof fetchLatestRelease;
 		fetchTargetManifest?: typeof fetchRemote;
+		loadLocal?: typeof loadLocal;
 	} = {},
 ): Promise<void> => {
 	const wrangler = deps.wrangler ?? wranglerModule;
 	const git = deps.git ?? gitModule;
 	const fetchLatest = deps.fetchLatest ?? fetchLatestRelease;
 	const fetchTargetManifest = deps.fetchTargetManifest ?? fetchRemote;
+	const readLocal = deps.loadLocal ?? loadLocal;
 	const flags = parseFlags(argv);
 
 	step("Preflight checks…");
@@ -334,7 +336,7 @@ export const main = async (
 	step("Resolving target version…");
 	const remote = git.parseRemote(REPO_ROOT);
 	const local =
-		loadLocal(REPO_ROOT) ??
+		readLocal(REPO_ROOT) ??
 		(() => {
 			console.warn("\n[upgrade] no local release-manifest.json; deriving from source");
 			return buildManifest();

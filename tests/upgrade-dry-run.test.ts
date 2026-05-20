@@ -68,6 +68,14 @@ const fetchTargetManifest = vi.fn(
 	async (): Promise<Manifest> => structuredClone(fakeTargetManifest),
 );
 
+// Inject a low local version so this test stays valid across release bumps.
+// Without injection, loadLocal reads the real release-manifest.json from
+// disk; when that version equals the test's target version, the upgrade
+// script early-returns ("nothing to do") and never calls fetchTargetManifest.
+const loadLocal = vi.fn(
+	(): Manifest => ({ ...structuredClone(fakeTargetManifest), version: "1.0.0" }),
+);
+
 describe("upgrade dry-run", () => {
 	let wranglerMock: typeof wranglerModule;
 	let gitMock: typeof gitModule;
@@ -79,6 +87,7 @@ describe("upgrade dry-run", () => {
 		gitMock = makeGitMock();
 		fetchLatest.mockClear();
 		fetchTargetManifest.mockClear();
+		loadLocal.mockClear();
 		logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 		stdoutSpy = vi
 			.spyOn(process.stdout, "write")
@@ -96,6 +105,7 @@ describe("upgrade dry-run", () => {
 			git: gitMock,
 			fetchLatest,
 			fetchTargetManifest,
+			loadLocal,
 		});
 
 		expect(wranglerMock.createKvNamespace).not.toHaveBeenCalled();
@@ -116,6 +126,7 @@ describe("upgrade dry-run", () => {
 			git: gitMock,
 			fetchLatest,
 			fetchTargetManifest,
+			loadLocal,
 		});
 
 		expect(fetchTargetManifest).toHaveBeenCalledTimes(1);
@@ -132,6 +143,7 @@ describe("upgrade dry-run", () => {
 			git: gitMock,
 			fetchLatest,
 			fetchTargetManifest,
+			loadLocal,
 		});
 
 		expect(fetchLatest).not.toHaveBeenCalled();
