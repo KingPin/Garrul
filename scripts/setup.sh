@@ -114,6 +114,28 @@ put_secret() {
 	esac
 }
 
+# Prompt once for a provider; if accepted, set both paired secrets.
+# Otherwise skip the whole group so users aren't asked twice to say no.
+put_secret_pair() {
+	local label="$1"
+	local hint="$2"
+	local name_a="$3"
+	local name_b="$4"
+	echo
+	read -r -p "Configure $label? ($hint) [y/N] " resp
+	case "$resp" in
+		y|Y|yes|YES)
+			wrangler secret put "$name_a"
+			wrangler secret put "$name_b"
+			;;
+		*)
+			echo "  skipped — set later with:"
+			echo "    wrangler secret put $name_a"
+			echo "    wrangler secret put $name_b"
+			;;
+	esac
+}
+
 # Auto-generate a 32-byte base64 random secret and stream it to wrangler.
 # Falls back to interactive entry if openssl is unavailable.
 put_random_secret() {
@@ -140,12 +162,9 @@ echo "These prompt one at a time. Skip any you don't have yet."
 
 put_random_secret JWT_SECRET     "auto-generated 32-byte secret; reserved for future JWT use (sessions are KV-backed)"
 put_random_secret IP_HASH_SECRET "auto-generated 32-byte HMAC pepper for IP hashing — generate once and keep it"
-put_secret TURNSTILE_SITE_KEY    "from dash.cloudflare.com → Turnstile"
-put_secret TURNSTILE_SECRET      "from dash.cloudflare.com → Turnstile"
-put_secret GH_CLIENT_ID          "from github.com/settings/developers"
-put_secret GH_CLIENT_SECRET      "from github.com/settings/developers"
-put_secret GOOGLE_CLIENT_ID      "from console.cloud.google.com → OAuth credentials"
-put_secret GOOGLE_CLIENT_SECRET  "from console.cloud.google.com → OAuth credentials"
+put_secret_pair "Turnstile"     "from dash.cloudflare.com → Turnstile"            TURNSTILE_SITE_KEY  TURNSTILE_SECRET
+put_secret_pair "GitHub OAuth"  "from github.com/settings/developers"             GH_CLIENT_ID        GH_CLIENT_SECRET
+put_secret_pair "Google OAuth"  "from console.cloud.google.com → OAuth credentials" GOOGLE_CLIENT_ID  GOOGLE_CLIENT_SECRET
 put_secret RESEND_API_KEY        "from resend.com/api-keys"
 put_secret WEBHOOK_URL           "optional fire-and-forget POST on new comment"
 
