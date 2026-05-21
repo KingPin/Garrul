@@ -620,12 +620,18 @@ const buildThread = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	return wrap;
 };
 
+const PROVIDER_LABELS: Record<"github" | "google", string> = {
+	github: "GitHub",
+	google: "Google",
+};
+
 const buildAuthBlock = (
 	me: Me,
 	apiBase: string,
+	providers: ReadonlyArray<"github" | "google">,
 	onSignedIn: () => void,
 	onSignedOut: () => void,
-): HTMLElement => {
+): HTMLElement | null => {
 	if (me) {
 		const wrap = el("div", "gr-signed");
 		wrap.appendChild(el("span", undefined, "Posting as "));
@@ -654,10 +660,14 @@ const buildAuthBlock = (
 		return wrap;
 	}
 
+	// No OAuth providers configured on the server → no sign-in row at all.
+	// Anonymous commenting still works via the regular form.
+	if (providers.length === 0) return null;
+
 	const wrap = el("div", "gr-signin");
 	wrap.appendChild(el("span", undefined, "Sign in to get a verified badge:"));
-	for (const p of ["github", "google"] as const) {
-		const btn = el("button", undefined, p === "github" ? "GitHub" : "Google");
+	for (const p of providers) {
+		const btn = el("button", undefined, PROVIDER_LABELS[p]);
 		btn.type = "button";
 		btn.addEventListener("click", () => startOauth(p, apiBase, onSignedIn));
 		wrap.appendChild(btn);
@@ -889,6 +899,7 @@ const loadOnce = async (
 ) => {
 	let siteKey: string | null = null;
 	let editWindowMinutes = 5;
+	let providers: ReadonlyArray<"github" | "google"> = [];
 	try {
 		const cfgRes = await fetch(`${apiBase}/api/v1/config`, {
 			credentials: "include",
@@ -897,9 +908,13 @@ const loadOnce = async (
 			const cfg = (await cfgRes.json()) as {
 				turnstile_site_key?: string;
 				edit_window_minutes?: number;
+				providers?: string[];
 			};
 			siteKey = cfg.turnstile_site_key ?? null;
 			editWindowMinutes = cfg.edit_window_minutes ?? 5;
+			providers = (cfg.providers ?? []).filter(
+				(p): p is "github" | "google" => p === "github" || p === "google",
+			);
 		}
 	} catch {
 		// /api/v1/config is optional; the widget still renders without Turnstile
@@ -933,7 +948,7 @@ const loadOnce = async (
 		editWindowMs: editWindowMinutes * 60_000,
 		reload,
 	};
-	const authBlock = buildAuthBlock(me, apiBase, reload, reload);
+	const authBlock = buildAuthBlock(me, apiBase, providers, reload, reload);
 	// Mint the timing token now so the honeypot-timing heuristic has
 	// real elapsed seconds to measure when the user eventually submits.
 	prefetchFormToken(apiBase);
@@ -944,7 +959,8 @@ const loadOnce = async (
 	} else {
 		appendThreads(list, data.threads, ctx);
 	}
-	wrap.append(authBlock, form, list);
+	if (authBlock) wrap.appendChild(authBlock);
+	wrap.append(form, list);
 
 	if (data.next_cursor) {
 		const more = el("button", "gr-loadmore", "Load older comments");
