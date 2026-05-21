@@ -8,6 +8,9 @@
  *   npm run upgrade -- --yes       # non-interactive (CI); secrets must be pre-set
  *   npm run upgrade -- --version v0.0.2
  *
+ * Interactive flow prints the GitHub release notes (when available) and
+ * the drift plan, then asks for confirmation. `--yes` skips that prompt.
+ *
  * Flags:
  *   --dry-run            Print the plan and exit; no side effects.
  *   --yes                Skip confirmations. Missing secrets become hard errors.
@@ -94,10 +97,40 @@ const stepFail = (suffix: string): void => {
 	process.stdout.write(` FAIL\n  ${suffix}\n`);
 };
 
+type ReleaseInfo = { tag: string; url: string; notes: string | null };
+
+const parseReleaseResponse = (
+	body: unknown,
+	owner: string,
+	repo: string,
+): ReleaseInfo => {
+	if (
+		typeof body !== "object" ||
+		body === null ||
+		typeof (body as { tag_name?: unknown }).tag_name !== "string"
+	) {
+		throw new Error("GitHub release response missing tag_name");
+	}
+	const tag = (body as { tag_name: string }).tag_name;
+	const rawNotes = (body as { body?: unknown }).body;
+	const notes =
+		typeof rawNotes === "string" && rawNotes.trim().length > 0
+			? rawNotes
+			: null;
+	return {
+		tag,
+		url:
+			typeof (body as { html_url?: unknown }).html_url === "string"
+				? ((body as { html_url: string }).html_url)
+				: `https://github.com/${owner}/${repo}/releases/tag/${tag}`,
+		notes,
+	};
+};
+
 const fetchLatestRelease = async (
 	owner: string,
 	repo: string,
-): Promise<{ tag: string; url: string }> => {
+): Promise<ReleaseInfo> => {
 	const res = await fetch(
 		`https://api.github.com/repos/${owner}/${repo}/releases/latest`,
 		{ headers: { Accept: "application/vnd.github+json" } },
@@ -107,21 +140,43 @@ const fetchLatestRelease = async (
 			`GitHub releases/latest returned ${res.status} for ${owner}/${repo}`,
 		);
 	}
-	const body: unknown = await res.json();
-	if (
-		typeof body !== "object" ||
-		body === null ||
-		typeof (body as { tag_name?: unknown }).tag_name !== "string"
-	) {
-		throw new Error("GitHub release response missing tag_name");
+	return parseReleaseResponse(await res.json(), owner, repo);
+};
+
+const fetchReleaseForTag = async (
+	owner: string,
+	repo: string,
+	tag: string,
+): Promise<ReleaseInfo | null> => {
+	const res = await fetch(
+		`https://api.github.com/repos/${owner}/${repo}/releases/tags/${encodeURIComponent(tag)}`,
+		{ headers: { Accept: "application/vnd.github+json" } },
+	);
+	if (res.status === 404) return null;
+	if (!res.ok) {
+		throw new Error(
+			`GitHub releases/tags/${tag} returned ${res.status} for ${owner}/${repo}`,
+		);
 	}
-	return {
-		tag: (body as { tag_name: string }).tag_name,
-		url:
-			typeof (body as { html_url?: unknown }).html_url === "string"
-				? ((body as { html_url: string }).html_url)
-				: `https://github.com/${owner}/${repo}/releases/tag/${(body as { tag_name: string }).tag_name}`,
-	};
+	return parseReleaseResponse(await res.json(), owner, repo);
+};
+
+const printReleaseNotes = (info: ReleaseInfo | null, tag: string): void => {
+	console.log("");
+	console.log(`Release notes (${tag}):`);
+	if (!info) {
+		console.log("  (no GitHub release published for this tag)");
+		return;
+	}
+	console.log(`  ${info.url}`);
+	if (!info.notes) {
+		console.log("  (release has no description)");
+		return;
+	}
+	console.log("");
+	for (const line of info.notes.replace(/\r\n/g, "\n").split("\n")) {
+		console.log(`  ${line}`);
+	}
 };
 
 const computePlan = (
@@ -310,6 +365,7 @@ export const main = async (
 		wrangler?: typeof wranglerModule;
 		git?: typeof gitModule;
 		fetchLatest?: typeof fetchLatestRelease;
+		fetchReleaseForTag?: typeof fetchReleaseForTag;
 		fetchTargetManifest?: typeof fetchRemote;
 		loadLocal?: typeof loadLocal;
 	} = {},
@@ -317,6 +373,7 @@ export const main = async (
 	const wrangler = deps.wrangler ?? wranglerModule;
 	const git = deps.git ?? gitModule;
 	const fetchLatest = deps.fetchLatest ?? fetchLatestRelease;
+	const fetchReleaseTag = deps.fetchReleaseForTag ?? fetchReleaseForTag;
 	const fetchTargetManifest = deps.fetchTargetManifest ?? fetchRemote;
 	const readLocal = deps.loadLocal ?? loadLocal;
 	const flags = parseFlags(argv);
@@ -343,6 +400,7 @@ export const main = async (
 		})();
 
 	let targetTag: string;
+	let release: ReleaseInfo | null = null;
 	if (flags.version) {
 		if (!parseSemver(flags.version)) {
 			stepFail(`bad --version: ${flags.version}`);
@@ -352,6 +410,7 @@ export const main = async (
 	} else {
 		const latest = await fetchLatest(remote.owner, remote.repo);
 		targetTag = latest.tag;
+		release = latest;
 	}
 	stepOk(targetTag);
 
@@ -370,6 +429,16 @@ export const main = async (
 	step("Fetching target manifest…");
 	const target = await fetchTargetManifest(remote.owner, remote.repo, targetTag);
 	stepOk();
+
+	if (release === null) {
+		step("Fetching release notes…");
+		try {
+			release = await fetchReleaseTag(remote.owner, remote.repo, targetTag);
+			stepOk(release ? "OK" : "none");
+		} catch (err) {
+			stepOk(`skipped (${(err as Error).message})`);
+		}
+	}
 
 	if (compareSemver(local.version, target.minPreviousVersion) < 0) {
 		console.error(
@@ -391,6 +460,7 @@ export const main = async (
 		process.exit(1);
 	}
 
+	printReleaseNotes(release, targetTag);
 	printPlan(local, target, plan);
 
 	if (flags.dryRun) {
@@ -398,9 +468,7 @@ export const main = async (
 		return;
 	}
 
-	if (!hasMutations(plan) && !plan.renderer.bumped) {
-		console.log("[upgrade] code-only release; proceeding to checkout + deploy");
-	} else if (!flags.yes) {
+	if (!flags.yes) {
 		const proceed = await confirm("Proceed?");
 		if (!proceed) {
 			console.log("[upgrade] aborted by user");
