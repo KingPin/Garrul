@@ -10,6 +10,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import {
 	buildAuthorizeUrl,
 	callbackUrl,
+	constantTimeEqual,
 	consumeHandoff,
 	consumeState,
 	isProvider,
@@ -129,6 +130,31 @@ describe("randomHex", () => {
 	});
 	it("produces distinct values across calls", () => {
 		expect(randomHex(16)).not.toBe(randomHex(16));
+	});
+});
+
+describe("constantTimeEqual", () => {
+	it("returns true for identical strings", () => {
+		expect(constantTimeEqual("abc123", "abc123")).toBe(true);
+		expect(constantTimeEqual("", "")).toBe(true);
+	});
+	it("returns false on length mismatch", () => {
+		expect(constantTimeEqual("abc", "abcd")).toBe(false);
+		expect(constantTimeEqual("abcd", "abc")).toBe(false);
+		expect(constantTimeEqual("", "x")).toBe(false);
+	});
+	it("returns false on byte mismatch at any position", () => {
+		// First-byte mismatch — naive === short-circuits here; this is the
+		// position whose timing leak motivated the helper.
+		expect(constantTimeEqual("xbc", "abc")).toBe(false);
+		// Middle-byte mismatch.
+		expect(constantTimeEqual("axc", "abc")).toBe(false);
+		// Last-byte mismatch.
+		expect(constantTimeEqual("abx", "abc")).toBe(false);
+	});
+	it("returns true for two randomHex outputs that happen to match", () => {
+		const tok = randomHex(16);
+		expect(constantTimeEqual(tok, tok)).toBe(true);
 	});
 });
 
