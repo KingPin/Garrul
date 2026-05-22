@@ -618,6 +618,10 @@ admin.post("/api/users/:id", async (c) => {
 	if (!body || typeof body.banned !== "boolean") {
 		return c.json({ error: "invalid_body" }, 400);
 	}
+	// Without this, setUserBanned silently no-ops on a bogus id and the
+	// endpoint returns ok — masking a typo or stale UI from the admin.
+	const target = await getUser(c.env.DB, id);
+	if (!target) return c.json({ error: "not_found" }, 404);
 	await setUserBanned(c.env.DB, id, body.banned);
 	return c.json({ ok: true, id, banned: body.banned });
 });
