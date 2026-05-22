@@ -338,6 +338,105 @@ const getFormToken = (apiBase: string): Promise<string> => {
 	return formTokenPromise as Promise<string>;
 };
 
+/**
+ * Turnstile renders inside our Shadow DOM, but the api.js auto-render scans
+ * `document.querySelectorAll('.cf-turnstile')` against the LIGHT DOM only —
+ * shadow boundaries are opaque to that selector, so the placeholder div sits
+ * empty and no token ever lands in `cf-turnstile-response`. The fix is to
+ * load api.js in `render=explicit` mode and call `turnstile.render(box, …)`
+ * ourselves once the script's onload fires.
+ */
+type TurnstileApi = {
+	render: (
+		el: HTMLElement | string,
+		opts: { sitekey: string },
+	) => string | undefined;
+};
+const TURNSTILE_CALLBACK = "__garrulTurnstileOnload";
+type TurnstileWindow = Window & {
+	turnstile?: TurnstileApi;
+	[TURNSTILE_CALLBACK]?: () => void;
+};
+let turnstileLoadStarted = false;
+const turnstilePending: Array<() => void> = [];
+
+const drainTurnstilePending = (): void => {
+	const tw = window as TurnstileWindow;
+	if (!tw.turnstile?.render) return;
+	while (turnstilePending.length > 0) {
+		const fn = turnstilePending.shift();
+		try {
+			fn?.();
+		} catch {
+			// One bad render shouldn't block the rest of the queue.
+		}
+	}
+};
+
+const ensureTurnstileScript = (onError: () => void): void => {
+	const tw = window as TurnstileWindow;
+	if (tw.turnstile?.render) return;
+	if (turnstileLoadStarted) return;
+	turnstileLoadStarted = true;
+
+	// Chain with any pre-existing callback the host page may have set, so we
+	// don't clobber a host site that uses Turnstile for its own forms.
+	const prior = tw[TURNSTILE_CALLBACK];
+	tw[TURNSTILE_CALLBACK] = () => {
+		if (typeof prior === "function") {
+			try {
+				prior();
+			} catch {
+				// Host callback failures aren't our problem; keep going.
+			}
+		}
+		drainTurnstilePending();
+	};
+
+	const s = document.createElement("script");
+	s.src = `https://challenges.cloudflare.com/turnstile/v0/api.js?onload=${TURNSTILE_CALLBACK}&render=explicit`;
+	s.async = true;
+	s.defer = true;
+	// The host page's CSP can block this load. Without this handler the user
+	// just sees a form with no captcha and gets a confusing "Spam check
+	// failed" on submit.
+	s.onerror = () => {
+		turnstilePending.length = 0;
+		onError();
+	};
+	document.head.appendChild(s);
+};
+
+const renderTurnstileWidget = (
+	box: HTMLElement,
+	sitekey: string,
+	onError: () => void,
+): void => {
+	const doRender = () => {
+		// reload() can swap the form out before api.js finishes loading —
+		// skip queued renders whose box is no longer attached.
+		if (!box.isConnected) return;
+		if (box.dataset.garrulRendered === "1") return;
+		const tw = window as TurnstileWindow;
+		if (!tw.turnstile?.render) return;
+		box.dataset.garrulRendered = "1";
+		try {
+			tw.turnstile.render(box, { sitekey });
+		} catch {
+			delete box.dataset.garrulRendered;
+			onError();
+		}
+	};
+
+	const tw = window as TurnstileWindow;
+	if (tw.turnstile?.render) {
+		doRender();
+		return;
+	}
+	turnstilePending.push(doRender);
+	ensureTurnstileScript(onError);
+};
+
 const REACTION_KINDS: { kind: string; emoji: string }[] = [
 	{ kind: "like", emoji: "👍" },
 	{ kind: "love", emoji: "❤️" },
@@ -1051,31 +1150,23 @@ const loadOnce = async (
 		}
 	}
 
-	if (siteKey && !document.querySelector('script[src*="turnstile"]')) {
-		const s = document.createElement("script");
-		s.src = "https://challenges.cloudflare.com/turnstile/v0/api.js";
-		s.async = true;
-		s.defer = true;
-		// The host page's CSP can block this load (the script lives on the
-		// host's document, not in the widget's Shadow DOM). Without this
-		// handler the user just sees a form with no captcha, types a comment,
-		// and gets a confusing "Spam check failed" on submit.
-		s.onerror = () => {
-			const tsBox = form.querySelector(".cf-turnstile") as HTMLElement | null;
-			if (!tsBox) return; // signed-in path doesn't render Turnstile
-			tsBox.hidden = true;
-			const submitBtn = form.querySelector(
-				"button[type=submit]",
-			) as HTMLButtonElement | null;
-			if (submitBtn) submitBtn.disabled = true;
-			const errEl = form.querySelector(".gr-error") as HTMLElement | null;
-			if (errEl) {
-				errEl.textContent =
-					"Anti-spam check couldn't load — the host page's CSP may be blocking https://challenges.cloudflare.com. Site owner: see Garrul's troubleshooting docs.";
-				errEl.hidden = false;
-			}
-		};
-		document.head.appendChild(s);
+	if (siteKey) {
+		const tsBox = form.querySelector(".cf-turnstile") as HTMLElement | null;
+		if (tsBox) {
+			renderTurnstileWidget(tsBox, siteKey, () => {
+				tsBox.hidden = true;
+				const submitBtn = form.querySelector(
+					"button[type=submit]",
+				) as HTMLButtonElement | null;
+				if (submitBtn) submitBtn.disabled = true;
+				const errEl = form.querySelector(".gr-error") as HTMLElement | null;
+				if (errEl) {
+					errEl.textContent =
+						"Anti-spam check couldn't load — the host page's CSP may be blocking https://challenges.cloudflare.com. Site owner: see Garrul's troubleshooting docs.";
+					errEl.hidden = false;
+				}
+			});
+		}
 	}
 
 	form.addEventListener("submit", (e) => {
