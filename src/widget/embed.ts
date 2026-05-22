@@ -501,7 +501,12 @@ const buildActions = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): HTMLEleme
 		const replyBtn = el("button", undefined, "Reply");
 		replyBtn.type = "button";
 		replyBtn.addEventListener("click", () => {
-			if (main.querySelector(".gr-reply-form")) return;
+			// Editor forms share the `gr-reply-form` class (and styling) but tag
+			// themselves with `data-mode="edit"` — narrow the guard so an open
+			// editor doesn't silently swallow Reply clicks.
+			if (main.querySelector('.gr-reply-form:not([data-mode="edit"])')) {
+				return;
+			}
 			main.appendChild(buildReplyForm(n, ctx));
 		});
 		row.appendChild(replyBtn);
@@ -542,6 +547,9 @@ const buildActions = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): HTMLEleme
 };
 
 const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
+	// Symmetric to the Reply-button guard: only one editor at a time on a
+	// given comment. Reply forms (no data-mode) may coexist alongside.
+	if (main.querySelector('.gr-reply-form[data-mode="edit"]')) return;
 	const bodyEl = main.querySelector(".gr-body");
 	if (!bodyEl) return;
 	const wrap = el("form", "gr-reply-form");
