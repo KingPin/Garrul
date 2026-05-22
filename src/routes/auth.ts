@@ -83,14 +83,19 @@ auth.get("/:provider/start", async (c) => {
 	}
 
 	// `return` is where the widget wants us to deliver focus after the
-	// popup closes (its top-level origin, e.g. the blog page).
+	// popup closes (its top-level origin, e.g. the blog page). It must
+	// match an entry in ALLOWED_ORIGINS — that's the same allowlist the
+	// cross-site API origin gate uses, so dev workflows already populate
+	// it (e.g. ALLOWED_ORIGINS="http://localhost:5173"). No ENV=dev
+	// bypass: a wide-open postMessage target is a real footgun even
+	// locally.
 	const rawReturn = c.req.query("return") ?? "";
 	const allowed = parseAllowedOrigins(env.ALLOWED_ORIGINS);
 	let return_origin = "";
 	try {
 		const u = new URL(rawReturn);
 		const candidate = u.origin;
-		if (allowed.has(candidate) || env.ENV === "dev") {
+		if (allowed.has(candidate)) {
 			return_origin = candidate;
 		}
 	} catch {
