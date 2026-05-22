@@ -13,7 +13,7 @@ import { counts } from "./routes/api.counts";
 import { permalink } from "./routes/permalink";
 import { subscriptions } from "./routes/api.subscriptions";
 import { runDigest } from "./lib/digest";
-import { requestLogger } from "./lib/log";
+import { log, requestLogger } from "./lib/log";
 import { corsAndCsrf } from "./lib/cors";
 import { sessionMiddleware } from "./lib/session";
 
@@ -90,13 +90,7 @@ app.use("*", async (c, next) => {
 	if (c.env.ENV === "dev") {
 		const host = new URL(c.req.url).hostname;
 		if (!isLocalDevHost(host)) {
-			console.error(
-				JSON.stringify({
-					level: "error",
-					msg: "ENV=dev on non-local host; refusing to serve",
-					host,
-				}),
-			);
+			log.error("ENV=dev on non-local host; refusing to serve", { host });
 			return c.body(null, 500);
 		}
 	}
@@ -156,15 +150,10 @@ app.get("/", (c) =>
 app.notFound((c) => c.json({ error: "not_found" }, 404));
 
 app.onError((err, c) => {
-	console.error(
-		JSON.stringify({
-			level: "error",
-			ts: new Date().toISOString(),
-			msg: "unhandled.error",
-			error: err.message,
-			stack: err.stack,
-		}),
-	);
+	log.error("unhandled.error", {
+		error: err.message,
+		stack: err.stack,
+	});
 	return c.json({ error: "internal_error" }, 500);
 });
 
