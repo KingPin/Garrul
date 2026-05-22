@@ -712,6 +712,11 @@ const buildForm = (siteKey: string | null, signedIn: boolean): HTMLFormElement =
 	honey.tabIndex = -1;
 	honey.setAttribute("aria-hidden", "true");
 	honey.autocomplete = "off";
+	// `readonly` makes browser autofill / password managers skip the field
+	// (they universally ignore readonly inputs). Naive form-spam bots that
+	// POST the form body directly still submit values for it, so the trap
+	// still fires — `autocomplete="off"` alone isn't honored by most fillers.
+	honey.readOnly = true;
 	form.appendChild(honey);
 
 	// Notify-me opt-in. Anonymous: an email field appears alongside the
