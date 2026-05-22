@@ -10,6 +10,8 @@
  * leave the env vars unset.
  */
 
+import { log } from "./log";
+
 export type SendEmailInput = {
 	to: string;
 	from: string;
@@ -47,25 +49,15 @@ export const sendEmail = async (
 		});
 		if (!res.ok) {
 			const body = await res.text().catch(() => "");
-			console.error(
-				JSON.stringify({
-					level: "warn",
-					msg: "email.send_failed",
-					status: res.status,
-					body: body.slice(0, 200),
-				}),
-			);
+			log.warn("email.send_failed", {
+				status: res.status,
+				body: body.slice(0, 200),
+			});
 			return false;
 		}
 		return true;
 	} catch (err) {
-		console.error(
-			JSON.stringify({
-				level: "warn",
-				msg: "email.send_error",
-				error: String(err),
-			}),
-		);
+		log.warn("email.send_error", { error: String(err) });
 		return false;
 	}
 };
