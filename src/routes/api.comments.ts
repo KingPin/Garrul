@@ -44,6 +44,7 @@ import { readSession } from "../lib/session";
 import { verifyTurnstile } from "../lib/turnstile";
 import { writeEvent } from "../lib/analytics";
 import { fireWebhook } from "../lib/webhook";
+import { log } from "../lib/log";
 import {
 	countLinks,
 	isFirstComment,
@@ -350,15 +351,11 @@ comments.post("/", async (c) => {
 		body.form_ts,
 	);
 	if (verdict.reasons.length > 0) {
-		console.log(
-			JSON.stringify({
-				level: "info",
-				msg: "spam.flagged",
-				reasons: verdict.reasons,
-				post_slug: slug,
-				provider: author.provider,
-			}),
-		);
+		log.info("spam.flagged", {
+			reasons: verdict.reasons,
+			post_slug: slug,
+			provider: author.provider,
+		});
 	}
 
 	const body_html = renderMarkdown(bodyCheck.body);
