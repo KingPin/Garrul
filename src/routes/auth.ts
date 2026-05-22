@@ -35,6 +35,7 @@ import {
 	readSession,
 } from "../lib/session";
 import { writeEvent } from "../lib/analytics";
+import { log } from "../lib/log";
 
 // Per-flow cookie naming: the suffix is the first 8 hex chars of the
 // (48-hex-char) state token, which gives 32 bits of disambiguation
@@ -243,7 +244,7 @@ auth.get("/:provider/callback", async (c) => {
 			redirect,
 		);
 	} catch (err) {
-		console.error(JSON.stringify({ level: "error", msg: "oauth.token", provider, error: String(err) }));
+		log.error("oauth.token", { provider, error: String(err) });
 		writeEvent(c.env.ANALYTICS, "oauth.failed", { provider, outcome: "token_exchange" });
 		return c.html(finishHtml(payload.return_origin, false, "token_exchange_failed"));
 	}
@@ -252,7 +253,7 @@ auth.get("/:provider/callback", async (c) => {
 	try {
 		profile = await cfg.fetch_profile(accessToken);
 	} catch (err) {
-		console.error(JSON.stringify({ level: "error", msg: "oauth.profile", provider, error: String(err) }));
+		log.error("oauth.profile", { provider, error: String(err) });
 		writeEvent(c.env.ANALYTICS, "oauth.failed", { provider, outcome: "profile_fetch" });
 		return c.html(finishHtml(payload.return_origin, false, "profile_fetch_failed"));
 	}
