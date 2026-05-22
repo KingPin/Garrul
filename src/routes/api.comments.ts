@@ -402,7 +402,14 @@ comments.post("/", async (c) => {
 				await enqueueNotification(c.env.DB, sub.id, inserted.id);
 			}
 		})();
+		// Always wait for the enqueue to finish. With executionCtx, it
+		// runs after the response is sent; without (vanishingly rare —
+		// only non-HTTP entry points lack one), we'd otherwise lose
+		// notification rows on cold isolates because the runtime can
+		// cancel orphan promises after the response settles. A few
+		// extra ms beats silent data loss.
 		if (c.executionCtx) c.executionCtx.waitUntil(fanout);
+		else await fanout;
 	}
 
 	return c.json({ comment: serializeComment(inserted, author) }, 201);
