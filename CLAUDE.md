@@ -70,6 +70,14 @@ Critical paths only: API contracts, sanitizer (XSS attempts), auth cookie roundt
 ### Commits
 Atomic commits per concern. Conventional-commits style (`feat:`, `fix:`, `refactor:`, `docs:`, `chore:`, `test:`). No giant "milestone done" commits.
 
+### Releases
+Every tagged release must ship a concise, operator-focused changelog in the **GitHub Release body** — that's what `npm run upgrade` fetches and prints before the drift plan (`scripts/upgrade.ts`). `generate_release_notes: true` in `release.yml` is a starting point, not the final body: review and rewrite it before publishing.
+
+- Group by `feat:` / `fix:` / `chore:` or `Highlights:` / `Notes:`. 3–6 lines is usually enough.
+- Focus on what changes for someone running the upgrade (new env vars, new endpoints, behavior changes), not internal refactors.
+- Patch releases get notes too, even one line. Never publish a stub body like `"v1.5.1"`.
+- Mirror the same summary in the annotated tag message (`git tag -a vX.Y.Z -m "..."`) so `git show <tag>` is also useful.
+
 ### Secrets
 Never commit `wrangler.toml` (gitignored — `wrangler.example.toml` is the template). Secrets go through `wrangler secret put` for production and `.dev.vars` (gitignored) for local. `.dev.vars.example` is the template.
 
