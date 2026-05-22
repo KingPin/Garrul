@@ -16,6 +16,7 @@ import {
 	PROVIDERS,
 	buildAuthorizeUrl,
 	callbackUrl,
+	constantTimeEqual,
 	consumeHandoff,
 	consumeState,
 	exchangeCodeForToken,
@@ -195,12 +196,14 @@ auth.get("/:provider/callback", async (c) => {
 
 	// Double-submit binding: the cookie set at /start must match the value
 	// stored in the consumed state payload. Same generic error message as
-	// above — don't tell the attacker which check failed.
+	// above — don't tell the attacker which check failed. Compare in
+	// constant time to avoid leaking the token byte-by-byte through
+	// response-time differences.
 	const browserToken = parseCookie(c.req.header("cookie"), cookieName);
 	if (
 		!payload.browser_token ||
 		!browserToken ||
-		browserToken !== payload.browser_token
+		!constantTimeEqual(browserToken, payload.browser_token)
 	) {
 		c.header("Set-Cookie", clearShortCookie(cookieName, c.env), {
 			append: true,

@@ -137,6 +137,21 @@ export const randomHex = (n: number): string => {
 	return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 };
 
+// Length-independent constant-time string compare. The browser_token /
+// handoff tokens we mint are fixed-length hex, so the early length
+// branch doesn't leak useful information to an attacker. A naive `===`
+// short-circuits at the first mismatched byte and is observable via
+// response timing — over enough callback requests an attacker can
+// recover the token byte-by-byte. Use this for any secret comparison.
+export const constantTimeEqual = (a: string, b: string): boolean => {
+	if (a.length !== b.length) return false;
+	let diff = 0;
+	for (let i = 0; i < a.length; i++) {
+		diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+	}
+	return diff === 0;
+};
+
 export type StatePayload = {
 	provider: ProviderId;
 	return_origin: string;
