@@ -295,6 +295,7 @@ type WidgetCtx = {
 	root: ShadowRoot;
 	me: Me;
 	editWindowMs: number;
+	turnstileSiteKey: string | null;
 	reload: () => void;
 };
 
@@ -602,6 +603,14 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	}
 	wrap.appendChild(ta);
 
+	// Turnstile only renders for anonymous replies. Signed-in posts skip it
+	// server-side, matching the top-level form's behavior.
+	if (ctx.turnstileSiteKey && !ctx.me) {
+		const tsBox = el("div", "cf-turnstile");
+		tsBox.setAttribute("data-sitekey", ctx.turnstileSiteKey);
+		wrap.appendChild(tsBox);
+	}
+
 	const actions = el("div", "gr-reply-actions");
 	const submit = el("button", undefined, "Post reply");
 	submit.type = "submit";
@@ -614,6 +623,25 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	const errBox = el("div", "gr-error");
 	errBox.hidden = true;
 	wrap.appendChild(errBox);
+
+	// The caller appends this form to the DOM synchronously after we return;
+	// defer the render so the box is connected when renderTurnstileWidget runs
+	// (its `isConnected` guard would otherwise skip a still-detached element).
+	if (ctx.turnstileSiteKey && !ctx.me) {
+		const tsBox = wrap.querySelector(".cf-turnstile") as HTMLElement | null;
+		const sitekey = ctx.turnstileSiteKey;
+		if (tsBox) {
+			queueMicrotask(() => {
+				renderTurnstileWidget(tsBox, sitekey, () => {
+					tsBox.hidden = true;
+					submit.disabled = true;
+					errBox.textContent =
+						"Anti-spam check couldn't load — the host page's CSP may be blocking https://challenges.cloudflare.com. Site owner: see Garrul's troubleshooting docs.";
+					errBox.hidden = false;
+				});
+			});
+		}
+	}
 
 	wrap.addEventListener("submit", async (e) => {
 		e.preventDefault();
@@ -1085,6 +1113,7 @@ const loadOnce = async (
 		root,
 		me,
 		editWindowMs: editWindowMinutes * 60_000,
+		turnstileSiteKey: siteKey,
 		reload,
 	};
 	const authBlock = buildAuthBlock(me, apiBase, providers, reload, reload);
