@@ -63,6 +63,7 @@ Icon?
 .codeium/
 .copilot/
 .windsurf/
+.playwright-mcp/
 
 # AI-generated planning / design artifacts (kept local, not committed)
 lets-talk-about-rolling-recursive-oasis.md
