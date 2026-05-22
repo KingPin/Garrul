@@ -352,6 +352,7 @@ type TurnstileApi = {
 		el: HTMLElement | string,
 		opts: { sitekey: string },
 	) => string | undefined;
+	reset?: (widgetId?: string) => void;
 };
 const TURNSTILE_CALLBACK = "__garrulTurnstileOnload";
 type TurnstileWindow = Window & {
@@ -422,7 +423,14 @@ const renderTurnstileWidget = (
 		if (!tw.turnstile?.render) return;
 		box.dataset.garrulRendered = "1";
 		try {
-			tw.turnstile.render(box, { sitekey });
+			const widgetId = tw.turnstile.render(box, { sitekey });
+			if (typeof widgetId === "string") {
+				// Stash the widget ID so we can reset the challenge between
+				// retries — siteverify rejects reused tokens, so a 4xx /
+				// pending response would otherwise strand the user with a
+				// consumed token and a permanent "Spam check failed".
+				box.dataset.garrulWidgetId = widgetId;
+			}
 		} catch {
 			delete box.dataset.garrulRendered;
 			onError();
@@ -436,6 +444,25 @@ const renderTurnstileWidget = (
 	}
 	turnstilePending.push(doRender);
 	ensureTurnstileScript(onError);
+};
+
+/**
+ * Reset the Turnstile widget rooted at `box` so siteverify will accept a
+ * fresh challenge on retry. No-op when Turnstile isn't loaded, wasn't
+ * rendered, or doesn't expose `reset`.
+ */
+const resetTurnstileWidget = (box: Element | null): void => {
+	if (!(box instanceof HTMLElement)) return;
+	const id = box.dataset.garrulWidgetId;
+	if (!id) return;
+	const tw = window as TurnstileWindow;
+	if (!tw.turnstile?.reset) return;
+	try {
+		tw.turnstile.reset(id);
+	} catch {
+		// reset can throw if the widget has been GC'd; the next render will
+		// give the user a fresh challenge anyway.
+	}
 };
 
 const REACTION_KINDS: { kind: string; emoji: string }[] = [
@@ -702,6 +729,7 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 				errBox.textContent = json.error ?? `HTTP ${res.status}`;
 				errBox.hidden = false;
 				submit.disabled = false;
+				resetTurnstileWidget(wrap.querySelector(".cf-turnstile"));
 				return;
 			}
 			if (json.comment?.status === "pending") {
@@ -710,6 +738,7 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 				errBox.hidden = false;
 				ta.value = "";
 				submit.disabled = false;
+				resetTurnstileWidget(wrap.querySelector(".cf-turnstile"));
 				return;
 			}
 			ctx.reload();
@@ -717,6 +746,7 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 			errBox.textContent = String(err);
 			errBox.hidden = false;
 			submit.disabled = false;
+			resetTurnstileWidget(wrap.querySelector(".cf-turnstile"));
 		}
 	});
 
@@ -1280,6 +1310,7 @@ const submit = async (
 				errEl.hidden = false;
 			}
 			if (submitBtn) submitBtn.disabled = false;
+			resetTurnstileWidget(form.querySelector(".cf-turnstile"));
 			return;
 		}
 
@@ -1294,6 +1325,7 @@ const submit = async (
 			) as HTMLTextAreaElement | null;
 			if (bodyInput) bodyInput.value = "";
 			if (submitBtn) submitBtn.disabled = false;
+			resetTurnstileWidget(form.querySelector(".cf-turnstile"));
 			return;
 		}
 
@@ -1320,6 +1352,7 @@ const submit = async (
 			errEl.hidden = false;
 		}
 		if (submitBtn) submitBtn.disabled = false;
+		resetTurnstileWidget(form.querySelector(".cf-turnstile"));
 	}
 };
 
