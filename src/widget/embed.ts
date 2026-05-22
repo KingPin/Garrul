@@ -611,6 +611,21 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	}
 	wrap.appendChild(ta);
 
+	// Honeypot: mirrors the top-level form's anti-spam input. Hidden offscreen
+	// via .gr-honeypot, readonly to defeat browser autofill, tabIndex -1 so
+	// keyboard users skip it. Browser-driven bots that fill every visible
+	// input still get caught by the server's "website non-empty → reject"
+	// check; without this input, the reply surface had no such signal.
+	const honey = el("input");
+	honey.className = "gr-honeypot";
+	honey.name = "website";
+	honey.type = "text";
+	honey.tabIndex = -1;
+	honey.setAttribute("aria-hidden", "true");
+	honey.autocomplete = "off";
+	honey.readOnly = true;
+	wrap.appendChild(honey);
+
 	// Turnstile only renders for anonymous replies. Signed-in posts skip it
 	// server-side, matching the top-level form's behavior.
 	if (ctx.turnstileSiteKey && !ctx.me) {
@@ -673,7 +688,7 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 					body: ta.value,
 					parent_id: parent.id,
 					turnstile_token: turnstileToken,
-					website: "",
+					website: honey.value,
 					form_ts: formTs,
 					post_title: ctx.host.dataset.title ?? null,
 					post_url: ctx.host.dataset.url ?? null,
