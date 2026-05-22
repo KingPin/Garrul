@@ -6,13 +6,11 @@
  * comment is created, edited, deleted, or moderated.
  *
  * Behavior:
- *   - Best-effort. A failed POST is logged and dropped; the user request
- *     completes regardless.
- *   - Use `ctx.waitUntil(...)` if available so the request handler can
- *     return while the POST is still in flight. We don't require the
- *     ExecutionContext to be passed in (most call sites don't have it),
- *     so the fallback is "fire the promise and let the worker keep it
- *     alive."
+ *   - Best-effort. A failed POST is logged via src/lib/log.ts and the
+ *     user request completes regardless.
+ *   - Callers MUST pass `c.executionCtx` so we can attach the POST to
+ *     `waitUntil` — without it, the runtime can cancel the in-flight
+ *     fetch once the response settles and the webhook is silently lost.
  *   - HMAC signing is intentionally deferred (v2 backlog). Operators who
  *     need it should put a reverse-proxy in front that adds the sig.
  *
@@ -26,6 +24,7 @@
  *     ts: number          // ms epoch
  *   }
  */
+import { log } from "./log";
 
 export type WebhookEvent =
 	| "comment.posted"
@@ -69,42 +68,41 @@ export const sendWebhook = async (
 			signal: controller.signal,
 		});
 		if (!res.ok) {
-			console.error(
-				JSON.stringify({
-					level: "warn",
-					msg: "webhook.non_ok",
-					event: payload.event,
-					comment_id: payload.comment_id,
-					status: res.status,
-				}),
-			);
-		}
-	} catch (err) {
-		console.error(
-			JSON.stringify({
-				level: "warn",
-				msg: "webhook.failed",
+			log.warn("webhook.non_ok", {
 				event: payload.event,
 				comment_id: payload.comment_id,
-				error: String(err),
-			}),
-		);
+				status: res.status,
+			});
+		}
+	} catch (err) {
+		log.warn("webhook.failed", {
+			event: payload.event,
+			comment_id: payload.comment_id,
+			error: String(err),
+		});
 	} finally {
 		clearTimeout(timer);
 	}
 };
 
 /**
- * Fire-and-forget convenience. Callers that have an ExecutionContext
- * should pass it so the worker keeps the request alive past response
- * send; without one, the promise is started but the runtime may drop it
- * if the request settles first.
+ * Fire-and-forget convenience. `executionCtx` is required: every HTTP
+ * request handler in this worker already has `c.executionCtx`, and
+ * without `waitUntil` the runtime can cancel the in-flight POST once
+ * the response settles. If a caller genuinely has no context, log and
+ * skip — better a missed webhook than a misleading "delivered" status.
  */
 export const fireWebhook = (
 	env: WebhookCtx,
 	executionCtx: { waitUntil(p: Promise<unknown>): void } | undefined,
 	payload: WebhookPayload,
 ): void => {
-	const p = sendWebhook(env, payload);
-	if (executionCtx) executionCtx.waitUntil(p);
+	if (!executionCtx) {
+		log.warn("webhook.skipped_no_ctx", {
+			event: payload.event,
+			comment_id: payload.comment_id,
+		});
+		return;
+	}
+	executionCtx.waitUntil(sendWebhook(env, payload));
 };
