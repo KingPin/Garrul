@@ -32,7 +32,10 @@ export const currentTag = (cwd?: string): string | null => {
 };
 
 export const fetchTags = (cwd?: string): void => {
-	run(["fetch", "--tags"], cwd ? { cwd } : {});
+	// --force re-syncs local tags whose targets diverged from the remote
+	// (e.g. a tag was re-pushed). Safe here: we only ever checkout tags
+	// matching /^v?\d+\.\d+\.\d+/ and never push from this script.
+	run(["fetch", "--tags", "--force"], cwd ? { cwd } : {});
 };
 
 export const checkout = (ref: string, cwd?: string): void => {
