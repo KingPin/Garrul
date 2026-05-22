@@ -10,6 +10,7 @@
  * short hash of body_md so identical resubmissions don't re-bill.
  */
 
+import { log } from "../log";
 import type { SpamCheckInput, SpamVerdict } from "./index";
 
 type WorkersAiConfig = {
@@ -79,14 +80,10 @@ export const checkWorkersAi = async (
 		const isSpam = norm.startsWith("SPAM");
 		const isHam = norm.startsWith("HAM");
 		if (!isSpam && !isHam) {
-			console.error(
-				JSON.stringify({
-					level: "warn",
-					msg: "spam.adapter.error",
-					provider: "workers-ai",
-					unexpected_response: raw.slice(0, 60),
-				}),
-			);
+			log.warn("spam.adapter.error", {
+				provider: "workers-ai",
+				unexpected_response: raw.slice(0, 60),
+			});
 			return null;
 		}
 		if (cfg.cache) {
@@ -98,14 +95,10 @@ export const checkWorkersAi = async (
 			? { spam: true, reason: "workers-ai.spam" }
 			: { spam: false };
 	} catch (err) {
-		console.error(
-			JSON.stringify({
-				level: "warn",
-				msg: "spam.adapter.error",
-				provider: "workers-ai",
-				error: String(err),
-			}),
-		);
+		log.warn("spam.adapter.error", {
+			provider: "workers-ai",
+			error: String(err),
+		});
 		return null;
 	}
 };

@@ -17,6 +17,7 @@
  * we still flag to `pending` rather than dropping, but it's recorded.
  */
 
+import { log } from "../log";
 import type { SpamCheckInput, SpamVerdict } from "./index";
 
 type AkismetConfig = {
@@ -62,15 +63,11 @@ export const checkAkismet = async (
 		);
 		if (!res.ok) {
 			const body = await res.text().catch(() => "");
-			console.error(
-				JSON.stringify({
-					level: "warn",
-					msg: "spam.adapter.error",
-					provider: "akismet",
-					status: res.status,
-					body: body.slice(0, 200),
-				}),
-			);
+			log.warn("spam.adapter.error", {
+				provider: "akismet",
+				status: res.status,
+				body: body.slice(0, 200),
+			});
 			return null;
 		}
 		const text = (await res.text()).trim().toLowerCase();
@@ -82,24 +79,16 @@ export const checkAkismet = async (
 			};
 		}
 		if (text === "false") return { spam: false };
-		console.error(
-			JSON.stringify({
-				level: "warn",
-				msg: "spam.adapter.error",
-				provider: "akismet",
-				unexpected_body: text.slice(0, 60),
-			}),
-		);
+		log.warn("spam.adapter.error", {
+			provider: "akismet",
+			unexpected_body: text.slice(0, 60),
+		});
 		return null;
 	} catch (err) {
-		console.error(
-			JSON.stringify({
-				level: "warn",
-				msg: "spam.adapter.error",
-				provider: "akismet",
-				error: String(err),
-			}),
-		);
+		log.warn("spam.adapter.error", {
+			provider: "akismet",
+			error: String(err),
+		});
 		return null;
 	}
 };

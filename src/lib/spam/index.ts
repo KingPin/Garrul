@@ -10,6 +10,7 @@
  * status to `'pending'`. Verdicts are never silently discarded.
  */
 
+import { log } from "../log";
 import { checkAkismet } from "./akismet";
 import { checkWorkersAi } from "./workers-ai";
 
@@ -52,12 +53,6 @@ export const checkSpam = async (
 			input,
 		);
 	}
-	console.error(
-		JSON.stringify({
-			level: "warn",
-			msg: "spam.adapter.unknown_provider",
-			provider,
-		}),
-	);
+	log.warn("spam.adapter.unknown_provider", { provider });
 	return null;
 };
