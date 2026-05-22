@@ -81,6 +81,14 @@ export const checkRateLimit = async (
 	const l = await readWindow(env.RATE_LIMITS, ipHash, "long", cfg.long, now);
 	if (!l.allowed) return { ok: false, reason: "long" };
 	// Both windows have room — record this request in both.
+	//
+	// This is a non-atomic read-modify-write. Two concurrent requests
+	// from the same IP can both observe `allowed=true` and each append
+	// a stamp, briefly exceeding the configured cap by the concurrent-
+	// request count. KV offers no compare-and-swap to fix this, and
+	// the comment-system trade-off (acceptable burst slop vs. the
+	// operational cost of a Durable Object per limiter key) lands on
+	// "good enough." Hard determinism is a v2 / Durable Objects task.
 	s.stamps.push(now);
 	l.stamps.push(now);
 	await writeBucket(env.RATE_LIMITS, s.key, s.stamps, cfg.short.windowSec);
