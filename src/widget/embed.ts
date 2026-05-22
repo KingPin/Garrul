@@ -216,6 +216,14 @@ const STYLE_CSS = `
 	0%, 100% { opacity: 1; }
 	50% { opacity: 0.45; }
 }
+.gr-attribution {
+	font-size: 0.8em;
+	color: var(--garrul-muted, #6b7280);
+	text-align: right;
+	margin: 0.5rem 0 0;
+}
+.gr-attribution a { color: inherit; text-decoration: none; }
+.gr-attribution a:hover { text-decoration: underline; }
 `;
 
 const fmtTime = (ts: number): string =>
@@ -924,6 +932,7 @@ const loadOnce = async (
 	let siteKey: string | null = null;
 	let editWindowMinutes = 5;
 	let providers: ReadonlyArray<"github" | "google"> = [];
+	let brandingHidden = false;
 	try {
 		const cfgRes = await fetch(`${apiBase}/api/v1/config`, {
 			credentials: "include",
@@ -933,12 +942,14 @@ const loadOnce = async (
 				turnstile_site_key?: string;
 				edit_window_minutes?: number;
 				providers?: string[];
+				branding_hidden?: boolean;
 			};
 			siteKey = cfg.turnstile_site_key ?? null;
 			editWindowMinutes = cfg.edit_window_minutes ?? 5;
 			providers = (cfg.providers ?? []).filter(
 				(p): p is "github" | "google" => p === "github" || p === "google",
 			);
+			brandingHidden = cfg.branding_hidden === true;
 		}
 	} catch {
 		// /api/v1/config is optional; the widget still renders without Turnstile
@@ -1009,6 +1020,18 @@ const loadOnce = async (
 			}
 		});
 		wrap.appendChild(more);
+	}
+
+	if (!brandingHidden) {
+		const attr = el("p", "gr-attribution");
+		attr.appendChild(document.createTextNode("Powered by "));
+		const link = document.createElement("a");
+		link.href = "https://garrul.com";
+		link.target = "_blank";
+		link.rel = "noopener noreferrer";
+		link.textContent = "Garrul";
+		attr.appendChild(link);
+		wrap.appendChild(attr);
 	}
 
 	root.append(style, wrap);

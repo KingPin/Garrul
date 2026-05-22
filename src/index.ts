@@ -52,6 +52,9 @@ export type Bindings = {
 	SPAM_HONEYPOT_MIN_MS?: string;
 	SPAM_FIRST_COMMENT_MODERATE?: string;
 	SPAM_FORM_TS_SECRET?: string;
+	// Set to "1" or "true" to suppress the "Powered by Garrul" attribution
+	// rendered under the comment list. Unset = attribution shown.
+	BRANDING_HIDDEN?: string;
 };
 
 const app = new Hono<{ Bindings: Bindings }>();
