@@ -774,10 +774,34 @@ const startOauth = (
 		// (e.source check is best-effort — popup is null in some browsers when
 		// cross-origin). The shape check is the real defense.
 		if (e.origin !== apiOrigin) return;
-		const data = e.data as { type?: string; ok?: boolean } | null;
+		const data = e.data as {
+			type?: string;
+			ok?: boolean;
+			handoff?: string | null;
+		} | null;
 		if (!data || data.type !== "garrul:auth") return;
 		window.removeEventListener("message", handler);
-		if (data.ok) onSuccess();
+		if (!data.ok) return;
+		// The popup's Set-Cookie is in its own (api-origin) CHIPS partition and
+		// won't be visible to this top-level on cross-site embeds. Exchange the
+		// handoff token from THIS context so the Set-Cookie lands in our
+		// partition. Servers without handoff support omit the field — fall
+		// through to onSuccess (same-site embeds still see the popup cookie).
+		const handoff = typeof data.handoff === "string" ? data.handoff : "";
+		if (!handoff) {
+			onSuccess();
+			return;
+		}
+		void fetch(`${apiBase}/api/v1/auth/session/exchange`, {
+			method: "POST",
+			credentials: "include",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ token: handoff }),
+		})
+			.then((res) => {
+				if (res.ok) onSuccess();
+			})
+			.catch(() => {});
 	};
 	window.addEventListener("message", handler);
 	if (!popup) {

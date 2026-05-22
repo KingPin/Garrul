@@ -178,6 +178,45 @@ export const consumeState = async (
 	}
 };
 
+// One-time handoff token used to ferry an OAuth-completed user_id from the
+// popup (whose top-level site is comments.example.com) back to the widget
+// (whose top-level site is the embedder, e.g. blog.example.org). With
+// `Partitioned` session cookies (CHIPS), a cookie set during the popup is
+// scoped to the popup's partition and not visible to the cross-site embed.
+// The widget receives this token via postMessage, then POSTs it to
+// /api/v1/auth/session/exchange — that request's response Set-Cookie lands
+// in the embedder's partition, where the widget can actually read it.
+const HANDOFF_TTL = 60;
+
+export const issueHandoff = async (
+	kv: KVNamespace,
+	user_id: string,
+): Promise<string> => {
+	const token = randomHex(24);
+	await kv.put(
+		`oauth:handoff:${token}`,
+		JSON.stringify({ user_id, created_at: Date.now() }),
+		{ expirationTtl: HANDOFF_TTL },
+	);
+	return token;
+};
+
+export const consumeHandoff = async (
+	kv: KVNamespace,
+	token: string,
+): Promise<string | null> => {
+	if (!/^[0-9a-f]{48}$/.test(token)) return null;
+	const raw = await kv.get(`oauth:handoff:${token}`);
+	if (!raw) return null;
+	await kv.delete(`oauth:handoff:${token}`);
+	try {
+		const parsed = JSON.parse(raw) as { user_id?: string };
+		return parsed.user_id ?? null;
+	} catch {
+		return null;
+	}
+};
+
 export const callbackUrl = (
 	env: { OAUTH_CALLBACK_BASE?: string },
 	requestUrl: string,

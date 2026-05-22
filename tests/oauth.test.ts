@@ -10,8 +10,10 @@ import { describe, it, expect, beforeEach } from "vitest";
 import {
 	buildAuthorizeUrl,
 	callbackUrl,
+	consumeHandoff,
 	consumeState,
 	isProvider,
+	issueHandoff,
 	issueState,
 	PROVIDERS,
 	randomHex,
@@ -88,6 +90,35 @@ describe("issueState / consumeState", () => {
 		});
 		const got = await consumeState(store, state);
 		expect(got?.browser_token).toBe(tok);
+	});
+});
+
+describe("issueHandoff / consumeHandoff", () => {
+	let store: KVNamespace;
+	beforeEach(() => {
+		store = kv();
+	});
+
+	it("round-trips user_id through the handoff token", async () => {
+		const token = await issueHandoff(store, "user-abc");
+		expect(token).toMatch(/^[0-9a-f]{48}$/);
+		expect(await consumeHandoff(store, token)).toBe("user-abc");
+	});
+
+	it("consumes handoff exactly once (replay defense)", async () => {
+		const token = await issueHandoff(store, "user-xyz");
+		expect(await consumeHandoff(store, token)).toBe("user-xyz");
+		expect(await consumeHandoff(store, token)).toBeNull();
+	});
+
+	it("rejects malformed tokens without touching KV", async () => {
+		expect(await consumeHandoff(store, "not-hex")).toBeNull();
+		expect(await consumeHandoff(store, "")).toBeNull();
+		expect(await consumeHandoff(store, "a".repeat(47))).toBeNull();
+	});
+
+	it("returns null for unknown handoff tokens", async () => {
+		expect(await consumeHandoff(store, "0".repeat(48))).toBeNull();
 	});
 });
 

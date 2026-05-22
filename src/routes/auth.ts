@@ -16,9 +16,11 @@ import {
 	PROVIDERS,
 	buildAuthorizeUrl,
 	callbackUrl,
+	consumeHandoff,
 	consumeState,
 	exchangeCodeForToken,
 	isProvider,
+	issueHandoff,
 	issueState,
 	randomHex,
 } from "../lib/oauth";
@@ -124,7 +126,12 @@ auth.get("/:provider/start", async (c) => {
 	return c.redirect(url, 302);
 });
 
-const finishHtml = (return_origin: string, ok: boolean, msg = ""): string => {
+const finishHtml = (
+	return_origin: string,
+	ok: boolean,
+	msg = "",
+	handoff: string | null = null,
+): string => {
 	// When return_origin wasn't validated against ALLOWED_ORIGINS (e.g. the
 	// caller didn't pass `?return=` or passed an unrecognized origin), we
 	// have no safe target to postMessage to. Previously we fell back to
@@ -140,11 +147,16 @@ const finishHtml = (return_origin: string, ok: boolean, msg = ""): string => {
 </body></html>`;
 	}
 	// return_origin is a validated, allow-listed string here; JSON.stringify
-	// emits it as a safe JS string literal.
+	// emits it as a safe JS string literal. `handoff` is a 48-hex-char token
+	// minted by issueHandoff and consumed by /session/exchange; the widget
+	// uses it to materialize a session cookie in its own (embedder) CHIPS
+	// partition — the popup's Set-Cookie is partitioned to comments.* and
+	// can't be read by the embedder iframe.
 	const payload = JSON.stringify({
 		type: "garrul:auth",
 		ok,
 		message: msg,
+		handoff,
 	});
 	const targetOrigin = JSON.stringify(return_origin);
 	return `<!doctype html>
@@ -253,14 +265,43 @@ auth.get("/:provider/callback", async (c) => {
 	}
 
 	await issueSession(c, user.id);
+	// Same user_id is also reachable via the handoff token below. The popup
+	// Set-Cookie above is what works on same-eTLD+1 embeds; the handoff is
+	// what works for cross-site embeds whose CHIPS partition the popup can't
+	// reach.
+	const handoff = await issueHandoff(c.env.OAUTH_STATE, user.id);
 	writeEvent(c.env.ANALYTICS, "oauth.complete", { provider });
 
 	c.header("content-type", "text/html; charset=utf-8");
-	return c.body(finishHtml(payload.return_origin, true));
+	return c.body(finishHtml(payload.return_origin, true, "", handoff));
 });
 
 auth.post("/signout", async (c) => {
 	clearSession(c);
+	return c.json({ ok: true });
+});
+
+// Exchange a one-time handoff token (minted at the tail of /callback) for a
+// real session cookie. The widget calls this from its embedder context so the
+// Set-Cookie lands in that context's CHIPS partition — see the handoff
+// helpers in src/lib/oauth.ts for the rationale.
+auth.post("/session/exchange", async (c) => {
+	let parsed: unknown;
+	try {
+		parsed = await c.req.json();
+	} catch {
+		return c.json({ error: "err.token.bad" }, 400);
+	}
+	const token =
+		parsed && typeof parsed === "object" && "token" in parsed
+			? (parsed as { token: unknown }).token
+			: undefined;
+	if (typeof token !== "string" || !token) {
+		return c.json({ error: "err.token.bad" }, 400);
+	}
+	const userId = await consumeHandoff(c.env.OAUTH_STATE, token);
+	if (!userId) return c.json({ error: "err.token.invalid" }, 400);
+	await issueSession(c, userId);
 	return c.json({ ok: true });
 });
 
