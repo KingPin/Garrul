@@ -22,6 +22,7 @@ import { readSession } from "../lib/session";
 import {
 	adminBulkUpdateCommentStatus,
 	adminGetCommentDetail,
+	adminGetUserDetail,
 	adminListComments,
 	adminListUsers,
 	adminStats,
@@ -42,6 +43,7 @@ import { ADMIN_CSP } from "../admin-ui/styles";
 import { renderDashboard } from "../admin-ui/pages/dashboard";
 import { renderCommentDetail } from "../admin-ui/pages/comment-detail";
 import { renderQueue, type QueueFilters } from "../admin-ui/pages/queue";
+import { renderUserDetail } from "../admin-ui/pages/user-detail";
 import { renderUsers } from "../admin-ui/pages/users";
 import { renderSettings } from "../admin-ui/pages/settings";
 
@@ -223,6 +225,43 @@ admin.get("/users", async (c) => {
 	const updateInfo = await peekCachedLatestVersion(c.env);
 	return c.html(
 		layout("Users", renderUsers(trimmed, q, nextCursor), user, updateInfo),
+	);
+});
+
+const USER_DETAIL_LIMIT = 50;
+
+admin.get("/users/:id", async (c) => {
+	const user = await requireAdmin(c);
+	if (user instanceof Response) return user;
+	const id = c.req.param("id");
+	const before = c.req.query("before");
+	let cursorTs: number | null = null;
+	let cursorId: string | null = null;
+	if (before) {
+		const parts = before.split("|");
+		const a = parts[0];
+		const b = parts[1];
+		if (parts.length === 2 && a && b) {
+			const ts = Number(a);
+			if (Number.isFinite(ts)) {
+				cursorTs = ts;
+				cursorId = b;
+			}
+		}
+	}
+	const detail = await adminGetUserDetail(
+		c.env.DB,
+		id,
+		USER_DETAIL_LIMIT,
+		cursorTs,
+		cursorId,
+	);
+	if (!detail) {
+		return c.html(accessDeniedHtml(404, "That user does not exist."), 404);
+	}
+	const updateInfo = await peekCachedLatestVersion(c.env);
+	return c.html(
+		layout(detail.user.name, renderUserDetail(detail), user, updateInfo),
 	);
 });
 

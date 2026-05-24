@@ -109,6 +109,10 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .comment-card-head { display: flex; justify-content: space-between;
                      align-items: center; gap: 1rem; margin-bottom: 0.25rem; }
 .comment-card .md { margin-top: 0.5rem; font-size: 0.9rem; }
+.user-head { display: flex; gap: 1rem; align-items: center; }
+.user-meta { flex: 1; min-width: 0; }
+.user-stats { display: flex; gap: 2rem; margin-top: 1rem;
+              padding-top: 1rem; border-top: 1px solid var(--border); }
 code { background: var(--bg); padding: 0.1rem 0.3rem; border-radius: 3px;
        font-family: ui-monospace, monospace; font-size: 0.85em; }
 .banner { display: flex; gap: 1rem; align-items: center; justify-content: space-between;
