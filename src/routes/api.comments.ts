@@ -440,10 +440,14 @@ comments.post("/", async (c) => {
 	await c.env.TREE_CACHE.delete(`tree:${slug}:first`);
 
 	// Persist whichever spam signals ran. Fire-and-forget so a slow D1
-	// write never adds latency to the user-visible POST.
+	// write never adds latency to the user-visible POST. Mirror the
+	// fanout pattern: without executionCtx (non-HTTP entry points), the
+	// runtime can cancel orphan promises after the response settles, so
+	// we await synchronously rather than lose verdict rows.
 	if (verdict.verdicts.length > 0) {
 		const persist = persistVerdicts(c.env.DB, inserted.id, verdict.verdicts);
 		if (c.executionCtx) c.executionCtx.waitUntil(persist);
+		else await persist;
 	}
 
 	writeEvent(c.env.ANALYTICS, "comment.posted", {
