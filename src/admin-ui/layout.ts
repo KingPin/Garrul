@@ -77,6 +77,7 @@ ${renderUpdateBanner(updateInfo)}
     <a href="/admin/users">Users</a>
     <a href="/admin/audit">Audit</a>
     <a href="/admin/subscriptions">Subscriptions</a>
+    <a href="/admin/operator">Operator</a>
     <a href="/admin/settings">Settings</a>
   </nav>
   <span class="me">${escapeHtml(currentUser.name)} <span class="pill admin">admin</span></span>

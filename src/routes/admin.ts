@@ -62,11 +62,14 @@ import { renderCommentDetail } from "../admin-ui/pages/comment-detail";
 import { renderQueue, type QueueFilters } from "../admin-ui/pages/queue";
 import { renderUserDetail } from "../admin-ui/pages/user-detail";
 import { renderUsers } from "../admin-ui/pages/users";
+import { renderOperator } from "../admin-ui/pages/operator";
 import { renderSettings } from "../admin-ui/pages/settings";
 import {
 	renderSubscriptions,
 	type SubscriptionsFilters,
 } from "../admin-ui/pages/subscriptions";
+import { rerenderBatch, rerenderStats } from "../db/rerender";
+import { runSeedDemo } from "../db/seed-demo";
 import { renderConfirmEmailHtml } from "../lib/digest";
 import { sendEmail } from "../lib/email";
 import { t } from "../i18n";
@@ -464,6 +467,26 @@ admin.get("/subscriptions", async (c) => {
 	);
 });
 
+const isSeedDemoAllowed = (env: Bindings): boolean => env.ENV !== "production";
+
+admin.get("/operator", async (c) => {
+	const user = await requireAdmin(c);
+	if (user instanceof Response) return user;
+	const stats = await rerenderStats(c.env.DB);
+	const updateInfo = await peekCachedLatestVersion(c.env);
+	return c.html(
+		layout(
+			"Operator",
+			renderOperator({
+				rerender: stats,
+				seed_demo_allowed: isSeedDemoAllowed(c.env),
+			}),
+			user,
+			updateInfo,
+		),
+	);
+});
+
 admin.get("/settings", async (c) => {
 	const user = await requireAdmin(c);
 	if (user instanceof Response) return user;
@@ -711,6 +734,69 @@ admin.post("/api/subscriptions/:id", async (c) => {
 		meta: { email: sub.email, post_slug: sub.post_slug },
 	});
 	return c.json({ ok: true, id, status: "resent" });
+});
+
+const RERENDER_MAX_BATCH = 100;
+
+admin.post("/api/ops/rerender", async (c) => {
+	const user = await requireAdmin(c);
+	if (user instanceof Response) return user;
+	const body = await c.req
+		.json<{
+			batch?: number;
+			cursor?: { created_at: number; id: string } | null;
+		}>()
+		.catch(() => ({}) as Record<string, never>);
+	const batchRaw = Number(body.batch ?? 50);
+	const batch =
+		Number.isFinite(batchRaw) && batchRaw > 0
+			? Math.min(RERENDER_MAX_BATCH, Math.floor(batchRaw))
+			: 50;
+	const cursor =
+		body.cursor &&
+		typeof body.cursor.created_at === "number" &&
+		typeof body.cursor.id === "string"
+			? body.cursor
+			: null;
+
+	const result = await rerenderBatch(c.env.DB, batch, cursor);
+	if (result.processed > 0) {
+		await adminInsertAudit(c.env.DB, {
+			admin_id: user.id,
+			action: "rerender",
+			target_kind: "system",
+			target_id: null,
+			reason: null,
+			meta: {
+				batch_size: batch,
+				processed: result.processed,
+				cursor_after: result.next_cursor,
+			},
+		});
+	}
+	return c.json({
+		ok: true,
+		processed: result.processed,
+		next_cursor: result.next_cursor,
+	});
+});
+
+admin.post("/api/ops/seed-demo", async (c) => {
+	const user = await requireAdmin(c);
+	if (user instanceof Response) return user;
+	if (!isSeedDemoAllowed(c.env)) {
+		return c.json({ error: "disabled_in_production" }, 403);
+	}
+	const result = await runSeedDemo(c.env.DB);
+	await adminInsertAudit(c.env.DB, {
+		admin_id: user.id,
+		action: "seed-demo",
+		target_kind: "system",
+		target_id: null,
+		reason: null,
+		meta: result,
+	});
+	return c.json({ ok: true, ...result });
 });
 
 export { admin };
