@@ -104,10 +104,15 @@ iframe.get("/turnstile-frame", (c) => {
 			? themeRaw
 			: "auto";
 
+	// connect-src needs 'self' because Turnstile redeems clearance via the
+	// page's own /cdn-cgi/challenge-platform/h/b/rc/... endpoint, which CF
+	// serves at the iframe origin (not challenges.cloudflare.com). Without
+	// it, api.js logs "Error contacting Turnstile, aborting clearance
+	// redemption" and never produces a token.
 	const csp = [
 		"default-src 'none'",
 		`script-src ${TURNSTILE_ORIGIN} 'unsafe-inline'`,
-		`connect-src ${TURNSTILE_ORIGIN}`,
+		`connect-src 'self' ${TURNSTILE_ORIGIN}`,
 		`frame-src ${TURNSTILE_ORIGIN}`,
 		"style-src 'unsafe-inline'",
 	].join("; ");

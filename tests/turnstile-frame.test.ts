@@ -87,6 +87,22 @@ describe("GET /embed/turnstile-frame", () => {
 		expect(csp).not.toContain("frame-ancestors");
 	});
 
+	it("allows 'self' in connect-src for Turnstile clearance redemption", async () => {
+		// api.js posts to /cdn-cgi/challenge-platform/h/b/rc/... on this iframe's
+		// origin to redeem clearance. Without 'self' here, Turnstile fails with
+		// "Error contacting Turnstile, aborting clearance redemption" and the
+		// token callback never fires.
+		const res = await fetchFrame("/embed/turnstile-frame");
+		const csp = res.headers.get("content-security-policy") ?? "";
+		const connectSrc = csp
+			.split(";")
+			.map((d) => d.trim())
+			.find((d) => d.startsWith("connect-src"));
+		expect(connectSrc).toBeDefined();
+		expect(connectSrc).toContain("'self'");
+		expect(connectSrc).toContain("https://challenges.cloudflare.com");
+	});
+
 	it("does not set X-Frame-Options DENY (so it can be embedded)", async () => {
 		const res = await fetchFrame("/embed/turnstile-frame");
 		// Global header middleware skips X-Frame-Options for /embed/*.
