@@ -74,6 +74,19 @@ button.bad { color: var(--bad); }
 button.bad:hover { border-color: var(--bad); }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 .actions { display: flex; gap: 0.4rem; }
+.author-cell { display: flex; gap: 0.5rem; align-items: center; color: inherit;
+               text-decoration: none; max-width: 180px; }
+.author-cell:hover .author-name { text-decoration: underline; }
+.author-avatar { display: inline-block; width: 28px; height: 28px;
+                 border-radius: 50%; overflow: hidden; flex: 0 0 auto;
+                 background: var(--bg); }
+.author-avatar img, .author-avatar svg { width: 100%; height: 100%;
+                                          display: block; border-radius: 50%; }
+.author-meta { display: flex; flex-direction: column; min-width: 0;
+               line-height: 1.15; }
+.author-name { font-size: 0.85rem; overflow: hidden; text-overflow: ellipsis;
+               white-space: nowrap; }
+.author-sub { font-size: 0.7rem; }
 .filter-bar { display: flex; gap: 0.5rem; align-items: center; margin-bottom: 1rem; }
 .filter-bar input[type=text] { background: var(--bg); border: 1px solid var(--border);
                                 color: var(--text); padding: 0.4rem 0.6rem;

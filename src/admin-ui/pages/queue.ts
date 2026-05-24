@@ -1,6 +1,26 @@
-import type { Comment, CommentStatus } from "../../db/queries";
+import type { AdminComment, CommentStatus } from "../../db/queries";
+import { identiconSvg } from "../../lib/identicon";
 import { sanitizeForEmail as resanitizeBodyHtml } from "../../lib/markdown";
 import { escapeHtml } from "../escape";
+
+const authorCell = (c: AdminComment): string => {
+	const name = c.author_name ?? "(deleted user)";
+	const provider = c.author_provider ?? "anon";
+	const avatar = c.author_avatar_url
+		? `<img class="author-avatar" src="${escapeHtml(c.author_avatar_url)}" alt="" width="28" height="28">`
+		: `<span class="author-avatar">${identiconSvg(c.user_id, 28)}</span>`;
+	const badges: string[] = [];
+	if (c.author_is_admin) badges.push('<span class="pill admin">admin</span>');
+	if (c.author_is_banned) badges.push('<span class="pill banned">banned</span>');
+	return `
+<a class="author-cell" href="/admin/users/${escapeHtml(c.user_id)}">
+  ${avatar}
+  <span class="author-meta">
+    <span class="author-name">${escapeHtml(name)} ${badges.join(" ")}</span>
+    <span class="author-sub muted">${escapeHtml(provider)}</span>
+  </span>
+</a>`;
+};
 
 const actionButtons = (id: string, status: CommentStatus): string => {
 	const parts: string[] = [];
@@ -23,7 +43,7 @@ const actionButtons = (id: string, status: CommentStatus): string => {
 };
 
 export const renderQueue = (
-	rows: Comment[],
+	rows: AdminComment[],
 	status: string,
 	nextCursor: string | null,
 ): string => {
@@ -40,6 +60,7 @@ export const renderQueue = (
 					(c) => `
 <tr x-data="{ busy: false }">
   <td><span class="pill ${c.status}">${c.status}</span></td>
+  <td>${authorCell(c)}</td>
   <td>
     <div class="muted">${new Date(c.created_at).toISOString().slice(0, 16).replace("T", " ")}</div>
     <div><code>${escapeHtml(c.post_slug)}</code></div>
@@ -50,7 +71,7 @@ export const renderQueue = (
 </tr>`,
 				)
 				.join("")
-		: `<tr><td colspan="4" class="muted">No comments match.</td></tr>`;
+		: `<tr><td colspan="5" class="muted">No comments match.</td></tr>`;
 
 	const next = nextCursor
 		? `<a href="/admin/queue?status=${status}&before=${encodeURIComponent(nextCursor)}">Next →</a>`
@@ -71,7 +92,7 @@ export const renderQueue = (
   }
 }">
   <table>
-    <thead><tr><th>Status</th><th>Meta</th><th>Body</th><th>Actions</th></tr></thead>
+    <thead><tr><th>Status</th><th>Author</th><th>Meta</th><th>Body</th><th>Actions</th></tr></thead>
     <tbody>${rowsHtml}</tbody>
   </table>
   <div class="pager">${next}</div>
