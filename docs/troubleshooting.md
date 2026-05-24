@@ -55,27 +55,39 @@ Two options:
 
 The Turnstile (anti-spam) widget never loaded, so the form submitted
 without a token and the API rejected it. The browser console usually
-shows a CSP violation referencing
-`https://challenges.cloudflare.com/turnstile/v0/api.js`.
-
-The script-tag embed loads Turnstile into the **host page's** document,
-so the host page's CSP must allow it. Add `https://challenges.cloudflare.com`
-to all three directives:
+shows a CSP violation referencing the Worker origin, e.g.:
 
 ```
-script-src  ... https://challenges.cloudflare.com;
-connect-src ... https://challenges.cloudflare.com;
-frame-src   ... https://challenges.cloudflare.com;
+Framing 'https://comments.example.com/' violates the following Content
+Security Policy directive: "frame-src 'self' ..."
 ```
 
-`script-src` lets the loader execute, `connect-src` lets the client
-talk back to Cloudflare during the challenge, and `frame-src` lets it
-render the challenge iframe.
+The widget renders Turnstile inside a same-origin iframe hosted by
+**this Worker** (not by `challenges.cloudflare.com`), so your host CSP
+must allow the Worker origin in three directives:
+
+```
+script-src  ... https://comments.example.com;
+connect-src ... https://comments.example.com;
+frame-src   ... https://comments.example.com;
+```
+
+`script-src` lets `embed.js` execute, `connect-src` lets it call the
+API, and `frame-src` lets it mount the Turnstile-hosting iframe. The
+nested challenge frame (at `challenges.cloudflare.com`) lives inside
+our iframe — your CSP doesn't see it and doesn't need to allow it.
+
+> Pre-v1.6.0 docs told operators to allow `https://challenges.cloudflare.com`
+> in `script-src` / `connect-src` / `frame-src`. After v1.6.0 that's no
+> longer needed (and `frame-src` to the Worker origin became required
+> instead). The trade is a slightly different host-CSP shape and a
+> stricter Garrul-side CSP for the Turnstile iframe.
 
 If you can't relax the host CSP, switch to the iframe variant
-(`/embed/:slug`) — it sets its own CSP that already permits Turnstile,
-so the host CSP doesn't need to change. See the "Iframe (CSP-strict
-hosts)" section in the README.
+(`/embed/:slug`) — the iframe page sets its own CSP that already
+permits everything, so the host CSP only needs `frame-src` for the
+Worker origin. See the "Iframe (CSP-strict hosts)" section in the
+README.
 
 If you intentionally disabled Turnstile by leaving `TURNSTILE_SITE_KEY`
 unset, this error shouldn't appear — verify `/api/v1/config` returns

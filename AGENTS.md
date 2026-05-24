@@ -411,7 +411,14 @@ If the host site sets a CSP, allow the Worker origin in:
 
 - `script-src {{INSTANCE_HOST}}` — for the embed bundle.
 - `connect-src {{INSTANCE_HOST}}` — for the comment + auth API calls.
-- `frame-src {{INSTANCE_HOST}}` — only if using the iframe embed mode.
+- `frame-src {{INSTANCE_HOST}}` — required in **both** modes. The
+  script-tag embed mounts a same-origin iframe at
+  `{{INSTANCE_URL}}/embed/turnstile-frame` to host the Turnstile
+  anti-spam challenge (this dodges a Shadow-DOM-incompatibility crash in
+  Cloudflare's `api.js`); the iframe-embed variant frames `/embed/:slug`
+  directly. Turnstile's own challenge frame nests inside our iframe and
+  is governed by our iframe's CSP, so the host CSP does **not** need
+  `frame-src https://challenges.cloudflare.com`.
 - `img-src` and `style-src` are fine as-is; the widget uses its
   Shadow DOM stylesheet and renders avatars inline as SVG or via the
   OAuth provider's CDN (covered by `img-src https:` or similar).

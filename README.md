@@ -60,14 +60,25 @@ Drop the widget into any page:
 <script src="https://comments.example.com/embed.js" defer></script>
 ```
 
-If your host page sets a Content-Security-Policy and you've enabled
-Turnstile, the host CSP must also allow `https://challenges.cloudflare.com`
-on `script-src`, `connect-src`, and `frame-src` — the bot-check script
-loads into the host document, not the widget's Shadow DOM. See the
-troubleshooting entry "Posting a comment fails with 'Spam check failed'"
-in [docs/troubleshooting.md](docs/troubleshooting.md) for the full
-directives, or use the iframe variant below to keep your host CSP
-untouched.
+If your host page sets a Content-Security-Policy, allow the Worker
+origin (where `embed.js`, the API, and the Turnstile-hosting iframe all
+live):
+
+```
+script-src  ... https://comments.example.com;
+connect-src ... https://comments.example.com;
+frame-src   ... https://comments.example.com;
+```
+
+`script-src` lets the embed bundle execute, `connect-src` lets it call
+the API, and `frame-src` lets the widget mount its same-origin iframe
+that hosts the Turnstile anti-spam challenge. (Turnstile used to render
+directly inside the Shadow DOM, which required `*.cloudflare.com` in
+your CSP — that's no longer needed. The challenge frame is nested
+inside our iframe and governed by its CSP, not yours.) See
+[docs/troubleshooting.md](docs/troubleshooting.md) for symptom-by-symptom
+diagnosis, or use the iframe variant below to keep your host CSP
+untouched entirely.
 
 ### Iframe (CSP-strict hosts)
 
