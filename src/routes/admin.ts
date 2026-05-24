@@ -707,15 +707,18 @@ admin.post("/api/subscriptions/:id", async (c) => {
 		return c.json({ error: "unsubscribed" }, 409);
 	}
 
+	// Send the confirmation email first; only persist the rotated token
+	// when delivery succeeds. If we rotated first and sendEmail returned
+	// false, the previous token would already be invalid and the user
+	// would have no working confirmation link at all.
 	const newToken = randomToken();
-	await adminRotateSubscriptionConfirmToken(c.env.DB, id, newToken);
 	const post = await getPost(c.env.DB, sub.post_slug);
 	const confirmUrl = `${publicBase}/api/v1/subscribe/confirm/${newToken}`;
 	const html = renderConfirmEmailHtml({
 		postTitle: post?.title ?? sub.post_slug,
 		confirmUrl,
 	});
-	await sendEmail(c.env, {
+	const sent = await sendEmail(c.env, {
 		to: sub.email,
 		from,
 		subject: t("email.confirm.subject").replace(
@@ -724,6 +727,10 @@ admin.post("/api/subscriptions/:id", async (c) => {
 		),
 		html,
 	});
+	if (!sent) {
+		return c.json({ error: "email_send_failed" }, 502);
+	}
+	await adminRotateSubscriptionConfirmToken(c.env.DB, id, newToken);
 
 	await adminInsertAudit(c.env.DB, {
 		admin_id: user.id,
