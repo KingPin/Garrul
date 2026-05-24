@@ -129,10 +129,16 @@ const ADMIN_CSP = [
 	// (x-data="...", @click="...") are governed by 'unsafe-eval' not
 	// 'unsafe-inline', and the admin layout has no inline <script> tags.
 	// The pinned + SRI-verified Alpine CDN load is the only script source.
-	"script-src 'self' 'unsafe-eval' https://cdn.jsdelivr.net",
+	//
+	// static.cloudflareinsights.com is allowed because Cloudflare zones
+	// with Web Analytics enabled auto-inject the RUM beacon into HTML
+	// responses; without this entry the admin page logs a CSP violation
+	// on every load. The beacon POSTs telemetry back to
+	// cloudflareinsights.com (different host), so connect-src lists it too.
+	"script-src 'self' 'unsafe-eval' https://cdn.jsdelivr.net https://static.cloudflareinsights.com",
 	"style-src 'self' 'unsafe-inline'",
 	"img-src 'self' data: https:",
-	"connect-src 'self'",
+	"connect-src 'self' https://cloudflareinsights.com",
 	"frame-ancestors 'none'",
 ].join("; ");
 
