@@ -308,6 +308,26 @@ const renderQueue = (
 		)
 		.join(" · ");
 
+	const actionButtons = (id: string, status: CommentStatus): string => {
+		const parts: string[] = [];
+		if (status !== "approved") {
+			parts.push(
+				`<button :disabled="busy" @click="busy=true; act('${id}','approve').finally(()=>busy=false)">${status === "deleted" || status === "spam" ? "Restore" : "Approve"}</button>`,
+			);
+		}
+		if (status !== "spam" && status !== "deleted") {
+			parts.push(
+				`<button :disabled="busy" class="bad" @click="busy=true; act('${id}','spam').finally(()=>busy=false)">Spam</button>`,
+			);
+		}
+		if (status !== "deleted") {
+			parts.push(
+				`<button :disabled="busy" class="bad" @click="busy=true; act('${id}','delete').finally(()=>busy=false)">Delete</button>`,
+			);
+		}
+		return parts.join("");
+	};
+
 	const rowsHtml = rows.length
 		? rows
 				.map(
@@ -320,11 +340,7 @@ const renderQueue = (
     <div class="muted" style="font-size:0.75rem">${escapeHtml(c.id)}</div>
   </td>
   <td class="row-body"><div class="md">${resanitizeBodyHtml(c.body_html)}</div></td>
-  <td class="actions">
-    <button :disabled="busy" @click="busy=true; act('${c.id}','approve').finally(()=>busy=false)">Approve</button>
-    <button :disabled="busy" class="bad" @click="busy=true; act('${c.id}','spam').finally(()=>busy=false)">Spam</button>
-    <button :disabled="busy" class="bad" @click="busy=true; act('${c.id}','delete').finally(()=>busy=false)">Delete</button>
-  </td>
+  <td class="actions">${actionButtons(c.id, c.status)}</td>
 </tr>`,
 				)
 				.join("")
