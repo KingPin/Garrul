@@ -7,7 +7,9 @@
  *
  * Each bucket is a single KV value: a JSON-encoded array of UNIX-epoch
  * milliseconds for each request in the current window. The TTL on the
- * key is the window length, so old data evicts automatically.
+ * key is at least the window length (clamped to KV's 60s minimum), so
+ * old data evicts automatically. The read-side cutoff filter is what
+ * actually enforces the window — the TTL is just for GC.
  *
  * KV writes are eventually consistent across the edge, which means a
  * burst from different regions could under-count. That's acceptable
@@ -44,13 +46,20 @@ const readBucket = async (
 	}
 };
 
+// Cloudflare KV requires expirationTtl >= 60s. The short-bucket window
+// is 10s, which would 400 on put. Clamp here — the read-side cutoff
+// already enforces the true window, so a slightly longer GC delay is
+// harmless.
+const KV_MIN_TTL_SEC = 60;
+
 const writeBucket = async (
 	kv: KVNamespace,
 	key: string,
 	stamps: number[],
 	ttlSec: number,
 ): Promise<void> => {
-	await kv.put(key, JSON.stringify(stamps), { expirationTtl: ttlSec });
+	const safeTtl = Math.max(ttlSec, KV_MIN_TTL_SEC);
+	await kv.put(key, JSON.stringify(stamps), { expirationTtl: safeTtl });
 };
 
 const readWindow = async (

@@ -9,14 +9,26 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { checkRateLimit, DEFAULTS } from "../src/lib/ratelimit";
 
-// Minimal KV stub. TTL is informational only — we don't simulate expiry
-// because the tests run faster than the shortest configured window.
+// Minimal KV stub. Mirrors Cloudflare's real put() contract: rejects any
+// expirationTtl below 60s with the same shape of error we'd see in prod
+// (`KV PUT failed: 400 Invalid expiration_ttl ...`). The previous version
+// silently swallowed the option and masked a real bug where short-bucket
+// (10s) writes 500'd every first comment.
 class StubKV {
 	private map = new Map<string, string>();
 	async get(key: string): Promise<string | null> {
 		return this.map.get(key) ?? null;
 	}
-	async put(key: string, value: string): Promise<void> {
+	async put(
+		key: string,
+		value: string,
+		opts?: { expirationTtl?: number },
+	): Promise<void> {
+		if (opts?.expirationTtl != null && opts.expirationTtl < 60) {
+			throw new Error(
+				`KV PUT failed: 400 Invalid expiration_ttl of ${opts.expirationTtl}. Expiration TTL must be at least 60.`,
+			);
+		}
 		this.map.set(key, value);
 	}
 }
