@@ -23,7 +23,15 @@ export type SpamCheckInput = {
 	is_first_comment: boolean;
 };
 
-export type SpamVerdict = { spam: boolean; reason?: string };
+export type SpamVerdict = {
+	spam: boolean;
+	reason?: string;
+	// Persisted to spam_verdicts.score / spam_verdicts.raw when present. Both
+	// optional because in-core heuristics often have no meaningful score and
+	// not every adapter exposes raw provider output.
+	score?: number | null;
+	raw?: Record<string, unknown> | null;
+};
 
 export type SpamEnv = {
 	SPAM_PROVIDER?: string;

@@ -24,6 +24,8 @@ const MAX_BODY_FOR_PROMPT = 2_000; // truncate for cost / latency
 
 const encoder = new TextEncoder();
 
+const clipResponse = (s: string): string => s.slice(0, 60);
+
 const cacheKey = async (bodyMd: string): Promise<string> => {
 	const digest = await crypto.subtle.digest("SHA-256", encoder.encode(bodyMd));
 	const hex = Array.from(new Uint8Array(digest), (b) =>
@@ -56,8 +58,14 @@ export const checkWorkersAi = async (
 	const key = await cacheKey(input.body_md);
 	if (cfg.cache) {
 		const cached = await cfg.cache.get(key);
-		if (cached === "spam") return { spam: true, reason: "workers-ai.cached" };
-		if (cached === "ham") return { spam: false };
+		if (cached === "spam")
+			return {
+				spam: true,
+				reason: "workers-ai.cached",
+				raw: { cached: true, model: MODEL },
+			};
+		if (cached === "ham")
+			return { spam: false, raw: { cached: true, model: MODEL } };
 	}
 
 	try {
@@ -70,19 +78,19 @@ export const checkWorkersAi = async (
 			max_tokens: 4,
 			temperature: 0,
 		});
-		const raw =
+		const text =
 			typeof out === "string"
 				? out
 				: typeof out?.response === "string"
 					? out.response
 					: "";
-		const norm = raw.trim().toUpperCase();
+		const norm = text.trim().toUpperCase();
 		const isSpam = norm.startsWith("SPAM");
 		const isHam = norm.startsWith("HAM");
 		if (!isSpam && !isHam) {
 			log.warn("spam.adapter.error", {
 				provider: "workers-ai",
-				unexpected_response: raw.slice(0, 60),
+				unexpected_response: text.slice(0, 60),
 			});
 			return null;
 		}
@@ -91,9 +99,10 @@ export const checkWorkersAi = async (
 				expirationTtl: CACHE_TTL_SECONDS,
 			});
 		}
+		const raw = { cached: false, model: MODEL, response: clipResponse(norm) };
 		return isSpam
-			? { spam: true, reason: "workers-ai.spam" }
-			: { spam: false };
+			? { spam: true, reason: "workers-ai.spam", raw }
+			: { spam: false, raw };
 	} catch (err) {
 		log.warn("spam.adapter.error", {
 			provider: "workers-ai",

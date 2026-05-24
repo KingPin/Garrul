@@ -78,7 +78,8 @@ describe("akismet provider", () => {
 			},
 			input,
 		);
-		expect(v).toEqual({ spam: true, reason: "akismet.spam" });
+		expect(v).toMatchObject({ spam: true, reason: "akismet.spam" });
+		expect(v?.raw).toMatchObject({ response: "true" });
 		expect(lastUrl).toContain("key.rest.akismet.com");
 		expect(lastBody).toContain("blog=https%3A%2F%2Fexample.com");
 		expect(lastBody).toContain("comment_author=Daisy");
@@ -97,7 +98,8 @@ describe("akismet provider", () => {
 			},
 			input,
 		);
-		expect(v).toEqual({ spam: false });
+		expect(v).toMatchObject({ spam: false });
+		expect(v?.raw).toMatchObject({ response: "false" });
 	});
 
 	it("marks pro-tip 'discard' verdicts with the discard reason", async () => {
@@ -110,7 +112,8 @@ describe("akismet provider", () => {
 			},
 			input,
 		);
-		expect(v).toEqual({ spam: true, reason: "akismet.discard" });
+		expect(v).toMatchObject({ spam: true, reason: "akismet.discard" });
+		expect(v?.raw).toMatchObject({ pro_tip: "discard" });
 	});
 
 	it("returns null on HTTP failure (degrade to no opinion)", async () => {
@@ -167,7 +170,8 @@ describe("workers-ai provider", () => {
 			},
 			input,
 		);
-		expect(v).toEqual({ spam: true, reason: "workers-ai.spam" });
+		expect(v).toMatchObject({ spam: true, reason: "workers-ai.spam" });
+		expect(v?.raw).toMatchObject({ cached: false });
 		expect(ai.run).toHaveBeenCalledOnce();
 		// Caches the verdict so a second call short-circuits.
 		expect([...kv.map.values()]).toContain("spam");
@@ -179,7 +183,8 @@ describe("workers-ai provider", () => {
 			{ SPAM_PROVIDER: "workers-ai", AI: ai as unknown as Ai },
 			input,
 		);
-		expect(v).toEqual({ spam: false });
+		expect(v).toMatchObject({ spam: false });
+		expect(v?.raw).toMatchObject({ cached: false });
 	});
 
 	it("uses cached verdict without calling the model again", async () => {

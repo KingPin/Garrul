@@ -76,9 +76,10 @@ export const checkAkismet = async (
 			return {
 				spam: true,
 				reason: proTip === "discard" ? "akismet.discard" : "akismet.spam",
+				raw: { response: text, pro_tip: proTip },
 			};
 		}
-		if (text === "false") return { spam: false };
+		if (text === "false") return { spam: false, raw: { response: text } };
 		log.warn("spam.adapter.error", {
 			provider: "akismet",
 			unexpected_body: text.slice(0, 60),
