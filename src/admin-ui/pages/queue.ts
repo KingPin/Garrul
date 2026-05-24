@@ -194,9 +194,9 @@ ${filterBar}
       if (!r.ok) throw new Error('bulk action failed: ' + r.status);
       return r.json();
     }).then(j => {
-      const n = (j && typeof j.touched === 'number') ? j.touched : ids.length;
-      this.$dispatch('toast', { text: action + ' ' + n + ' comment(s)' });
-      this.$dispatch('bulk-done', { ids });
+      const doneIds = (j && Array.isArray(j.touched)) ? j.touched : ids;
+      this.$dispatch('toast', { text: action + ' ' + doneIds.length + ' comment(s)' });
+      this.$dispatch('bulk-done', { ids: doneIds });
       this.selected = [];
     }).catch(e => {
       this.$dispatch('toast', { text: e.message || 'Bulk failed', kind: 'bad' });
