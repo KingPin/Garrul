@@ -22,10 +22,15 @@ export const rerenderStats = async (
 			`SELECT
         COUNT(CASE WHEN renderer_version >= ? THEN 1 END) AS up_to_date,
         COUNT(CASE WHEN renderer_version <  ? THEN 1 END) AS stale,
-        MIN(renderer_version)                              AS oldest_version
+        MIN(CASE WHEN renderer_version < ? THEN renderer_version END)
+                                                           AS oldest_version
         FROM comments`,
 		)
-		.bind(CURRENT_RENDERER_VERSION, CURRENT_RENDERER_VERSION)
+		.bind(
+			CURRENT_RENDERER_VERSION,
+			CURRENT_RENDERER_VERSION,
+			CURRENT_RENDERER_VERSION,
+		)
 		.first<{
 			up_to_date: number;
 			stale: number;
