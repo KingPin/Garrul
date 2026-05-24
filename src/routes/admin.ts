@@ -20,9 +20,13 @@ import type { Context } from "hono";
 import type { Bindings } from "../index";
 import { readSession } from "../lib/session";
 import {
+	ADMIN_ACTIONS,
 	adminBulkUpdateCommentStatus,
 	adminGetCommentDetail,
 	adminGetUserDetail,
+	adminInsertAudit,
+	adminLatestAuditByTarget,
+	adminListAudit,
 	adminListComments,
 	adminListUsers,
 	adminStats,
@@ -30,6 +34,8 @@ import {
 	getUser,
 	setUserBanned,
 	updateCommentStatus,
+	type AdminAction,
+	type AuditTargetKind,
 	type CommentStatus,
 	type User,
 } from "../db/queries";
@@ -41,6 +47,7 @@ import {
 import { accessDeniedHtml, layout } from "../admin-ui/layout";
 import { ADMIN_CSP } from "../admin-ui/styles";
 import { renderDashboard } from "../admin-ui/pages/dashboard";
+import { renderAudit, type AuditFilters } from "../admin-ui/pages/audit";
 import { renderCommentDetail } from "../admin-ui/pages/comment-detail";
 import { renderQueue, type QueueFilters } from "../admin-ui/pages/queue";
 import { renderUserDetail } from "../admin-ui/pages/user-detail";
@@ -170,6 +177,12 @@ admin.get("/queue", async (c) => {
 	const nextCursor =
 		rows.length > 50 && last ? `${last.created_at}|${last.id}` : null;
 
+	const latestAudit = await adminLatestAuditByTarget(
+		c.env.DB,
+		"comment",
+		trimmed.map((r) => r.id),
+	);
+
 	const updateInfo = await peekCachedLatestVersion(c.env);
 	const filters: QueueFilters = {
 		status,
@@ -180,7 +193,12 @@ admin.get("/queue", async (c) => {
 		to: toRaw ?? "",
 	};
 	return c.html(
-		layout("Queue", renderQueue(trimmed, filters, nextCursor), user, updateInfo),
+		layout(
+			"Queue",
+			renderQueue(trimmed, filters, nextCursor, latestAudit),
+			user,
+			updateInfo,
+		),
 	);
 });
 
@@ -265,6 +283,86 @@ admin.get("/users/:id", async (c) => {
 	);
 });
 
+admin.get("/audit", async (c) => {
+	const user = await requireAdmin(c);
+	if (user instanceof Response) return user;
+
+	const adminId = (c.req.query("admin_id") ?? "").trim();
+	const actionRaw = (c.req.query("action") ?? "").trim();
+	const targetKindRaw = (c.req.query("target_kind") ?? "").trim();
+	const targetId = (c.req.query("target_id") ?? "").trim();
+	const fromRaw = c.req.query("from");
+	const toRaw = c.req.query("to");
+	const fromMs = parseDateMs(fromRaw);
+	const toMs = parseDateMs(toRaw);
+	const toExclusive = toMs != null ? toMs + 86_400_000 : null;
+
+	const before = c.req.query("before");
+	let cursorTs: number | null = null;
+	let cursorId: string | null = null;
+	if (before) {
+		const parts = before.split("|");
+		const a = parts[0];
+		const b = parts[1];
+		if (parts.length === 2 && a && b) {
+			const ts = Number(a);
+			if (Number.isFinite(ts)) {
+				cursorTs = ts;
+				cursorId = b;
+			}
+		}
+	}
+
+	const validKinds: AuditTargetKind[] = [
+		"comment",
+		"user",
+		"subscription",
+		"system",
+	];
+	const kindFilter: AuditTargetKind | undefined = validKinds.includes(
+		targetKindRaw as AuditTargetKind,
+	)
+		? (targetKindRaw as AuditTargetKind)
+		: undefined;
+	const actionFilter: AdminAction | undefined = (
+		ADMIN_ACTIONS as ReadonlyArray<string>
+	).includes(actionRaw)
+		? (actionRaw as AdminAction)
+		: undefined;
+
+	const filter: import("../db/queries").AdminAuditFilter = {};
+	if (adminId) filter.admin_id = adminId;
+	if (actionFilter) filter.action = actionFilter;
+	if (kindFilter) filter.target_kind = kindFilter;
+	if (targetId) filter.target_id = targetId;
+	if (fromMs != null) filter.from = fromMs;
+	if (toExclusive != null) filter.to = toExclusive;
+
+	const rows = await adminListAudit(c.env.DB, filter, 51, cursorTs, cursorId);
+	const trimmed = rows.slice(0, 50);
+	const last = trimmed[trimmed.length - 1];
+	const nextCursor =
+		rows.length > 50 && last ? `${last.created_at}|${last.id}` : null;
+
+	const filters: AuditFilters = {
+		admin_id: adminId,
+		action: actionFilter ?? "",
+		target_kind: kindFilter ?? "",
+		target_id: targetId,
+		from: fromRaw ?? "",
+		to: toRaw ?? "",
+	};
+	const updateInfo = await peekCachedLatestVersion(c.env);
+	return c.html(
+		layout(
+			"Audit",
+			renderAudit(trimmed, filters, nextCursor, ADMIN_ACTIONS),
+			user,
+			updateInfo,
+		),
+	);
+});
+
 admin.get("/settings", async (c) => {
 	const user = await requireAdmin(c);
 	if (user instanceof Response) return user;
@@ -278,7 +376,9 @@ admin.post("/api/comments/:id", async (c) => {
 	const user = await requireAdmin(c);
 	if (user instanceof Response) return user;
 	const id = c.req.param("id");
-	const body = await c.req.json<{ action?: string }>().catch(() => null);
+	const body = await c.req
+		.json<{ action?: string; reason?: string }>()
+		.catch(() => null);
 	const action = body?.action as CommentAction | undefined;
 	let newStatus: CommentStatus;
 	switch (action) {
@@ -300,6 +400,14 @@ admin.post("/api/comments/:id", async (c) => {
 	const existing = await getComment(c.env.DB, id);
 	if (!existing) return c.json({ error: "not_found" }, 404);
 	await updateCommentStatus(c.env.DB, id, newStatus);
+	await adminInsertAudit(c.env.DB, {
+		admin_id: user.id,
+		action,
+		target_kind: "comment",
+		target_id: id,
+		reason: body?.reason ?? null,
+		meta: { prev_status: existing.status, new_status: newStatus },
+	});
 	// Bust the cached first page so the moderation result is visible.
 	await c.env.TREE_CACHE.delete(`tree:${existing.post_slug}:first`);
 	const webhookEvent: WebhookEvent | null =
@@ -358,6 +466,14 @@ admin.post("/api/comments/bulk", async (c) => {
 		return c.json({ error: "too_many" }, 400);
 	}
 	const touched = await adminBulkUpdateCommentStatus(c.env.DB, ids, newStatus);
+	const bulkAction: AdminAction =
+		action === "spam"
+			? "bulk.spam"
+			: action === "delete"
+				? "bulk.delete"
+				: action === "restore"
+					? "bulk.restore"
+					: "bulk.approve";
 	// Bust caches + fire webhooks for each touched comment. Both are
 	// independent of one another, so missing rows just no-op.
 	const webhookEvent: WebhookEvent | null =
@@ -371,6 +487,13 @@ admin.post("/api/comments/bulk", async (c) => {
 	for (const id of touched) {
 		const existing = await getComment(c.env.DB, id);
 		if (!existing) continue;
+		await adminInsertAudit(c.env.DB, {
+			admin_id: user.id,
+			action: bulkAction,
+			target_kind: "comment",
+			target_id: id,
+			meta: { batch_size: touched.length, new_status: newStatus },
+		});
 		await c.env.TREE_CACHE.delete(`tree:${existing.post_slug}:first`);
 		if (webhookEvent) {
 			fireWebhook(c.env, c.executionCtx, {
@@ -389,7 +512,9 @@ admin.post("/api/users/:id", async (c) => {
 	const user = await requireAdmin(c);
 	if (user instanceof Response) return user;
 	const id = c.req.param("id");
-	const body = await c.req.json<{ banned?: boolean }>().catch(() => null);
+	const body = await c.req
+		.json<{ banned?: boolean; reason?: string }>()
+		.catch(() => null);
 	if (!body || typeof body.banned !== "boolean") {
 		return c.json({ error: "invalid_body" }, 400);
 	}
@@ -398,6 +523,14 @@ admin.post("/api/users/:id", async (c) => {
 	const target = await getUser(c.env.DB, id);
 	if (!target) return c.json({ error: "not_found" }, 404);
 	await setUserBanned(c.env.DB, id, body.banned);
+	await adminInsertAudit(c.env.DB, {
+		admin_id: user.id,
+		action: body.banned ? "ban" : "unban",
+		target_kind: "user",
+		target_id: id,
+		reason: body.reason ?? null,
+		meta: { target_name: target.name },
+	});
 	return c.json({ ok: true, id, banned: body.banned });
 });
 
