@@ -64,21 +64,29 @@ const authorCell = (c: AdminComment): string => {
 </a>`;
 };
 
+const rowAct = (
+	id: string,
+	action: "approve" | "spam" | "delete",
+	successText: string,
+): string =>
+	`busy=true; act('${id}','${action}').then(()=>{$dispatch('toast',{text:'${successText}'}); gone=true;}).catch(e=>$dispatch('toast',{text:e.message||'Action failed',kind:'bad'})).finally(()=>busy=false)`;
+
 const actionButtons = (id: string, status: CommentStatus): string => {
 	const parts: string[] = [];
 	if (status !== "approved") {
+		const label = status === "deleted" || status === "spam" ? "Restore" : "Approve";
 		parts.push(
-			`<button :disabled="busy" @click="busy=true; act('${id}','approve').finally(()=>busy=false)">${status === "deleted" || status === "spam" ? "Restore" : "Approve"}</button>`,
+			`<button :disabled="busy" @click="${rowAct(id, "approve", label === "Restore" ? "Restored" : "Approved")}">${label}</button>`,
 		);
 	}
 	if (status !== "spam" && status !== "deleted") {
 		parts.push(
-			`<button :disabled="busy" class="bad" @click="busy=true; act('${id}','spam').finally(()=>busy=false)">Spam</button>`,
+			`<button :disabled="busy" class="bad" @click="${rowAct(id, "spam", "Marked as spam")}">Spam</button>`,
 		);
 	}
 	if (status !== "deleted") {
 		parts.push(
-			`<button :disabled="busy" class="bad" @click="busy=true; act('${id}','delete').finally(()=>busy=false)">Delete</button>`,
+			`<button :disabled="busy" class="bad" @click="${rowAct(id, "delete", "Deleted")}">Delete</button>`,
 		);
 	}
 	return parts.join("");
@@ -122,7 +130,9 @@ export const renderQueue = (
 		? rows
 				.map(
 					(c) => `
-<tr x-data="{ busy: false }">
+<tr x-data="{ busy: false, gone: false }"
+    x-show="!gone" x-transition.opacity
+    @bulk-done.window="if ($event.detail.ids.includes('${c.id}')) gone = true">
   <td class="bulk-cell"><input type="checkbox" :value="'${c.id}'" x-model="selected" :disabled="busy"></td>
   <td><span class="pill ${c.status}">${c.status}</span></td>
   <td>${authorCell(c)}</td>
@@ -168,20 +178,28 @@ ${filterBar}
       body: JSON.stringify({ action }),
     }).then(r => {
       if (!r.ok) throw new Error('action failed: ' + r.status);
-      location.reload();
+      return r.json();
     });
   },
   bulk(action) {
     if (this.selected.length === 0) return;
     if (!confirm(action + ' ' + this.selected.length + ' comment(s)?')) return;
     this.bulkBusy = true;
+    const ids = this.selected.slice();
     return fetch('/admin/api/comments/bulk', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ ids: this.selected, action }),
+      body: JSON.stringify({ ids, action }),
     }).then(r => {
       if (!r.ok) throw new Error('bulk action failed: ' + r.status);
-      location.reload();
+      return r.json();
+    }).then(j => {
+      const n = (j && typeof j.touched === 'number') ? j.touched : ids.length;
+      this.$dispatch('toast', { text: action + ' ' + n + ' comment(s)' });
+      this.$dispatch('bulk-done', { ids });
+      this.selected = [];
+    }).catch(e => {
+      this.$dispatch('toast', { text: e.message || 'Bulk failed', kind: 'bad' });
     }).finally(() => { this.bulkBusy = false; });
   }
 }">

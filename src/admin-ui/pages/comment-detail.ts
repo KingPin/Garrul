@@ -151,14 +151,18 @@ export const renderCommentDetail = (d: AdminCommentDetail): string => {
 <div class="card" x-data="{
   busy: false,
   act(action) {
+    this.busy = true;
     return fetch('/admin/api/comments/${escapeHtml(comment.id)}', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ action }),
     }).then(r => {
       if (!r.ok) throw new Error('action failed: ' + r.status);
-      location.reload();
-    });
+      this.$dispatch('toast', { text: action + 'd' });
+      setTimeout(() => location.reload(), 600);
+    }).catch(e => {
+      this.$dispatch('toast', { text: e.message, kind: 'bad' });
+    }).finally(() => { this.busy = false; });
   }
 }">
   <h2>Comment</h2>

@@ -67,7 +67,10 @@ export const layout = (
 <title>${escapeHtml(title)} — Garrul Admin</title>
 <style>${ADMIN_CSS}</style>
 </head>
-<body>
+<body x-data="{ helpOpen: false }"
+      @keydown.window.slash.prevent="(() => { const el = document.querySelector('input[type=text],input[type=search]'); if (el) el.focus(); })()"
+      @keydown.window.question-mark.prevent="helpOpen = !helpOpen"
+      @keydown.window.escape="helpOpen = false">
 ${renderUpdateBanner(updateInfo)}
 <header>
   <h1>Garrul Admin</h1>
@@ -80,8 +83,23 @@ ${renderUpdateBanner(updateInfo)}
     <a href="/admin/operator">Operator</a>
     <a href="/admin/settings">Settings</a>
   </nav>
-  <span class="me">${escapeHtml(currentUser.name)} <span class="pill admin">admin</span></span>
+  <span class="me">${escapeHtml(currentUser.name)} <span class="pill admin">admin</span> <button class="help-btn" @click="helpOpen = !helpOpen" aria-label="Keyboard shortcuts">?</button></span>
 </header>
+<div class="toast-tray" role="status" aria-live="polite" aria-atomic="true"
+     x-data="{ items: [] }"
+     @toast.window="items.push({ id: Date.now() + Math.random(), text: $event.detail.text, kind: $event.detail.kind || 'ok' }); setTimeout(() => { items.shift(); }, 4000)">
+  <template x-for="t in items" :key="t.id">
+    <div :class="'toast ' + t.kind" x-text="t.text"></div>
+  </template>
+</div>
+<div class="help-popover" x-show="helpOpen" x-cloak @click.away="helpOpen = false" role="dialog" aria-label="Keyboard shortcuts">
+  <h4 style="margin-top:0">Shortcuts</h4>
+  <dl>
+    <dt><kbd>/</kbd></dt><dd>Focus search</dd>
+    <dt><kbd>?</kbd></dt><dd>Toggle this help</dd>
+    <dt><kbd>Esc</kbd></dt><dd>Close help</dd>
+  </dl>
+</div>
 <main>
 ${body}
 </main>

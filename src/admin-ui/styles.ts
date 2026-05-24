@@ -115,6 +115,26 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
               padding-top: 1rem; border-top: 1px solid var(--border); }
 code { background: var(--bg); padding: 0.1rem 0.3rem; border-radius: 3px;
        font-family: ui-monospace, monospace; font-size: 0.85em; }
+.toast-tray { position: fixed; right: 1rem; bottom: 1rem; display: flex;
+              flex-direction: column; gap: 0.5rem; z-index: 1000;
+              pointer-events: none; }
+.toast { background: var(--panel); border: 1px solid var(--border);
+         border-left: 3px solid var(--ok); border-radius: 6px;
+         padding: 0.6rem 0.9rem; box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+         max-width: 320px; font-size: 0.85rem; }
+.toast.bad { border-left-color: var(--bad); }
+.help-btn { margin-left: 0.4rem; padding: 0.1rem 0.5rem; font-size: 0.8rem; }
+.help-popover { position: fixed; top: 3.5rem; right: 1rem;
+                background: var(--panel); border: 1px solid var(--border);
+                border-radius: 8px; padding: 1rem 1.25rem; min-width: 220px;
+                z-index: 900; box-shadow: 0 4px 16px rgba(0,0,0,0.5); }
+.help-popover dl { display: grid; grid-template-columns: auto 1fr;
+                   gap: 0.4rem 0.8rem; margin: 0; }
+.help-popover dt { font-weight: 500; }
+.help-popover dd { margin: 0; color: var(--muted); }
+kbd { background: var(--bg); border: 1px solid var(--border);
+      border-radius: 4px; padding: 0.05rem 0.4rem;
+      font-family: ui-monospace, monospace; font-size: 0.8em; }
 .dash-cols { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
 .dash-list { list-style: none; margin: 0; padding: 0; }
 .dash-list li { padding: 0.25rem 0; border-bottom: 1px dashed var(--border); }
@@ -126,4 +146,19 @@ code { background: var(--bg); padding: 0.1rem 0.3rem; border-radius: 3px;
 .banner.update code { background: rgba(0,0,0,0.25); color: inherit; }
 .banner.update button { background: transparent; color: inherit; border-color: #4a3a14; }
 .banner.update button:hover { border-color: #f7d77a; }
+@media (max-width: 720px) {
+  header { flex-wrap: wrap; gap: 0.5rem; padding: 0.5rem 0.75rem; }
+  header nav { flex-wrap: wrap; gap: 0.5rem 0.75rem; font-size: 0.9rem; }
+  header .me { margin-left: auto; font-size: 0.85rem; }
+  main { margin: 0.75rem auto; padding: 0 0.6rem; }
+  .card { padding: 0.75rem 0.85rem; border-radius: 6px; }
+  .card table { display: block; overflow-x: auto; }
+  .author-cell { max-width: 140px; }
+  .row-body { max-width: 280px; }
+  .bulk-bar { flex-wrap: wrap; }
+  .filter-bar.queue-filter { gap: 0.35rem; }
+  .filter-bar.queue-filter input[type=text] { min-width: 120px; }
+  .toast-tray { left: 0.5rem; right: 0.5rem; align-items: stretch; }
+  .toast { max-width: none; }
+}
 `;

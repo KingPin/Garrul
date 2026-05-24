@@ -90,6 +90,10 @@ export const renderUserDetail = (d: AdminUserDetail): string => {
       body: JSON.stringify({ banned }),
     }).then(r => {
       if (!r.ok) throw new Error('action failed: ' + r.status);
+      this.$dispatch('toast', { text: banned ? 'User banned' : 'User unbanned' });
+    }).catch(e => {
+      this.$dispatch('toast', { text: e.message, kind: 'bad' });
+      throw e;
     });
   }
 }">

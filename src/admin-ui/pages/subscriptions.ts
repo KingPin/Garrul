@@ -108,9 +108,13 @@ export const renderSubscriptions = (
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ action }),
-    }).then(r => {
-      if (!r.ok) throw new Error('action failed: ' + r.status);
-      location.reload();
+    }).then(async r => {
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || ('failed: ' + r.status));
+      this.$dispatch('toast', { text: action === 'unsubscribe' ? 'Unsubscribed' : 'Confirmation resent' });
+      setTimeout(() => location.reload(), 500);
+    }).catch(e => {
+      this.$dispatch('toast', { text: e.message, kind: 'bad' });
     });
   }
 }">
