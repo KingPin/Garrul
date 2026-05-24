@@ -133,7 +133,7 @@ admin.get("/queue", async (c) => {
 		}
 	}
 
-	const rows = await adminListComments(c.env.DB, status, 51, cursorTs, cursorId);
+	const rows = await adminListComments(c.env.DB, { status }, 51, cursorTs, cursorId);
 	const trimmed = rows.slice(0, 50);
 	const last = trimmed[trimmed.length - 1];
 	const nextCursor =

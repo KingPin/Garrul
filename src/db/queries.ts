@@ -540,40 +540,99 @@ export const listUserReactionsOnPost = async (
  * Admin: page through comments by status, newest first. Cursor is the
  * created_at,id pair of the last row from the previous page.
  */
+export type AdminComment = Comment & {
+	author_name: string | null;
+	author_email: string | null;
+	author_avatar_url: string | null;
+	author_provider: string | null;
+	author_is_admin: boolean;
+	author_is_banned: boolean;
+};
+
+type AdminCommentRow = Omit<
+	AdminComment,
+	"author_is_admin" | "author_is_banned"
+> & {
+	author_is_admin: number | null;
+	author_is_banned: number | null;
+};
+
+const toAdminComment = (row: AdminCommentRow): AdminComment => ({
+	...row,
+	author_is_admin: row.author_is_admin === 1,
+	author_is_banned: row.author_is_banned === 1,
+});
+
+export type AdminCommentFilter = {
+	status?: CommentStatus | "all";
+	q?: string;
+	post_slug?: string;
+	user_id?: string;
+	from?: number;
+	to?: number;
+};
+
 export const adminListComments = async (
 	db: D1Database,
-	status: CommentStatus | "all",
+	filter: AdminCommentFilter,
 	limit: number,
 	cursorCreatedAt: number | null,
 	cursorId: string | null,
-): Promise<Comment[]> => {
-	const statusFilter = status === "all" ? "" : "AND status = ?";
-	const sql = cursorCreatedAt != null && cursorId != null
-		? `SELECT id, post_slug, parent_id, user_id, body_md, body_html,
-		          renderer_version, status, edited_at, deleted_at,
-		          ip_hash, user_agent, created_at
-		     FROM comments
-		    WHERE (created_at, id) < (?, ?) ${statusFilter}
-		    ORDER BY created_at DESC, id DESC
-		    LIMIT ?`
-		: `SELECT id, post_slug, parent_id, user_id, body_md, body_html,
-		          renderer_version, status, edited_at, deleted_at,
-		          ip_hash, user_agent, created_at
-		     FROM comments
-		    WHERE 1=1 ${statusFilter}
-		    ORDER BY created_at DESC, id DESC
-		    LIMIT ?`;
-	const stmt = db.prepare(sql);
-	const binds: (number | string)[] =
-		cursorCreatedAt != null && cursorId != null
-			? status === "all"
-				? [cursorCreatedAt, cursorId, limit]
-				: [cursorCreatedAt, cursorId, status, limit]
-			: status === "all"
-				? [limit]
-				: [status, limit];
-	const result = await stmt.bind(...binds).all<Comment>();
-	return result.results ?? [];
+): Promise<AdminComment[]> => {
+	const where: string[] = ["1=1"];
+	const binds: (number | string)[] = [];
+
+	if (cursorCreatedAt != null && cursorId != null) {
+		where.push("(c.created_at, c.id) < (?, ?)");
+		binds.push(cursorCreatedAt, cursorId);
+	}
+	const status = filter.status ?? "all";
+	if (status !== "all") {
+		where.push("c.status = ?");
+		binds.push(status);
+	}
+	if (filter.q) {
+		where.push("LOWER(c.body_md) LIKE ?");
+		binds.push(`%${filter.q.toLowerCase()}%`);
+	}
+	if (filter.post_slug) {
+		where.push("c.post_slug = ?");
+		binds.push(filter.post_slug);
+	}
+	if (filter.user_id) {
+		where.push("c.user_id = ?");
+		binds.push(filter.user_id);
+	}
+	if (filter.from != null) {
+		where.push("c.created_at >= ?");
+		binds.push(filter.from);
+	}
+	if (filter.to != null) {
+		where.push("c.created_at < ?");
+		binds.push(filter.to);
+	}
+
+	const sql = `
+		SELECT c.id, c.post_slug, c.parent_id, c.user_id, c.body_md, c.body_html,
+		       c.renderer_version, c.status, c.edited_at, c.deleted_at,
+		       c.ip_hash, c.user_agent, c.created_at,
+		       u.name       AS author_name,
+		       u.email      AS author_email,
+		       u.avatar_url AS author_avatar_url,
+		       u.provider   AS author_provider,
+		       u.is_admin   AS author_is_admin,
+		       u.is_banned  AS author_is_banned
+		  FROM comments c
+		  LEFT JOIN users u ON u.id = c.user_id
+		 WHERE ${where.join(" AND ")}
+		 ORDER BY c.created_at DESC, c.id DESC
+		 LIMIT ?`;
+	binds.push(limit);
+	const result = await db
+		.prepare(sql)
+		.bind(...binds)
+		.all<AdminCommentRow>();
+	return (result.results ?? []).map(toAdminComment);
 };
 
 export const updateCommentStatus = async (
@@ -1013,4 +1072,722 @@ export const listStaleRendererComments = async (
 		created_at: number;
 	}>();
 	return result.results ?? [];
+};
+
+// ---------------------------------------------------------------------------
+// Admin observability — audit log, spam verdicts, dashboard aggregates,
+// detail-page rollups, subscriptions admin. Backed by migration 0004.
+// ---------------------------------------------------------------------------
+
+export type AuditTargetKind =
+	| "comment"
+	| "user"
+	| "subscription"
+	| "system";
+
+export const ADMIN_ACTIONS = [
+	"approve",
+	"spam",
+	"delete",
+	"restore",
+	"edit",
+	"ban",
+	"unban",
+	"rerender",
+	"seed-demo",
+	"sub.unsubscribe",
+	"sub.resend",
+	"bulk.approve",
+	"bulk.spam",
+	"bulk.delete",
+	"bulk.restore",
+] as const;
+export type AdminAction = (typeof ADMIN_ACTIONS)[number];
+
+export type AuditRow = {
+	id: string;
+	admin_id: string;
+	action: string;
+	target_kind: AuditTargetKind;
+	target_id: string | null;
+	reason: string | null;
+	meta: string | null;
+	created_at: number;
+};
+
+export type AuditRowWithAdmin = AuditRow & { admin_name: string | null };
+
+export const adminInsertAudit = async (
+	db: D1Database,
+	args: {
+		admin_id: string;
+		action: AdminAction | string;
+		target_kind: AuditTargetKind;
+		target_id?: string | null;
+		reason?: string | null;
+		meta?: Record<string, unknown> | null;
+	},
+): Promise<void> => {
+	const id = ulid();
+	await db
+		.prepare(
+			`INSERT INTO audit_log
+			   (id, admin_id, action, target_kind, target_id, reason, meta, created_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		)
+		.bind(
+			id,
+			args.admin_id,
+			args.action,
+			args.target_kind,
+			args.target_id ?? null,
+			args.reason ?? null,
+			args.meta ? JSON.stringify(args.meta) : null,
+			Date.now(),
+		)
+		.run();
+};
+
+export type AdminAuditFilter = {
+	admin_id?: string;
+	action?: string;
+	target_kind?: AuditTargetKind;
+	target_id?: string;
+	from?: number;
+	to?: number;
+};
+
+export const adminListAudit = async (
+	db: D1Database,
+	filter: AdminAuditFilter,
+	limit: number,
+	cursorCreatedAt: number | null,
+	cursorId: string | null,
+): Promise<AuditRowWithAdmin[]> => {
+	const where: string[] = ["1=1"];
+	const binds: (string | number)[] = [];
+	if (cursorCreatedAt != null && cursorId != null) {
+		where.push("(a.created_at, a.id) < (?, ?)");
+		binds.push(cursorCreatedAt, cursorId);
+	}
+	if (filter.admin_id) {
+		where.push("a.admin_id = ?");
+		binds.push(filter.admin_id);
+	}
+	if (filter.action) {
+		where.push("a.action = ?");
+		binds.push(filter.action);
+	}
+	if (filter.target_kind) {
+		where.push("a.target_kind = ?");
+		binds.push(filter.target_kind);
+	}
+	if (filter.target_id) {
+		where.push("a.target_id = ?");
+		binds.push(filter.target_id);
+	}
+	if (filter.from != null) {
+		where.push("a.created_at >= ?");
+		binds.push(filter.from);
+	}
+	if (filter.to != null) {
+		where.push("a.created_at < ?");
+		binds.push(filter.to);
+	}
+	const sql = `
+		SELECT a.id, a.admin_id, a.action, a.target_kind, a.target_id,
+		       a.reason, a.meta, a.created_at,
+		       u.name AS admin_name
+		  FROM audit_log a
+		  LEFT JOIN users u ON u.id = a.admin_id
+		 WHERE ${where.join(" AND ")}
+		 ORDER BY a.created_at DESC, a.id DESC
+		 LIMIT ?`;
+	binds.push(limit);
+	const result = await db
+		.prepare(sql)
+		.bind(...binds)
+		.all<AuditRowWithAdmin>();
+	return result.results ?? [];
+};
+
+export const adminAuditForTarget = async (
+	db: D1Database,
+	target_kind: AuditTargetKind,
+	target_id: string,
+	limit: number,
+): Promise<AuditRowWithAdmin[]> => {
+	const result = await db
+		.prepare(
+			`SELECT a.id, a.admin_id, a.action, a.target_kind, a.target_id,
+			        a.reason, a.meta, a.created_at,
+			        u.name AS admin_name
+			   FROM audit_log a
+			   LEFT JOIN users u ON u.id = a.admin_id
+			  WHERE a.target_kind = ? AND a.target_id = ?
+			  ORDER BY a.created_at DESC, a.id DESC
+			  LIMIT ?`,
+		)
+		.bind(target_kind, target_id, limit)
+		.all<AuditRowWithAdmin>();
+	return result.results ?? [];
+};
+
+// Map of {target_id: latestAuditRow} for a batch of comment IDs. Used to
+// render the "approved by X · 3h ago" strip under each queue row in one
+// extra query rather than N. Returns only the latest row per target.
+export const adminLatestAuditByTarget = async (
+	db: D1Database,
+	target_kind: AuditTargetKind,
+	target_ids: string[],
+): Promise<Map<string, AuditRowWithAdmin>> => {
+	if (target_ids.length === 0) return new Map();
+	const placeholders = target_ids.map(() => "?").join(",");
+	const result = await db
+		.prepare(
+			`SELECT a.id, a.admin_id, a.action, a.target_kind, a.target_id,
+			        a.reason, a.meta, a.created_at,
+			        u.name AS admin_name
+			   FROM audit_log a
+			   LEFT JOIN users u ON u.id = a.admin_id
+			  WHERE a.target_kind = ?
+			    AND a.target_id IN (${placeholders})
+			  ORDER BY a.created_at DESC, a.id DESC`,
+		)
+		.bind(target_kind, ...target_ids)
+		.all<AuditRowWithAdmin>();
+	const out = new Map<string, AuditRowWithAdmin>();
+	for (const row of result.results ?? []) {
+		if (row.target_id && !out.has(row.target_id)) {
+			out.set(row.target_id, row);
+		}
+	}
+	return out;
+};
+
+// ---------------------------------------------------------------------------
+// Spam verdicts
+// ---------------------------------------------------------------------------
+
+export type SpamVerdictSource = "akismet" | "workers-ai" | "heuristics";
+export type SpamVerdictValue = "spam" | "ham" | "uncertain";
+
+export type SpamVerdictRow = {
+	id: string;
+	comment_id: string;
+	source: string;
+	verdict: string;
+	score: number | null;
+	raw: string | null;
+	created_at: number;
+};
+
+export const adminInsertSpamVerdict = async (
+	db: D1Database,
+	args: {
+		comment_id: string;
+		source: SpamVerdictSource | string;
+		verdict: SpamVerdictValue | string;
+		score?: number | null;
+		raw?: unknown;
+	},
+): Promise<void> => {
+	const id = ulid();
+	const rawJson =
+		args.raw == null
+			? null
+			: typeof args.raw === "string"
+				? args.raw
+				: JSON.stringify(args.raw);
+	await db
+		.prepare(
+			`INSERT INTO spam_verdicts
+			   (id, comment_id, source, verdict, score, raw, created_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		)
+		.bind(
+			id,
+			args.comment_id,
+			args.source,
+			args.verdict,
+			args.score ?? null,
+			rawJson,
+			Date.now(),
+		)
+		.run();
+};
+
+export const adminListSpamVerdicts = async (
+	db: D1Database,
+	comment_id: string,
+): Promise<SpamVerdictRow[]> => {
+	const result = await db
+		.prepare(
+			`SELECT id, comment_id, source, verdict, score, raw, created_at
+			   FROM spam_verdicts
+			  WHERE comment_id = ?
+			  ORDER BY created_at DESC, id DESC`,
+		)
+		.bind(comment_id)
+		.all<SpamVerdictRow>();
+	return result.results ?? [];
+};
+
+// Latest verdict per source for a batch of comment IDs. Used to render
+// verdict pills on queue rows in one extra query.
+export const adminLatestVerdictsByComment = async (
+	db: D1Database,
+	comment_ids: string[],
+): Promise<Map<string, SpamVerdictRow[]>> => {
+	if (comment_ids.length === 0) return new Map();
+	const placeholders = comment_ids.map(() => "?").join(",");
+	const result = await db
+		.prepare(
+			`SELECT id, comment_id, source, verdict, score, raw, created_at
+			   FROM spam_verdicts
+			  WHERE comment_id IN (${placeholders})
+			  ORDER BY created_at DESC, id DESC`,
+		)
+		.bind(...comment_ids)
+		.all<SpamVerdictRow>();
+	const out = new Map<string, SpamVerdictRow[]>();
+	const seenSources = new Map<string, Set<string>>();
+	for (const row of result.results ?? []) {
+		const key = row.comment_id;
+		let sources = seenSources.get(key);
+		if (!sources) {
+			sources = new Set();
+			seenSources.set(key, sources);
+		}
+		if (sources.has(row.source)) continue; // keep only latest per source
+		sources.add(row.source);
+		const list = out.get(key) ?? [];
+		list.push(row);
+		out.set(key, list);
+	}
+	return out;
+};
+
+// ---------------------------------------------------------------------------
+// Dashboard aggregates
+// ---------------------------------------------------------------------------
+
+export type TimelinePoint = { day: string; count: number };
+
+export const adminTimeline = async (
+	db: D1Database,
+	days: number,
+): Promise<TimelinePoint[]> => {
+	const from = Date.now() - days * 24 * 3600 * 1000;
+	const result = await db
+		.prepare(
+			`SELECT strftime('%Y-%m-%d', created_at / 1000, 'unixepoch') AS day,
+			        COUNT(*) AS count
+			   FROM comments
+			  WHERE created_at >= ?
+			  GROUP BY day
+			  ORDER BY day ASC`,
+		)
+		.bind(from)
+		.all<TimelinePoint>();
+	return result.results ?? [];
+};
+
+export type TopPost = {
+	post_slug: string;
+	count: number;
+	title: string | null;
+};
+
+export const adminTopPosts = async (
+	db: D1Database,
+	days: number,
+	limit: number,
+): Promise<TopPost[]> => {
+	const from = Date.now() - days * 24 * 3600 * 1000;
+	const result = await db
+		.prepare(
+			`SELECT c.post_slug AS post_slug,
+			        COUNT(*)    AS count,
+			        p.title     AS title
+			   FROM comments c
+			   LEFT JOIN posts p ON p.slug = c.post_slug
+			  WHERE c.created_at >= ?
+			    AND c.status = 'approved'
+			  GROUP BY c.post_slug
+			  ORDER BY count DESC
+			  LIMIT ?`,
+		)
+		.bind(from, limit)
+		.all<TopPost>();
+	return result.results ?? [];
+};
+
+export type TopCommenter = {
+	user_id: string;
+	name: string;
+	avatar_url: string | null;
+	count: number;
+};
+
+export const adminTopCommenters = async (
+	db: D1Database,
+	days: number,
+	limit: number,
+): Promise<TopCommenter[]> => {
+	const from = Date.now() - days * 24 * 3600 * 1000;
+	const result = await db
+		.prepare(
+			`SELECT c.user_id      AS user_id,
+			        u.name         AS name,
+			        u.avatar_url   AS avatar_url,
+			        COUNT(*)       AS count
+			   FROM comments c
+			   JOIN users u ON u.id = c.user_id
+			  WHERE c.created_at >= ?
+			    AND c.status = 'approved'
+			  GROUP BY c.user_id
+			  ORDER BY count DESC
+			  LIMIT ?`,
+		)
+		.bind(from, limit)
+		.all<TopCommenter>();
+	return result.results ?? [];
+};
+
+export const adminOldestPending = async (
+	db: D1Database,
+): Promise<{ id: string; created_at: number } | null> => {
+	const row = await db
+		.prepare(
+			`SELECT id, created_at FROM comments
+			  WHERE status = 'pending'
+			  ORDER BY created_at ASC
+			  LIMIT 1`,
+		)
+		.first<{ id: string; created_at: number }>();
+	return row ?? null;
+};
+
+export type SpamRate = { total: number; spam: number };
+
+export const adminSpamRate = async (
+	db: D1Database,
+	days: number,
+): Promise<SpamRate> => {
+	const from = Date.now() - days * 24 * 3600 * 1000;
+	const row = await db
+		.prepare(
+			`SELECT COUNT(*) AS total,
+			        SUM(CASE WHEN status = 'spam' THEN 1 ELSE 0 END) AS spam
+			   FROM comments
+			  WHERE created_at >= ?`,
+		)
+		.bind(from)
+		.first<{ total: number; spam: number | null }>();
+	return { total: row?.total ?? 0, spam: row?.spam ?? 0 };
+};
+
+// ---------------------------------------------------------------------------
+// Detail pages
+// ---------------------------------------------------------------------------
+
+export type AdminCommentDetail = {
+	comment: AdminComment;
+	parent: AdminComment | null;
+	replies: AdminComment[];
+	ip_siblings: AdminComment[];
+	user_recent: AdminComment[];
+	verdicts: SpamVerdictRow[];
+	audit: AuditRowWithAdmin[];
+};
+
+export const adminGetCommentDetail = async (
+	db: D1Database,
+	id: string,
+): Promise<AdminCommentDetail | null> => {
+	const commentRow = await db
+		.prepare(
+			`SELECT c.id, c.post_slug, c.parent_id, c.user_id, c.body_md, c.body_html,
+			        c.renderer_version, c.status, c.edited_at, c.deleted_at,
+			        c.ip_hash, c.user_agent, c.created_at,
+			        u.name       AS author_name,
+			        u.email      AS author_email,
+			        u.avatar_url AS author_avatar_url,
+			        u.provider   AS author_provider,
+			        u.is_admin   AS author_is_admin,
+			        u.is_banned  AS author_is_banned
+			   FROM comments c
+			   LEFT JOIN users u ON u.id = c.user_id
+			  WHERE c.id = ?`,
+		)
+		.bind(id)
+		.first<AdminCommentRow>();
+	if (!commentRow) return null;
+	const comment = toAdminComment(commentRow);
+
+	const parent = comment.parent_id
+		? await db
+				.prepare(
+					`SELECT c.id, c.post_slug, c.parent_id, c.user_id, c.body_md, c.body_html,
+					        c.renderer_version, c.status, c.edited_at, c.deleted_at,
+					        c.ip_hash, c.user_agent, c.created_at,
+					        u.name       AS author_name,
+					        u.email      AS author_email,
+					        u.avatar_url AS author_avatar_url,
+					        u.provider   AS author_provider,
+					        u.is_admin   AS author_is_admin,
+					        u.is_banned  AS author_is_banned
+					   FROM comments c
+					   LEFT JOIN users u ON u.id = c.user_id
+					  WHERE c.id = ?`,
+				)
+				.bind(comment.parent_id)
+				.first<AdminCommentRow>()
+				.then((r) => (r ? toAdminComment(r) : null))
+		: null;
+
+	const repliesResult = await db
+		.prepare(
+			`SELECT c.id, c.post_slug, c.parent_id, c.user_id, c.body_md, c.body_html,
+			        c.renderer_version, c.status, c.edited_at, c.deleted_at,
+			        c.ip_hash, c.user_agent, c.created_at,
+			        u.name       AS author_name,
+			        u.email      AS author_email,
+			        u.avatar_url AS author_avatar_url,
+			        u.provider   AS author_provider,
+			        u.is_admin   AS author_is_admin,
+			        u.is_banned  AS author_is_banned
+			   FROM comments c
+			   LEFT JOIN users u ON u.id = c.user_id
+			  WHERE c.parent_id = ?
+			  ORDER BY c.created_at ASC
+			  LIMIT 20`,
+		)
+		.bind(id)
+		.all<AdminCommentRow>();
+	const replies = (repliesResult.results ?? []).map(toAdminComment);
+
+	const ipSiblings = comment.ip_hash
+		? await db
+				.prepare(
+					`SELECT c.id, c.post_slug, c.parent_id, c.user_id, c.body_md, c.body_html,
+					        c.renderer_version, c.status, c.edited_at, c.deleted_at,
+					        c.ip_hash, c.user_agent, c.created_at,
+					        u.name       AS author_name,
+					        u.email      AS author_email,
+					        u.avatar_url AS author_avatar_url,
+					        u.provider   AS author_provider,
+					        u.is_admin   AS author_is_admin,
+					        u.is_banned  AS author_is_banned
+					   FROM comments c
+					   LEFT JOIN users u ON u.id = c.user_id
+					  WHERE c.ip_hash = ? AND c.id != ?
+					  ORDER BY c.created_at DESC
+					  LIMIT 10`,
+				)
+				.bind(comment.ip_hash, id)
+				.all<AdminCommentRow>()
+				.then((r) => (r.results ?? []).map(toAdminComment))
+		: [];
+
+	const userRecent = await db
+		.prepare(
+			`SELECT c.id, c.post_slug, c.parent_id, c.user_id, c.body_md, c.body_html,
+			        c.renderer_version, c.status, c.edited_at, c.deleted_at,
+			        c.ip_hash, c.user_agent, c.created_at,
+			        u.name       AS author_name,
+			        u.email      AS author_email,
+			        u.avatar_url AS author_avatar_url,
+			        u.provider   AS author_provider,
+			        u.is_admin   AS author_is_admin,
+			        u.is_banned  AS author_is_banned
+			   FROM comments c
+			   LEFT JOIN users u ON u.id = c.user_id
+			  WHERE c.user_id = ? AND c.id != ?
+			  ORDER BY c.created_at DESC
+			  LIMIT 5`,
+		)
+		.bind(comment.user_id, id)
+		.all<AdminCommentRow>()
+		.then((r) => (r.results ?? []).map(toAdminComment));
+
+	const verdicts = await adminListSpamVerdicts(db, id);
+	const audit = await adminAuditForTarget(db, "comment", id, 50);
+
+	return {
+		comment,
+		parent,
+		replies,
+		ip_siblings: ipSiblings,
+		user_recent: userRecent,
+		verdicts,
+		audit,
+	};
+};
+
+export type AdminUserDetail = {
+	user: User;
+	comments: AdminComment[];
+	next_cursor: string | null;
+	reactions_received: number;
+	audit: AuditRowWithAdmin[];
+};
+
+export const adminGetUserDetail = async (
+	db: D1Database,
+	id: string,
+	limit: number,
+	cursorCreatedAt: number | null,
+	cursorId: string | null,
+): Promise<AdminUserDetail | null> => {
+	const user = await getUser(db, id);
+	if (!user) return null;
+
+	const rows = await adminListComments(
+		db,
+		{ user_id: id },
+		limit + 1,
+		cursorCreatedAt,
+		cursorId,
+	);
+	const trimmed = rows.slice(0, limit);
+	const last = trimmed[trimmed.length - 1];
+	const next_cursor =
+		rows.length > limit && last ? `${last.created_at}|${last.id}` : null;
+
+	const reactionsRow = await db
+		.prepare(
+			`SELECT COUNT(*) AS n FROM reactions r
+			   JOIN comments c ON c.id = r.comment_id
+			  WHERE c.user_id = ?`,
+		)
+		.bind(id)
+		.first<{ n: number }>();
+
+	const audit = await adminAuditForTarget(db, "user", id, 50);
+
+	return {
+		user,
+		comments: trimmed,
+		next_cursor,
+		reactions_received: reactionsRow?.n ?? 0,
+		audit,
+	};
+};
+
+// ---------------------------------------------------------------------------
+// Bulk comment status update (used by the queue's bulk-actions bar)
+// ---------------------------------------------------------------------------
+
+export const adminBulkUpdateCommentStatus = async (
+	db: D1Database,
+	ids: string[],
+	status: CommentStatus,
+): Promise<string[]> => {
+	if (ids.length === 0) return [];
+	const now = Date.now();
+	const deletedAt = status === "deleted" ? now : null;
+	const placeholders = ids.map(() => "?").join(",");
+	// Only update rows that currently exist; return their IDs so the caller
+	// can audit-log exactly the rows that were touched.
+	const existing = await db
+		.prepare(`SELECT id FROM comments WHERE id IN (${placeholders})`)
+		.bind(...ids)
+		.all<{ id: string }>();
+	const presentIds = (existing.results ?? []).map((r) => r.id);
+	if (presentIds.length === 0) return [];
+	const presentPlaceholders = presentIds.map(() => "?").join(",");
+	await db
+		.prepare(
+			`UPDATE comments
+			    SET status = ?, deleted_at = ?
+			  WHERE id IN (${presentPlaceholders})`,
+		)
+		.bind(status, deletedAt, ...presentIds)
+		.run();
+	return presentIds;
+};
+
+// ---------------------------------------------------------------------------
+// Subscriptions admin
+// ---------------------------------------------------------------------------
+
+export type AdminSubscriptionFilter = {
+	q?: string;
+	post_slug?: string;
+	confirmed?: boolean;
+	unsubscribed?: boolean;
+};
+
+export const adminListSubscriptions = async (
+	db: D1Database,
+	filter: AdminSubscriptionFilter,
+	limit: number,
+	cursorCreatedAt: number | null,
+	cursorId: string | null,
+): Promise<Subscription[]> => {
+	const where: string[] = ["1=1"];
+	const binds: (string | number)[] = [];
+	if (cursorCreatedAt != null && cursorId != null) {
+		where.push("(created_at, id) < (?, ?)");
+		binds.push(cursorCreatedAt, cursorId);
+	}
+	if (filter.q) {
+		where.push("LOWER(email) LIKE ?");
+		binds.push(`%${filter.q.toLowerCase()}%`);
+	}
+	if (filter.post_slug) {
+		where.push("post_slug = ?");
+		binds.push(filter.post_slug);
+	}
+	if (filter.confirmed === true) where.push("confirmed_at IS NOT NULL");
+	if (filter.confirmed === false) where.push("confirmed_at IS NULL");
+	if (filter.unsubscribed === true) where.push("unsubscribed_at IS NOT NULL");
+	if (filter.unsubscribed === false) where.push("unsubscribed_at IS NULL");
+
+	const sql = `
+		SELECT id, post_slug, email, token, created_at,
+		       unsubscribed_at, last_notified_at,
+		       confirm_token, confirmed_at
+		  FROM subscriptions
+		 WHERE ${where.join(" AND ")}
+		 ORDER BY created_at DESC, id DESC
+		 LIMIT ?`;
+	binds.push(limit);
+	const result = await db
+		.prepare(sql)
+		.bind(...binds)
+		.all<Subscription>();
+	return result.results ?? [];
+};
+
+export const adminGetSubscription = async (
+	db: D1Database,
+	id: string,
+): Promise<Subscription | null> => {
+	return await db
+		.prepare(
+			`SELECT id, post_slug, email, token, created_at,
+			        unsubscribed_at, last_notified_at,
+			        confirm_token, confirmed_at
+			   FROM subscriptions WHERE id = ?`,
+		)
+		.bind(id)
+		.first<Subscription>();
+};
+
+export const adminRotateSubscriptionConfirmToken = async (
+	db: D1Database,
+	id: string,
+	new_token: string,
+): Promise<void> => {
+	await db
+		.prepare(
+			`UPDATE subscriptions
+			    SET confirm_token = ?, confirmed_at = NULL
+			  WHERE id = ?`,
+		)
+		.bind(new_token, id)
+		.run();
 };
