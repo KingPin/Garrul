@@ -11,6 +11,13 @@
  */
 import { ulid } from "../lib/ulid";
 
+// Escape SQL LIKE wildcards so admin search inputs are matched as literals.
+// SQLite treats `%` and `_` as wildcards inside the pattern; without escaping
+// them, searching for "50%" matches "501" too, and a string of `_` chars can
+// force a full O(n*m) scan on every row. Pair every call site with an
+// `ESCAPE '\\'` clause on the LIKE.
+const escapeLike = (s: string): string => s.replace(/[\\%_]/g, "\\$&");
+
 export type Post = {
 	slug: string;
 	title: string | null;
@@ -592,8 +599,8 @@ export const adminListComments = async (
 		binds.push(status);
 	}
 	if (filter.q) {
-		where.push("LOWER(c.body_md) LIKE ?");
-		binds.push(`%${filter.q.toLowerCase()}%`);
+		where.push("LOWER(c.body_md) LIKE ? ESCAPE '\\'");
+		binds.push(`%${escapeLike(filter.q.toLowerCase())}%`);
 	}
 	if (filter.post_slug) {
 		where.push("c.post_slug = ?");
@@ -664,8 +671,10 @@ export const adminListUsers = async (
 	cursorCreatedAt: number | null,
 	cursorId: string | null,
 ): Promise<User[]> => {
-	const pattern = search ? `${search.toLowerCase()}%` : null;
-	const filter = pattern ? "AND (LOWER(name) LIKE ? OR LOWER(email) LIKE ?)" : "";
+	const pattern = search ? `${escapeLike(search.toLowerCase())}%` : null;
+	const filter = pattern
+		? "AND (LOWER(name) LIKE ? ESCAPE '\\' OR LOWER(email) LIKE ? ESCAPE '\\')"
+		: "";
 	const sql = cursorCreatedAt != null && cursorId != null
 		? `SELECT id, provider, provider_id, name, email, avatar_url,
 		          is_admin, is_banned, created_at
@@ -1734,8 +1743,8 @@ export const adminListSubscriptions = async (
 		binds.push(cursorCreatedAt, cursorId);
 	}
 	if (filter.q) {
-		where.push("LOWER(email) LIKE ?");
-		binds.push(`%${filter.q.toLowerCase()}%`);
+		where.push("LOWER(email) LIKE ? ESCAPE '\\'");
+		binds.push(`%${escapeLike(filter.q.toLowerCase())}%`);
 	}
 	if (filter.post_slug) {
 		where.push("post_slug = ?");
