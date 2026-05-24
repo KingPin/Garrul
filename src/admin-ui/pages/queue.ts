@@ -3,6 +3,27 @@ import { identiconSvg } from "../../lib/identicon";
 import { sanitizeForEmail as resanitizeBodyHtml } from "../../lib/markdown";
 import { escapeHtml } from "../escape";
 
+export type QueueFilters = {
+	status: CommentStatus | "all";
+	q: string;
+	post_slug: string;
+	user_id: string;
+	from: string;
+	to: string;
+};
+
+const queryString = (f: QueueFilters): string => {
+	const params = new URLSearchParams();
+	if (f.status !== "pending") params.set("status", f.status);
+	if (f.q) params.set("q", f.q);
+	if (f.post_slug) params.set("post_slug", f.post_slug);
+	if (f.user_id) params.set("user_id", f.user_id);
+	if (f.from) params.set("from", f.from);
+	if (f.to) params.set("to", f.to);
+	const s = params.toString();
+	return s ? `?${s}` : "";
+};
+
 const authorCell = (c: AdminComment): string => {
 	const name = c.author_name ?? "(deleted user)";
 	const provider = c.author_provider ?? "anon";
@@ -44,15 +65,36 @@ const actionButtons = (id: string, status: CommentStatus): string => {
 
 export const renderQueue = (
 	rows: AdminComment[],
-	status: string,
+	filters: QueueFilters,
 	nextCursor: string | null,
 ): string => {
 	const tabs = ["all", "approved", "pending", "spam", "deleted"]
-		.map(
-			(s) =>
-				`<a href="/admin/queue?status=${s}" ${s === status ? 'style="font-weight:600"' : ""}>${s}</a>`,
-		)
+		.map((s) => {
+			// Status tabs preserve every other active filter — clicking
+			// "spam" while a search is active should keep the search.
+			const tabFilters = { ...filters, status: s as QueueFilters["status"] };
+			const href = `/admin/queue${queryString(tabFilters)}`;
+			return `<a href="${href}" ${s === filters.status ? 'style="font-weight:600"' : ""}>${s}</a>`;
+		})
 		.join(" · ");
+
+	const hasFilters =
+		filters.q ||
+		filters.post_slug ||
+		filters.user_id ||
+		filters.from ||
+		filters.to;
+	const filterBar = `
+<form class="filter-bar queue-filter" method="get" action="/admin/queue">
+  <input type="hidden" name="status" value="${escapeHtml(filters.status)}">
+  <input type="text" name="q" placeholder="search body" value="${escapeHtml(filters.q)}">
+  <input type="text" name="post_slug" placeholder="post slug" value="${escapeHtml(filters.post_slug)}">
+  <input type="date" name="from" value="${escapeHtml(filters.from)}" title="from (UTC)">
+  <input type="date" name="to" value="${escapeHtml(filters.to)}" title="to (UTC, inclusive)">
+  ${filters.user_id ? `<input type="hidden" name="user_id" value="${escapeHtml(filters.user_id)}"><span class="muted">user: <code>${escapeHtml(filters.user_id)}</code></span>` : ""}
+  <button type="submit">Filter</button>
+  ${hasFilters ? `<a href="/admin/queue?status=${escapeHtml(filters.status)}" class="muted">clear</a>` : ""}
+</form>`;
 
 	const rowsHtml = rows.length
 		? rows
@@ -73,12 +115,17 @@ export const renderQueue = (
 				.join("")
 		: `<tr><td colspan="5" class="muted">No comments match.</td></tr>`;
 
-	const next = nextCursor
-		? `<a href="/admin/queue?status=${status}&before=${encodeURIComponent(nextCursor)}">Next →</a>`
+	const qs = queryString(filters);
+	const nextHref = nextCursor
+		? `/admin/queue${qs}${qs ? "&" : "?"}before=${encodeURIComponent(nextCursor)}`
+		: null;
+	const next = nextHref
+		? `<a href="${nextHref}">Next →</a>`
 		: '<span class="muted">end</span>';
 
 	return `
 <div class="filter-bar"><span class="muted">filter:</span> ${tabs}</div>
+${filterBar}
 <div class="card" x-data="{
   act(id, action) {
     return fetch('/admin/api/comments/' + id, {

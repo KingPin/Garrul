@@ -88,9 +88,13 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
                white-space: nowrap; }
 .author-sub { font-size: 0.7rem; }
 .filter-bar { display: flex; gap: 0.5rem; align-items: center; margin-bottom: 1rem; }
-.filter-bar input[type=text] { background: var(--bg); border: 1px solid var(--border);
+.filter-bar input[type=text], .filter-bar input[type=date] {
+                                background: var(--bg); border: 1px solid var(--border);
                                 color: var(--text); padding: 0.4rem 0.6rem;
-                                border-radius: 6px; min-width: 240px; }
+                                border-radius: 6px; }
+.filter-bar input[type=text] { min-width: 200px; }
+.filter-bar.queue-filter { flex-wrap: wrap; }
+.filter-bar.queue-filter input[type=text] { min-width: 140px; }
 .muted { color: var(--muted); }
 .pager { display: flex; justify-content: space-between; margin-top: 1rem; }
 code { background: var(--bg); padding: 0.1rem 0.3rem; border-radius: 3px;

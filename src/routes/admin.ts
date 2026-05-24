@@ -38,7 +38,7 @@ import {
 import { accessDeniedHtml, layout } from "../admin-ui/layout";
 import { ADMIN_CSP } from "../admin-ui/styles";
 import { renderDashboard } from "../admin-ui/pages/dashboard";
-import { renderQueue } from "../admin-ui/pages/queue";
+import { renderQueue, type QueueFilters } from "../admin-ui/pages/queue";
 import { renderUsers } from "../admin-ui/pages/users";
 import { renderSettings } from "../admin-ui/pages/settings";
 
@@ -105,6 +105,15 @@ admin.get("/", async (c) => {
 	return c.html(layout("Dashboard", renderDashboard(stats, c.env), user, updateInfo));
 });
 
+// Parse a YYYY-MM-DD string into a ms-epoch timestamp at the start of UTC day.
+// Returns null on any malformed input.
+const parseDateMs = (raw: string | undefined): number | null => {
+	if (!raw) return null;
+	if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return null;
+	const ms = Date.parse(`${raw}T00:00:00Z`);
+	return Number.isFinite(ms) ? ms : null;
+};
+
 admin.get("/queue", async (c) => {
 	const user = await requireAdmin(c);
 	if (user instanceof Response) return user;
@@ -116,6 +125,16 @@ admin.get("/queue", async (c) => {
 		statusParam === "deleted"
 			? statusParam
 			: "all";
+
+	const q = (c.req.query("q") ?? "").trim();
+	const postSlug = (c.req.query("post_slug") ?? "").trim();
+	const userId = (c.req.query("user_id") ?? "").trim();
+	const fromRaw = c.req.query("from");
+	const toRaw = c.req.query("to");
+	const fromMs = parseDateMs(fromRaw);
+	// "to" is inclusive in the UI but the SQL uses < — push it forward 24h.
+	const toMs = parseDateMs(toRaw);
+	const toExclusive = toMs != null ? toMs + 86_400_000 : null;
 
 	const before = c.req.query("before");
 	let cursorTs: number | null = null;
@@ -133,15 +152,30 @@ admin.get("/queue", async (c) => {
 		}
 	}
 
-	const rows = await adminListComments(c.env.DB, { status }, 51, cursorTs, cursorId);
+	const filter: import("../db/queries").AdminCommentFilter = { status };
+	if (q) filter.q = q;
+	if (postSlug) filter.post_slug = postSlug;
+	if (userId) filter.user_id = userId;
+	if (fromMs != null) filter.from = fromMs;
+	if (toExclusive != null) filter.to = toExclusive;
+
+	const rows = await adminListComments(c.env.DB, filter, 51, cursorTs, cursorId);
 	const trimmed = rows.slice(0, 50);
 	const last = trimmed[trimmed.length - 1];
 	const nextCursor =
 		rows.length > 50 && last ? `${last.created_at}|${last.id}` : null;
 
 	const updateInfo = await peekCachedLatestVersion(c.env);
+	const filters: QueueFilters = {
+		status,
+		q,
+		post_slug: postSlug,
+		user_id: userId,
+		from: fromRaw ?? "",
+		to: toRaw ?? "",
+	};
 	return c.html(
-		layout("Queue", renderQueue(trimmed, status, nextCursor), user, updateInfo),
+		layout("Queue", renderQueue(trimmed, filters, nextCursor), user, updateInfo),
 	);
 });
 
