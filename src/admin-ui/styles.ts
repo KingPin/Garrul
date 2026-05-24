@@ -99,7 +99,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .pager { display: flex; justify-content: space-between; margin-top: 1rem; }
 .bulk-cell { width: 32px; }
 .bulk-bar { position: sticky; bottom: 0; display: flex; align-items: center;
-            gap: 0.5rem; padding: 0.75rem 1rem; background: var(--card);
+            gap: 0.5rem; padding: 0.75rem 1rem; background: var(--panel);
             border-top: 1px solid var(--border); margin: 1rem -1rem -1rem;
             border-radius: 0 0 8px 8px; }
 .bulk-bar span:first-child { font-weight: 600; margin-right: auto; }
