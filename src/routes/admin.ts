@@ -26,17 +26,22 @@ import {
 	adminGetUserDetail,
 	adminInsertAudit,
 	adminLatestAuditByTarget,
+	adminGetSubscription,
 	adminListAudit,
 	adminListComments,
+	adminListSubscriptions,
 	adminListUsers,
 	adminOldestPending,
+	adminRotateSubscriptionConfirmToken,
 	adminSpamRate,
 	adminStats,
 	adminTimeline,
 	adminTopCommenters,
 	adminTopPosts,
 	getComment,
+	getPost,
 	getUser,
+	markSubscriptionUnsubscribed,
 	setUserBanned,
 	updateCommentStatus,
 	type AdminAction,
@@ -58,6 +63,13 @@ import { renderQueue, type QueueFilters } from "../admin-ui/pages/queue";
 import { renderUserDetail } from "../admin-ui/pages/user-detail";
 import { renderUsers } from "../admin-ui/pages/users";
 import { renderSettings } from "../admin-ui/pages/settings";
+import {
+	renderSubscriptions,
+	type SubscriptionsFilters,
+} from "../admin-ui/pages/subscriptions";
+import { renderConfirmEmailHtml } from "../lib/digest";
+import { sendEmail } from "../lib/email";
+import { t } from "../i18n";
 
 const admin = new Hono<{ Bindings: Bindings }>();
 
@@ -388,6 +400,70 @@ admin.get("/audit", async (c) => {
 	);
 });
 
+const parseTriState = (raw: string | undefined): "" | "yes" | "no" => {
+	if (raw === "yes" || raw === "no") return raw;
+	return "";
+};
+
+admin.get("/subscriptions", async (c) => {
+	const user = await requireAdmin(c);
+	if (user instanceof Response) return user;
+	const q = (c.req.query("q") ?? "").trim();
+	const postSlug = (c.req.query("post_slug") ?? "").trim();
+	const confirmed = parseTriState(c.req.query("confirmed"));
+	const unsubscribed = parseTriState(c.req.query("unsubscribed"));
+	const before = c.req.query("before") ?? null;
+
+	const filter: Parameters<typeof adminListSubscriptions>[1] = {};
+	if (q) filter.q = q;
+	if (postSlug) filter.post_slug = postSlug;
+	if (confirmed === "yes") filter.confirmed = true;
+	if (confirmed === "no") filter.confirmed = false;
+	if (unsubscribed === "yes") filter.unsubscribed = true;
+	if (unsubscribed === "no") filter.unsubscribed = false;
+
+	const limit = 50;
+	let cursorCreatedAt: number | null = null;
+	let cursorId: string | null = null;
+	if (before) {
+		const [tsStr, id] = before.split("|");
+		const ts = Number(tsStr);
+		if (Number.isFinite(ts) && id) {
+			cursorCreatedAt = ts;
+			cursorId = id;
+		}
+	}
+	const rows = await adminListSubscriptions(
+		c.env.DB,
+		filter,
+		limit + 1,
+		cursorCreatedAt,
+		cursorId,
+	);
+	let nextCursor: string | null = null;
+	if (rows.length > limit) {
+		const last = rows[limit - 1];
+		if (last) nextCursor = `${last.created_at}|${last.id}`;
+		rows.length = limit;
+	}
+
+	const filters: SubscriptionsFilters = {
+		q,
+		post_slug: postSlug,
+		confirmed,
+		unsubscribed,
+	};
+	const updateInfo = await peekCachedLatestVersion(c.env);
+	return c.html(
+		layout(
+			"Subscriptions",
+			renderSubscriptions(rows, filters, nextCursor),
+			user,
+			updateInfo,
+		),
+	);
+});
+
 admin.get("/settings", async (c) => {
 	const user = await requireAdmin(c);
 	if (user instanceof Response) return user;
@@ -557,6 +633,84 @@ admin.post("/api/users/:id", async (c) => {
 		meta: { target_name: target.name },
 	});
 	return c.json({ ok: true, id, banned: body.banned });
+});
+
+const randomToken = (): string => {
+	const bytes = new Uint8Array(32);
+	crypto.getRandomValues(bytes);
+	return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+};
+
+admin.post("/api/subscriptions/:id", async (c) => {
+	const user = await requireAdmin(c);
+	if (user instanceof Response) return user;
+	const id = c.req.param("id");
+	const body = await c.req
+		.json<{ action?: string; reason?: string }>()
+		.catch(() => null);
+	const action = body?.action;
+	if (action !== "unsubscribe" && action !== "resend") {
+		return c.json({ error: "invalid_action" }, 400);
+	}
+
+	const sub = await adminGetSubscription(c.env.DB, id);
+	if (!sub) return c.json({ error: "not_found" }, 404);
+
+	if (action === "unsubscribe") {
+		if (sub.unsubscribed_at == null) {
+			await markSubscriptionUnsubscribed(c.env.DB, id);
+		}
+		await adminInsertAudit(c.env.DB, {
+			admin_id: user.id,
+			action: "sub.unsubscribe",
+			target_kind: "subscription",
+			target_id: id,
+			reason: body?.reason ?? null,
+			meta: { email: sub.email, post_slug: sub.post_slug },
+		});
+		return c.json({ ok: true, id, status: "unsubscribed" });
+	}
+
+	// resend: rotate confirm_token + re-issue the confirmation email.
+	const publicBase = c.env.PUBLIC_BASE_URL;
+	const from = c.env.EMAIL_FROM;
+	if (!publicBase || !from) {
+		return c.json({ error: "email_not_configured" }, 503);
+	}
+	if (sub.confirmed_at != null) {
+		return c.json({ error: "already_confirmed" }, 409);
+	}
+	if (sub.unsubscribed_at != null) {
+		return c.json({ error: "unsubscribed" }, 409);
+	}
+
+	const newToken = randomToken();
+	await adminRotateSubscriptionConfirmToken(c.env.DB, id, newToken);
+	const post = await getPost(c.env.DB, sub.post_slug);
+	const confirmUrl = `${publicBase}/api/v1/subscribe/confirm/${newToken}`;
+	const html = renderConfirmEmailHtml({
+		postTitle: post?.title ?? sub.post_slug,
+		confirmUrl,
+	});
+	await sendEmail(c.env, {
+		to: sub.email,
+		from,
+		subject: t("email.confirm.subject").replace(
+			"{title}",
+			post?.title ?? sub.post_slug,
+		),
+		html,
+	});
+
+	await adminInsertAudit(c.env.DB, {
+		admin_id: user.id,
+		action: "sub.resend",
+		target_kind: "subscription",
+		target_id: id,
+		reason: body?.reason ?? null,
+		meta: { email: sub.email, post_slug: sub.post_slug },
+	});
+	return c.json({ ok: true, id, status: "resent" });
 });
 
 export { admin };
