@@ -20,6 +20,7 @@ import type { Context } from "hono";
 import type { Bindings } from "../index";
 import { readSession } from "../lib/session";
 import {
+	adminBulkUpdateCommentStatus,
 	adminListComments,
 	adminListUsers,
 	adminStats,
@@ -264,6 +265,69 @@ admin.post("/api/comments/:id", async (c) => {
 		});
 	}
 	return c.json({ ok: true, id, status: newStatus });
+});
+
+const BULK_ACTION_LIMIT = 100;
+
+admin.post("/api/comments/bulk", async (c) => {
+	const user = await requireAdmin(c);
+	if (user instanceof Response) return user;
+	const body = await c.req
+		.json<{ ids?: unknown; action?: string }>()
+		.catch(() => null);
+	if (!body) return c.json({ error: "invalid_body" }, 400);
+	const action = body.action as CommentAction | undefined;
+	let newStatus: CommentStatus;
+	switch (action) {
+		case "approve":
+		case "restore":
+			newStatus = "approved";
+			break;
+		case "spam":
+			newStatus = "spam";
+			break;
+		case "delete":
+			newStatus = "deleted";
+			break;
+		default:
+			return c.json({ error: "invalid_action" }, 400);
+	}
+	if (!Array.isArray(body.ids)) {
+		return c.json({ error: "invalid_ids" }, 400);
+	}
+	const ids = (body.ids as unknown[]).filter(
+		(x): x is string => typeof x === "string" && x.length > 0,
+	);
+	if (ids.length === 0) return c.json({ error: "empty_ids" }, 400);
+	if (ids.length > BULK_ACTION_LIMIT) {
+		return c.json({ error: "too_many" }, 400);
+	}
+	const touched = await adminBulkUpdateCommentStatus(c.env.DB, ids, newStatus);
+	// Bust caches + fire webhooks for each touched comment. Both are
+	// independent of one another, so missing rows just no-op.
+	const webhookEvent: WebhookEvent | null =
+		newStatus === "approved"
+			? "comment.approved"
+			: newStatus === "spam"
+				? "comment.spam"
+				: newStatus === "deleted"
+					? "comment.deleted"
+					: null;
+	for (const id of touched) {
+		const existing = await getComment(c.env.DB, id);
+		if (!existing) continue;
+		await c.env.TREE_CACHE.delete(`tree:${existing.post_slug}:first`);
+		if (webhookEvent) {
+			fireWebhook(c.env, c.executionCtx, {
+				event: webhookEvent,
+				comment_id: id,
+				post_slug: existing.post_slug,
+				user_id: existing.user_id,
+				ts: Date.now(),
+			});
+		}
+	}
+	return c.json({ ok: true, status: newStatus, touched });
 });
 
 admin.post("/api/users/:id", async (c) => {

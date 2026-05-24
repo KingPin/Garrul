@@ -101,6 +101,7 @@ export const renderQueue = (
 				.map(
 					(c) => `
 <tr x-data="{ busy: false }">
+  <td class="bulk-cell"><input type="checkbox" :value="'${c.id}'" x-model="selected" :disabled="busy"></td>
   <td><span class="pill ${c.status}">${c.status}</span></td>
   <td>${authorCell(c)}</td>
   <td>
@@ -113,7 +114,9 @@ export const renderQueue = (
 </tr>`,
 				)
 				.join("")
-		: `<tr><td colspan="5" class="muted">No comments match.</td></tr>`;
+		: `<tr><td colspan="6" class="muted">No comments match.</td></tr>`;
+
+	const allIds = rows.map((r) => r.id);
 
 	const qs = queryString(filters);
 	const nextHref = nextCursor
@@ -127,6 +130,12 @@ export const renderQueue = (
 <div class="filter-bar"><span class="muted">filter:</span> ${tabs}</div>
 ${filterBar}
 <div class="card" x-data="{
+  selected: [],
+  bulkBusy: false,
+  allIds: ${JSON.stringify(allIds)},
+  toggleAll(e) {
+    this.selected = e.target.checked ? this.allIds.slice() : [];
+  },
   act(id, action) {
     return fetch('/admin/api/comments/' + id, {
       method: 'POST',
@@ -136,12 +145,35 @@ ${filterBar}
       if (!r.ok) throw new Error('action failed: ' + r.status);
       location.reload();
     });
+  },
+  bulk(action) {
+    if (this.selected.length === 0) return;
+    if (!confirm(action + ' ' + this.selected.length + ' comment(s)?')) return;
+    this.bulkBusy = true;
+    return fetch('/admin/api/comments/bulk', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ids: this.selected, action }),
+    }).then(r => {
+      if (!r.ok) throw new Error('bulk action failed: ' + r.status);
+      location.reload();
+    }).finally(() => { this.bulkBusy = false; });
   }
 }">
   <table>
-    <thead><tr><th>Status</th><th>Author</th><th>Meta</th><th>Body</th><th>Actions</th></tr></thead>
+    <thead><tr>
+      <th class="bulk-cell"><input type="checkbox" @change="toggleAll($event)" :checked="selected.length > 0 && selected.length === allIds.length"></th>
+      <th>Status</th><th>Author</th><th>Meta</th><th>Body</th><th>Actions</th>
+    </tr></thead>
     <tbody>${rowsHtml}</tbody>
   </table>
   <div class="pager">${next}</div>
+  <div class="bulk-bar" x-show="selected.length > 0" x-cloak>
+    <span><span x-text="selected.length"></span> selected</span>
+    <button :disabled="bulkBusy" @click="bulk('approve')">Approve</button>
+    <button :disabled="bulkBusy" class="bad" @click="bulk('spam')">Spam</button>
+    <button :disabled="bulkBusy" class="bad" @click="bulk('delete')">Delete</button>
+    <button :disabled="bulkBusy" @click="selected = []">Clear</button>
+  </div>
 </div>`;
 };
