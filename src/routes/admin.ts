@@ -467,7 +467,11 @@ admin.get("/subscriptions", async (c) => {
 	);
 });
 
-const isSeedDemoAllowed = (env: Bindings): boolean => env.ENV !== "production";
+// Default-deny: only allow seed-demo when ENV is explicitly "dev". A fresh
+// deploy that forgot to set ENV=production would otherwise satisfy
+// `env.ENV !== "production"` and let an admin seed demo content into a real
+// instance. Matches the SameSite=Lax cookie fallback gate in lib/session.ts.
+const isSeedDemoAllowed = (env: Bindings): boolean => env.ENV === "dev";
 
 admin.get("/operator", async (c) => {
 	const user = await requireAdmin(c);
