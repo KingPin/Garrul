@@ -13,12 +13,12 @@
  * the check, a token solved on any site sharing the operator's sitekey
  * would be accepted here.
  *
- * `data.hostname` reflects the page that SOLVED the challenge — for the
- * Garrul widget that's the host page embedding the comment widget, not
- * this Worker. Callers must therefore derive expectedHostname from the
- * request Origin (after validating Origin against ALLOWED_ORIGINS) — not
- * from the request URL. See routes/api.comments.ts for the canonical
- * call site.
+ * `data.hostname` reflects the page that SOLVED the challenge. The
+ * Garrul widget renders Turnstile inside a same-origin iframe served by
+ * this Worker (GET /embed/turnstile-frame — the Shadow-DOM-dodging fix),
+ * so `data.hostname` is always this Worker's own hostname. Callers
+ * derive expectedHostname from the request URL. See routes/api.comments.ts
+ * for the canonical call site.
  *
  * In dev, Cloudflare provides "always passes" test keys — see
  * .dev.vars.example for the values. The test keys return their own

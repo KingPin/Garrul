@@ -253,28 +253,16 @@ comments.post("/", async (c) => {
 			return c.json({ error: t("err.turnstile.required") }, 400);
 		}
 		// Turnstile binds the token to the hostname where the widget was
-		// SOLVED — i.e. the host page that embedded our widget, not this
-		// Worker. corsAndCsrf has already enforced that the Origin header
-		// is in ALLOWED_ORIGINS, so deriving expectedHostname from Origin
-		// is safe (any spoofed Origin was rejected upstream) and necessary
-		// (using c.req.url.hostname would reject every cross-origin embed).
-		const originHeader = c.req.header("origin");
-		let expectedHostname: string | null = null;
-		if (originHeader) {
-			try {
-				expectedHostname = new URL(originHeader).hostname;
-			} catch {
-				expectedHostname = null;
-			}
-		}
-		if (!expectedHostname) {
-			return c.json({ error: t("err.turnstile.invalid") }, 400);
-		}
+		// SOLVED. The widget renders inside our same-origin iframe at
+		// GET /embed/turnstile-frame (the Shadow-DOM-dodging fix), so the
+		// hostname Cloudflare stamps on the token is *this Worker's own
+		// hostname* — not the embedding host page. Deriving expectedHostname
+		// from the request URL is therefore correct here.
+		let expectedHostname = new URL(c.req.url).hostname;
 		// Cloudflare's "always passes" dev test keys return a fixed
 		// data.hostname of "example.com" regardless of where the widget
-		// actually rendered. Override expectedHostname under ENV=dev so
-		// local wrangler dev (origin=localhost) keeps exercising the
-		// hostname check end-to-end without being rejected.
+		// actually rendered. Override under ENV=dev so local wrangler dev
+		// (hostname=localhost) keeps exercising the hostname check.
 		if (c.env.ENV === "dev") {
 			expectedHostname = "example.com";
 		}
