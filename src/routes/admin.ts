@@ -21,6 +21,7 @@ import type { Bindings } from "../index";
 import { readSession } from "../lib/session";
 import {
 	adminBulkUpdateCommentStatus,
+	adminGetCommentDetail,
 	adminListComments,
 	adminListUsers,
 	adminStats,
@@ -39,6 +40,7 @@ import {
 import { accessDeniedHtml, layout } from "../admin-ui/layout";
 import { ADMIN_CSP } from "../admin-ui/styles";
 import { renderDashboard } from "../admin-ui/pages/dashboard";
+import { renderCommentDetail } from "../admin-ui/pages/comment-detail";
 import { renderQueue, type QueueFilters } from "../admin-ui/pages/queue";
 import { renderUsers } from "../admin-ui/pages/users";
 import { renderSettings } from "../admin-ui/pages/settings";
@@ -177,6 +179,20 @@ admin.get("/queue", async (c) => {
 	};
 	return c.html(
 		layout("Queue", renderQueue(trimmed, filters, nextCursor), user, updateInfo),
+	);
+});
+
+admin.get("/comments/:id", async (c) => {
+	const user = await requireAdmin(c);
+	if (user instanceof Response) return user;
+	const id = c.req.param("id");
+	const detail = await adminGetCommentDetail(c.env.DB, id);
+	if (!detail) {
+		return c.html(accessDeniedHtml(404, "That comment does not exist."), 404);
+	}
+	const updateInfo = await peekCachedLatestVersion(c.env);
+	return c.html(
+		layout(`Comment ${id.slice(0, 8)}`, renderCommentDetail(detail), user, updateInfo),
 	);
 });
 

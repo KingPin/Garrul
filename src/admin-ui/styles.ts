@@ -104,6 +104,11 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
             border-radius: 0 0 8px 8px; }
 .bulk-bar span:first-child { font-weight: 600; margin-right: auto; }
 [x-cloak] { display: none !important; }
+.comment-card { border: 1px solid var(--border); border-radius: 6px;
+                padding: 0.75rem; margin: 0.5rem 0; }
+.comment-card-head { display: flex; justify-content: space-between;
+                     align-items: center; gap: 1rem; margin-bottom: 0.25rem; }
+.comment-card .md { margin-top: 0.5rem; font-size: 0.9rem; }
 code { background: var(--bg); padding: 0.1rem 0.3rem; border-radius: 3px;
        font-family: ui-monospace, monospace; font-size: 0.85em; }
 .banner { display: flex; gap: 1rem; align-items: center; justify-content: space-between;

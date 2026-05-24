@@ -3,12 +3,21 @@ import type { UpdateInfo } from "../lib/version-check";
 import { escapeHtml } from "./escape";
 import { ADMIN_CSS, ALPINE_SRI, ALPINE_VERSION } from "./styles";
 
-export const accessDeniedHtml = (status: 401 | 403, message: string): string => `
+const statusTitle = (status: 401 | 403 | 404): string => {
+	if (status === 401) return "Sign in required";
+	if (status === 403) return "Forbidden";
+	return "Not found";
+};
+
+export const accessDeniedHtml = (
+	status: 401 | 403 | 404,
+	message: string,
+): string => `
 <!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>${status === 401 ? "Sign in required" : "Forbidden"} — Garrul Admin</title>
+<title>${statusTitle(status)} — Garrul Admin</title>
 <style>
   body { font-family: system-ui, -apple-system, Segoe UI, sans-serif;
          background: #0b0d10; color: #e7eaf0; max-width: 480px;
@@ -19,7 +28,7 @@ export const accessDeniedHtml = (status: 401 | 403, message: string): string => 
 </style>
 </head>
 <body>
-<h1>${status === 401 ? "Sign in required" : "Forbidden"}</h1>
+<h1>${statusTitle(status)}</h1>
 <p>${message}</p>
 <p class="muted">Sign in through the comments widget on any page first, then refresh.
   Admins are auto-promoted on sign-in if their email is in
