@@ -25,7 +25,11 @@ src/
   email/                # adapter interface + per-provider impls
   i18n/                 # en.ts string table; t(key) shim
   widget/               # embed.ts (script), iframe.ts, iframe-resizer.ts, styles.css, templates.ts
-  admin-ui/             # JSX layouts and pages
+  admin-ui/             # layout + per-page renderers (server-rendered HTML + Alpine attrs)
+                        #   layout.ts, styles.ts, escape.ts
+                        #   pages/   — dashboard, queue, comment-detail, users, user-detail,
+                        #              audit, subscriptions, operator, settings
+                        #   components/ — spam-summary, shared bits
 test/                   # Vitest suites
 examples/               # host-site integration snippets (astro, wordpress, hugo, jekyll, plain-html)
 scripts/                # setup.sh, rerender.ts, seed-demo.ts, db-export.sh
