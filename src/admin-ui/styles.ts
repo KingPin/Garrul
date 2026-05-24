@@ -115,6 +115,10 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
               padding-top: 1rem; border-top: 1px solid var(--border); }
 code { background: var(--bg); padding: 0.1rem 0.3rem; border-radius: 3px;
        font-family: ui-monospace, monospace; font-size: 0.85em; }
+.dash-cols { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+.dash-list { list-style: none; margin: 0; padding: 0; }
+.dash-list li { padding: 0.25rem 0; border-bottom: 1px dashed var(--border); }
+.dash-list li:last-child { border-bottom: 0; }
 .banner { display: flex; gap: 1rem; align-items: center; justify-content: space-between;
           padding: 0.6rem 1rem; border-bottom: 1px solid var(--border); font-size: 0.9rem; }
 .banner.update { background: #2a1f08; color: #f7d77a; border-bottom-color: #4a3a14; }

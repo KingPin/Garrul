@@ -29,7 +29,12 @@ import {
 	adminListAudit,
 	adminListComments,
 	adminListUsers,
+	adminOldestPending,
+	adminSpamRate,
 	adminStats,
+	adminTimeline,
+	adminTopCommenters,
+	adminTopPosts,
 	getComment,
 	getUser,
 	setUserBanned,
@@ -112,9 +117,29 @@ admin.use("*", versionCheckMiddleware());
 admin.get("/", async (c) => {
 	const user = await requireAdmin(c);
 	if (user instanceof Response) return user;
-	const stats = await adminStats(c.env.DB);
-	const updateInfo = await peekCachedLatestVersion(c.env);
-	return c.html(layout("Dashboard", renderDashboard(stats, c.env), user, updateInfo));
+	const db = c.env.DB;
+	const [stats, timeline, topPosts, topCommenters, oldestPending, spamRate, updateInfo] =
+		await Promise.all([
+			adminStats(db),
+			adminTimeline(db, 30),
+			adminTopPosts(db, 30, 5),
+			adminTopCommenters(db, 30, 5),
+			adminOldestPending(db),
+			adminSpamRate(db, 30),
+			peekCachedLatestVersion(c.env),
+		]);
+	const body = renderDashboard(
+		{
+			stats,
+			timeline,
+			top_posts: topPosts,
+			top_commenters: topCommenters,
+			oldest_pending: oldestPending,
+			spam_rate: spamRate,
+		},
+		c.env,
+	);
+	return c.html(layout("Dashboard", body, user, updateInfo));
 });
 
 // Parse a YYYY-MM-DD string into a ms-epoch timestamp at the start of UTC day.
