@@ -383,6 +383,16 @@ const mountTurnstileFrame = (
 		"sandbox",
 		"allow-scripts allow-same-origin allow-popups",
 	);
+	// Turnstile's bundle probes for several sensor features for bot-signal
+	// scoring. The browser's default Permissions-Policy denies these in
+	// cross-origin iframes unless the parent delegates via allow=, which
+	// throws "xr-spatial-tracking is not allowed" + siblings into the host
+	// console on every page load. Delegating here is purely a console-noise
+	// fix — none of these features touch user input.
+	frame.setAttribute(
+		"allow",
+		"xr-spatial-tracking; accelerometer; gyroscope; magnetometer",
+	);
 	const parentOrigin = encodeURIComponent(window.location.origin);
 	frame.src = `${apiBase}/embed/turnstile-frame?parent_origin=${parentOrigin}`;
 	container.appendChild(frame);

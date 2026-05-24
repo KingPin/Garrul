@@ -183,7 +183,20 @@ iframe.get("/turnstile-frame", (c) => {
 	c.header("content-security-policy", csp);
 	c.header("x-content-type-options", "nosniff");
 	c.header("referrer-policy", "no-referrer");
-	c.header("cache-control", "public, max-age=300");
+	// Turnstile's bundle probes for sensor features. Without explicit grants
+	// the browser default denies them in cross-origin iframes and logs a
+	// Permissions-Policy violation per probe. The widget's iframe element
+	// also sets a matching allow=, but we set the header here too so the
+	// policy is unambiguous when the iframe is opened directly.
+	c.header(
+		"permissions-policy",
+		"xr-spatial-tracking=(self), accelerometer=(self), gyroscope=(self), magnetometer=(self)",
+	);
+	// no-transform tells Cloudflare's edge to skip HTML transformations
+	// (RUM beacon injection, Auto-Minify, Polish, etc.). Without it, the
+	// edge inserts cloudflareinsights.com/beacon.min.js into the <head>,
+	// which our strict CSP then blocks and logs to the console.
+	c.header("cache-control", "public, max-age=300, no-transform");
 	return c.body(html);
 });
 
@@ -294,7 +307,9 @@ iframe.get("/:slug", (c) => {
 	c.header("content-security-policy", csp);
 	c.header("x-content-type-options", "nosniff");
 	c.header("referrer-policy", "no-referrer");
-	c.header("cache-control", "public, max-age=300");
+	// Match the turnstile-frame route — same rationale: keep CF's edge
+	// from injecting RUM beacons that our CSP then blocks.
+	c.header("cache-control", "public, max-age=300, no-transform");
 	return c.body(html);
 });
 
