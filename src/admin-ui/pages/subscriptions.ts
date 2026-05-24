@@ -31,16 +31,21 @@ const statusPill = (sub: Subscription): string => {
 	return '<span class="pill pending">pending</span>';
 };
 
+// JSON-stringify + HTML-escape so the value is a well-formed JS string
+// literal inside the Alpine expression regardless of the id's content.
+// ULIDs are safe today but the typing is just `string`.
+const jsLiteral = (s: string): string => escapeHtml(JSON.stringify(s));
+
 const actionButtons = (sub: Subscription): string => {
 	const parts: string[] = [];
 	if (sub.unsubscribed_at == null) {
 		parts.push(
-			`<button :disabled="busy" class="bad" @click="busy=true; act('${sub.id}','unsubscribe').finally(()=>busy=false)">Unsubscribe</button>`,
+			`<button :disabled="busy" class="bad" @click="busy=true; act(${jsLiteral(sub.id)},'unsubscribe').finally(()=>busy=false)">Unsubscribe</button>`,
 		);
 	}
 	if (sub.confirmed_at == null && sub.unsubscribed_at == null) {
 		parts.push(
-			`<button :disabled="busy" @click="busy=true; act('${sub.id}','resend').finally(()=>busy=false)">Resend confirm</button>`,
+			`<button :disabled="busy" @click="busy=true; act(${jsLiteral(sub.id)},'resend').finally(()=>busy=false)">Resend confirm</button>`,
 		);
 	}
 	return parts.join("");

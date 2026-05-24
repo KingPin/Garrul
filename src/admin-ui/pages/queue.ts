@@ -64,12 +64,18 @@ const authorCell = (c: AdminComment): string => {
 </a>`;
 };
 
+// Embed values as JSON-stringified, HTML-escaped literals so the resulting
+// Alpine expression is well-formed regardless of the underlying string
+// content (defense in depth: ULIDs are safe today, but the typing is just
+// `string`).
+const jsLiteral = (s: string): string => escapeHtml(JSON.stringify(s));
+
 const rowAct = (
 	id: string,
 	action: "approve" | "spam" | "delete",
 	successText: string,
 ): string =>
-	`busy=true; act('${id}','${action}').then(()=>{$dispatch('toast',{text:'${successText}'}); gone=true;}).catch(e=>$dispatch('toast',{text:e.message||'Action failed',kind:'bad'})).finally(()=>busy=false)`;
+	`busy=true; act(${jsLiteral(id)},${jsLiteral(action)}).then(()=>{$dispatch('toast',{text:${jsLiteral(successText)}}); gone=true;}).catch(e=>$dispatch('toast',{text:e.message||'Action failed',kind:'bad'})).finally(()=>busy=false)`;
 
 const actionButtons = (id: string, status: CommentStatus): string => {
 	const parts: string[] = [];
@@ -132,8 +138,8 @@ export const renderQueue = (
 					(c) => `
 <tr x-data="{ busy: false, gone: false }"
     x-show="!gone" x-transition.opacity
-    @bulk-done.window="if ($event.detail.ids.includes('${c.id}')) gone = true">
-  <td class="bulk-cell"><input type="checkbox" :value="'${c.id}'" x-model="selected" :disabled="busy"></td>
+    @bulk-done.window="if ($event.detail.ids.includes(${jsLiteral(c.id)})) gone = true">
+  <td class="bulk-cell"><input type="checkbox" :value="${jsLiteral(c.id)}" x-model="selected" :disabled="busy"></td>
   <td><span class="pill ${c.status}">${c.status}</span></td>
   <td>${authorCell(c)}</td>
   <td>
