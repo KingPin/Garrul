@@ -1092,6 +1092,7 @@ export type AuditTargetKind =
 	| "comment"
 	| "user"
 	| "subscription"
+	| "webhook"
 	| "system";
 
 export const ADMIN_ACTIONS = [
@@ -1110,6 +1111,9 @@ export const ADMIN_ACTIONS = [
 	"bulk.spam",
 	"bulk.delete",
 	"bulk.restore",
+	"webhook.create",
+	"webhook.update",
+	"webhook.delete",
 ] as const;
 export type AdminAction = (typeof ADMIN_ACTIONS)[number];
 

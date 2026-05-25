@@ -38,18 +38,27 @@ import {
 	adminTimeline,
 	adminTopCommenters,
 	adminTopPosts,
+	createWebhookEndpoint,
+	deleteWebhookEndpoint,
 	getComment,
 	getPost,
 	getUser,
+	getWebhookEndpoint,
+	isWebhookAdapter,
+	listWebhookEndpoints,
 	markSubscriptionUnsubscribed,
 	setUserBanned,
 	updateCommentStatus,
+	updateWebhookEndpoint,
 	type AdminAction,
 	type AuditTargetKind,
 	type CommentStatus,
 	type User,
+	type WebhookAdapter,
+	type WebhookEndpoint,
 } from "../db/queries";
 import { fireWebhook, type WebhookEvent } from "../lib/webhook";
+import { checkOutboundUrl } from "../lib/url-safety";
 import {
 	peekCachedLatestVersion,
 	peekCachedRecentReleases,
@@ -66,6 +75,11 @@ import { renderUserDetail } from "../admin-ui/pages/user-detail";
 import { renderUsers } from "../admin-ui/pages/users";
 import { renderOperator } from "../admin-ui/pages/operator";
 import { renderSettings } from "../admin-ui/pages/settings";
+import {
+	renderWebhookForm,
+	renderWebhooksList,
+	type WebhookFormData,
+} from "../admin-ui/pages/webhooks";
 import {
 	renderSubscriptions,
 	type SubscriptionsFilters,
@@ -508,6 +522,221 @@ admin.get("/about", async (c) => {
 		peekCachedRecentReleases(c.env),
 	]);
 	return c.html(layout("About", renderAbout(releases), user, updateInfo));
+});
+
+// -------------------------- webhook endpoints -------------------------------
+//
+// Operator-only CRUD for /webhook_endpoints rows. Mods don't see this; webhook
+// configuration is operator territory (secrets, outbound URLs).
+//
+// The env-shim banner is driven by a stale `WEBHOOK_URL` env var coexisting
+// with a populated table — that's the misconfiguration that buys the user
+// the legacy unsigned-no-retry semantics. If the table is empty, the shim is
+// the only delivery surface and the banner reminds the operator to migrate.
+
+const isEnvShimActive = (env: Bindings, endpoints: WebhookEndpoint[]): boolean =>
+	Boolean(env.WEBHOOK_URL) && endpoints.length === 0;
+
+admin.get("/webhooks", async (c) => {
+	const user = await requireAdmin(c);
+	if (user instanceof Response) return user;
+	const updateInfo = await peekCachedLatestVersion(c.env);
+	const endpoints = await listWebhookEndpoints(c.env.DB);
+	return c.html(
+		layout(
+			"Webhooks",
+			renderWebhooksList(endpoints, {
+				active: isEnvShimActive(c.env, endpoints),
+				url: c.env.WEBHOOK_URL ?? "",
+			}),
+			user,
+			updateInfo,
+		),
+	);
+});
+
+admin.get("/webhooks/new", async (c) => {
+	const user = await requireAdmin(c);
+	if (user instanceof Response) return user;
+	const updateInfo = await peekCachedLatestVersion(c.env);
+	const data: WebhookFormData = { endpoint: null, error: null };
+	return c.html(
+		layout("Add webhook", renderWebhookForm(data), user, updateInfo),
+	);
+});
+
+admin.get("/webhooks/:id", async (c) => {
+	const user = await requireAdmin(c);
+	if (user instanceof Response) return user;
+	const id = c.req.param("id");
+	const endpoint = await getWebhookEndpoint(c.env.DB, id);
+	if (!endpoint) {
+		return c.html(
+			accessDeniedHtml(404, "That webhook endpoint no longer exists."),
+			404,
+		);
+	}
+	const updateInfo = await peekCachedLatestVersion(c.env);
+	const data: WebhookFormData = { endpoint, error: null };
+	return c.html(
+		layout("Edit webhook", renderWebhookForm(data), user, updateInfo),
+	);
+});
+
+// Validation helpers used by both POST and PATCH. Centralized so an
+// operator who PATCHes a URL gets the same SSRF/scheme checks as a
+// fresh create.
+type WebhookBody = {
+	url?: unknown;
+	secret?: unknown;
+	events?: unknown;
+	adapter?: unknown;
+	enabled?: unknown;
+};
+
+type WebhookFields = {
+	url: string;
+	secret: string | null;
+	events: string[] | null;
+	adapter: WebhookAdapter;
+	enabled: boolean;
+};
+
+const VALID_EVENTS = [
+	"comment.posted",
+	"comment.edited",
+	"comment.deleted",
+	"comment.approved",
+	"comment.spam",
+] as const;
+
+const isValidEvent = (v: unknown): v is (typeof VALID_EVENTS)[number] =>
+	typeof v === "string" &&
+	(VALID_EVENTS as readonly string[]).includes(v);
+
+const parseWebhookBody = (
+	body: WebhookBody,
+	env: Bindings,
+): { ok: true; fields: WebhookFields } | { ok: false; error: string } => {
+	if (typeof body.url !== "string" || body.url.length === 0) {
+		return { ok: false, error: "url_required" };
+	}
+	// allowHttp only in dev — production endpoints must be https to make
+	// the signing+secret guarantees meaningful end-to-end.
+	const safe = checkOutboundUrl(body.url, { allowHttp: env.ENV === "dev" });
+	if (!safe.ok) return { ok: false, error: `url:${safe.reason}` };
+
+	let secret: string | null = null;
+	if (body.secret !== undefined && body.secret !== null && body.secret !== "") {
+		if (typeof body.secret !== "string") {
+			return { ok: false, error: "secret_invalid" };
+		}
+		// 16 bytes of entropy minimum — anything shorter is unsafe for HMAC
+		// signing and almost certainly a typo (admin meant "no secret").
+		if (body.secret.length < 16) {
+			return { ok: false, error: "secret_too_short" };
+		}
+		if (body.secret.length > 256) {
+			return { ok: false, error: "secret_too_long" };
+		}
+		secret = body.secret;
+	}
+
+	let events: string[] | null = null;
+	if (body.events !== undefined && body.events !== null) {
+		if (!Array.isArray(body.events)) {
+			return { ok: false, error: "events_invalid" };
+		}
+		const filtered = body.events.filter(isValidEvent);
+		if (filtered.length !== body.events.length) {
+			return { ok: false, error: "events_unknown" };
+		}
+		// All five events selected = "no filter"; store NULL so receivers
+		// see future events too without a re-save.
+		events = filtered.length === VALID_EVENTS.length ? null : filtered;
+	}
+
+	const adapter = body.adapter ?? "generic";
+	if (!isWebhookAdapter(adapter)) {
+		return { ok: false, error: "adapter_invalid" };
+	}
+
+	const enabled = body.enabled !== false; // default true
+
+	return {
+		ok: true,
+		fields: { url: body.url, secret, events, adapter, enabled },
+	};
+};
+
+admin.post("/api/webhooks", async (c) => {
+	const user = await requireAdmin(c);
+	if (user instanceof Response) return user;
+	const body = await c.req.json<WebhookBody>().catch(() => null);
+	if (!body) return c.json({ error: "invalid_body" }, 400);
+	const parsed = parseWebhookBody(body, c.env);
+	if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+	const created = await createWebhookEndpoint(c.env.DB, parsed.fields);
+	await adminInsertAudit(c.env.DB, {
+		admin_id: user.id,
+		action: "webhook.create",
+		target_kind: "webhook",
+		target_id: created.id,
+		// Never write the secret to the audit log — just whether one is set.
+		meta: {
+			url: created.url,
+			adapter: created.adapter,
+			enabled: created.enabled,
+			has_secret: created.secret != null,
+			events: created.events,
+		},
+	});
+	return c.json({ ok: true, id: created.id });
+});
+
+admin.patch("/api/webhooks/:id", async (c) => {
+	const user = await requireAdmin(c);
+	if (user instanceof Response) return user;
+	const id = c.req.param("id");
+	const existing = await getWebhookEndpoint(c.env.DB, id);
+	if (!existing) return c.json({ error: "not_found" }, 404);
+	const body = await c.req.json<WebhookBody>().catch(() => null);
+	if (!body) return c.json({ error: "invalid_body" }, 400);
+	const parsed = parseWebhookBody(body, c.env);
+	if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+	await updateWebhookEndpoint(c.env.DB, id, parsed.fields);
+	await adminInsertAudit(c.env.DB, {
+		admin_id: user.id,
+		action: "webhook.update",
+		target_kind: "webhook",
+		target_id: id,
+		meta: {
+			url: parsed.fields.url,
+			adapter: parsed.fields.adapter,
+			enabled: parsed.fields.enabled,
+			has_secret: parsed.fields.secret != null,
+			secret_rotated: parsed.fields.secret !== existing.secret,
+			events: parsed.fields.events,
+		},
+	});
+	return c.json({ ok: true, id });
+});
+
+admin.delete("/api/webhooks/:id", async (c) => {
+	const user = await requireAdmin(c);
+	if (user instanceof Response) return user;
+	const id = c.req.param("id");
+	const existing = await getWebhookEndpoint(c.env.DB, id);
+	if (!existing) return c.json({ error: "not_found" }, 404);
+	await deleteWebhookEndpoint(c.env.DB, id);
+	await adminInsertAudit(c.env.DB, {
+		admin_id: user.id,
+		action: "webhook.delete",
+		target_kind: "webhook",
+		target_id: id,
+		meta: { url: existing.url, adapter: existing.adapter },
+	});
+	return c.json({ ok: true, id });
 });
 
 type CommentAction = "approve" | "spam" | "delete" | "restore";
