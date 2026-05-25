@@ -21,6 +21,7 @@
 import { Hono } from "hono";
 import type { Bindings } from "../index";
 import {
+	adminInsertSpamVerdict,
 	enqueueNotification,
 	getOrCreateGhost,
 	getComment,
@@ -34,6 +35,8 @@ import {
 	updateCommentBody,
 	upsertPost,
 	type Comment,
+	type SpamVerdictSource,
+	type SpamVerdictValue,
 	type User,
 } from "../db/queries";
 import { identiconSvg } from "../lib/identicon";
@@ -155,11 +158,28 @@ comments.get("/form-token", async (c) => {
 	return c.json({ token });
 });
 
+type PendingVerdict = {
+	source: SpamVerdictSource;
+	verdict: SpamVerdictValue;
+	score: number | null;
+	raw: Record<string, unknown> | null;
+};
+
+type SpamEvaluation = {
+	status: CommentStatus;
+	reasons: string[];
+	verdicts: PendingVerdict[];
+};
+
 /**
  * Run the configured anti-spam signals against a candidate comment and
  * decide whether it goes in as `approved` or `pending`. Each signal is
  * gated by its own env var. Admins skip the check entirely. Heuristics
  * run first and short-circuit the (potentially paid) classifier call.
+ *
+ * Per-source verdicts are surfaced alongside the routing decision so the
+ * caller can persist them to spam_verdicts once the comment id is known
+ * (see persistVerdicts).
  */
 const evaluateSpam = async (
 	env: Bindings,
@@ -168,9 +188,11 @@ const evaluateSpam = async (
 	postUrl: string | null,
 	userAgent: string | null,
 	formTs: string | undefined,
-): Promise<{ status: CommentStatus; reasons: string[] }> => {
-	if (author.is_admin) return { status: "approved", reasons: [] };
+): Promise<SpamEvaluation> => {
+	if (author.is_admin) return { status: "approved", reasons: [], verdicts: [] };
 	const reasons: string[] = [];
+	const verdicts: PendingVerdict[] = [];
+	const heuristicsRaw: Record<string, unknown> = {};
 
 	const minMs = Number.parseInt(env.SPAM_HONEYPOT_MIN_MS ?? "", 10);
 	if (Number.isFinite(minMs) && minMs > 0 && env.SPAM_FORM_TS_SECRET) {
@@ -180,12 +202,14 @@ const evaluateSpam = async (
 			Date.now(),
 			minMs,
 		);
+		heuristicsRaw.form_ts = { flag: v.flag, reason: v.reason ?? null };
 		if (v.flag) reasons.push(v.reason ?? "form_ts");
 	}
 
 	const linkThreshold = Number.parseInt(env.SPAM_LINK_THRESHOLD ?? "", 10);
 	if (Number.isFinite(linkThreshold) && linkThreshold >= 0) {
 		const n = countLinks(bodyMd);
+		heuristicsRaw.link_count = { count: n, threshold: linkThreshold };
 		if (n > linkThreshold) reasons.push(`link_count:${n}`);
 	}
 
@@ -196,13 +220,25 @@ const evaluateSpam = async (
 	let isFirst = false;
 	if (moderateFirst || env.SPAM_PROVIDER) {
 		isFirst = await isFirstComment(env.DB, author.id);
-		if (moderateFirst && isFirst) reasons.push("first_comment");
+		if (moderateFirst) {
+			heuristicsRaw.first_comment = { is_first: isFirst };
+			if (isFirst) reasons.push("first_comment");
+		}
+	}
+
+	if (Object.keys(heuristicsRaw).length > 0) {
+		verdicts.push({
+			source: "heuristics",
+			verdict: reasons.length > 0 ? "spam" : "ham",
+			score: null,
+			raw: heuristicsRaw,
+		});
 	}
 
 	// Skip the classifier call when a heuristic already flagged — the
 	// outcome is already `pending` and the call may cost money/latency.
 	if (reasons.length === 0 && env.SPAM_PROVIDER) {
-		const verdict = await checkSpam(env, {
+		const classifierVerdict = await checkSpam(env, {
 			body_md: bodyMd,
 			author_name: author.name,
 			author_email: author.email,
@@ -210,12 +246,51 @@ const evaluateSpam = async (
 			post_url: postUrl,
 			is_first_comment: isFirst,
 		});
-		if (verdict?.spam) reasons.push(verdict.reason ?? "classifier");
+		if (classifierVerdict) {
+			const source: SpamVerdictSource =
+				env.SPAM_PROVIDER === "akismet" ? "akismet" : "workers-ai";
+			verdicts.push({
+				source,
+				verdict: classifierVerdict.spam ? "spam" : "ham",
+				score: classifierVerdict.score ?? null,
+				raw: classifierVerdict.raw ?? null,
+			});
+			if (classifierVerdict.spam) {
+				reasons.push(classifierVerdict.reason ?? "classifier");
+			}
+		}
 	}
 
 	return reasons.length > 0
-		? { status: "pending", reasons }
-		: { status: "approved", reasons: [] };
+		? { status: "pending", reasons, verdicts }
+		: { status: "approved", reasons: [], verdicts };
+};
+
+/**
+ * Fire-and-forget verdict persistence. Each row is independently swallowed
+ * on error — a slow or broken D1 must never crash comment submission.
+ */
+const persistVerdicts = async (
+	db: D1Database,
+	commentId: string,
+	verdicts: PendingVerdict[],
+): Promise<void> => {
+	for (const v of verdicts) {
+		try {
+			await adminInsertSpamVerdict(db, {
+				comment_id: commentId,
+				source: v.source,
+				verdict: v.verdict,
+				score: v.score,
+				raw: v.raw,
+			});
+		} catch (err) {
+			log.warn("spam.verdict.persist_failed", {
+				source: v.source,
+				error: String(err),
+			});
+		}
+	}
 };
 
 comments.post("/", async (c) => {
@@ -363,6 +438,17 @@ comments.post("/", async (c) => {
 	// nothing else to invalidate. Pending comments don't appear in the
 	// public tree but the cache key is the same; busting is still correct.
 	await c.env.TREE_CACHE.delete(`tree:${slug}:first`);
+
+	// Persist whichever spam signals ran. Fire-and-forget so a slow D1
+	// write never adds latency to the user-visible POST. Mirror the
+	// fanout pattern: without executionCtx (non-HTTP entry points), the
+	// runtime can cancel orphan promises after the response settles, so
+	// we await synchronously rather than lose verdict rows.
+	if (verdict.verdicts.length > 0) {
+		const persist = persistVerdicts(c.env.DB, inserted.id, verdict.verdicts);
+		if (c.executionCtx) c.executionCtx.waitUntil(persist);
+		else await persist;
+	}
 
 	writeEvent(c.env.ANALYTICS, "comment.posted", {
 		post_slug: slug,

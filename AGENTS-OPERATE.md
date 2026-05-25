@@ -285,8 +285,32 @@ edit a migration after it's applied to prod — add new behavior as a new
 numbered file.
 
 **Admin UI.** `/admin` requires an OAuth sign-in whose email is in
-`ADMIN_EMAILS`. Shows the moderation queue (flagged + new comments)
-and basic user management. Server-rendered HTML + Alpine.js, no SPA.
+`ADMIN_EMAILS`. Server-rendered HTML + Alpine.js, no SPA.
+
+Pages (top nav):
+
+| Path | Purpose |
+| --- | --- |
+| `/admin` | Dashboard: counts, 30-day comments-per-day sparkline, oldest pending, spam-rate, top posts/commenters. |
+| `/admin/queue` | Moderation queue. Status tabs + filter bar (body search, post slug, date range, scoped-by-user). Per-row + bulk actions (Approve/Spam/Delete/Restore). Each row shows author identity (avatar + provider + admin/banned pills) and the latest audit footer. |
+| `/admin/comments/:id` | Single-comment view: parent + replies, raw markdown, spam-verdicts per source, full audit history for that comment, author block with their last 5 comments. |
+| `/admin/users` | User search + ban toggle. |
+| `/admin/users/:id` | User detail: all their comments paginated, reactions received, audit history affecting them, Ban/Unban. |
+| `/admin/audit` | Audit log with filter form (admin, action, target kind/id, date range). |
+| `/admin/subscriptions` | Email subscription list. Filter by email/post/confirmed/unsubscribed. Actions: manual unsubscribe, resend confirmation. |
+| `/admin/operator` | Two batch operations: rerender stale comments (POSTs `/admin/api/ops/rerender` in 50-row chunks until done) and seed-demo (idempotent; gated to `ENV != "production"`). |
+| `/admin/settings` | Read-only view of anti-spam + email config; edits still go through `wrangler secret put`. |
+
+State-changing endpoints (all under `/admin/api/...`, all require admin
+session + Origin allowlist, all write an `audit_log` row before
+responding):
+
+- `POST /admin/api/comments/:id` — `{action: approve|spam|delete|restore, reason?}`
+- `POST /admin/api/comments/bulk` — `{ids: string[], action}` (cap 100)
+- `POST /admin/api/users/:id` — `{banned: boolean, reason?}`
+- `POST /admin/api/subscriptions/:id` — `{action: unsubscribe|resend, reason?}`
+- `POST /admin/api/ops/rerender` — `{batch?: number, cursor?}` → `{processed, next_cursor}`
+- `POST /admin/api/ops/seed-demo` — disabled when `ENV=production`
 
 **Custom domains.** Strongly recommended. Set in `wrangler.toml`:
 

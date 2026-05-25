@@ -13,48 +13,68 @@
  * no session). Action POSTs go through the same Origin-header CSRF
  * middleware as the public API.
  *
- * Why HTML strings + Alpine instead of JSX + a framework: Alpine.js
- * gives us inline `x-data` interactivity in ~15KB without a build step,
- * matches the project's "ship the minimum" theme, and keeps the bundle
- * out of the embed.js budget. The trade-off — Alpine needs
- * `'unsafe-eval'` — is scoped to /admin/* only via the CSP we set here.
+ * Rendering lives in src/admin-ui/ — this file is the routing layer only.
  */
 import { Hono } from "hono";
 import type { Context } from "hono";
 import type { Bindings } from "../index";
 import { readSession } from "../lib/session";
 import {
+	ADMIN_ACTIONS,
+	adminBulkUpdateCommentStatus,
+	adminGetCommentDetail,
+	adminGetUserDetail,
+	adminInsertAudit,
+	adminLatestAuditByTarget,
+	adminGetSubscription,
+	adminListAudit,
 	adminListComments,
+	adminListSubscriptions,
 	adminListUsers,
+	adminOldestPending,
+	adminRotateSubscriptionConfirmToken,
+	adminSpamRate,
 	adminStats,
+	adminTimeline,
+	adminTopCommenters,
+	adminTopPosts,
 	getComment,
+	getPost,
 	getUser,
+	markSubscriptionUnsubscribed,
 	setUserBanned,
 	updateCommentStatus,
-	type AdminStats,
-	type Comment,
+	type AdminAction,
+	type AuditTargetKind,
 	type CommentStatus,
 	type User,
 } from "../db/queries";
 import { fireWebhook, type WebhookEvent } from "../lib/webhook";
-import { sanitizeForEmail as resanitizeBodyHtml } from "../lib/markdown";
 import {
 	peekCachedLatestVersion,
 	versionCheckMiddleware,
-	type UpdateInfo,
 } from "../lib/version-check";
+import { accessDeniedHtml, layout } from "../admin-ui/layout";
+import { ADMIN_CSP } from "../admin-ui/styles";
+import { renderDashboard } from "../admin-ui/pages/dashboard";
+import { renderAudit, type AuditFilters } from "../admin-ui/pages/audit";
+import { renderCommentDetail } from "../admin-ui/pages/comment-detail";
+import { renderQueue, type QueueFilters } from "../admin-ui/pages/queue";
+import { renderUserDetail } from "../admin-ui/pages/user-detail";
+import { renderUsers } from "../admin-ui/pages/users";
+import { renderOperator } from "../admin-ui/pages/operator";
+import { renderSettings } from "../admin-ui/pages/settings";
+import {
+	renderSubscriptions,
+	type SubscriptionsFilters,
+} from "../admin-ui/pages/subscriptions";
+import { rerenderBatch, rerenderStats } from "../db/rerender";
+import { runSeedDemo } from "../db/seed-demo";
+import { renderConfirmEmailHtml } from "../lib/digest";
+import { sendEmail } from "../lib/email";
+import { t } from "../i18n";
 
 const admin = new Hono<{ Bindings: Bindings }>();
-
-const escapeHtml = (s: string | null | undefined): string => {
-	if (s == null) return "";
-	return s
-		.replace(/&/g, "&amp;")
-		.replace(/</g, "&lt;")
-		.replace(/>/g, "&gt;")
-		.replace(/"/g, "&quot;")
-		.replace(/'/g, "&#39;");
-};
 
 type Ctx = Context<{ Bindings: Bindings }>;
 
@@ -62,30 +82,6 @@ const wantsHtml = (c: Ctx): boolean => {
 	const accept = c.req.header("accept") ?? "";
 	return accept.includes("text/html");
 };
-
-const accessDeniedHtml = (status: 401 | 403, message: string): string => `
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<title>${status === 401 ? "Sign in required" : "Forbidden"} — Garrul Admin</title>
-<style>
-  body { font-family: system-ui, -apple-system, Segoe UI, sans-serif;
-         background: #0b0d10; color: #e7eaf0; max-width: 480px;
-         margin: 4rem auto; padding: 0 1rem; line-height: 1.55; }
-  h1 { margin-top: 0; }
-  a { color: #6aa9ff; }
-  code { background: #1e2530; padding: 0.1rem 0.3rem; border-radius: 3px; }
-</style>
-</head>
-<body>
-<h1>${status === 401 ? "Sign in required" : "Forbidden"}</h1>
-<p>${message}</p>
-<p class="muted">Sign in through the comments widget on any page first, then refresh.
-  Admins are auto-promoted on sign-in if their email is in
-  <code>ADMIN_EMAILS</code>.</p>
-</body>
-</html>`;
 
 const requireAdmin = async (c: Ctx): Promise<User | Response> => {
 	const session = await readSession(c);
@@ -109,370 +105,6 @@ const requireAdmin = async (c: Ctx): Promise<User | Response> => {
 		return c.json({ error: "not_authorized" }, 403);
 	}
 	return user;
-};
-
-// SRI for the Alpine.js build the admin layout loads from jsdelivr. If
-// the version in the <script> tag changes, regenerate this with:
-//   curl -fsSL https://cdn.jsdelivr.net/npm/alpinejs@<ver>/dist/cdn.min.js \
-//     | openssl dgst -sha384 -binary | openssl base64 -A
-const ALPINE_SRI =
-	"sha384-BxpSbjbDhVKwnC1UfcjsNEuMuxg4af5IXOaSi1Iq5rASQ/9a7uslhEXbP9UI/fXo";
-
-const ADMIN_CSP = [
-	"default-src 'self'",
-	// 'unsafe-eval' is required by Alpine.js's x-data expression evaluator
-	// (Alpine compiles directive expressions at runtime). Confined to
-	// /admin/* via this header; the public API + widget pages keep their
-	// stricter CSP.
-	//
-	// 'unsafe-inline' is intentionally absent: Alpine attribute directives
-	// (x-data="...", @click="...") are governed by 'unsafe-eval' not
-	// 'unsafe-inline', and the admin layout has no inline <script> tags.
-	// The pinned + SRI-verified Alpine CDN load is the only script source.
-	//
-	// static.cloudflareinsights.com is allowed because Cloudflare zones
-	// with Web Analytics enabled auto-inject the RUM beacon into HTML
-	// responses; without this entry the admin page logs a CSP violation
-	// on every load. The beacon POSTs telemetry back to
-	// cloudflareinsights.com (different host), so connect-src lists it too.
-	"script-src 'self' 'unsafe-eval' https://cdn.jsdelivr.net https://static.cloudflareinsights.com",
-	"style-src 'self' 'unsafe-inline'",
-	"img-src 'self' data: https:",
-	"connect-src 'self' https://cloudflareinsights.com",
-	"frame-ancestors 'none'",
-].join("; ");
-
-const renderUpdateBanner = (info: UpdateInfo | null): string => {
-	if (!info || !info.behind) return "";
-	const tag = escapeHtml(info.latest);
-	const url = escapeHtml(info.url);
-	const key = `garrul.dismissed.update.${info.latest}`;
-	return `
-<div x-data="{ shown: localStorage.getItem(${JSON.stringify(key)}) !== '1' }"
-     x-show="shown"
-     class="banner update">
-  <span>Update available: <strong>${tag}</strong> —
-    <a href="${url}" target="_blank" rel="noopener">release notes</a>.
-    Run <code>npm run upgrade</code>.</span>
-  <button @click="localStorage.setItem(${JSON.stringify(key)},'1'); shown=false"
-          aria-label="Dismiss update notice">Dismiss</button>
-</div>`;
-};
-
-const layout = (
-	title: string,
-	body: string,
-	currentUser: User,
-	updateInfo: UpdateInfo | null,
-): string => `
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${escapeHtml(title)} — Garrul Admin</title>
-<style>
-  :root {
-    --bg: #0b0d10; --panel: #131820; --border: #1e2530; --text: #e7eaf0;
-    --muted: #8a93a6; --accent: #6aa9ff; --warn: #f7b955; --bad: #ef6a6a;
-    --ok: #4ad295;
-  }
-  * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--text);
-         font: 14px/1.5 system-ui, -apple-system, Segoe UI, sans-serif; }
-  a { color: var(--accent); text-decoration: none; }
-  a:hover { text-decoration: underline; }
-  header { background: var(--panel); border-bottom: 1px solid var(--border);
-           padding: 0.75rem 1rem; display: flex; gap: 1.5rem; align-items: center; }
-  header h1 { font-size: 1rem; margin: 0; }
-  header nav { display: flex; gap: 1rem; flex: 1; }
-  header .me { color: var(--muted); }
-  main { max-width: 1100px; margin: 1.5rem auto; padding: 0 1rem; }
-  .card { background: var(--panel); border: 1px solid var(--border);
-          border-radius: 8px; padding: 1rem 1.25rem; margin-bottom: 1rem; }
-  .stat-grid { display: grid; gap: 0.75rem; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
-  .stat { background: var(--bg); border: 1px solid var(--border);
-          border-radius: 6px; padding: 0.75rem 1rem; }
-  .stat .v { font-size: 1.5rem; font-weight: 600; }
-  .stat .l { color: var(--muted); font-size: 0.8rem; }
-  table { width: 100%; border-collapse: collapse; }
-  th, td { padding: 0.5rem 0.5rem; border-bottom: 1px solid var(--border);
-           text-align: left; vertical-align: top; }
-  th { color: var(--muted); font-weight: 500; font-size: 0.8rem; text-transform: uppercase; }
-  .row-body { color: var(--text); max-width: 480px; overflow-wrap: anywhere; }
-  .row-body .md { font-size: 0.9rem; }
-  .pill { display: inline-block; padding: 0.1rem 0.5rem; border-radius: 999px;
-          font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em;
-          border: 1px solid var(--border); color: var(--muted); }
-  .pill.approved { color: var(--ok); border-color: var(--ok); }
-  .pill.pending { color: var(--warn); border-color: var(--warn); }
-  .pill.spam, .pill.deleted, .pill.banned { color: var(--bad); border-color: var(--bad); }
-  .pill.admin { color: var(--accent); border-color: var(--accent); }
-  button, .btn { background: var(--bg); color: var(--text); border: 1px solid var(--border);
-                 padding: 0.3rem 0.6rem; border-radius: 6px; cursor: pointer; font-size: 0.85rem; }
-  button:hover { border-color: var(--accent); }
-  button.bad { color: var(--bad); }
-  button.bad:hover { border-color: var(--bad); }
-  button:disabled { opacity: 0.5; cursor: not-allowed; }
-  .actions { display: flex; gap: 0.4rem; }
-  .filter-bar { display: flex; gap: 0.5rem; align-items: center; margin-bottom: 1rem; }
-  .filter-bar input[type=text] { background: var(--bg); border: 1px solid var(--border);
-                                  color: var(--text); padding: 0.4rem 0.6rem;
-                                  border-radius: 6px; min-width: 240px; }
-  .muted { color: var(--muted); }
-  .pager { display: flex; justify-content: space-between; margin-top: 1rem; }
-  code { background: var(--bg); padding: 0.1rem 0.3rem; border-radius: 3px;
-         font-family: ui-monospace, monospace; font-size: 0.85em; }
-  .banner { display: flex; gap: 1rem; align-items: center; justify-content: space-between;
-            padding: 0.6rem 1rem; border-bottom: 1px solid var(--border); font-size: 0.9rem; }
-  .banner.update { background: #2a1f08; color: #f7d77a; border-bottom-color: #4a3a14; }
-  .banner.update a { color: #ffd57a; text-decoration: underline; }
-  .banner.update code { background: rgba(0,0,0,0.25); color: inherit; }
-  .banner.update button { background: transparent; color: inherit; border-color: #4a3a14; }
-  .banner.update button:hover { border-color: #f7d77a; }
-</style>
-</head>
-<body>
-${renderUpdateBanner(updateInfo)}
-<header>
-  <h1>Garrul Admin</h1>
-  <nav>
-    <a href="/admin">Dashboard</a>
-    <a href="/admin/queue">Queue</a>
-    <a href="/admin/users">Users</a>
-    <a href="/admin/settings">Settings</a>
-  </nav>
-  <span class="me">${escapeHtml(currentUser.name)} <span class="pill admin">admin</span></span>
-</header>
-<main>
-${body}
-</main>
-<script src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.5/dist/cdn.min.js"
-        integrity="${ALPINE_SRI}"
-        crossorigin="anonymous"
-        defer></script>
-</body>
-</html>`;
-
-const spamSummary = (env: Bindings): string => {
-	// Match the same gating evaluateSpam uses at runtime, otherwise the
-	// dashboard would claim a layer is active when its value is invalid
-	// (e.g. SPAM_LINK_THRESHOLD='NaN', SPAM_HONEYPOT_MIN_MS='0').
-	const provider = env.SPAM_PROVIDER || "off";
-	const heuristics: string[] = [];
-	const minMs = Number.parseInt(env.SPAM_HONEYPOT_MIN_MS ?? "", 10);
-	if (Number.isFinite(minMs) && minMs > 0 && env.SPAM_FORM_TS_SECRET) {
-		heuristics.push(`honeypot-timing(${minMs}ms)`);
-	}
-	const linkThreshold = Number.parseInt(env.SPAM_LINK_THRESHOLD ?? "", 10);
-	if (Number.isFinite(linkThreshold) && linkThreshold >= 0) {
-		heuristics.push(`link-threshold(>${linkThreshold})`);
-	}
-	if (env.SPAM_FIRST_COMMENT_MODERATE === "true") {
-		heuristics.push("first-comment-moderation");
-	}
-	const heuristicsLabel = heuristics.length > 0 ? heuristics.join(", ") : "none";
-	return `provider=<code>${escapeHtml(provider)}</code> · heuristics=<code>${escapeHtml(heuristicsLabel)}</code>`;
-};
-
-const renderDashboard = (stats: AdminStats, env: Bindings): string => `
-<div class="card">
-  <h2>Overview</h2>
-  <div class="stat-grid">
-    <div class="stat"><div class="v">${stats.total_comments}</div><div class="l">total comments</div></div>
-    <div class="stat"><div class="v">${stats.pending_comments}</div><div class="l">pending</div></div>
-    <div class="stat"><div class="v">${stats.spam_comments}</div><div class="l">spam</div></div>
-    <div class="stat"><div class="v">${stats.total_users}</div><div class="l">users</div></div>
-    <div class="stat"><div class="v">${stats.banned_users}</div><div class="l">banned</div></div>
-  </div>
-  <p class="muted">Anti-spam: ${spamSummary(env)}. See <a href="/admin/settings">Settings</a> to change.</p>
-</div>
-<div class="card">
-  <h3>Quick actions</h3>
-  <ul>
-    <li><a href="/admin/queue?status=pending">Review ${stats.pending_comments} pending comment(s)</a></li>
-    <li><a href="/admin/queue?status=spam">Inspect spam folder</a></li>
-    <li><a href="/admin/users">Manage users</a></li>
-  </ul>
-</div>`;
-
-const renderQueue = (
-	rows: Comment[],
-	status: string,
-	nextCursor: string | null,
-): string => {
-	const tabs = ["all", "approved", "pending", "spam", "deleted"]
-		.map(
-			(s) =>
-				`<a href="/admin/queue?status=${s}" ${s === status ? 'style="font-weight:600"' : ""}>${s}</a>`,
-		)
-		.join(" · ");
-
-	const actionButtons = (id: string, status: CommentStatus): string => {
-		const parts: string[] = [];
-		if (status !== "approved") {
-			parts.push(
-				`<button :disabled="busy" @click="busy=true; act('${id}','approve').finally(()=>busy=false)">${status === "deleted" || status === "spam" ? "Restore" : "Approve"}</button>`,
-			);
-		}
-		if (status !== "spam" && status !== "deleted") {
-			parts.push(
-				`<button :disabled="busy" class="bad" @click="busy=true; act('${id}','spam').finally(()=>busy=false)">Spam</button>`,
-			);
-		}
-		if (status !== "deleted") {
-			parts.push(
-				`<button :disabled="busy" class="bad" @click="busy=true; act('${id}','delete').finally(()=>busy=false)">Delete</button>`,
-			);
-		}
-		return parts.join("");
-	};
-
-	const rowsHtml = rows.length
-		? rows
-				.map(
-					(c) => `
-<tr x-data="{ busy: false }">
-  <td><span class="pill ${c.status}">${c.status}</span></td>
-  <td>
-    <div class="muted">${new Date(c.created_at).toISOString().slice(0, 16).replace("T", " ")}</div>
-    <div><code>${escapeHtml(c.post_slug)}</code></div>
-    <div class="muted" style="font-size:0.75rem">${escapeHtml(c.id)}</div>
-  </td>
-  <td class="row-body"><div class="md">${resanitizeBodyHtml(c.body_html)}</div></td>
-  <td class="actions">${actionButtons(c.id, c.status)}</td>
-</tr>`,
-				)
-				.join("")
-		: `<tr><td colspan="4" class="muted">No comments match.</td></tr>`;
-
-	const next = nextCursor
-		? `<a href="/admin/queue?status=${status}&before=${encodeURIComponent(nextCursor)}">Next →</a>`
-		: '<span class="muted">end</span>';
-
-	return `
-<div class="filter-bar"><span class="muted">filter:</span> ${tabs}</div>
-<div class="card" x-data="{
-  act(id, action) {
-    return fetch('/admin/api/comments/' + id, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ action }),
-    }).then(r => {
-      if (!r.ok) throw new Error('action failed: ' + r.status);
-      location.reload();
-    });
-  }
-}">
-  <table>
-    <thead><tr><th>Status</th><th>Meta</th><th>Body</th><th>Actions</th></tr></thead>
-    <tbody>${rowsHtml}</tbody>
-  </table>
-  <div class="pager">${next}</div>
-</div>`;
-};
-
-const renderUsers = (
-	rows: User[],
-	q: string,
-	nextCursor: string | null,
-): string => {
-	const rowsHtml = rows.length
-		? rows
-				.map(
-					(u) => `
-<tr x-data="{ busy: false, banned: ${u.is_banned} }">
-  <td>
-    <div>${escapeHtml(u.name)} ${u.is_admin ? '<span class="pill admin">admin</span>' : ""}
-      <span x-show="banned" class="pill banned">banned</span></div>
-    <div class="muted">${escapeHtml(u.email ?? "—")}</div>
-  </td>
-  <td>${escapeHtml(u.provider)}</td>
-  <td class="muted">${new Date(u.created_at).toISOString().slice(0, 10)}</td>
-  <td class="actions">
-    <template x-if="!banned">
-      <button :disabled="busy" class="bad" @click="busy=true; setBanned('${u.id}', true).then(()=>{banned=true}).finally(()=>busy=false)">Ban</button>
-    </template>
-    <template x-if="banned">
-      <button :disabled="busy" @click="busy=true; setBanned('${u.id}', false).then(()=>{banned=false}).finally(()=>busy=false)">Unban</button>
-    </template>
-  </td>
-</tr>`,
-				)
-				.join("")
-		: `<tr><td colspan="4" class="muted">No users match.</td></tr>`;
-
-	const queryStr = q ? `&q=${encodeURIComponent(q)}` : "";
-	const next = nextCursor
-		? `<a href="/admin/users?before=${encodeURIComponent(nextCursor)}${queryStr}">Next →</a>`
-		: '<span class="muted">end</span>';
-
-	return `
-<div class="card" x-data="{
-  setBanned(id, banned) {
-    return fetch('/admin/api/users/' + id, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ banned }),
-    }).then(r => {
-      if (!r.ok) throw new Error('action failed: ' + r.status);
-    });
-  }
-}">
-  <form class="filter-bar" method="get" action="/admin/users">
-    <input type="text" name="q" placeholder="search name or email" value="${escapeHtml(q)}">
-    <button type="submit">Search</button>
-    ${q ? '<a href="/admin/users">clear</a>' : ""}
-  </form>
-  <table>
-    <thead><tr><th>User</th><th>Provider</th><th>Joined</th><th>Actions</th></tr></thead>
-    <tbody>${rowsHtml}</tbody>
-  </table>
-  <div class="pager">${next}</div>
-</div>`;
-};
-
-const renderSettings = (env: Bindings): string => {
-	const rows: [string, string][] = [
-		["ENV", env.ENV ?? "(unset)"],
-		["ALLOWED_ORIGINS", env.ALLOWED_ORIGINS ?? "(unset)"],
-		["ADMIN_EMAILS", env.ADMIN_EMAILS ?? "(unset)"],
-		["EDIT_WINDOW_MINUTES", env.EDIT_WINDOW_MINUTES ?? "(default: 15)"],
-		["TURNSTILE_SITE_KEY", env.TURNSTILE_SITE_KEY ? "(set)" : "(unset)"],
-		["GH_CLIENT_ID", env.GH_CLIENT_ID ? "(set)" : "(unset)"],
-		["GOOGLE_CLIENT_ID", env.GOOGLE_CLIENT_ID ? "(set)" : "(unset)"],
-		["OAUTH_CALLBACK_BASE", env.OAUTH_CALLBACK_BASE ?? "(falls back to request origin)"],
-		["EMAIL_PROVIDER", env.EMAIL_PROVIDER ?? "(unset)"],
-		["SPAM_PROVIDER", env.SPAM_PROVIDER || "(unset)"],
-		["AKISMET_API_KEY", env.AKISMET_API_KEY ? "(set)" : "(unset)"],
-		["AKISMET_SITE_URL", env.AKISMET_SITE_URL ?? "(unset)"],
-		["SPAM_LINK_THRESHOLD", env.SPAM_LINK_THRESHOLD ?? "(unset)"],
-		["SPAM_HONEYPOT_MIN_MS", env.SPAM_HONEYPOT_MIN_MS ?? "(unset)"],
-		["SPAM_FIRST_COMMENT_MODERATE", env.SPAM_FIRST_COMMENT_MODERATE ?? "(unset)"],
-		["SPAM_FORM_TS_SECRET", env.SPAM_FORM_TS_SECRET ? "(set)" : "(unset)"],
-	];
-	const body = rows
-		.map(([k, v]) => `<tr><td><code>${k}</code></td><td>${escapeHtml(v)}</td></tr>`)
-		.join("");
-	return `
-<div class="card">
-  <h2>Configuration</h2>
-  <p class="muted">All settings are environment variables. Change them with
-  <code>wrangler secret put NAME</code> (or edit <code>wrangler.toml</code>
-  <code>[vars]</code> for non-secrets) and redeploy.</p>
-  <table>
-    <thead><tr><th>Variable</th><th>Value</th></tr></thead>
-    <tbody>${body}</tbody>
-  </table>
-</div>
-<div class="card">
-  <h3>Bindings</h3>
-  <ul>
-    <li><code>DB</code> — D1 database (comments, users, reactions, posts)</li>
-    <li><code>RATE_LIMITS</code>, <code>OAUTH_STATE</code>, <code>SESSIONS</code>, <code>TREE_CACHE</code> — KV namespaces</li>
-    <li><code>ANALYTICS</code> — Workers Analytics Engine dataset (optional)</li>
-  </ul>
-</div>`;
 };
 
 admin.use("*", async (c, next) => {
@@ -500,10 +132,39 @@ admin.use("*", versionCheckMiddleware());
 admin.get("/", async (c) => {
 	const user = await requireAdmin(c);
 	if (user instanceof Response) return user;
-	const stats = await adminStats(c.env.DB);
-	const updateInfo = await peekCachedLatestVersion(c.env);
-	return c.html(layout("Dashboard", renderDashboard(stats, c.env), user, updateInfo));
+	const db = c.env.DB;
+	const [stats, timeline, topPosts, topCommenters, oldestPending, spamRate, updateInfo] =
+		await Promise.all([
+			adminStats(db),
+			adminTimeline(db, 30),
+			adminTopPosts(db, 30, 5),
+			adminTopCommenters(db, 30, 5),
+			adminOldestPending(db),
+			adminSpamRate(db, 30),
+			peekCachedLatestVersion(c.env),
+		]);
+	const body = renderDashboard(
+		{
+			stats,
+			timeline,
+			top_posts: topPosts,
+			top_commenters: topCommenters,
+			oldest_pending: oldestPending,
+			spam_rate: spamRate,
+		},
+		c.env,
+	);
+	return c.html(layout("Dashboard", body, user, updateInfo));
 });
+
+// Parse a YYYY-MM-DD string into a ms-epoch timestamp at the start of UTC day.
+// Returns null on any malformed input.
+const parseDateMs = (raw: string | undefined): number | null => {
+	if (!raw) return null;
+	if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return null;
+	const ms = Date.parse(`${raw}T00:00:00Z`);
+	return Number.isFinite(ms) ? ms : null;
+};
 
 admin.get("/queue", async (c) => {
 	const user = await requireAdmin(c);
@@ -516,6 +177,16 @@ admin.get("/queue", async (c) => {
 		statusParam === "deleted"
 			? statusParam
 			: "all";
+
+	const q = (c.req.query("q") ?? "").trim();
+	const postSlug = (c.req.query("post_slug") ?? "").trim();
+	const userId = (c.req.query("user_id") ?? "").trim();
+	const fromRaw = c.req.query("from");
+	const toRaw = c.req.query("to");
+	const fromMs = parseDateMs(fromRaw);
+	// "to" is inclusive in the UI but the SQL uses < — push it forward 24h.
+	const toMs = parseDateMs(toRaw);
+	const toExclusive = toMs != null ? toMs + 86_400_000 : null;
 
 	const before = c.req.query("before");
 	let cursorTs: number | null = null;
@@ -533,15 +204,55 @@ admin.get("/queue", async (c) => {
 		}
 	}
 
-	const rows = await adminListComments(c.env.DB, status, 51, cursorTs, cursorId);
+	const filter: import("../db/queries").AdminCommentFilter = { status };
+	if (q) filter.q = q;
+	if (postSlug) filter.post_slug = postSlug;
+	if (userId) filter.user_id = userId;
+	if (fromMs != null) filter.from = fromMs;
+	if (toExclusive != null) filter.to = toExclusive;
+
+	const rows = await adminListComments(c.env.DB, filter, 51, cursorTs, cursorId);
 	const trimmed = rows.slice(0, 50);
 	const last = trimmed[trimmed.length - 1];
 	const nextCursor =
 		rows.length > 50 && last ? `${last.created_at}|${last.id}` : null;
 
+	const latestAudit = await adminLatestAuditByTarget(
+		c.env.DB,
+		"comment",
+		trimmed.map((r) => r.id),
+	);
+
+	const updateInfo = await peekCachedLatestVersion(c.env);
+	const filters: QueueFilters = {
+		status,
+		q,
+		post_slug: postSlug,
+		user_id: userId,
+		from: fromRaw ?? "",
+		to: toRaw ?? "",
+	};
+	return c.html(
+		layout(
+			"Queue",
+			renderQueue(trimmed, filters, nextCursor, latestAudit),
+			user,
+			updateInfo,
+		),
+	);
+});
+
+admin.get("/comments/:id", async (c) => {
+	const user = await requireAdmin(c);
+	if (user instanceof Response) return user;
+	const id = c.req.param("id");
+	const detail = await adminGetCommentDetail(c.env.DB, id);
+	if (!detail) {
+		return c.html(accessDeniedHtml(404, "That comment does not exist."), 404);
+	}
 	const updateInfo = await peekCachedLatestVersion(c.env);
 	return c.html(
-		layout("Queue", renderQueue(trimmed, status, nextCursor), user, updateInfo),
+		layout(`Comment ${id.slice(0, 8)}`, renderCommentDetail(detail), user, updateInfo),
 	);
 });
 
@@ -575,6 +286,211 @@ admin.get("/users", async (c) => {
 	);
 });
 
+const USER_DETAIL_LIMIT = 50;
+
+admin.get("/users/:id", async (c) => {
+	const user = await requireAdmin(c);
+	if (user instanceof Response) return user;
+	const id = c.req.param("id");
+	const before = c.req.query("before");
+	let cursorTs: number | null = null;
+	let cursorId: string | null = null;
+	if (before) {
+		const parts = before.split("|");
+		const a = parts[0];
+		const b = parts[1];
+		if (parts.length === 2 && a && b) {
+			const ts = Number(a);
+			if (Number.isFinite(ts)) {
+				cursorTs = ts;
+				cursorId = b;
+			}
+		}
+	}
+	const detail = await adminGetUserDetail(
+		c.env.DB,
+		id,
+		USER_DETAIL_LIMIT,
+		cursorTs,
+		cursorId,
+	);
+	if (!detail) {
+		return c.html(accessDeniedHtml(404, "That user does not exist."), 404);
+	}
+	const updateInfo = await peekCachedLatestVersion(c.env);
+	return c.html(
+		layout(detail.user.name, renderUserDetail(detail), user, updateInfo),
+	);
+});
+
+admin.get("/audit", async (c) => {
+	const user = await requireAdmin(c);
+	if (user instanceof Response) return user;
+
+	const adminId = (c.req.query("admin_id") ?? "").trim();
+	const actionRaw = (c.req.query("action") ?? "").trim();
+	const targetKindRaw = (c.req.query("target_kind") ?? "").trim();
+	const targetId = (c.req.query("target_id") ?? "").trim();
+	const fromRaw = c.req.query("from");
+	const toRaw = c.req.query("to");
+	const fromMs = parseDateMs(fromRaw);
+	const toMs = parseDateMs(toRaw);
+	const toExclusive = toMs != null ? toMs + 86_400_000 : null;
+
+	const before = c.req.query("before");
+	let cursorTs: number | null = null;
+	let cursorId: string | null = null;
+	if (before) {
+		const parts = before.split("|");
+		const a = parts[0];
+		const b = parts[1];
+		if (parts.length === 2 && a && b) {
+			const ts = Number(a);
+			if (Number.isFinite(ts)) {
+				cursorTs = ts;
+				cursorId = b;
+			}
+		}
+	}
+
+	const validKinds: AuditTargetKind[] = [
+		"comment",
+		"user",
+		"subscription",
+		"system",
+	];
+	const kindFilter: AuditTargetKind | undefined = validKinds.includes(
+		targetKindRaw as AuditTargetKind,
+	)
+		? (targetKindRaw as AuditTargetKind)
+		: undefined;
+	const actionFilter: AdminAction | undefined = (
+		ADMIN_ACTIONS as ReadonlyArray<string>
+	).includes(actionRaw)
+		? (actionRaw as AdminAction)
+		: undefined;
+
+	const filter: import("../db/queries").AdminAuditFilter = {};
+	if (adminId) filter.admin_id = adminId;
+	if (actionFilter) filter.action = actionFilter;
+	if (kindFilter) filter.target_kind = kindFilter;
+	if (targetId) filter.target_id = targetId;
+	if (fromMs != null) filter.from = fromMs;
+	if (toExclusive != null) filter.to = toExclusive;
+
+	const rows = await adminListAudit(c.env.DB, filter, 51, cursorTs, cursorId);
+	const trimmed = rows.slice(0, 50);
+	const last = trimmed[trimmed.length - 1];
+	const nextCursor =
+		rows.length > 50 && last ? `${last.created_at}|${last.id}` : null;
+
+	const filters: AuditFilters = {
+		admin_id: adminId,
+		action: actionFilter ?? "",
+		target_kind: kindFilter ?? "",
+		target_id: targetId,
+		from: fromRaw ?? "",
+		to: toRaw ?? "",
+	};
+	const updateInfo = await peekCachedLatestVersion(c.env);
+	return c.html(
+		layout(
+			"Audit",
+			renderAudit(trimmed, filters, nextCursor, ADMIN_ACTIONS),
+			user,
+			updateInfo,
+		),
+	);
+});
+
+const parseTriState = (raw: string | undefined): "" | "yes" | "no" => {
+	if (raw === "yes" || raw === "no") return raw;
+	return "";
+};
+
+admin.get("/subscriptions", async (c) => {
+	const user = await requireAdmin(c);
+	if (user instanceof Response) return user;
+	const q = (c.req.query("q") ?? "").trim();
+	const postSlug = (c.req.query("post_slug") ?? "").trim();
+	const confirmed = parseTriState(c.req.query("confirmed"));
+	const unsubscribed = parseTriState(c.req.query("unsubscribed"));
+	const before = c.req.query("before") ?? null;
+
+	const filter: Parameters<typeof adminListSubscriptions>[1] = {};
+	if (q) filter.q = q;
+	if (postSlug) filter.post_slug = postSlug;
+	if (confirmed === "yes") filter.confirmed = true;
+	if (confirmed === "no") filter.confirmed = false;
+	if (unsubscribed === "yes") filter.unsubscribed = true;
+	if (unsubscribed === "no") filter.unsubscribed = false;
+
+	const limit = 50;
+	let cursorCreatedAt: number | null = null;
+	let cursorId: string | null = null;
+	if (before) {
+		const [tsStr, id] = before.split("|");
+		const ts = Number(tsStr);
+		if (Number.isFinite(ts) && id) {
+			cursorCreatedAt = ts;
+			cursorId = id;
+		}
+	}
+	const rows = await adminListSubscriptions(
+		c.env.DB,
+		filter,
+		limit + 1,
+		cursorCreatedAt,
+		cursorId,
+	);
+	let nextCursor: string | null = null;
+	if (rows.length > limit) {
+		const last = rows[limit - 1];
+		if (last) nextCursor = `${last.created_at}|${last.id}`;
+		rows.length = limit;
+	}
+
+	const filters: SubscriptionsFilters = {
+		q,
+		post_slug: postSlug,
+		confirmed,
+		unsubscribed,
+	};
+	const updateInfo = await peekCachedLatestVersion(c.env);
+	return c.html(
+		layout(
+			"Subscriptions",
+			renderSubscriptions(rows, filters, nextCursor),
+			user,
+			updateInfo,
+		),
+	);
+});
+
+// Default-deny: only allow seed-demo when ENV is explicitly "dev". A fresh
+// deploy that forgot to set ENV=production would otherwise satisfy
+// `env.ENV !== "production"` and let an admin seed demo content into a real
+// instance. Matches the SameSite=Lax cookie fallback gate in lib/session.ts.
+const isSeedDemoAllowed = (env: Bindings): boolean => env.ENV === "dev";
+
+admin.get("/operator", async (c) => {
+	const user = await requireAdmin(c);
+	if (user instanceof Response) return user;
+	const stats = await rerenderStats(c.env.DB);
+	const updateInfo = await peekCachedLatestVersion(c.env);
+	return c.html(
+		layout(
+			"Operator",
+			renderOperator({
+				rerender: stats,
+				seed_demo_allowed: isSeedDemoAllowed(c.env),
+			}),
+			user,
+			updateInfo,
+		),
+	);
+});
+
 admin.get("/settings", async (c) => {
 	const user = await requireAdmin(c);
 	if (user instanceof Response) return user;
@@ -588,7 +504,9 @@ admin.post("/api/comments/:id", async (c) => {
 	const user = await requireAdmin(c);
 	if (user instanceof Response) return user;
 	const id = c.req.param("id");
-	const body = await c.req.json<{ action?: string }>().catch(() => null);
+	const body = await c.req
+		.json<{ action?: string; reason?: string }>()
+		.catch(() => null);
 	const action = body?.action as CommentAction | undefined;
 	let newStatus: CommentStatus;
 	switch (action) {
@@ -610,6 +528,14 @@ admin.post("/api/comments/:id", async (c) => {
 	const existing = await getComment(c.env.DB, id);
 	if (!existing) return c.json({ error: "not_found" }, 404);
 	await updateCommentStatus(c.env.DB, id, newStatus);
+	await adminInsertAudit(c.env.DB, {
+		admin_id: user.id,
+		action,
+		target_kind: "comment",
+		target_id: id,
+		reason: body?.reason ?? null,
+		meta: { prev_status: existing.status, new_status: newStatus },
+	});
 	// Bust the cached first page so the moderation result is visible.
 	await c.env.TREE_CACHE.delete(`tree:${existing.post_slug}:first`);
 	const webhookEvent: WebhookEvent | null =
@@ -632,11 +558,91 @@ admin.post("/api/comments/:id", async (c) => {
 	return c.json({ ok: true, id, status: newStatus });
 });
 
+const BULK_ACTION_LIMIT = 100;
+
+admin.post("/api/comments/bulk", async (c) => {
+	const user = await requireAdmin(c);
+	if (user instanceof Response) return user;
+	const body = await c.req
+		.json<{ ids?: unknown; action?: string }>()
+		.catch(() => null);
+	if (!body) return c.json({ error: "invalid_body" }, 400);
+	const action = body.action as CommentAction | undefined;
+	let newStatus: CommentStatus;
+	switch (action) {
+		case "approve":
+		case "restore":
+			newStatus = "approved";
+			break;
+		case "spam":
+			newStatus = "spam";
+			break;
+		case "delete":
+			newStatus = "deleted";
+			break;
+		default:
+			return c.json({ error: "invalid_action" }, 400);
+	}
+	if (!Array.isArray(body.ids)) {
+		return c.json({ error: "invalid_ids" }, 400);
+	}
+	const ids = (body.ids as unknown[]).filter(
+		(x): x is string => typeof x === "string" && x.length > 0,
+	);
+	if (ids.length === 0) return c.json({ error: "empty_ids" }, 400);
+	if (ids.length > BULK_ACTION_LIMIT) {
+		return c.json({ error: "too_many" }, 400);
+	}
+	const touched = await adminBulkUpdateCommentStatus(c.env.DB, ids, newStatus);
+	const bulkAction: AdminAction =
+		action === "spam"
+			? "bulk.spam"
+			: action === "delete"
+				? "bulk.delete"
+				: action === "restore"
+					? "bulk.restore"
+					: "bulk.approve";
+	// Bust caches + fire webhooks for each touched comment. Both are
+	// independent of one another, so missing rows just no-op.
+	const webhookEvent: WebhookEvent | null =
+		newStatus === "approved"
+			? "comment.approved"
+			: newStatus === "spam"
+				? "comment.spam"
+				: newStatus === "deleted"
+					? "comment.deleted"
+					: null;
+	for (const id of touched) {
+		const existing = await getComment(c.env.DB, id);
+		if (!existing) continue;
+		await adminInsertAudit(c.env.DB, {
+			admin_id: user.id,
+			action: bulkAction,
+			target_kind: "comment",
+			target_id: id,
+			meta: { batch_size: touched.length, new_status: newStatus },
+		});
+		await c.env.TREE_CACHE.delete(`tree:${existing.post_slug}:first`);
+		if (webhookEvent) {
+			fireWebhook(c.env, c.executionCtx, {
+				event: webhookEvent,
+				comment_id: id,
+				post_slug: existing.post_slug,
+				user_id: existing.user_id,
+				ts: Date.now(),
+			});
+		}
+	}
+	return c.json({ ok: true, status: newStatus, touched });
+});
+
 admin.post("/api/users/:id", async (c) => {
 	const user = await requireAdmin(c);
 	if (user instanceof Response) return user;
 	const id = c.req.param("id");
-	const body = await c.req.json<{ banned?: boolean }>().catch(() => null);
+	const body = await c.req
+		.json<{ banned?: boolean; reason?: string }>()
+		.catch(() => null);
 	if (!body || typeof body.banned !== "boolean") {
 		return c.json({ error: "invalid_body" }, 400);
 	}
@@ -645,7 +651,163 @@ admin.post("/api/users/:id", async (c) => {
 	const target = await getUser(c.env.DB, id);
 	if (!target) return c.json({ error: "not_found" }, 404);
 	await setUserBanned(c.env.DB, id, body.banned);
+	await adminInsertAudit(c.env.DB, {
+		admin_id: user.id,
+		action: body.banned ? "ban" : "unban",
+		target_kind: "user",
+		target_id: id,
+		reason: body.reason ?? null,
+		meta: { target_name: target.name },
+	});
 	return c.json({ ok: true, id, banned: body.banned });
+});
+
+const randomToken = (): string => {
+	const bytes = new Uint8Array(32);
+	crypto.getRandomValues(bytes);
+	return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+};
+
+admin.post("/api/subscriptions/:id", async (c) => {
+	const user = await requireAdmin(c);
+	if (user instanceof Response) return user;
+	const id = c.req.param("id");
+	const body = await c.req
+		.json<{ action?: string; reason?: string }>()
+		.catch(() => null);
+	const action = body?.action;
+	if (action !== "unsubscribe" && action !== "resend") {
+		return c.json({ error: "invalid_action" }, 400);
+	}
+
+	const sub = await adminGetSubscription(c.env.DB, id);
+	if (!sub) return c.json({ error: "not_found" }, 404);
+
+	if (action === "unsubscribe") {
+		if (sub.unsubscribed_at == null) {
+			await markSubscriptionUnsubscribed(c.env.DB, id);
+		}
+		await adminInsertAudit(c.env.DB, {
+			admin_id: user.id,
+			action: "sub.unsubscribe",
+			target_kind: "subscription",
+			target_id: id,
+			reason: body?.reason ?? null,
+			meta: { email: sub.email, post_slug: sub.post_slug },
+		});
+		return c.json({ ok: true, id, status: "unsubscribed" });
+	}
+
+	// resend: rotate confirm_token + re-issue the confirmation email.
+	const publicBase = c.env.PUBLIC_BASE_URL;
+	const from = c.env.EMAIL_FROM;
+	if (!publicBase || !from) {
+		return c.json({ error: "email_not_configured" }, 503);
+	}
+	if (sub.confirmed_at != null) {
+		return c.json({ error: "already_confirmed" }, 409);
+	}
+	if (sub.unsubscribed_at != null) {
+		return c.json({ error: "unsubscribed" }, 409);
+	}
+
+	// Send the confirmation email first; only persist the rotated token
+	// when delivery succeeds. If we rotated first and sendEmail returned
+	// false, the previous token would already be invalid and the user
+	// would have no working confirmation link at all.
+	const newToken = randomToken();
+	const post = await getPost(c.env.DB, sub.post_slug);
+	const confirmUrl = `${publicBase}/api/v1/subscribe/confirm/${newToken}`;
+	const html = renderConfirmEmailHtml({
+		postTitle: post?.title ?? sub.post_slug,
+		confirmUrl,
+	});
+	const sent = await sendEmail(c.env, {
+		to: sub.email,
+		from,
+		subject: t("email.confirm.subject").replace(
+			"{title}",
+			post?.title ?? sub.post_slug,
+		),
+		html,
+	});
+	if (!sent) {
+		return c.json({ error: "email_send_failed" }, 502);
+	}
+	await adminRotateSubscriptionConfirmToken(c.env.DB, id, newToken);
+
+	await adminInsertAudit(c.env.DB, {
+		admin_id: user.id,
+		action: "sub.resend",
+		target_kind: "subscription",
+		target_id: id,
+		reason: body?.reason ?? null,
+		meta: { email: sub.email, post_slug: sub.post_slug },
+	});
+	return c.json({ ok: true, id, status: "resent" });
+});
+
+const RERENDER_MAX_BATCH = 100;
+
+admin.post("/api/ops/rerender", async (c) => {
+	const user = await requireAdmin(c);
+	if (user instanceof Response) return user;
+	const body = await c.req
+		.json<{
+			batch?: number;
+			cursor?: { created_at: number; id: string } | null;
+		}>()
+		.catch(() => ({}) as Record<string, never>);
+	const batchRaw = Number(body.batch ?? 50);
+	const batch =
+		Number.isFinite(batchRaw) && batchRaw > 0
+			? Math.min(RERENDER_MAX_BATCH, Math.floor(batchRaw))
+			: 50;
+	const cursor =
+		body.cursor &&
+		typeof body.cursor.created_at === "number" &&
+		typeof body.cursor.id === "string"
+			? body.cursor
+			: null;
+
+	const result = await rerenderBatch(c.env.DB, batch, cursor);
+	if (result.processed > 0) {
+		await adminInsertAudit(c.env.DB, {
+			admin_id: user.id,
+			action: "rerender",
+			target_kind: "system",
+			target_id: null,
+			reason: null,
+			meta: {
+				batch_size: batch,
+				processed: result.processed,
+				cursor_after: result.next_cursor,
+			},
+		});
+	}
+	return c.json({
+		ok: true,
+		processed: result.processed,
+		next_cursor: result.next_cursor,
+	});
+});
+
+admin.post("/api/ops/seed-demo", async (c) => {
+	const user = await requireAdmin(c);
+	if (user instanceof Response) return user;
+	if (!isSeedDemoAllowed(c.env)) {
+		return c.json({ error: "disabled_in_production" }, 403);
+	}
+	const result = await runSeedDemo(c.env.DB);
+	await adminInsertAudit(c.env.DB, {
+		admin_id: user.id,
+		action: "seed-demo",
+		target_kind: "system",
+		target_id: null,
+		reason: null,
+		meta: result,
+	});
+	return c.json({ ok: true, ...result });
 });
 
 export { admin };
