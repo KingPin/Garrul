@@ -102,6 +102,23 @@ const parseIso = (s: string | null): number => {
 	return Number.isFinite(t) ? t : Date.now();
 };
 
+// Strip HTML tags repeatedly until the input is a fixed point. A single
+// pass of `<[^>]+>` is bypassable when tags are nested: e.g.
+// `<scr<script>ipt>` becomes `<script>` after one replace and would still
+// be live HTML if downstream ever interpreted it. We're downstream-safe
+// already (output is markdown re-rendered through the allowlist), but
+// CodeQL flags the pattern regardless — and the fixed-point loop is the
+// canonical fix, costs O(n) per pass on already-clean strings.
+const stripTagsRepeatedly = (s: string): string => {
+	let prev: string;
+	let curr = s;
+	do {
+		prev = curr;
+		curr = prev.replace(/<[^>]+>/g, "");
+	} while (curr !== prev);
+	return curr;
+};
+
 export const disqusHtmlToMarkdown = (html: string): string => {
 	if (!html) return "";
 	let text = html;
@@ -109,14 +126,14 @@ export const disqusHtmlToMarkdown = (html: string): string => {
 		/<a\b[^>]*href\s*=\s*"([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi,
 		(_, href: string, inner: string) => {
 			const url = decodeEntities(href);
-			const label = decodeEntities(inner.replace(/<[^>]+>/g, "")).trim();
+			const label = decodeEntities(stripTagsRepeatedly(inner)).trim();
 			if (!/^https?:\/\//i.test(url)) return label;
 			return label && label !== url ? `[${label}](${url})` : url;
 		},
 	);
 	text = text.replace(/<br\s*\/?>/gi, "\n");
 	text = text.replace(/<\/p>/gi, "\n\n");
-	text = text.replace(/<[^>]+>/g, "");
+	text = stripTagsRepeatedly(text);
 	text = decodeEntities(text);
 	return text.trim();
 };
