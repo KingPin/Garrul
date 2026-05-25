@@ -172,6 +172,15 @@ const postOnce = async (
 
 const isDevEnv = (env: WebhookEnv): boolean => env.ENV === "dev";
 
+// The legacy WEBHOOK_URL env var allowed http:// in any environment.
+// Table-configured endpoints go through checkOutboundUrl on save, which
+// already rejects http:// outside dev — so the `_env` shim is the only
+// path that needs the relaxed scheme check at dispatch time. Without
+// this, operators upgrading with a prod `http://` WEBHOOK_URL silently
+// stop receiving deliveries.
+const allowHttpFor = (endpoint: WebhookEndpoint, env: WebhookEnv): boolean =>
+	endpoint.id === "_env" || isDevEnv(env);
+
 const dispatchToEndpoint = async (
 	env: WebhookEnv,
 	endpoint: WebhookEndpoint,
@@ -179,7 +188,7 @@ const dispatchToEndpoint = async (
 ): Promise<void> => {
 	if (!matchesEventFilter(endpoint, payload.event)) return;
 	const body = await renderBody(env.DB, endpoint.adapter, payload);
-	const result = await postOnce(endpoint, body, isDevEnv(env));
+	const result = await postOnce(endpoint, body, allowHttpFor(endpoint, env));
 	if (result.ok) {
 		if (endpoint.id !== "_env" && endpoint.fail_count > 0) {
 			await resetWebhookFailCount(env.DB, endpoint.id);
@@ -277,7 +286,11 @@ const retryDelivery = async (
 		);
 		return;
 	}
-	const result = await postOnce(endpoint, delivery.payload, isDevEnv(env));
+	const result = await postOnce(
+		endpoint,
+		delivery.payload,
+		allowHttpFor(endpoint, env),
+	);
 	if (result.ok) {
 		await markWebhookDelivered(env.DB, delivery.id);
 		if (endpoint.fail_count > 0) {
