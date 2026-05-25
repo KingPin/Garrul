@@ -51,6 +51,11 @@ export type TreeNode = {
 	 *  MAX_DEPTH) and the UI should show "@<flatten_from> ..." prefix. */
 	flatten_from: string | null;
 	reactions: ReactionCount[];
+	score_up: number;
+	score_down: number;
+	/** -1 / 0 / 1; only meaningful for the requesting viewer. Anonymous
+	 *  viewers always see 0 (and their list response is KV-cached). */
+	my_vote: -1 | 0 | 1;
 	replies: TreeNode[];
 };
 
@@ -133,6 +138,7 @@ const toNode = (
 	flatten_from: string | null,
 	usersById: Map<string, TreeAuthor>,
 	reactionsById: Map<string, ReactionCount[]>,
+	myVotes: Map<string, -1 | 1>,
 ): TreeNode => ({
 	id: row.id,
 	parent_id: row.parent_id,
@@ -145,6 +151,9 @@ const toNode = (
 	depth,
 	flatten_from,
 	reactions: reactionsById.get(row.id) ?? [],
+	score_up: row.score_up ?? 0,
+	score_down: row.score_down ?? 0,
+	my_vote: myVotes.get(row.id) ?? 0,
 	replies: [],
 });
 
@@ -161,13 +170,14 @@ const buildSubtree = (
 	usersById: Map<string, TreeAuthor>,
 	byId: Map<string, Comment>,
 	reactionsById: Map<string, ReactionCount[]>,
+	myVotes: Map<string, -1 | 1>,
 ): TreeNode[] => {
 	const kids = (children.get(parentId) ?? []).filter((k) => keep.has(k.id));
 	if (kids.length === 0) return [];
 	const out: TreeNode[] = [];
 	for (const k of kids) {
 		if (depth < MAX_DEPTH) {
-			const node = toNode(k, depth, null, usersById, reactionsById);
+			const node = toNode(k, depth, null, usersById, reactionsById, myVotes);
 			node.replies = buildSubtree(
 				k.id,
 				depth + 1,
@@ -176,6 +186,7 @@ const buildSubtree = (
 				usersById,
 				byId,
 				reactionsById,
+				myVotes,
 			);
 			out.push(node);
 		} else {
@@ -186,7 +197,7 @@ const buildSubtree = (
 				parentRow != null
 					? buildAuthor(usersById, parentRow.user_id).name
 					: null;
-			const node = toNode(k, MAX_DEPTH, parentAuthorName, usersById, reactionsById);
+			const node = toNode(k, MAX_DEPTH, parentAuthorName, usersById, reactionsById, myVotes);
 			out.push(node);
 			// Continue chasing the flattened descendants so nothing is dropped.
 			const descendants = buildSubtree(
@@ -197,6 +208,7 @@ const buildSubtree = (
 				usersById,
 				byId,
 				reactionsById,
+				myVotes,
 			);
 			for (const d of descendants) out.push(d);
 		}
@@ -212,6 +224,7 @@ export const buildTree = (
 	rows: Comment[],
 	usersById: Map<string, TreeAuthor>,
 	reactionsById: Map<string, ReactionCount[]> = new Map(),
+	myVotes: Map<string, -1 | 1> = new Map(),
 ): BuildResult => {
 	const byId = new Map<string, Comment>();
 	for (const r of rows) byId.set(r.id, r);
@@ -221,8 +234,8 @@ export const buildTree = (
 	const tops = (children.get(null) ?? []).filter((t) => keep.has(t.id));
 	const threads: TreeNode[] = [];
 	for (const t of tops) {
-		const node = toNode(t, 0, null, usersById, reactionsById);
-		node.replies = buildSubtree(t.id, 1, children, keep, usersById, byId, reactionsById);
+		const node = toNode(t, 0, null, usersById, reactionsById, myVotes);
+		node.replies = buildSubtree(t.id, 1, children, keep, usersById, byId, reactionsById, myVotes);
 		threads.push(node);
 	}
 	return { threads };

@@ -53,6 +53,8 @@ export type Comment = {
 	ip_hash: string | null;
 	user_agent: string | null;
 	created_at: number;
+	score_up: number;
+	score_down: number;
 };
 
 type UserRow = Omit<User, "is_admin" | "is_banned"> & {
@@ -294,6 +296,8 @@ export const insertComment = async (
 		ip_hash: input.ip_hash,
 		user_agent: input.user_agent,
 		created_at: now,
+		score_up: 0,
+		score_down: 0,
 	};
 };
 
@@ -305,7 +309,7 @@ export const getComment = async (
 		.prepare(
 			`SELECT id, post_slug, parent_id, user_id, body_md, body_html,
 			        renderer_version, status, edited_at, deleted_at,
-			        ip_hash, user_agent, created_at
+			        ip_hash, user_agent, created_at, score_up, score_down
 			 FROM comments WHERE id = ?`,
 		)
 		.bind(id)
@@ -326,7 +330,7 @@ export const getCommentsByIds = async (
 		.prepare(
 			`SELECT id, post_slug, parent_id, user_id, body_md, body_html,
 			        renderer_version, status, edited_at, deleted_at,
-			        ip_hash, user_agent, created_at
+			        ip_hash, user_agent, created_at, score_up, score_down
 			   FROM comments WHERE id IN (${placeholders})`,
 		)
 		.bind(...ids)
@@ -373,7 +377,7 @@ export const listCommentsForPost = async (
 		.prepare(
 			`SELECT id, post_slug, parent_id, user_id, body_md, body_html,
 			        renderer_version, status, edited_at, deleted_at,
-			        ip_hash, user_agent, created_at
+			        ip_hash, user_agent, created_at, score_up, score_down
 			 FROM comments
 			 WHERE post_slug = ? AND status NOT IN ('spam', 'pending')
 			 ORDER BY created_at ASC, id ASC`,
@@ -396,7 +400,8 @@ export const listLatestApprovedComments = async (
 		.prepare(
 			`SELECT c.id, c.post_slug, c.parent_id, c.user_id, c.body_md, c.body_html,
 			        c.renderer_version, c.status, c.edited_at, c.deleted_at,
-			        c.ip_hash, c.user_agent, c.created_at, u.name AS author_name
+			        c.ip_hash, c.user_agent, c.created_at, c.score_up, c.score_down,
+			        u.name AS author_name
 			   FROM comments c
 			   JOIN users u ON u.id = c.user_id
 			  WHERE c.post_slug = ? AND c.status = 'approved'
@@ -622,7 +627,7 @@ export const adminListComments = async (
 	const sql = `
 		SELECT c.id, c.post_slug, c.parent_id, c.user_id, c.body_md, c.body_html,
 		       c.renderer_version, c.status, c.edited_at, c.deleted_at,
-		       c.ip_hash, c.user_agent, c.created_at,
+		       c.ip_hash, c.user_agent, c.created_at, c.score_up, c.score_down,
 		       u.name       AS author_name,
 		       u.email      AS author_email,
 		       u.avatar_url AS author_avatar_url,
@@ -2146,4 +2151,126 @@ export const pruneWebhookDeliveries = async (
 		.bind(olderThan)
 		.run();
 	return (rs.meta as { changes?: number }).changes ?? 0;
+};
+
+// -- votes -------------------------------------------------------------------
+//
+// Voting is exclusive: at most one row per (comment_id, user_id) with value
+// -1 or 1. The reactions table is the wrong shape (multi-emoji per user)
+// because a malicious client could send both up and down — see the
+// votes migration for the full rationale.
+
+export type Vote = {
+	comment_id: string;
+	user_id: string;
+	value: -1 | 1;
+	created_at: number;
+};
+
+export type VoteValue = -1 | 0 | 1;
+
+export type VoteResult = {
+	score_up: number;
+	score_down: number;
+	my_vote: -1 | 0 | 1;
+};
+
+const reselectScores = async (
+	db: D1Database,
+	comment_id: string,
+	user_id: string,
+): Promise<VoteResult> => {
+	const row = await db
+		.prepare(
+			`SELECT c.score_up, c.score_down,
+			        COALESCE((SELECT value FROM votes
+			                   WHERE comment_id = c.id AND user_id = ?), 0) AS my_vote
+			   FROM comments c WHERE c.id = ?`,
+		)
+		.bind(user_id, comment_id)
+		.first<{ score_up: number; score_down: number; my_vote: number }>();
+	if (!row) return { score_up: 0, score_down: 0, my_vote: 0 };
+	const mv = row.my_vote === 1 || row.my_vote === -1 ? row.my_vote : 0;
+	return { score_up: row.score_up, score_down: row.score_down, my_vote: mv };
+};
+
+/**
+ * Atomically upsert a vote and recompute the denormalized counters on the
+ * parent comment. value=0 means "clear my vote". The denormalization keeps
+ * the public list query as a single SELECT against `comments` — no JOIN to
+ * an aggregation against `votes` per page load.
+ *
+ * Returns the post-write counters and the requester's now-vote so the
+ * widget can patch the DOM without busting the per-post tree cache.
+ */
+export const castVote = async (
+	db: D1Database,
+	comment_id: string,
+	user_id: string,
+	value: VoteValue,
+): Promise<VoteResult> => {
+	const now = Date.now();
+	if (value === 0) {
+		await db.batch([
+			db
+				.prepare(`DELETE FROM votes WHERE comment_id = ? AND user_id = ?`)
+				.bind(comment_id, user_id),
+			db
+				.prepare(
+					`UPDATE comments SET
+					   score_up   = (SELECT COUNT(*) FROM votes WHERE comment_id = ? AND value =  1),
+					   score_down = (SELECT COUNT(*) FROM votes WHERE comment_id = ? AND value = -1)
+					 WHERE id = ?`,
+				)
+				.bind(comment_id, comment_id, comment_id),
+		]);
+	} else {
+		await db.batch([
+			db
+				.prepare(
+					`INSERT INTO votes (comment_id, user_id, value, created_at)
+					 VALUES (?, ?, ?, ?)
+					 ON CONFLICT(comment_id, user_id) DO UPDATE SET
+					   value      = excluded.value,
+					   created_at = excluded.created_at`,
+				)
+				.bind(comment_id, user_id, value, now),
+			db
+				.prepare(
+					`UPDATE comments SET
+					   score_up   = (SELECT COUNT(*) FROM votes WHERE comment_id = ? AND value =  1),
+					   score_down = (SELECT COUNT(*) FROM votes WHERE comment_id = ? AND value = -1)
+					 WHERE id = ?`,
+				)
+				.bind(comment_id, comment_id, comment_id),
+		]);
+	}
+	return reselectScores(db, comment_id, user_id);
+};
+
+/**
+ * Returns the calling user's vote on each (comment_id) for one post, as
+ * a Map keyed by comment_id. Used to populate `my_vote` on the public
+ * list endpoint for authenticated viewers; anonymous viewers bypass this
+ * (the cached payload has no my_vote field).
+ */
+export const getUserVotesOnPost = async (
+	db: D1Database,
+	post_slug: string,
+	user_id: string,
+): Promise<Map<string, -1 | 1>> => {
+	const result = await db
+		.prepare(
+			`SELECT v.comment_id, v.value
+			   FROM votes v
+			   JOIN comments c ON c.id = v.comment_id
+			  WHERE c.post_slug = ? AND v.user_id = ?`,
+		)
+		.bind(post_slug, user_id)
+		.all<{ comment_id: string; value: number }>();
+	const out = new Map<string, -1 | 1>();
+	for (const r of result.results ?? []) {
+		if (r.value === 1 || r.value === -1) out.set(r.comment_id, r.value);
+	}
+	return out;
 };
