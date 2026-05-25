@@ -561,7 +561,13 @@ comments.get("/", async (c) => {
 	const sortParam = (c.req.query("sort") ?? "new").trim();
 	const sort: "new" | "top" = sortParam === "top" ? "top" : "new";
 
-	const cursor = decodeCursor(c.req.query("before") ?? null);
+	// The cursor format (`id < cursor`) only makes sense for the time-DESC
+	// `new` ordering — applying it to score-sorted results would skip or
+	// duplicate threads as scores shift. `top` returns a single page; any
+	// supplied ?before is ignored.
+	const cursor = sort === "top"
+		? null
+		: decodeCursor(c.req.query("before") ?? null);
 	const session = await readSession(c);
 
 	// Fast path: first page is cached in KV for anonymous viewers only,
@@ -622,7 +628,9 @@ comments.get("/", async (c) => {
 		: 0;
 	const sliceFrom = startIdx < 0 ? allThreads.length : startIdx;
 	const page = allThreads.slice(sliceFrom, sliceFrom + TOP_LEVEL_PAGE);
-	const more = allThreads.length > sliceFrom + TOP_LEVEL_PAGE;
+	// `top` is a single page (see cursor-decoding note above) so callers
+	// shouldn't get a next_cursor that would lead to ill-defined paging.
+	const more = sort === "new" && allThreads.length > sliceFrom + TOP_LEVEL_PAGE;
 	const next_cursor = more ? (page[page.length - 1]?.id ?? null) : null;
 
 	const payload: ListPayload = { post, threads: page, next_cursor };
