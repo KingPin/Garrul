@@ -1125,6 +1125,7 @@ export type AuditTargetKind =
 	| "user"
 	| "subscription"
 	| "webhook"
+	| "saved_reply"
 	| "system";
 
 export const ADMIN_ACTIONS = [
@@ -1150,6 +1151,10 @@ export const ADMIN_ACTIONS = [
 	"role.revoke_mod",
 	"role.grant_admin",
 	"role.revoke_admin",
+	"saved_reply.create",
+	"saved_reply.update",
+	"saved_reply.delete",
+	"saved_reply.post",
 ] as const;
 export type AdminAction = (typeof ADMIN_ACTIONS)[number];
 
@@ -2304,4 +2309,116 @@ export const getUserVotesOnPost = async (
 		if (r.value === 1 || r.value === -1) out.set(r.comment_id, r.value);
 	}
 	return out;
+};
+
+// -- saved replies ----------------------------------------------------------
+//
+// Canned moderator responses. The picker fetches the visible-to-me set
+// (`listSavedRepliesForUser`) which is `OWNER = me OR scope = 'shared'`.
+// Mutations are owner-only: even an admin should not be able to silently
+// edit a different mod's private reply through the API (we audit-log the
+// post action separately).
+
+export type SavedReplyScope = "private" | "shared";
+
+export type SavedReply = {
+	id: string;
+	owner_id: string;
+	title: string;
+	body_md: string;
+	scope: SavedReplyScope;
+	created_at: number;
+	updated_at: number;
+};
+
+export const isSavedReplyScope = (v: unknown): v is SavedReplyScope =>
+	v === "private" || v === "shared";
+
+export const listSavedRepliesForUser = async (
+	db: D1Database,
+	user_id: string,
+): Promise<SavedReply[]> => {
+	const result = await db
+		.prepare(
+			`SELECT id, owner_id, title, body_md, scope, created_at, updated_at
+			   FROM saved_replies
+			  WHERE owner_id = ? OR scope = 'shared'
+			  ORDER BY created_at DESC`,
+		)
+		.bind(user_id)
+		.all<SavedReply>();
+	return result.results ?? [];
+};
+
+export const getSavedReply = async (
+	db: D1Database,
+	id: string,
+): Promise<SavedReply | null> => {
+	return await db
+		.prepare(
+			`SELECT id, owner_id, title, body_md, scope, created_at, updated_at
+			   FROM saved_replies WHERE id = ?`,
+		)
+		.bind(id)
+		.first<SavedReply>();
+};
+
+export const insertSavedReply = async (
+	db: D1Database,
+	input: {
+		owner_id: string;
+		title: string;
+		body_md: string;
+		scope: SavedReplyScope;
+	},
+): Promise<SavedReply> => {
+	const id = ulid();
+	const now = Date.now();
+	await db
+		.prepare(
+			`INSERT INTO saved_replies
+			   (id, owner_id, title, body_md, scope, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		)
+		.bind(id, input.owner_id, input.title, input.body_md, input.scope, now, now)
+		.run();
+	return {
+		id,
+		owner_id: input.owner_id,
+		title: input.title,
+		body_md: input.body_md,
+		scope: input.scope,
+		created_at: now,
+		updated_at: now,
+	};
+};
+
+export const updateSavedReply = async (
+	db: D1Database,
+	id: string,
+	owner_id: string,
+	patch: { title: string; body_md: string; scope: SavedReplyScope },
+): Promise<boolean> => {
+	const now = Date.now();
+	const result = await db
+		.prepare(
+			`UPDATE saved_replies
+			    SET title = ?, body_md = ?, scope = ?, updated_at = ?
+			  WHERE id = ? AND owner_id = ?`,
+		)
+		.bind(patch.title, patch.body_md, patch.scope, now, id, owner_id)
+		.run();
+	return (result.meta?.changes ?? 0) > 0;
+};
+
+export const deleteSavedReply = async (
+	db: D1Database,
+	id: string,
+	owner_id: string,
+): Promise<boolean> => {
+	const result = await db
+		.prepare(`DELETE FROM saved_replies WHERE id = ? AND owner_id = ?`)
+		.bind(id, owner_id)
+		.run();
+	return (result.meta?.changes ?? 0) > 0;
 };
