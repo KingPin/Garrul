@@ -18,16 +18,21 @@ import {
 describe("signWebhookBody", () => {
 	it("produces a deterministic hex signature for a fixed (secret, ts, body)", async () => {
 		// Vector computed independently via openssl:
-		//   echo -n '1700000000000.{"hello":"world"}' \
+		//   printf '%s' '1700000000000.{"hello":"world"}' \
 		//     | openssl dgst -sha256 -hmac 'whsec_test'
+		// Pinning the literal digest is the load-bearing assertion: a silent
+		// change to the encoder, key import, HMAC variant, or hex encoder
+		// fails this test even if output stays deterministic and hex-shaped.
+		const EXPECTED_SIG =
+			"195306fc6e208b472595aee6784b376a8e70d774a8dc37119a209093c6923ee5";
 		const out = await signWebhookBody(
 			"whsec_test",
 			'{"hello":"world"}',
 			1_700_000_000_000,
 		);
 		expect(out.ts).toBe(1_700_000_000_000);
-		expect(out.signature).toMatch(/^[0-9a-f]{64}$/);
-		expect(out.header).toBe(`t=1700000000000,v1=${out.signature}`);
+		expect(out.signature).toBe(EXPECTED_SIG);
+		expect(out.header).toBe(`t=1700000000000,v1=${EXPECTED_SIG}`);
 		// Reproducing the signature with the same inputs must produce the
 		// identical hex — guards against any non-determinism creeping into
 		// the encoder/key path.
