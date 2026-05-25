@@ -53,6 +53,7 @@ import {
 } from "../db/queries";
 import { log } from "./log";
 import { checkOutboundUrl } from "./url-safety";
+import { renderDiscordBody, renderSlackBody } from "./webhook-adapters";
 import { signWebhookBody } from "./webhook-sig";
 
 export type WebhookEvent =
@@ -97,14 +98,13 @@ const AUTO_DISABLE_THRESHOLD = 10;
 const renderGenericBody = (payload: WebhookPayload): string =>
 	JSON.stringify(payload);
 
-const renderBody = (
+const renderBody = async (
+	db: D1Database,
 	adapter: WebhookAdapter,
 	payload: WebhookPayload,
-): string => {
-	// slack/discord adapters land in Feature #3. Until then they fall
-	// through to the generic shape so existing endpoints with adapter=
-	// 'slack' (set ahead of the next release) don't 500.
-	if (adapter === "generic") return renderGenericBody(payload);
+): Promise<string> => {
+	if (adapter === "slack") return renderSlackBody(db, payload);
+	if (adapter === "discord") return renderDiscordBody(db, payload);
 	return renderGenericBody(payload);
 };
 
@@ -178,7 +178,7 @@ const dispatchToEndpoint = async (
 	payload: WebhookPayload,
 ): Promise<void> => {
 	if (!matchesEventFilter(endpoint, payload.event)) return;
-	const body = renderBody(endpoint.adapter, payload);
+	const body = await renderBody(env.DB, endpoint.adapter, payload);
 	const result = await postOnce(endpoint, body, isDevEnv(env));
 	if (result.ok) {
 		if (endpoint.id !== "_env" && endpoint.fail_count > 0) {
