@@ -1800,3 +1800,346 @@ export const adminRotateSubscriptionConfirmToken = async (
 		.bind(new_token, id)
 		.run();
 };
+
+// -----------------------------------------------------------------------------
+// Webhook endpoints + deliveries (migration 0006).
+// -----------------------------------------------------------------------------
+
+export type WebhookAdapter = "generic" | "slack" | "discord";
+
+export const isWebhookAdapter = (v: unknown): v is WebhookAdapter =>
+	v === "generic" || v === "slack" || v === "discord";
+
+export type WebhookEndpoint = {
+	id: string;
+	url: string;
+	secret: string | null;
+	events: string[] | null; // null = all events
+	adapter: WebhookAdapter;
+	enabled: boolean;
+	fail_count: number;
+	disabled_at: number | null;
+	created_at: number;
+	updated_at: number;
+};
+
+type WebhookEndpointRow = {
+	id: string;
+	url: string;
+	secret: string | null;
+	events: string | null;
+	adapter: string;
+	enabled: number;
+	fail_count: number;
+	disabled_at: number | null;
+	created_at: number;
+	updated_at: number;
+};
+
+const toWebhookEndpoint = (row: WebhookEndpointRow): WebhookEndpoint => ({
+	id: row.id,
+	url: row.url,
+	secret: row.secret,
+	events:
+		row.events == null || row.events === ""
+			? null
+			: row.events
+					.split(",")
+					.map((s) => s.trim())
+					.filter(Boolean),
+	adapter: isWebhookAdapter(row.adapter) ? row.adapter : "generic",
+	enabled: row.enabled === 1,
+	fail_count: row.fail_count,
+	disabled_at: row.disabled_at,
+	created_at: row.created_at,
+	updated_at: row.updated_at,
+});
+
+export const listWebhookEndpoints = async (
+	db: D1Database,
+): Promise<WebhookEndpoint[]> => {
+	const rs = await db
+		.prepare(
+			`SELECT id, url, secret, events, adapter, enabled, fail_count,
+			        disabled_at, created_at, updated_at
+			   FROM webhook_endpoints
+			  ORDER BY created_at ASC`,
+		)
+		.all<WebhookEndpointRow>();
+	return (rs.results ?? []).map(toWebhookEndpoint);
+};
+
+export const listEnabledWebhookEndpoints = async (
+	db: D1Database,
+): Promise<WebhookEndpoint[]> => {
+	const rs = await db
+		.prepare(
+			`SELECT id, url, secret, events, adapter, enabled, fail_count,
+			        disabled_at, created_at, updated_at
+			   FROM webhook_endpoints
+			  WHERE enabled = 1
+			  ORDER BY created_at ASC`,
+		)
+		.all<WebhookEndpointRow>();
+	return (rs.results ?? []).map(toWebhookEndpoint);
+};
+
+export const getWebhookEndpoint = async (
+	db: D1Database,
+	id: string,
+): Promise<WebhookEndpoint | null> => {
+	const row = await db
+		.prepare(
+			`SELECT id, url, secret, events, adapter, enabled, fail_count,
+			        disabled_at, created_at, updated_at
+			   FROM webhook_endpoints WHERE id = ?`,
+		)
+		.bind(id)
+		.first<WebhookEndpointRow>();
+	return row ? toWebhookEndpoint(row) : null;
+};
+
+export type WebhookEndpointInput = {
+	url: string;
+	secret: string | null;
+	events: string[] | null;
+	adapter: WebhookAdapter;
+	enabled: boolean;
+};
+
+const serializeEvents = (events: string[] | null): string | null =>
+	events == null || events.length === 0 ? null : events.join(",");
+
+export const createWebhookEndpoint = async (
+	db: D1Database,
+	input: WebhookEndpointInput,
+): Promise<WebhookEndpoint> => {
+	const id = ulid();
+	const now = Date.now();
+	await db
+		.prepare(
+			`INSERT INTO webhook_endpoints
+			   (id, url, secret, events, adapter, enabled, fail_count,
+			    disabled_at, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?, 0, NULL, ?, ?)`,
+		)
+		.bind(
+			id,
+			input.url,
+			input.secret,
+			serializeEvents(input.events),
+			input.adapter,
+			input.enabled ? 1 : 0,
+			now,
+			now,
+		)
+		.run();
+	const created = await getWebhookEndpoint(db, id);
+	if (!created) throw new Error("webhook endpoint vanished after insert");
+	return created;
+};
+
+export const updateWebhookEndpoint = async (
+	db: D1Database,
+	id: string,
+	input: Partial<WebhookEndpointInput>,
+): Promise<void> => {
+	// Build the SET clause dynamically so callers can patch one field
+	// (e.g. just enabled, just secret) without overwriting siblings.
+	const sets: string[] = ["updated_at = ?"];
+	const values: (string | number | null)[] = [Date.now()];
+	if (input.url !== undefined) {
+		sets.push("url = ?");
+		values.push(input.url);
+	}
+	if (input.secret !== undefined) {
+		sets.push("secret = ?");
+		values.push(input.secret);
+	}
+	if (input.events !== undefined) {
+		sets.push("events = ?");
+		values.push(serializeEvents(input.events));
+	}
+	if (input.adapter !== undefined) {
+		sets.push("adapter = ?");
+		values.push(input.adapter);
+	}
+	if (input.enabled !== undefined) {
+		sets.push("enabled = ?");
+		values.push(input.enabled ? 1 : 0);
+		// Re-enabling clears the auto-disable marker + counter so the next
+		// failure cycle starts fresh, not from wherever it was paused.
+		if (input.enabled) {
+			sets.push("disabled_at = NULL");
+			sets.push("fail_count = 0");
+		}
+	}
+	values.push(id);
+	await db
+		.prepare(`UPDATE webhook_endpoints SET ${sets.join(", ")} WHERE id = ?`)
+		.bind(...values)
+		.run();
+};
+
+export const deleteWebhookEndpoint = async (
+	db: D1Database,
+	id: string,
+): Promise<void> => {
+	// ON DELETE CASCADE on webhook_deliveries.endpoint_id wipes the queue.
+	await db
+		.prepare(`DELETE FROM webhook_endpoints WHERE id = ?`)
+		.bind(id)
+		.run();
+};
+
+export const incrementWebhookFailCount = async (
+	db: D1Database,
+	id: string,
+	autoDisableAt: number | null,
+): Promise<void> => {
+	await db
+		.prepare(
+			`UPDATE webhook_endpoints
+			    SET fail_count = fail_count + 1,
+			        disabled_at = COALESCE(disabled_at, ?),
+			        enabled = CASE WHEN ? IS NULL THEN enabled ELSE 0 END,
+			        updated_at = ?
+			  WHERE id = ?`,
+		)
+		.bind(autoDisableAt, autoDisableAt, Date.now(), id)
+		.run();
+};
+
+export const resetWebhookFailCount = async (
+	db: D1Database,
+	id: string,
+): Promise<void> => {
+	await db
+		.prepare(
+			`UPDATE webhook_endpoints
+			    SET fail_count = 0, disabled_at = NULL, updated_at = ?
+			  WHERE id = ?`,
+		)
+		.bind(Date.now(), id)
+		.run();
+};
+
+export type WebhookDeliveryStatus = "pending" | "delivered" | "giveup";
+
+export type WebhookDelivery = {
+	id: string;
+	endpoint_id: string;
+	event: string;
+	payload: string;
+	status: WebhookDeliveryStatus;
+	attempts: number;
+	last_error: string | null;
+	next_attempt_at: number;
+	created_at: number;
+	delivered_at: number | null;
+};
+
+type WebhookDeliveryRow = Omit<WebhookDelivery, "status"> & { status: string };
+
+const toWebhookDelivery = (row: WebhookDeliveryRow): WebhookDelivery => {
+	const status: WebhookDeliveryStatus =
+		row.status === "delivered" || row.status === "giveup"
+			? row.status
+			: "pending";
+	return { ...row, status };
+};
+
+export const enqueueWebhookDelivery = async (
+	db: D1Database,
+	endpoint_id: string,
+	event: string,
+	payload: string,
+	next_attempt_at: number,
+): Promise<string> => {
+	const id = ulid();
+	await db
+		.prepare(
+			`INSERT INTO webhook_deliveries
+			   (id, endpoint_id, event, payload, status, attempts,
+			    last_error, next_attempt_at, created_at, delivered_at)
+			 VALUES (?, ?, ?, ?, 'pending', 0, NULL, ?, ?, NULL)`,
+		)
+		.bind(id, endpoint_id, event, payload, next_attempt_at, Date.now())
+		.run();
+	return id;
+};
+
+export const listPendingWebhookDeliveries = async (
+	db: D1Database,
+	now: number,
+	limit: number,
+): Promise<WebhookDelivery[]> => {
+	const rs = await db
+		.prepare(
+			`SELECT id, endpoint_id, event, payload, status, attempts,
+			        last_error, next_attempt_at, created_at, delivered_at
+			   FROM webhook_deliveries
+			  WHERE status = 'pending' AND next_attempt_at <= ?
+			  ORDER BY next_attempt_at ASC
+			  LIMIT ?`,
+		)
+		.bind(now, limit)
+		.all<WebhookDeliveryRow>();
+	return (rs.results ?? []).map(toWebhookDelivery);
+};
+
+export const markWebhookDelivered = async (
+	db: D1Database,
+	id: string,
+): Promise<void> => {
+	await db
+		.prepare(
+			`UPDATE webhook_deliveries
+			    SET status = 'delivered',
+			        attempts = attempts + 1,
+			        delivered_at = ?,
+			        last_error = NULL
+			  WHERE id = ?`,
+		)
+		.bind(Date.now(), id)
+		.run();
+};
+
+export const markWebhookFailed = async (
+	db: D1Database,
+	id: string,
+	next_attempt_at: number | null, // null → giveup
+	last_error: string,
+): Promise<void> => {
+	const status = next_attempt_at == null ? "giveup" : "pending";
+	const nextTs = next_attempt_at ?? 0;
+	await db
+		.prepare(
+			`UPDATE webhook_deliveries
+			    SET status = ?,
+			        attempts = attempts + 1,
+			        last_error = ?,
+			        next_attempt_at = ?
+			  WHERE id = ?`,
+		)
+		.bind(status, last_error, nextTs, id)
+		.run();
+};
+
+export const pruneWebhookDeliveries = async (
+	db: D1Database,
+	olderThan: number,
+): Promise<number> => {
+	// Keep the deliveries table from growing unbounded — delivered + giveup
+	// rows older than the threshold are removed. Pending rows are always
+	// kept so a long backoff schedule can't be silently dropped.
+	const rs = await db
+		.prepare(
+			`DELETE FROM webhook_deliveries
+			  WHERE status IN ('delivered', 'giveup')
+			    AND created_at < ?`,
+		)
+		.bind(olderThan)
+		.run();
+	return (rs.meta as { changes?: number }).changes ?? 0;
+};
