@@ -80,10 +80,18 @@ const escapeSlackMentions = (s: string): string =>
 		.replace(/<#([A-Z0-9]+)>/g, "<#​$1>");
 
 // Slack body text needs &<> escaped per Slack's API docs.
+//
+// Order matters: mention-neutralization MUST run before HTML escaping.
+// Slack decodes &amp;/&lt;/&gt; before parsing mentions, so if we
+// HTML-escape first, `<!channel>` becomes `&lt;!channel&gt;`, the
+// mention regex finds nothing — and Slack happily decodes and pings
+// the channel. Inserting the ZWSP into the raw form means the
+// neutralizer survives the round trip.
 const escapeSlackText = (s: string): string =>
-	escapeSlackMentions(
-		s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"),
-	);
+	escapeSlackMentions(s)
+		.replace(/&/g, "&amp;")
+		.replace(/</g, "&lt;")
+		.replace(/>/g, "&gt;");
 
 // Discord mentions: @everyone, @here, <@id>, <@!id>, <@&roleId>.
 // Inserting a zero-width space breaks the trigger while keeping the
