@@ -13,6 +13,7 @@ import { counts } from "./routes/api.counts";
 import { permalink } from "./routes/permalink";
 import { subscriptions } from "./routes/api.subscriptions";
 import { runDigest } from "./lib/digest";
+import { runWebhookRetries } from "./lib/webhook";
 import { log, requestLogger } from "./lib/log";
 import { corsAndCsrf } from "./lib/cors";
 import { sessionMiddleware } from "./lib/session";
@@ -168,6 +169,14 @@ export default {
 		env: Bindings,
 		ctx: ExecutionContext,
 	): Promise<void> => {
+		// Two independent passes per cron tick. waitUntil for both so a
+		// slow digest can't starve the webhook retry queue (and vice
+		// versa) — they each own their own wallclock budget.
 		ctx.waitUntil(runDigest(env));
+		ctx.waitUntil(
+			runWebhookRetries(env).catch((err) => {
+				log.error("scheduled.webhook_retries", { error: String(err) });
+			}),
+		);
 	},
 };
