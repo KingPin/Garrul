@@ -64,6 +64,19 @@ const authorCell = (c: AdminComment): string => {
 </a>`;
 };
 
+// Net vote score with up/down split. We render the net first (the value
+// brigading mitigation cares about) and a muted sub-line with the raw
+// counts so a mod scanning the queue can spot e.g. 50↑/49↓ noise.
+const scoreCell = (c: AdminComment): string => {
+	const up = c.score_up ?? 0;
+	const down = c.score_down ?? 0;
+	const net = up - down;
+	const cls = net > 0 ? "score-pos" : net < 0 ? "score-neg" : "muted";
+	return `
+<span class="score ${cls}">${net > 0 ? "+" : ""}${net}</span>
+<div class="muted" style="font-size:0.75rem">${up}↑ ${down}↓</div>`;
+};
+
 // Embed values as JSON-stringified, HTML-escaped literals so the resulting
 // Alpine expression is well-formed regardless of the underlying string
 // content (defense in depth: ULIDs are safe today, but the typing is just
@@ -142,6 +155,7 @@ export const renderQueue = (
   <td class="bulk-cell"><input type="checkbox" :value="${jsLiteral(c.id)}" x-model="selected" :disabled="busy"></td>
   <td><span class="pill ${c.status}">${c.status}</span></td>
   <td>${authorCell(c)}</td>
+  <td class="score-cell" title="up / down">${scoreCell(c)}</td>
   <td>
     <div class="muted">${new Date(c.created_at).toISOString().slice(0, 16).replace("T", " ")}</div>
     <div><code>${escapeHtml(c.post_slug)}</code></div>
@@ -155,7 +169,7 @@ export const renderQueue = (
 </tr>`,
 				)
 				.join("")
-		: `<tr><td colspan="6" class="muted">No comments match.</td></tr>`;
+		: `<tr><td colspan="7" class="muted">No comments match.</td></tr>`;
 
 	const allIds = rows.map((r) => r.id);
 
@@ -212,7 +226,7 @@ ${filterBar}
   <table>
     <thead><tr>
       <th class="bulk-cell"><input type="checkbox" @change="toggleAll($event)" :checked="selected.length > 0 && selected.length === allIds.length"></th>
-      <th>Status</th><th>Author</th><th>Meta</th><th>Body</th><th>Actions</th>
+      <th>Status</th><th>Author</th><th title="Vote score">Score</th><th>Meta</th><th>Body</th><th>Actions</th>
     </tr></thead>
     <tbody>${rowsHtml}</tbody>
   </table>

@@ -98,6 +98,10 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .muted { color: var(--muted); }
 .pager { display: flex; justify-content: space-between; margin-top: 1rem; }
 .bulk-cell { width: 32px; }
+.score-cell { width: 70px; text-align: center; font-variant-numeric: tabular-nums; }
+.score { font-weight: 600; }
+.score-pos { color: #15803d; }
+.score-neg { color: #b91c1c; }
 .bulk-bar { position: sticky; bottom: 0; display: flex; align-items: center;
             gap: 0.5rem; padding: 0.75rem 1rem; background: var(--panel);
             border-top: 1px solid var(--border); margin: 1rem -1rem -1rem;
