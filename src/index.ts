@@ -3,6 +3,7 @@ import { health } from "./routes/health";
 import { comments } from "./routes/api.comments";
 import { config } from "./routes/api.config";
 import { reactions } from "./routes/api.reactions";
+import { votes } from "./routes/api.votes";
 import { auth } from "./routes/auth";
 import { embed } from "./routes/embed";
 import { agents } from "./routes/agents";
@@ -67,6 +68,11 @@ export type Bindings = {
 	//   - Account.Workers KV Storage: Read
 	CF_API_TOKEN?: string;
 	CF_ACCOUNT_ID?: string;
+	// Authenticated voting. Both default to enabled. Set to "0" or "false"
+	// to disable. Disabling downvotes is a brigading-mitigation switch the
+	// operator can flip without redeploy.
+	VOTING_ENABLED?: string;
+	DOWNVOTES_ENABLED?: string;
 };
 
 const app = new Hono<{ Bindings: Bindings }>();
@@ -142,6 +148,7 @@ app.use("/api/*", sessionMiddleware());
 app.route("/api/v1/health", health);
 app.route("/api/v1/comments", comments);
 app.route("/api/v1/reactions", reactions);
+app.route("/api/v1/votes", votes);
 app.route("/api/v1/config", config);
 app.route("/api/v1/counts", counts);
 app.route("/api/v1/subscribe", subscriptions);
