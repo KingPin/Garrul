@@ -695,7 +695,7 @@ admin.post("/api/users/:id", async (c) => {
 	return c.json({ ok: true, id, banned: body.banned });
 });
 
-const roleAuditAction = (
+export const roleAuditAction = (
 	from: UserRole,
 	to: UserRole,
 ): AdminAction | null => {
