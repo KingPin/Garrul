@@ -109,6 +109,22 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
             border-radius: 0 0 8px 8px; }
 .bulk-bar span:first-child { font-weight: 600; margin-right: auto; }
 [x-cloak] { display: none !important; }
+.reply-modal { position: fixed; inset: 0; background: rgba(0,0,0,0.55);
+               display: flex; align-items: flex-start; justify-content: center;
+               padding-top: 6vh; z-index: 1100; }
+.reply-modal-inner { background: var(--panel); border: 1px solid var(--border);
+                     border-radius: 8px; padding: 1.25rem; width: min(560px, 92vw);
+                     max-height: 85vh; overflow: auto; box-shadow: 0 12px 32px rgba(0,0,0,0.45); }
+.reply-list { list-style: none; padding: 0; margin: 0 0 0.75rem; max-height: 30vh;
+              overflow: auto; border: 1px solid var(--border); border-radius: 6px; }
+.reply-list li { border-bottom: 1px solid var(--border); }
+.reply-list li:last-child { border-bottom: none; }
+.reply-pick { display: flex; justify-content: space-between; gap: 0.75rem;
+              width: 100%; padding: 0.5rem 0.75rem; background: transparent;
+              border: none; color: var(--fg); text-align: left; cursor: pointer; }
+.reply-pick:hover { background: var(--bg); }
+.reply-pick.active { background: var(--accent); color: var(--bg); }
+.reply-pick.active .muted { color: var(--bg); opacity: 0.85; }
 .comment-card { border: 1px solid var(--border); border-radius: 6px;
                 padding: 0.75rem; margin: 0.5rem 0; }
 .comment-card-head { display: flex; justify-content: space-between;
