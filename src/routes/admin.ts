@@ -52,10 +52,12 @@ import {
 import { fireWebhook, type WebhookEvent } from "../lib/webhook";
 import {
 	peekCachedLatestVersion,
+	peekCachedRecentReleases,
 	versionCheckMiddleware,
 } from "../lib/version-check";
 import { accessDeniedHtml, layout } from "../admin-ui/layout";
 import { ADMIN_CSP } from "../admin-ui/styles";
+import { renderAbout } from "../admin-ui/pages/about";
 import { renderDashboard } from "../admin-ui/pages/dashboard";
 import { renderAudit, type AuditFilters } from "../admin-ui/pages/audit";
 import { renderCommentDetail } from "../admin-ui/pages/comment-detail";
@@ -496,6 +498,16 @@ admin.get("/settings", async (c) => {
 	if (user instanceof Response) return user;
 	const updateInfo = await peekCachedLatestVersion(c.env);
 	return c.html(layout("Settings", renderSettings(c.env), user, updateInfo));
+});
+
+admin.get("/about", async (c) => {
+	const user = await requireAdmin(c);
+	if (user instanceof Response) return user;
+	const [updateInfo, releases] = await Promise.all([
+		peekCachedLatestVersion(c.env),
+		peekCachedRecentReleases(c.env),
+	]);
+	return c.html(layout("About", renderAbout(releases), user, updateInfo));
 });
 
 type CommentAction = "approve" | "spam" | "delete" | "restore";

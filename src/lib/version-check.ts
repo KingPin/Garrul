@@ -15,6 +15,7 @@
  */
 import type { MiddlewareHandler } from "hono";
 import { CURRENT_VERSION, REPO_OWNER, REPO_NAME } from "./version.gen";
+import { renderMarkdown } from "./markdown";
 import { log } from "./log";
 
 export type UpdateInfo = {
@@ -24,8 +25,20 @@ export type UpdateInfo = {
 	url: string;
 };
 
+export type ReleaseSummary = {
+	tag: string;
+	name: string;
+	url: string;
+	publishedAt: string;
+	bodyHtml: string;
+};
+
 type CacheEntry =
 	| { kind: "ok"; latest: string; url: string; fetchedAt: number }
+	| { kind: "null"; fetchedAt: number };
+
+type ReleasesCacheEntry =
+	| { kind: "ok"; releases: ReleaseSummary[]; fetchedAt: number }
 	| { kind: "null"; fetchedAt: number };
 
 type Env = {
@@ -34,6 +47,8 @@ type Env = {
 };
 
 const CACHE_KEY = "meta:latest-release";
+const RELEASES_CACHE_KEY = "meta:recent-releases";
+const RECENT_RELEASES_LIMIT = 5;
 const OK_TTL_SEC = 86_400; // 24h
 const NULL_TTL_SEC = 3_600; // 1h on failure, so we don't hammer GitHub
 
@@ -191,19 +206,146 @@ export const peekCachedLatestVersion = async (
 	};
 };
 
+const fetchRecentReleasesFromGitHub = async (
+	env: Env,
+): Promise<ReleaseSummary[] | null> => {
+	const headers: Record<string, string> = {
+		Accept: "application/vnd.github+json",
+		"User-Agent": "garrul-version-check",
+	};
+	if (env.GITHUB_TOKEN) {
+		headers.Authorization = `Bearer ${env.GITHUB_TOKEN}`;
+	}
+	try {
+		const res = await fetch(
+			`https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases?per_page=${RECENT_RELEASES_LIMIT}`,
+			{ headers },
+		);
+		if (!res.ok) {
+			log.warn("releases_fetch.failed", {
+				status: res.status,
+				owner: REPO_OWNER,
+				repo: REPO_NAME,
+			});
+			return null;
+		}
+		const body: unknown = await res.json();
+		if (!Array.isArray(body)) {
+			log.warn("releases_fetch.malformed");
+			return null;
+		}
+		const out: ReleaseSummary[] = [];
+		for (const item of body) {
+			if (typeof item !== "object" || item === null) continue;
+			const r = item as {
+				tag_name?: unknown;
+				name?: unknown;
+				html_url?: unknown;
+				published_at?: unknown;
+				body?: unknown;
+				draft?: unknown;
+			};
+			if (r.draft === true) continue;
+			if (typeof r.tag_name !== "string") continue;
+			const tag = r.tag_name;
+			out.push({
+				tag,
+				name: typeof r.name === "string" && r.name ? r.name : tag,
+				url:
+					typeof r.html_url === "string"
+						? r.html_url
+						: `https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/tag/${tag}`,
+				publishedAt:
+					typeof r.published_at === "string" ? r.published_at : "",
+				bodyHtml: renderMarkdown(typeof r.body === "string" ? r.body : ""),
+			});
+		}
+		return out;
+	} catch (err) {
+		log.warn("releases_fetch.failed", { error: (err as Error).message });
+		return null;
+	}
+};
+
+const readReleasesCache = async (
+	env: Env,
+): Promise<ReleasesCacheEntry | null> => {
+	const raw = await env.TREE_CACHE.get(RELEASES_CACHE_KEY);
+	if (!raw) return null;
+	try {
+		const parsed: unknown = JSON.parse(raw);
+		if (
+			typeof parsed === "object" &&
+			parsed !== null &&
+			typeof (parsed as { kind?: unknown }).kind === "string"
+		) {
+			return parsed as ReleasesCacheEntry;
+		}
+		return null;
+	} catch {
+		return null;
+	}
+};
+
+const writeReleasesCache = async (
+	env: Env,
+	entry: ReleasesCacheEntry,
+): Promise<void> => {
+	const ttl = entry.kind === "ok" ? OK_TTL_SEC : NULL_TTL_SEC;
+	await env.TREE_CACHE.put(RELEASES_CACHE_KEY, JSON.stringify(entry), {
+		expirationTtl: ttl,
+	});
+};
+
+export const getCachedRecentReleases = async (
+	env: Env,
+): Promise<ReleaseSummary[] | null> => {
+	const existing = await readReleasesCache(env);
+	if (existing && existing.kind === "ok") return existing.releases;
+	if (existing && existing.kind === "null") return null;
+
+	const fresh = await fetchRecentReleasesFromGitHub(env);
+	if (!fresh) {
+		await writeReleasesCache(env, { kind: "null", fetchedAt: Date.now() });
+		return null;
+	}
+	await writeReleasesCache(env, {
+		kind: "ok",
+		releases: fresh,
+		fetchedAt: Date.now(),
+	});
+	return fresh;
+};
+
+/**
+ * Cache-only read for the admin About page. Never triggers a GitHub fetch;
+ * the middleware refreshes asynchronously.
+ */
+export const peekCachedRecentReleases = async (
+	env: Env,
+): Promise<ReleaseSummary[] | null> => {
+	const existing = await readReleasesCache(env);
+	if (!existing || existing.kind !== "ok") return null;
+	return existing.releases;
+};
+
 /**
  * Middleware that triggers a (cache-aware) refresh of the latest-release
- * info on admin requests, then proceeds. The refresh is dispatched via
- * `executionCtx.waitUntil` so we never block the request on a GitHub
- * fetch — the banner reads `peekCachedLatestVersion` and naturally
- * surfaces the new info on the *next* admin hit. Wired in routes/admin.ts.
+ * info and the recent-releases list on admin requests, then proceeds. The
+ * refresh is dispatched via `executionCtx.waitUntil` so we never block the
+ * request on a GitHub fetch — the banner reads `peekCachedLatestVersion`
+ * and the About page reads `peekCachedRecentReleases`; both surface fresh
+ * info on the *next* admin hit. Wired in routes/admin.ts.
  */
 export const versionCheckMiddleware = (): MiddlewareHandler<{
 	Bindings: Env;
 }> => {
 	return async (c, next) => {
 		const refresh = async () => {
-			const info = await getCachedLatestVersion(c.env);
+			const [info] = await Promise.all([
+				getCachedLatestVersion(c.env),
+				getCachedRecentReleases(c.env),
+			]);
 			if (info && info.behind) {
 				log.warn("version_check.behind", {
 					current: info.current,

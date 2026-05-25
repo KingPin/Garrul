@@ -82,6 +82,7 @@ ${renderUpdateBanner(updateInfo)}
     <a href="/admin/subscriptions">Subscriptions</a>
     <a href="/admin/operator">Operator</a>
     <a href="/admin/settings">Settings</a>
+    <a href="/admin/about">About</a>
   </nav>
   <span class="me">${escapeHtml(currentUser.name)} <span class="pill admin">admin</span> <button class="help-btn" @click="helpOpen = !helpOpen" aria-label="Keyboard shortcuts">?</button></span>
 </header>

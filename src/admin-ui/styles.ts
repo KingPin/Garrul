@@ -146,6 +146,20 @@ kbd { background: var(--bg); border: 1px solid var(--border);
 .banner.update code { background: rgba(0,0,0,0.25); color: inherit; }
 .banner.update button { background: transparent; color: inherit; border-color: #4a3a14; }
 .banner.update button:hover { border-color: #f7d77a; }
+.link-list { list-style: none; padding: 0; margin: 0.5rem 0; display: grid;
+             gap: 0.25rem; }
+.link-list li { padding: 0.15rem 0; }
+.release-card { border: 1px solid var(--border); border-radius: 6px;
+                padding: 0.75rem 1rem; margin: 0.75rem 0; }
+.release-card:last-child { margin-bottom: 0; }
+.release-head { margin: 0 0 0.25rem; font-size: 1rem;
+                display: flex; gap: 0.5rem; align-items: baseline;
+                flex-wrap: wrap; }
+.release-head a { font-family: ui-monospace, monospace; }
+.release-name { color: var(--muted); font-weight: 400; font-size: 0.9rem; }
+.release-body { font-size: 0.9rem; }
+.release-body p:first-child { margin-top: 0; }
+.release-body p:last-child { margin-bottom: 0; }
 @media (max-width: 720px) {
   header { flex-wrap: wrap; gap: 0.5rem; padding: 0.5rem 0.75rem; }
   header nav { flex-wrap: wrap; gap: 0.5rem 0.75rem; font-size: 0.9rem; }
