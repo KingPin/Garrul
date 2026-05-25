@@ -28,6 +28,7 @@ import {
 	getPost,
 	getUserVotesOnPost,
 	insertComment,
+	isUserRole,
 	listActiveSubscriptionsForPost,
 	listCommentsForPost,
 	listReactionsForPost,
@@ -76,15 +77,20 @@ type SessionVars = {
 // D1 stores booleans as 0/1 INTEGER; we widen to a row type for `.first<…>()`
 // and `.all<…>()` callsites that hit the users table directly, then convert
 // at the boundary. (db/queries.ts has its own copy for its internal use.)
-type UserRow = Omit<User, "is_admin" | "is_banned"> & {
+// `role` is widened to `string` because D1 returns the raw column value;
+// we re-narrow at the boundary via isUserRole, falling back to "user" so a
+// stale row with an unknown role can't crash the request.
+type UserRow = Omit<User, "is_admin" | "is_banned" | "role"> & {
 	is_admin: number;
 	is_banned: number;
+	role: string;
 };
 
 const rowToUser = (row: UserRow): User => ({
 	...row,
 	is_admin: row.is_admin === 1,
 	is_banned: row.is_banned === 1,
+	role: isUserRole(row.role) ? row.role : "user",
 });
 
 const comments = new Hono<{ Bindings: Bindings; Variables: SessionVars }>();
@@ -367,7 +373,7 @@ comments.post("/", async (c) => {
 		const u = await c.env.DB
 			.prepare(
 				`SELECT id, provider, provider_id, name, email, avatar_url,
-				        is_admin, is_banned, created_at
+				        is_admin, is_banned, role, created_at
 				 FROM users WHERE id = ?`,
 			)
 			.bind(session.user_id)
@@ -509,7 +515,7 @@ const loadAuthors = async (
 	const result = await db
 		.prepare(
 			`SELECT id, provider, provider_id, name, email, avatar_url,
-			        is_admin, is_banned, created_at
+			        is_admin, is_banned, role, created_at
 			 FROM users WHERE id IN (${placeholders})`,
 		)
 		.bind(...userIds)
@@ -680,7 +686,7 @@ comments.patch("/:id", async (c) => {
 	const authorRow = await c.env.DB
 		.prepare(
 			`SELECT id, provider, provider_id, name, email, avatar_url,
-			        is_admin, is_banned, created_at
+			        is_admin, is_banned, role, created_at
 			 FROM users WHERE id = ?`,
 		)
 		.bind(updated.user_id)
