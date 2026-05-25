@@ -38,6 +38,7 @@ import {
 	adminTimeline,
 	adminTopCommenters,
 	adminTopPosts,
+	countAdmins,
 	createWebhookEndpoint,
 	deleteWebhookEndpoint,
 	getComment,
@@ -1330,6 +1331,19 @@ admin.post("/api/users/:id/role", async (c) => {
 	if (!target) return c.json({ error: "not_found" }, 404);
 	const action = roleAuditAction(target.role, body.role);
 	if (!action) return c.json({ ok: true, id, role: target.role });
+	// Refuse a demotion that would leave the instance with zero admins.
+	// Self-change is already blocked above; this catches the parallel
+	// case where two admins simultaneously demote each other. The check
+	// is intentionally NOT a transaction with setUserRole — a true race
+	// here would require both requests to read count=2 before either
+	// writes, which is a narrow window and the worst case is a recovery
+	// via the DB CLI, not silent state corruption.
+	if (target.role === "admin" && body.role !== "admin") {
+		const admins = await countAdmins(c.env.DB);
+		if (admins <= 1) {
+			return c.json({ error: "last_admin" }, 400);
+		}
+	}
 	await setUserRole(c.env.DB, id, body.role);
 	await adminInsertAudit(c.env.DB, {
 		admin_id: user.id,

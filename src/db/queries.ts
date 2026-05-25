@@ -744,6 +744,17 @@ export const setUserRole = async (
 		.run();
 };
 
+// Used by the role-change endpoint to refuse a demotion that would leave
+// the instance with zero admins. Self-demotion is already blocked, so
+// this guards the parallel-demotion edge case (two admins each demoting
+// the other simultaneously).
+export const countAdmins = async (db: D1Database): Promise<number> => {
+	const row = await db
+		.prepare(`SELECT COUNT(*) AS n FROM users WHERE role = 'admin'`)
+		.first<{ n: number }>();
+	return row?.n ?? 0;
+};
+
 export type AdminStats = {
 	total_comments: number;
 	pending_comments: number;

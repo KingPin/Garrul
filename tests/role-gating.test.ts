@@ -16,6 +16,7 @@ import { roleAuditAction } from "../src/routes/admin";
 import { renderUserDetail } from "../src/admin-ui/pages/user-detail";
 import { renderUsers } from "../src/admin-ui/pages/users";
 import { layout } from "../src/admin-ui/layout";
+import { countAdmins } from "../src/db/queries";
 import type {
 	AdminUserDetail,
 	User,
@@ -181,5 +182,46 @@ describe("admin layout role-aware nav", () => {
 		const html = layout("test", "<p>x</p>", plain, null);
 		expect(html).not.toContain('pill admin">admin</span>');
 		expect(html).not.toContain('pill mod">mod</span>');
+	});
+});
+
+describe("countAdmins", () => {
+	it("counts users WHERE role = 'admin' (not is_admin)", async () => {
+		let captured: { sql: string; binds: unknown[] } | null = null;
+		const db = {
+			prepare(sql: string) {
+				return {
+					bind(...args: unknown[]) {
+						captured = { sql, binds: args };
+						return this;
+					},
+					async first() {
+						captured = captured ?? { sql, binds: [] };
+						return { n: 2 };
+					},
+				};
+			},
+		};
+		const n = await countAdmins(db as unknown as D1Database);
+		expect(n).toBe(2);
+		expect(captured).not.toBeNull();
+		expect(captured!.sql).toContain("FROM users WHERE role = 'admin'");
+	});
+
+	it("returns 0 when no row comes back (defensive default)", async () => {
+		const db = {
+			prepare(_sql: string) {
+				return {
+					bind() {
+						return this;
+					},
+					async first() {
+						return null;
+					},
+				};
+			},
+		};
+		const n = await countAdmins(db as unknown as D1Database);
+		expect(n).toBe(0);
 	});
 });
