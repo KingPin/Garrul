@@ -24,6 +24,11 @@ import {
 	updateSavedReply,
 } from "../src/db/queries";
 import { renderMarkdown } from "../src/lib/markdown";
+import {
+	SAVED_REPLY_BODY_MAX,
+	SAVED_REPLY_TITLE_MAX,
+	parseSavedReplyBody,
+} from "../src/routes/admin";
 
 type Captured = { sql: string; binds: unknown[] };
 
@@ -202,21 +207,82 @@ describe("saved reply body sanitization", () => {
 });
 
 // --------------------- input validation parser -----------------------------
-//
-// We import the parser through the admin route module's behavior rather
-// than re-exporting it. Instead, we lock the validation rules in a small
-// table-driven check on the renderMarkdown side + the route-level checks
-// are exercised in admin-render tests already (next file).
 
-describe("validation thresholds", () => {
-	it("title cap is 120 chars", () => {
-		// matches SAVED_REPLY_TITLE_MAX in src/routes/admin.ts — if you
-		// change one, change the other.
-		expect(120).toBe(120);
+describe("parseSavedReplyBody — title length bound", () => {
+	it("accepts a title at the cap", () => {
+		const r = parseSavedReplyBody({
+			title: "x".repeat(SAVED_REPLY_TITLE_MAX),
+			body_md: "ok",
+			scope: "private",
+		});
+		expect(r.ok).toBe(true);
 	});
 
-	it("body cap is 8000 chars", () => {
-		// matches SAVED_REPLY_BODY_MAX in src/routes/admin.ts
-		expect(8000).toBe(8000);
+	it("rejects a title one char over the cap with title_too_long", () => {
+		const r = parseSavedReplyBody({
+			title: "x".repeat(SAVED_REPLY_TITLE_MAX + 1),
+			body_md: "ok",
+			scope: "private",
+		});
+		expect(r.ok).toBe(false);
+		if (!r.ok) expect(r.error).toBe("title_too_long");
+	});
+});
+
+describe("parseSavedReplyBody — body length bound", () => {
+	it("accepts a body at the cap", () => {
+		const r = parseSavedReplyBody({
+			title: "t",
+			body_md: "x".repeat(SAVED_REPLY_BODY_MAX),
+			scope: "private",
+		});
+		expect(r.ok).toBe(true);
+	});
+
+	it("rejects a body one char over the cap with body_too_long", () => {
+		const r = parseSavedReplyBody({
+			title: "t",
+			body_md: "x".repeat(SAVED_REPLY_BODY_MAX + 1),
+			scope: "private",
+		});
+		expect(r.ok).toBe(false);
+		if (!r.ok) expect(r.error).toBe("body_too_long");
+	});
+});
+
+describe("parseSavedReplyBody — other rules", () => {
+	it("rejects a missing title with title_required", () => {
+		const r = parseSavedReplyBody({ title: "  ", body_md: "ok", scope: "private" });
+		expect(r.ok).toBe(false);
+		if (!r.ok) expect(r.error).toBe("title_required");
+	});
+
+	it("rejects a missing body with body_required", () => {
+		const r = parseSavedReplyBody({ title: "t", body_md: "  ", scope: "private" });
+		expect(r.ok).toBe(false);
+		if (!r.ok) expect(r.error).toBe("body_required");
+	});
+
+	it("rejects an unknown scope with scope_invalid", () => {
+		const r = parseSavedReplyBody({
+			title: "t",
+			body_md: "ok",
+			scope: "team",
+		});
+		expect(r.ok).toBe(false);
+		if (!r.ok) expect(r.error).toBe("scope_invalid");
+	});
+
+	it("trims the title but preserves body whitespace", () => {
+		const r = parseSavedReplyBody({
+			title: "  hello  ",
+			body_md: "  body  ",
+			scope: "shared",
+		});
+		expect(r.ok).toBe(true);
+		if (r.ok) {
+			expect(r.fields.title).toBe("hello");
+			expect(r.fields.body_md).toBe("  body  ");
+		}
 	});
 });

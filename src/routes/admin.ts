@@ -860,8 +860,10 @@ admin.delete("/api/webhooks/:id", async (c) => {
 //     mod has already vouched for the content). Body is the saved reply's
 //     markdown, optionally edited.
 
-const SAVED_REPLY_TITLE_MAX = 120;
-const SAVED_REPLY_BODY_MAX = 8000;
+// Exported so tests can assert the parser against the real values
+// instead of pinning literal numbers that would silently drift.
+export const SAVED_REPLY_TITLE_MAX = 120;
+export const SAVED_REPLY_BODY_MAX = 8000;
 
 type SavedReplyBody = {
 	title?: unknown;
@@ -875,7 +877,7 @@ type SavedReplyFields = {
 	scope: SavedReplyScope;
 };
 
-const parseSavedReplyBody = (
+export const parseSavedReplyBody = (
 	body: SavedReplyBody,
 ): { ok: true; fields: SavedReplyFields } | { ok: false; error: string } => {
 	if (typeof body.title !== "string" || body.title.trim().length === 0) {
