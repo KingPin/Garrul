@@ -138,7 +138,7 @@ export const renderWebhookForm = (data: WebhookFormData): string => {
 	const submitLabel = isNew ? "Create endpoint" : "Save changes";
 	return `
 <a href="/admin/webhooks" class="muted">← back to webhooks</a>
-<div class="card" x-data="{
+<div class="card" x-data="${escapeHtml(`{
   busy: false,
   error: ${JSON.stringify(data.error)},
   async submit(e) {
@@ -170,7 +170,7 @@ export const renderWebhookForm = (data: WebhookFormData): string => {
       this.busy = false;
     }
   }
-}">
+}`)}">
   <h3 style="margin-top:0">${heading}</h3>
   ${errorBlock}
   <p x-show="error" style="color:var(--bad)" x-text="error"></p>
