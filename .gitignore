@@ -19,6 +19,9 @@ src/lib/version.gen.ts
 .miniflare/
 wrangler.toml
 
+# D1 backups produced by scripts/db-export.sh — contain real user data
+garrul-backup-*.sql
+
 # Environment / secrets
 .env
 .env.*
