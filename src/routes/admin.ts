@@ -85,7 +85,14 @@ const wantsHtml = (c: Ctx): boolean => {
 	return accept.includes("text/html");
 };
 
-const requireAdmin = async (c: Ctx): Promise<User | Response> => {
+// Gate the admin-area pages and APIs. `level: "admin"` is the historical
+// behavior — only users with role='admin' (equivalently is_admin=1) pass.
+// `level: "mod"` is the new gate for moderation endpoints: role='mod' OR
+// role='admin'. Banned users never pass either gate.
+const requireRole = async (
+	c: Ctx,
+	level: "admin" | "mod",
+): Promise<User | Response> => {
 	const session = await readSession(c);
 	if (!session) {
 		if (wantsHtml(c)) {
@@ -97,10 +104,16 @@ const requireAdmin = async (c: Ctx): Promise<User | Response> => {
 		return c.json({ error: "not_authenticated" }, 401);
 	}
 	const user = await getUser(c.env.DB, session.user_id);
-	if (!user || !user.is_admin) {
+	const allowed =
+		!!user &&
+		!user.is_banned &&
+		(level === "mod"
+			? user.role === "mod" || user.role === "admin"
+			: user.role === "admin");
+	if (!allowed) {
 		if (wantsHtml(c)) {
 			return c.html(
-				accessDeniedHtml(403, "Your account is not an admin on this instance."),
+				accessDeniedHtml(403, "Your account does not have access to this area."),
 				403,
 			);
 		}
@@ -108,6 +121,11 @@ const requireAdmin = async (c: Ctx): Promise<User | Response> => {
 	}
 	return user;
 };
+
+const requireAdmin = (c: Ctx): Promise<User | Response> =>
+	requireRole(c, "admin");
+
+const requireMod = (c: Ctx): Promise<User | Response> => requireRole(c, "mod");
 
 admin.use("*", async (c, next) => {
 	c.header("content-security-policy", ADMIN_CSP);
@@ -132,7 +150,7 @@ admin.use("*", async (c, next) => {
 admin.use("*", versionCheckMiddleware());
 
 admin.get("/", async (c) => {
-	const user = await requireAdmin(c);
+	const user = await requireMod(c);
 	if (user instanceof Response) return user;
 	const db = c.env.DB;
 	const [stats, timeline, topPosts, topCommenters, oldestPending, spamRate, updateInfo] =
@@ -169,7 +187,7 @@ const parseDateMs = (raw: string | undefined): number | null => {
 };
 
 admin.get("/queue", async (c) => {
-	const user = await requireAdmin(c);
+	const user = await requireMod(c);
 	if (user instanceof Response) return user;
 	const statusParam = c.req.query("status") ?? "pending";
 	const status: CommentStatus | "all" =
@@ -245,7 +263,7 @@ admin.get("/queue", async (c) => {
 });
 
 admin.get("/comments/:id", async (c) => {
-	const user = await requireAdmin(c);
+	const user = await requireMod(c);
 	if (user instanceof Response) return user;
 	const id = c.req.param("id");
 	const detail = await adminGetCommentDetail(c.env.DB, id);
@@ -501,7 +519,7 @@ admin.get("/settings", async (c) => {
 });
 
 admin.get("/about", async (c) => {
-	const user = await requireAdmin(c);
+	const user = await requireMod(c);
 	if (user instanceof Response) return user;
 	const [updateInfo, releases] = await Promise.all([
 		peekCachedLatestVersion(c.env),
@@ -513,7 +531,7 @@ admin.get("/about", async (c) => {
 type CommentAction = "approve" | "spam" | "delete" | "restore";
 
 admin.post("/api/comments/:id", async (c) => {
-	const user = await requireAdmin(c);
+	const user = await requireMod(c);
 	if (user instanceof Response) return user;
 	const id = c.req.param("id");
 	const body = await c.req
@@ -573,7 +591,7 @@ admin.post("/api/comments/:id", async (c) => {
 const BULK_ACTION_LIMIT = 100;
 
 admin.post("/api/comments/bulk", async (c) => {
-	const user = await requireAdmin(c);
+	const user = await requireMod(c);
 	if (user instanceof Response) return user;
 	const body = await c.req
 		.json<{ ids?: unknown; action?: string }>()

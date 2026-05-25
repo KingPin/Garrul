@@ -319,7 +319,7 @@ auth.get("/me", async (c) => {
 	if (!session) return c.json({ user: null });
 	const u = await c.env.DB
 		.prepare(
-			`SELECT id, provider, name, email, avatar_url, is_admin
+			`SELECT id, provider, name, email, avatar_url, is_admin, role
 			 FROM users WHERE id = ?`,
 		)
 		.bind(session.user_id)
@@ -330,8 +330,11 @@ auth.get("/me", async (c) => {
 			email: string | null;
 			avatar_url: string | null;
 			is_admin: number;
+			role: string | null;
 		}>();
 	if (!u) return c.json({ user: null });
+	const role: "user" | "mod" | "admin" =
+		u.role === "mod" || u.role === "admin" ? u.role : "user";
 	return c.json({
 		user: {
 			id: u.id,
@@ -340,6 +343,7 @@ auth.get("/me", async (c) => {
 			email: u.email,
 			avatar_url: u.avatar_url,
 			is_admin: u.is_admin === 1,
+			role,
 		},
 	});
 });

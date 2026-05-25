@@ -67,6 +67,7 @@ th { color: var(--muted); font-weight: 500; font-size: 0.8rem; text-transform: u
 .pill.pending { color: var(--warn); border-color: var(--warn); }
 .pill.spam, .pill.deleted, .pill.banned { color: var(--bad); border-color: var(--bad); }
 .pill.admin { color: var(--accent); border-color: var(--accent); }
+.pill.mod { color: var(--warn); border-color: var(--warn); }
 button, .btn { background: var(--bg); color: var(--text); border: 1px solid var(--border);
                padding: 0.3rem 0.6rem; border-radius: 6px; cursor: pointer; font-size: 0.85rem; }
 button:hover { border-color: var(--accent); }
