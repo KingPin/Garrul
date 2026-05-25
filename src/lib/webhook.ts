@@ -1,30 +1,59 @@
 /**
- * Outbound webhook for comment events.
+ * Outbound webhook dispatch — multi-endpoint, optionally signed, with a
+ * D1-backed retry queue.
  *
- * Operators set WEBHOOK_URL to a private endpoint (Slack incoming webhook,
- * Discord, custom audit log, etc.) and receive a JSON POST whenever a
- * comment is created, edited, deleted, or moderated.
+ * Endpoints live in `webhook_endpoints` (see migration 0006). Each
+ * endpoint has:
+ *   - a target URL (validated by checkOutboundUrl on save),
+ *   - an optional HMAC secret (signWebhookBody → X-Garrul-Signature),
+ *   - an event filter (NULL/empty = all events),
+ *   - an adapter that shapes the body for the destination (generic |
+ *     slack | discord; slack/discord land in Feature #3).
  *
- * Behavior:
- *   - Best-effort. A failed POST is logged via src/lib/log.ts and the
- *     user request completes regardless.
- *   - Callers MUST pass `c.executionCtx` so we can attach the POST to
- *     `waitUntil` — without it, the runtime can cancel the in-flight
- *     fetch once the response settles and the webhook is silently lost.
- *   - HMAC signing is intentionally deferred (v2 backlog). Operators who
- *     need it should put a reverse-proxy in front that adds the sig.
+ * Dispatch flow:
+ *   1. fireWebhook(c, payload) returns immediately and runs the dispatch
+ *      under ctx.waitUntil. Callers don't await.
+ *   2. dispatch loads the enabled endpoint list, filters by event, and
+ *      attempts an immediate POST per endpoint.
+ *   3. If the POST fails (network error / non-2xx), a webhook_deliveries
+ *      row is queued with next_attempt_at = now + RETRY_SCHEDULE[0]. The
+ *      scheduled handler in src/index.ts picks up due rows and retries
+ *      them, re-signing with a fresh timestamp each time so the receiver's
+ *      replay-window check still passes hours later.
  *
- * Payload shape (stable v1 contract):
+ * Backward compatibility:
+ *   - Operators with WEBHOOK_URL set and no table rows still get
+ *     deliveries — the env URL is synthesized into an in-memory endpoint
+ *     (adapter=generic, secret=null, events=null=all). The env shim does
+ *     NOT participate in the retry queue (no row to reference) — that's
+ *     the operator's nudge to migrate to a real endpoint row if they
+ *     want retries.
+ *
+ * Payload contract (v1, stable):
  *   {
- *     event: "comment.posted" | "comment.edited" | "comment.deleted"
- *          | "comment.approved" | "comment.spam",
- *     comment_id: string,
- *     post_slug: string,
- *     user_id: string,
- *     ts: number          // ms epoch
+ *     event: WebhookEvent,
+ *     comment_id, post_slug, user_id: string,
+ *     ts: number   // ms epoch of the EVENT, not the signature
  *   }
+ *   Receivers verify with the recipe in docs/webhooks.md.
  */
+import {
+	enqueueWebhookDelivery,
+	getWebhookEndpoint,
+	incrementWebhookFailCount,
+	listEnabledWebhookEndpoints,
+	listPendingWebhookDeliveries,
+	markWebhookDelivered,
+	markWebhookFailed,
+	pruneWebhookDeliveries,
+	resetWebhookFailCount,
+	type WebhookAdapter,
+	type WebhookDelivery,
+	type WebhookEndpoint,
+} from "../db/queries";
 import { log } from "./log";
+import { checkOutboundUrl } from "./url-safety";
+import { signWebhookBody } from "./webhook-sig";
 
 export type WebhookEvent =
 	| "comment.posted"
@@ -41,59 +70,170 @@ export type WebhookPayload = {
 	ts: number;
 };
 
-type WebhookCtx = {
+type WebhookEnv = {
+	DB: D1Database;
 	WEBHOOK_URL?: string;
+	ENV?: string;
 };
 
 const TIMEOUT_MS = 5000;
 
-export const sendWebhook = async (
-	env: WebhookCtx,
+// Exponential backoff schedule (ms). Index 0 is "first retry after the
+// initial inline failure". After we've exhausted this list we mark the
+// delivery 'giveup' and bump the endpoint's fail_count.
+export const RETRY_SCHEDULE_MS: readonly number[] = [
+	60_000,           // +1 min
+	5 * 60_000,       // +5 min
+	30 * 60_000,      // +30 min
+	2 * 60 * 60_000,  // +2 hr
+	6 * 60 * 60_000,  // +6 hr
+] as const;
+
+// After this many consecutive failures the endpoint auto-disables. The
+// operator sees `disabled_at` on the admin page and can investigate +
+// re-enable.
+const AUTO_DISABLE_THRESHOLD = 10;
+
+const renderGenericBody = (payload: WebhookPayload): string =>
+	JSON.stringify(payload);
+
+const renderBody = (
+	adapter: WebhookAdapter,
 	payload: WebhookPayload,
-): Promise<void> => {
-	const url = env.WEBHOOK_URL;
-	if (!url) return;
-	if (!/^https?:\/\//i.test(url)) return;
+): string => {
+	// slack/discord adapters land in Feature #3. Until then they fall
+	// through to the generic shape so existing endpoints with adapter=
+	// 'slack' (set ahead of the next release) don't 500.
+	if (adapter === "generic") return renderGenericBody(payload);
+	return renderGenericBody(payload);
+};
+
+const matchesEventFilter = (
+	endpoint: WebhookEndpoint,
+	event: WebhookEvent,
+): boolean => endpoint.events == null || endpoint.events.includes(event);
+
+const buildSyntheticEnvEndpoint = (url: string): WebhookEndpoint => {
+	const now = Date.now();
+	return {
+		id: "_env",
+		url,
+		secret: null,
+		events: null,
+		adapter: "generic",
+		enabled: true,
+		fail_count: 0,
+		disabled_at: null,
+		created_at: now,
+		updated_at: now,
+	};
+};
+
+const buildHeaders = async (
+	endpoint: WebhookEndpoint,
+	body: string,
+): Promise<HeadersInit> => {
+	const headers: Record<string, string> = {
+		"content-type": "application/json",
+		"user-agent": "Garrul-Webhook/2.0",
+	};
+	if (endpoint.secret) {
+		const sig = await signWebhookBody(endpoint.secret, body);
+		headers["x-garrul-signature"] = sig.header;
+	}
+	return headers;
+};
+
+const postOnce = async (
+	endpoint: WebhookEndpoint,
+	body: string,
+	allowHttp: boolean,
+): Promise<{ ok: boolean; status: number; error?: string }> => {
+	const safe = checkOutboundUrl(endpoint.url, { allowHttp });
+	if (!safe.ok) return { ok: false, status: 0, error: `url:${safe.reason}` };
 
 	const controller = new AbortController();
 	const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
 	try {
-		const res = await fetch(url, {
+		const headers = await buildHeaders(endpoint, body);
+		const res = await fetch(endpoint.url, {
 			method: "POST",
-			headers: {
-				"content-type": "application/json",
-				"user-agent": "Garrul-Webhook/1.0",
-			},
-			body: JSON.stringify(payload),
+			headers,
+			body,
 			signal: controller.signal,
 		});
-		if (!res.ok) {
-			log.warn("webhook.non_ok", {
-				event: payload.event,
-				comment_id: payload.comment_id,
-				status: res.status,
-			});
-		}
+		return { ok: res.ok, status: res.status };
 	} catch (err) {
-		log.warn("webhook.failed", {
-			event: payload.event,
-			comment_id: payload.comment_id,
-			error: String(err),
-		});
+		return { ok: false, status: 0, error: String(err) };
 	} finally {
 		clearTimeout(timer);
 	}
 };
 
-/**
- * Fire-and-forget convenience. `executionCtx` is required: every HTTP
- * request handler in this worker already has `c.executionCtx`, and
- * without `waitUntil` the runtime can cancel the in-flight POST once
- * the response settles. If a caller genuinely has no context, log and
- * skip — better a missed webhook than a misleading "delivered" status.
- */
+const isDevEnv = (env: WebhookEnv): boolean => env.ENV === "dev";
+
+const dispatchToEndpoint = async (
+	env: WebhookEnv,
+	endpoint: WebhookEndpoint,
+	payload: WebhookPayload,
+): Promise<void> => {
+	if (!matchesEventFilter(endpoint, payload.event)) return;
+	const body = renderBody(endpoint.adapter, payload);
+	const result = await postOnce(endpoint, body, isDevEnv(env));
+	if (result.ok) {
+		if (endpoint.id !== "_env" && endpoint.fail_count > 0) {
+			await resetWebhookFailCount(env.DB, endpoint.id);
+		}
+		return;
+	}
+	const errorTag = result.error ?? `http_${result.status}`;
+	log.warn("webhook.failed", {
+		endpoint_id: endpoint.id,
+		event: payload.event,
+		comment_id: payload.comment_id,
+		status: result.status,
+		error: errorTag,
+	});
+	// Synthetic env endpoint has no row to queue against — legacy fire-
+	// and-forget semantics. Real endpoints get a delivery row for retry.
+	if (endpoint.id === "_env") return;
+	await enqueueWebhookDelivery(
+		env.DB,
+		endpoint.id,
+		payload.event,
+		body,
+		Date.now() + (RETRY_SCHEDULE_MS[0] ?? 60_000),
+	);
+};
+
+const loadEndpoints = async (env: WebhookEnv): Promise<WebhookEndpoint[]> => {
+	const rows = await listEnabledWebhookEndpoints(env.DB);
+	if (env.WEBHOOK_URL && rows.length === 0) {
+		// Legacy single-URL operator. Synthesize so they still get
+		// deliveries during the upgrade window; admin UI will flag it.
+		return [buildSyntheticEnvEndpoint(env.WEBHOOK_URL)];
+	}
+	return rows;
+};
+
+export const dispatchWebhook = async (
+	env: WebhookEnv,
+	payload: WebhookPayload,
+): Promise<void> => {
+	let endpoints: WebhookEndpoint[];
+	try {
+		endpoints = await loadEndpoints(env);
+	} catch (err) {
+		log.error("webhook.load_endpoints", { error: String(err) });
+		return;
+	}
+	await Promise.all(
+		endpoints.map((e) => dispatchToEndpoint(env, e, payload)),
+	);
+};
+
 export const fireWebhook = (
-	env: WebhookCtx,
+	env: WebhookEnv,
 	executionCtx: { waitUntil(p: Promise<unknown>): void } | undefined,
 	payload: WebhookPayload,
 ): void => {
@@ -104,5 +244,87 @@ export const fireWebhook = (
 		});
 		return;
 	}
-	executionCtx.waitUntil(sendWebhook(env, payload));
+	executionCtx.waitUntil(dispatchWebhook(env, payload));
+};
+
+// -------------------------- retry handler -----------------------------------
+
+const RETRY_BATCH = 25;
+const PRUNE_AFTER_MS = 30 * 24 * 60 * 60_000; // 30 days
+
+const nextBackoffMs = (attempts: number): number | null => {
+	// `attempts` here is the count BEFORE this run (post-increment is
+	// done by markWebhookFailed). After RETRY_SCHEDULE_MS.length total
+	// retries we give up.
+	if (attempts >= RETRY_SCHEDULE_MS.length) return null;
+	return RETRY_SCHEDULE_MS[attempts] ?? null;
+};
+
+const retryDelivery = async (
+	env: WebhookEnv,
+	delivery: WebhookDelivery,
+): Promise<void> => {
+	const endpoint = await getWebhookEndpoint(env.DB, delivery.endpoint_id);
+	if (!endpoint || !endpoint.enabled) {
+		// Endpoint was deleted or paused between the enqueue and this run.
+		// Mark the delivery as giveup so it stops cycling and doesn't show
+		// up in next_attempt_at scans forever.
+		await markWebhookFailed(
+			env.DB,
+			delivery.id,
+			null,
+			endpoint ? "endpoint_disabled" : "endpoint_deleted",
+		);
+		return;
+	}
+	const result = await postOnce(endpoint, delivery.payload, isDevEnv(env));
+	if (result.ok) {
+		await markWebhookDelivered(env.DB, delivery.id);
+		if (endpoint.fail_count > 0) {
+			await resetWebhookFailCount(env.DB, endpoint.id);
+		}
+		return;
+	}
+	const errorTag = result.error ?? `http_${result.status}`;
+	const next = nextBackoffMs(delivery.attempts + 1);
+	const giveup = next == null;
+	await markWebhookFailed(
+		env.DB,
+		delivery.id,
+		giveup ? null : Date.now() + next,
+		errorTag,
+	);
+	if (giveup) {
+		const newCount = endpoint.fail_count + 1;
+		await incrementWebhookFailCount(
+			env.DB,
+			endpoint.id,
+			newCount >= AUTO_DISABLE_THRESHOLD ? Date.now() : null,
+		);
+	}
+};
+
+export const runWebhookRetries = async (env: WebhookEnv): Promise<void> => {
+	const now = Date.now();
+	const due = await listPendingWebhookDeliveries(env.DB, now, RETRY_BATCH);
+	if (due.length === 0) return;
+	// Sequential rather than Promise.all: a single failing receiver can
+	// soak up the timeout budget; running serial means one stuck endpoint
+	// can't starve the others by exhausting the worker's wallclock cap.
+	// 25 deliveries × 5s timeout = 125s max, well under the cron's 30s
+	// CPU budget because most calls return in <1s. Adjust if real-world
+	// traffic shows a long tail.
+	for (const delivery of due) {
+		try {
+			await retryDelivery(env, delivery);
+		} catch (err) {
+			log.error("webhook.retry_crash", {
+				delivery_id: delivery.id,
+				error: String(err),
+			});
+		}
+	}
+	await pruneWebhookDeliveries(env.DB, Date.now() - PRUNE_AFTER_MS).catch(
+		(err) => log.warn("webhook.prune_failed", { error: String(err) }),
+	);
 };
