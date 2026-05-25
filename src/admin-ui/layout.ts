@@ -103,7 +103,8 @@ ${renderUpdateBanner(updateInfo)}
   <h1>Garrul Admin</h1>
   <nav>
     <a href="/admin">Dashboard</a>
-    <a href="/admin/queue">Queue</a>${adminOnlyLinks}
+    <a href="/admin/queue">Queue</a>
+    <a href="/admin/saved-replies">Replies</a>${adminOnlyLinks}
     <a href="/admin/about">About</a>
   </nav>
   <span class="me">${escapeHtml(currentUser.name)} ${rolePill} <button class="help-btn" @click="helpOpen = !helpOpen" aria-label="Keyboard shortcuts">?</button></span>

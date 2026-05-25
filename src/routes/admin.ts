@@ -43,18 +43,28 @@ import {
 	getComment,
 	getPost,
 	getUser,
+	getUsersByIds,
+	getSavedReply,
 	getWebhookEndpoint,
+	insertComment,
+	insertSavedReply,
+	isSavedReplyScope,
 	isUserRole,
 	isWebhookAdapter,
+	listSavedRepliesForUser,
 	listWebhookEndpoints,
 	markSubscriptionUnsubscribed,
 	setUserBanned,
 	setUserRole,
 	updateCommentStatus,
+	updateSavedReply,
+	deleteSavedReply,
 	updateWebhookEndpoint,
 	type AdminAction,
 	type AuditTargetKind,
 	type CommentStatus,
+	type SavedReply,
+	type SavedReplyScope,
 	type User,
 	type UserRole,
 	type WebhookAdapter,
@@ -75,6 +85,10 @@ import { renderDashboard } from "../admin-ui/pages/dashboard";
 import { renderAudit, type AuditFilters } from "../admin-ui/pages/audit";
 import { renderCommentDetail } from "../admin-ui/pages/comment-detail";
 import { renderQueue, type QueueFilters } from "../admin-ui/pages/queue";
+import {
+	renderSavedRepliesList,
+	renderSavedReplyForm,
+} from "../admin-ui/pages/saved-replies";
 import { renderUserDetail } from "../admin-ui/pages/user-detail";
 import { renderUsers } from "../admin-ui/pages/users";
 import { renderOperator } from "../admin-ui/pages/operator";
@@ -98,6 +112,7 @@ import {
 	renderSubscriptions,
 	type SubscriptionsFilters,
 } from "../admin-ui/pages/subscriptions";
+import { CURRENT_RENDERER_VERSION, renderMarkdown } from "../lib/markdown";
 import { rerenderBatch, rerenderStats } from "../db/rerender";
 import { runSeedDemo } from "../db/seed-demo";
 import { renderConfirmEmailHtml } from "../lib/digest";
@@ -819,6 +834,303 @@ admin.delete("/api/webhooks/:id", async (c) => {
 		meta: { url: existing.url, adapter: existing.adapter },
 	});
 	return c.json({ ok: true, id });
+});
+
+// ---------------------------- Saved replies --------------------------------
+//
+// Pre-written moderator replies. A mod authors a markdown body; we never
+// store rendered HTML — every post goes through renderMarkdown at post time
+// so a renderer-version bump always applies (matches comments).
+//
+// Visibility:
+//   - 'private' replies are visible only to the owner.
+//   - 'shared' replies are visible to every mod + admin.
+//
+// Mutation:
+//   - Only the owner can edit or delete (enforced in SQL via owner_id WHERE).
+//     Even an admin can't modify another mod's reply through the API — they
+//     can sign in as that user via OAuth if they really need to.
+//
+// Post-as-reply:
+//   - POST /admin/api/saved-replies/:id/post with { comment_id } posts a
+//     top-level reply on the same post as the target comment, authored by
+//     the mod's own user, status=approved (bypassing Turnstile/spam — the
+//     mod has already vouched for the content). Body is the saved reply's
+//     markdown, optionally edited.
+
+const SAVED_REPLY_TITLE_MAX = 120;
+const SAVED_REPLY_BODY_MAX = 8000;
+
+type SavedReplyBody = {
+	title?: unknown;
+	body_md?: unknown;
+	scope?: unknown;
+};
+
+type SavedReplyFields = {
+	title: string;
+	body_md: string;
+	scope: SavedReplyScope;
+};
+
+const parseSavedReplyBody = (
+	body: SavedReplyBody,
+): { ok: true; fields: SavedReplyFields } | { ok: false; error: string } => {
+	if (typeof body.title !== "string" || body.title.trim().length === 0) {
+		return { ok: false, error: "title_required" };
+	}
+	if (body.title.length > SAVED_REPLY_TITLE_MAX) {
+		return { ok: false, error: "title_too_long" };
+	}
+	if (typeof body.body_md !== "string" || body.body_md.trim().length === 0) {
+		return { ok: false, error: "body_required" };
+	}
+	if (body.body_md.length > SAVED_REPLY_BODY_MAX) {
+		return { ok: false, error: "body_too_long" };
+	}
+	if (!isSavedReplyScope(body.scope)) {
+		return { ok: false, error: "scope_invalid" };
+	}
+	return {
+		ok: true,
+		fields: {
+			title: body.title.trim(),
+			body_md: body.body_md,
+			scope: body.scope,
+		},
+	};
+};
+
+admin.get("/saved-replies", async (c) => {
+	const user = await requireMod(c);
+	if (user instanceof Response) return user;
+	const updateInfo = await peekCachedLatestVersion(c.env);
+	const replies = await listSavedRepliesForUser(c.env.DB, user.id);
+	const ownerIds = Array.from(new Set(replies.map((r) => r.owner_id)));
+	const owners = await getUsersByIds(c.env.DB, ownerIds);
+	const ownersById = new Map<string, string>();
+	for (const [id, u] of owners) ownersById.set(id, u.name);
+	return c.html(
+		renderPage(
+			c,
+			"Saved replies",
+			renderSavedRepliesList(replies, user, ownersById),
+			user,
+			updateInfo,
+		),
+	);
+});
+
+admin.get("/saved-replies/new", async (c) => {
+	const user = await requireMod(c);
+	if (user instanceof Response) return user;
+	const updateInfo = await peekCachedLatestVersion(c.env);
+	return c.html(
+		renderPage(
+			c,
+			"New saved reply",
+			renderSavedReplyForm({ existing: null, error: null }),
+			user,
+			updateInfo,
+		),
+	);
+});
+
+admin.get("/saved-replies/:id", async (c) => {
+	const user = await requireMod(c);
+	if (user instanceof Response) return user;
+	const id = c.req.param("id");
+	const reply = await getSavedReply(c.env.DB, id);
+	if (!reply) {
+		return c.html(
+			accessDeniedHtml(404, "That saved reply no longer exists."),
+			404,
+		);
+	}
+	// Read visibility: owner can always see it; non-owners only if shared.
+	// Private replies are not enumerable across mods.
+	if (reply.owner_id !== user.id && reply.scope !== "shared") {
+		return c.html(
+			accessDeniedHtml(404, "That saved reply no longer exists."),
+			404,
+		);
+	}
+	const updateInfo = await peekCachedLatestVersion(c.env);
+	return c.html(
+		renderPage(
+			c,
+			"Edit saved reply",
+			renderSavedReplyForm({ existing: reply, error: null }),
+			user,
+			updateInfo,
+		),
+	);
+});
+
+// JSON list for the queue's Reply picker. Same visibility rules as
+// /admin/saved-replies — owner-private OR scope=shared.
+admin.get("/api/saved-replies", async (c) => {
+	const user = await requireMod(c);
+	if (user instanceof Response) return user;
+	const replies = await listSavedRepliesForUser(c.env.DB, user.id);
+	return c.json({
+		replies: replies.map((r) => ({
+			id: r.id,
+			title: r.title,
+			body_md: r.body_md,
+			scope: r.scope,
+			owner_id: r.owner_id,
+		})),
+	});
+});
+
+admin.post("/api/saved-replies", async (c) => {
+	const user = await requireMod(c);
+	if (user instanceof Response) return user;
+	const body = await c.req.json<SavedReplyBody>().catch(() => null);
+	if (!body) return c.json({ error: "invalid_body" }, 400);
+	const parsed = parseSavedReplyBody(body);
+	if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+	const created = await insertSavedReply(c.env.DB, {
+		owner_id: user.id,
+		title: parsed.fields.title,
+		body_md: parsed.fields.body_md,
+		scope: parsed.fields.scope,
+	});
+	await adminInsertAudit(c.env.DB, {
+		admin_id: user.id,
+		action: "saved_reply.create",
+		target_kind: "saved_reply",
+		target_id: created.id,
+		meta: { title: created.title, scope: created.scope },
+	});
+	return c.json({ ok: true, id: created.id });
+});
+
+admin.patch("/api/saved-replies/:id", async (c) => {
+	const user = await requireMod(c);
+	if (user instanceof Response) return user;
+	const id = c.req.param("id");
+	const existing = await getSavedReply(c.env.DB, id);
+	if (!existing) return c.json({ error: "not_found" }, 404);
+	// Owner-only mutation. Even an admin cannot edit another mod's private
+	// reply through the API — the WHERE clause in updateSavedReply enforces
+	// this in SQL too, but we 403 cleanly here for a better error.
+	if (existing.owner_id !== user.id) {
+		return c.json({ error: "not_owner" }, 403);
+	}
+	const body = await c.req.json<SavedReplyBody>().catch(() => null);
+	if (!body) return c.json({ error: "invalid_body" }, 400);
+	const parsed = parseSavedReplyBody(body);
+	if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+	const changed = await updateSavedReply(c.env.DB, id, user.id, parsed.fields);
+	if (!changed) return c.json({ error: "not_found" }, 404);
+	await adminInsertAudit(c.env.DB, {
+		admin_id: user.id,
+		action: "saved_reply.update",
+		target_kind: "saved_reply",
+		target_id: id,
+		meta: {
+			title: parsed.fields.title,
+			scope: parsed.fields.scope,
+			scope_changed: existing.scope !== parsed.fields.scope,
+		},
+	});
+	return c.json({ ok: true, id });
+});
+
+admin.delete("/api/saved-replies/:id", async (c) => {
+	const user = await requireMod(c);
+	if (user instanceof Response) return user;
+	const id = c.req.param("id");
+	const existing = await getSavedReply(c.env.DB, id);
+	if (!existing) return c.json({ error: "not_found" }, 404);
+	if (existing.owner_id !== user.id) {
+		return c.json({ error: "not_owner" }, 403);
+	}
+	const deleted = await deleteSavedReply(c.env.DB, id, user.id);
+	if (!deleted) return c.json({ error: "not_found" }, 404);
+	await adminInsertAudit(c.env.DB, {
+		admin_id: user.id,
+		action: "saved_reply.delete",
+		target_kind: "saved_reply",
+		target_id: id,
+		meta: { title: existing.title, scope: existing.scope },
+	});
+	return c.json({ ok: true, id });
+});
+
+// Post a saved reply as a top-level reply on a comment. Body is the
+// saved reply's markdown by default; the mod can override (`body_md`) to
+// tweak before sending. Always re-rendered through renderMarkdown — we
+// never trust stored HTML.
+admin.post("/api/saved-replies/:id/post", async (c) => {
+	const user = await requireMod(c);
+	if (user instanceof Response) return user;
+	const id = c.req.param("id");
+	const reply = await getSavedReply(c.env.DB, id);
+	if (!reply) return c.json({ error: "not_found" }, 404);
+	// Visibility check mirrors the GET — only the owner or shared replies.
+	if (reply.owner_id !== user.id && reply.scope !== "shared") {
+		return c.json({ error: "not_found" }, 404);
+	}
+	const body = await c.req
+		.json<{ comment_id?: unknown; body_md?: unknown }>()
+		.catch(() => null);
+	if (!body || typeof body.comment_id !== "string") {
+		return c.json({ error: "invalid_body" }, 400);
+	}
+	const target = await getComment(c.env.DB, body.comment_id);
+	if (!target) return c.json({ error: "comment_not_found" }, 404);
+	if (target.status === "deleted") {
+		return c.json({ error: "comment_deleted" }, 400);
+	}
+	// Allow the mod to override the body before posting.
+	const rawBody =
+		typeof body.body_md === "string" && body.body_md.trim().length > 0
+			? body.body_md
+			: reply.body_md;
+	if (rawBody.length > SAVED_REPLY_BODY_MAX) {
+		return c.json({ error: "body_too_long" }, 400);
+	}
+	const body_html = renderMarkdown(rawBody);
+	const inserted = await insertComment(c.env.DB, {
+		post_slug: target.post_slug,
+		parent_id: target.id,
+		user_id: user.id,
+		body_md: rawBody,
+		body_html,
+		renderer_version: CURRENT_RENDERER_VERSION,
+		status: "approved",
+		ip_hash: null,
+		user_agent: null,
+	});
+	await adminInsertAudit(c.env.DB, {
+		admin_id: user.id,
+		action: "saved_reply.post",
+		target_kind: "comment",
+		target_id: inserted.id,
+		meta: {
+			from_saved_reply: true,
+			saved_reply_id: reply.id,
+			parent_id: target.id,
+			post_slug: target.post_slug,
+		},
+	});
+	// Bust the post's tree caches so the new reply is visible immediately.
+	await Promise.all([
+		c.env.TREE_CACHE.delete(`tree:${target.post_slug}:first:new`),
+		c.env.TREE_CACHE.delete(`tree:${target.post_slug}:first:top`),
+		c.env.TREE_CACHE.delete(`tree:${target.post_slug}:first`),
+	]);
+	fireWebhook(c.env, c.executionCtx, {
+		event: "comment.posted",
+		comment_id: inserted.id,
+		post_slug: target.post_slug,
+		user_id: user.id,
+		ts: Date.now(),
+	});
+	return c.json({ ok: true, id: inserted.id });
 });
 
 type CommentAction = "approve" | "spam" | "delete" | "restore";
