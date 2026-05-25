@@ -56,6 +56,17 @@ export type Bindings = {
 	// Set to "1" or "true" to suppress the "Powered by Garrul" attribution
 	// rendered under the comment list. Unset = attribution shown.
 	BRANDING_HIDDEN?: string;
+	// Cloudflare usage dashboard (optional). When both are set, /admin/usage
+	// surfaces today's Workers / D1 / KV usage vs the free-tier ceilings via
+	// Cloudflare's GraphQL Analytics API. Unset → the page shows a setup
+	// guide instead of charts and the nav link is hidden.
+	//
+	// Token scopes required (least-privilege):
+	//   - Account.Analytics: Read
+	//   - Account.D1: Read
+	//   - Account.Workers KV Storage: Read
+	CF_API_TOKEN?: string;
+	CF_ACCOUNT_ID?: string;
 };
 
 const app = new Hono<{ Bindings: Bindings }>();

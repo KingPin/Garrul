@@ -53,11 +53,16 @@ export const renderUpdateBanner = (info: UpdateInfo | null): string => {
 </div>`;
 };
 
+export type LayoutOpts = {
+	usage_link?: boolean;
+};
+
 export const layout = (
 	title: string,
 	body: string,
 	currentUser: User,
 	updateInfo: UpdateInfo | null,
+	opts: LayoutOpts = {},
 ): string => `
 <!doctype html>
 <html lang="en">
@@ -81,6 +86,7 @@ ${renderUpdateBanner(updateInfo)}
     <a href="/admin/audit">Audit</a>
     <a href="/admin/subscriptions">Subscriptions</a>
     <a href="/admin/webhooks">Webhooks</a>
+    ${opts.usage_link ? '<a href="/admin/usage">Usage</a>' : ""}
     <a href="/admin/operator">Operator</a>
     <a href="/admin/settings">Settings</a>
     <a href="/admin/about">About</a>

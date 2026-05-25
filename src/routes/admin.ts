@@ -63,6 +63,7 @@ import {
 	peekCachedLatestVersion,
 	peekCachedRecentReleases,
 	versionCheckMiddleware,
+	type UpdateInfo,
 } from "../lib/version-check";
 import { accessDeniedHtml, layout } from "../admin-ui/layout";
 import { ADMIN_CSP } from "../admin-ui/styles";
@@ -81,6 +82,16 @@ import {
 	type WebhookFormData,
 } from "../admin-ui/pages/webhooks";
 import {
+	renderUsageDashboard,
+	renderUsageSetup,
+	renderUsageTokenError,
+} from "../admin-ui/pages/usage";
+import {
+	fetchUsageSnapshot,
+	isUsageConfigured,
+	verifyToken,
+} from "../lib/cf-usage";
+import {
 	renderSubscriptions,
 	type SubscriptionsFilters,
 } from "../admin-ui/pages/subscriptions";
@@ -98,6 +109,21 @@ const wantsHtml = (c: Ctx): boolean => {
 	const accept = c.req.header("accept") ?? "";
 	return accept.includes("text/html");
 };
+
+// Thin wrapper so every admin layout call computes the same env-derived
+// nav opts (currently just whether the optional usage dashboard is wired
+// up). Centralized so adding a future env-gated link doesn't require
+// touching ~17 callsites.
+const renderPage = (
+	c: Ctx,
+	title: string,
+	body: string,
+	user: User,
+	updateInfo: UpdateInfo | null,
+): string =>
+	layout(title, body, user, updateInfo, {
+		usage_link: isUsageConfigured(c.env),
+	});
 
 const requireAdmin = async (c: Ctx): Promise<User | Response> => {
 	const session = await readSession(c);
@@ -170,7 +196,7 @@ admin.get("/", async (c) => {
 		},
 		c.env,
 	);
-	return c.html(layout("Dashboard", body, user, updateInfo));
+	return c.html(renderPage(c, "Dashboard", body, user, updateInfo));
 });
 
 // Parse a YYYY-MM-DD string into a ms-epoch timestamp at the start of UTC day.
@@ -249,7 +275,7 @@ admin.get("/queue", async (c) => {
 		to: toRaw ?? "",
 	};
 	return c.html(
-		layout(
+		renderPage(c, 
 			"Queue",
 			renderQueue(trimmed, filters, nextCursor, latestAudit),
 			user,
@@ -268,7 +294,7 @@ admin.get("/comments/:id", async (c) => {
 	}
 	const updateInfo = await peekCachedLatestVersion(c.env);
 	return c.html(
-		layout(`Comment ${id.slice(0, 8)}`, renderCommentDetail(detail), user, updateInfo),
+		renderPage(c, `Comment ${id.slice(0, 8)}`, renderCommentDetail(detail), user, updateInfo),
 	);
 });
 
@@ -298,7 +324,7 @@ admin.get("/users", async (c) => {
 		rows.length > 50 && last ? `${last.created_at}|${last.id}` : null;
 	const updateInfo = await peekCachedLatestVersion(c.env);
 	return c.html(
-		layout("Users", renderUsers(trimmed, q, nextCursor), user, updateInfo),
+		renderPage(c, "Users", renderUsers(trimmed, q, nextCursor), user, updateInfo),
 	);
 });
 
@@ -335,7 +361,7 @@ admin.get("/users/:id", async (c) => {
 	}
 	const updateInfo = await peekCachedLatestVersion(c.env);
 	return c.html(
-		layout(detail.user.name, renderUserDetail(detail), user, updateInfo),
+		renderPage(c, detail.user.name, renderUserDetail(detail), user, updateInfo),
 	);
 });
 
@@ -410,7 +436,7 @@ admin.get("/audit", async (c) => {
 	};
 	const updateInfo = await peekCachedLatestVersion(c.env);
 	return c.html(
-		layout(
+		renderPage(c, 
 			"Audit",
 			renderAudit(trimmed, filters, nextCursor, ADMIN_ACTIONS),
 			user,
@@ -474,7 +500,7 @@ admin.get("/subscriptions", async (c) => {
 	};
 	const updateInfo = await peekCachedLatestVersion(c.env);
 	return c.html(
-		layout(
+		renderPage(c, 
 			"Subscriptions",
 			renderSubscriptions(rows, filters, nextCursor),
 			user,
@@ -495,7 +521,7 @@ admin.get("/operator", async (c) => {
 	const stats = await rerenderStats(c.env.DB);
 	const updateInfo = await peekCachedLatestVersion(c.env);
 	return c.html(
-		layout(
+		renderPage(c, 
 			"Operator",
 			renderOperator({
 				rerender: stats,
@@ -511,7 +537,7 @@ admin.get("/settings", async (c) => {
 	const user = await requireAdmin(c);
 	if (user instanceof Response) return user;
 	const updateInfo = await peekCachedLatestVersion(c.env);
-	return c.html(layout("Settings", renderSettings(c.env), user, updateInfo));
+	return c.html(renderPage(c, "Settings", renderSettings(c.env), user, updateInfo));
 });
 
 admin.get("/about", async (c) => {
@@ -521,7 +547,7 @@ admin.get("/about", async (c) => {
 		peekCachedLatestVersion(c.env),
 		peekCachedRecentReleases(c.env),
 	]);
-	return c.html(layout("About", renderAbout(releases), user, updateInfo));
+	return c.html(renderPage(c, "About", renderAbout(releases), user, updateInfo));
 });
 
 // -------------------------- webhook endpoints -------------------------------
@@ -543,7 +569,7 @@ admin.get("/webhooks", async (c) => {
 	const updateInfo = await peekCachedLatestVersion(c.env);
 	const endpoints = await listWebhookEndpoints(c.env.DB);
 	return c.html(
-		layout(
+		renderPage(c, 
 			"Webhooks",
 			renderWebhooksList(endpoints, {
 				active: isEnvShimActive(c.env, endpoints),
@@ -561,7 +587,7 @@ admin.get("/webhooks/new", async (c) => {
 	const updateInfo = await peekCachedLatestVersion(c.env);
 	const data: WebhookFormData = { endpoint: null, error: null };
 	return c.html(
-		layout("Add webhook", renderWebhookForm(data), user, updateInfo),
+		renderPage(c, "Add webhook", renderWebhookForm(data), user, updateInfo),
 	);
 });
 
@@ -579,7 +605,7 @@ admin.get("/webhooks/:id", async (c) => {
 	const updateInfo = await peekCachedLatestVersion(c.env);
 	const data: WebhookFormData = { endpoint, error: null };
 	return c.html(
-		layout("Edit webhook", renderWebhookForm(data), user, updateInfo),
+		renderPage(c, "Edit webhook", renderWebhookForm(data), user, updateInfo),
 	);
 });
 
@@ -720,6 +746,41 @@ admin.patch("/api/webhooks/:id", async (c) => {
 		},
 	});
 	return c.json({ ok: true, id });
+});
+
+// -------------------------- Cloudflare usage dashboard ----------------------
+//
+// Optional feature. When CF_API_TOKEN + CF_ACCOUNT_ID are unset, the page
+// shows a setup guide instead of charts and the nav link is hidden by
+// layout.ts. We never throw a 500 here just because the operator hasn't
+// configured the token — graceful degradation per spec.
+
+admin.get("/usage", async (c) => {
+	const user = await requireAdmin(c);
+	if (user instanceof Response) return user;
+	const updateInfo = await peekCachedLatestVersion(c.env);
+	if (!isUsageConfigured(c.env)) {
+		return c.html(renderPage(c, "Usage", renderUsageSetup(), user, updateInfo));
+	}
+	// Verify the token before hitting GraphQL — surfaces revoked / wrong-
+	// scope tokens with a clear error instead of cryptic GraphQL failures.
+	const tokenOk = await verifyToken(c.env.CF_API_TOKEN as string);
+	if (!tokenOk.ok || tokenOk.status !== "active") {
+		const errMsg = tokenOk.ok ? `status:${tokenOk.status}` : tokenOk.error;
+		return c.html(
+			renderPage(c, "Usage", renderUsageTokenError(errMsg), user, updateInfo),
+		);
+	}
+	try {
+		const snapshot = await fetchUsageSnapshot(c.env);
+		return c.html(
+			renderPage(c, "Usage", renderUsageDashboard(snapshot), user, updateInfo),
+		);
+	} catch (err) {
+		return c.html(
+			renderPage(c, "Usage", renderUsageTokenError(String(err)), user, updateInfo),
+		);
+	}
 });
 
 admin.delete("/api/webhooks/:id", async (c) => {
