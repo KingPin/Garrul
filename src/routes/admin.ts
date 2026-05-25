@@ -342,7 +342,7 @@ admin.get("/users/:id", async (c) => {
 	}
 	const updateInfo = await peekCachedLatestVersion(c.env);
 	return c.html(
-		layout(detail.user.name, renderUserDetail(detail), user, updateInfo),
+		layout(detail.user.name, renderUserDetail(detail, user), user, updateInfo),
 	);
 });
 

@@ -6,13 +6,18 @@ export const renderUsers = (
 	q: string,
 	nextCursor: string | null,
 ): string => {
+	const rolePill = (u: User): string => {
+		if (u.role === "admin") return '<span class="pill admin">admin</span>';
+		if (u.role === "mod") return '<span class="pill mod">mod</span>';
+		return "";
+	};
 	const rowsHtml = rows.length
 		? rows
 				.map(
 					(u) => `
 <tr x-data="{ busy: false, banned: ${u.is_banned} }">
   <td>
-    <div>${escapeHtml(u.name)} ${u.is_admin ? '<span class="pill admin">admin</span>' : ""}
+    <div><a href="/admin/users/${escapeHtml(u.id)}">${escapeHtml(u.name)}</a> ${rolePill(u)}
       <span x-show="banned" class="pill banned">banned</span></div>
     <div class="muted">${escapeHtml(u.email ?? "—")}</div>
   </td>
