@@ -44,16 +44,19 @@ import {
 	getPost,
 	getUser,
 	getWebhookEndpoint,
+	isUserRole,
 	isWebhookAdapter,
 	listWebhookEndpoints,
 	markSubscriptionUnsubscribed,
 	setUserBanned,
+	setUserRole,
 	updateCommentStatus,
 	updateWebhookEndpoint,
 	type AdminAction,
 	type AuditTargetKind,
 	type CommentStatus,
 	type User,
+	type UserRole,
 	type WebhookAdapter,
 	type WebhookEndpoint,
 } from "../db/queries";
@@ -125,7 +128,14 @@ const renderPage = (
 		usage_link: isUsageConfigured(c.env),
 	});
 
-const requireAdmin = async (c: Ctx): Promise<User | Response> => {
+// Gate the admin-area pages and APIs. `level: "admin"` is the historical
+// behavior — only users with role='admin' (equivalently is_admin=1) pass.
+// `level: "mod"` is the new gate for moderation endpoints: role='mod' OR
+// role='admin'. Banned users never pass either gate.
+const requireRole = async (
+	c: Ctx,
+	level: "admin" | "mod",
+): Promise<User | Response> => {
 	const session = await readSession(c);
 	if (!session) {
 		if (wantsHtml(c)) {
@@ -137,10 +147,16 @@ const requireAdmin = async (c: Ctx): Promise<User | Response> => {
 		return c.json({ error: "not_authenticated" }, 401);
 	}
 	const user = await getUser(c.env.DB, session.user_id);
-	if (!user || !user.is_admin) {
+	const allowed =
+		!!user &&
+		!user.is_banned &&
+		(level === "mod"
+			? user.role === "mod" || user.role === "admin"
+			: user.role === "admin");
+	if (!allowed) {
 		if (wantsHtml(c)) {
 			return c.html(
-				accessDeniedHtml(403, "Your account is not an admin on this instance."),
+				accessDeniedHtml(403, "Your account does not have access to this area."),
 				403,
 			);
 		}
@@ -148,6 +164,11 @@ const requireAdmin = async (c: Ctx): Promise<User | Response> => {
 	}
 	return user;
 };
+
+const requireAdmin = (c: Ctx): Promise<User | Response> =>
+	requireRole(c, "admin");
+
+const requireMod = (c: Ctx): Promise<User | Response> => requireRole(c, "mod");
 
 admin.use("*", async (c, next) => {
 	c.header("content-security-policy", ADMIN_CSP);
@@ -172,7 +193,7 @@ admin.use("*", async (c, next) => {
 admin.use("*", versionCheckMiddleware());
 
 admin.get("/", async (c) => {
-	const user = await requireAdmin(c);
+	const user = await requireMod(c);
 	if (user instanceof Response) return user;
 	const db = c.env.DB;
 	const [stats, timeline, topPosts, topCommenters, oldestPending, spamRate, updateInfo] =
@@ -209,7 +230,7 @@ const parseDateMs = (raw: string | undefined): number | null => {
 };
 
 admin.get("/queue", async (c) => {
-	const user = await requireAdmin(c);
+	const user = await requireMod(c);
 	if (user instanceof Response) return user;
 	const statusParam = c.req.query("status") ?? "pending";
 	const status: CommentStatus | "all" =
@@ -285,7 +306,7 @@ admin.get("/queue", async (c) => {
 });
 
 admin.get("/comments/:id", async (c) => {
-	const user = await requireAdmin(c);
+	const user = await requireMod(c);
 	if (user instanceof Response) return user;
 	const id = c.req.param("id");
 	const detail = await adminGetCommentDetail(c.env.DB, id);
@@ -361,7 +382,7 @@ admin.get("/users/:id", async (c) => {
 	}
 	const updateInfo = await peekCachedLatestVersion(c.env);
 	return c.html(
-		renderPage(c, detail.user.name, renderUserDetail(detail), user, updateInfo),
+		renderPage(c, detail.user.name, renderUserDetail(detail, user), user, updateInfo),
 	);
 });
 
@@ -541,7 +562,7 @@ admin.get("/settings", async (c) => {
 });
 
 admin.get("/about", async (c) => {
-	const user = await requireAdmin(c);
+	const user = await requireMod(c);
 	if (user instanceof Response) return user;
 	const [updateInfo, releases] = await Promise.all([
 		peekCachedLatestVersion(c.env),
@@ -803,7 +824,7 @@ admin.delete("/api/webhooks/:id", async (c) => {
 type CommentAction = "approve" | "spam" | "delete" | "restore";
 
 admin.post("/api/comments/:id", async (c) => {
-	const user = await requireAdmin(c);
+	const user = await requireMod(c);
 	if (user instanceof Response) return user;
 	const id = c.req.param("id");
 	const body = await c.req
@@ -863,7 +884,7 @@ admin.post("/api/comments/:id", async (c) => {
 const BULK_ACTION_LIMIT = 100;
 
 admin.post("/api/comments/bulk", async (c) => {
-	const user = await requireAdmin(c);
+	const user = await requireMod(c);
 	if (user instanceof Response) return user;
 	const body = await c.req
 		.json<{ ids?: unknown; action?: string }>()
@@ -962,6 +983,54 @@ admin.post("/api/users/:id", async (c) => {
 		meta: { target_name: target.name },
 	});
 	return c.json({ ok: true, id, banned: body.banned });
+});
+
+export const roleAuditAction = (
+	from: UserRole,
+	to: UserRole,
+): AdminAction | null => {
+	if (from === to) return null;
+	if (to === "admin") return "role.grant_admin";
+	if (from === "admin") return "role.revoke_admin";
+	if (to === "mod") return "role.grant_mod";
+	return "role.revoke_mod";
+};
+
+admin.post("/api/users/:id/role", async (c) => {
+	const user = await requireAdmin(c);
+	if (user instanceof Response) return user;
+	const id = c.req.param("id");
+	const body = await c.req
+		.json<{ role?: unknown; reason?: string }>()
+		.catch(() => null);
+	if (!body || !isUserRole(body.role)) {
+		return c.json({ error: "invalid_role" }, 400);
+	}
+	// Self-demotion would leave the instance without an admin if this is the
+	// last one. Block self role changes entirely — operators must promote a
+	// peer to admin first and have them demote, or use the DB CLI for the
+	// emergency case. Same defense-in-depth as ban: easy to misclick.
+	if (id === user.id) {
+		return c.json({ error: "cannot_change_own_role" }, 400);
+	}
+	const target = await getUser(c.env.DB, id);
+	if (!target) return c.json({ error: "not_found" }, 404);
+	const action = roleAuditAction(target.role, body.role);
+	if (!action) return c.json({ ok: true, id, role: target.role });
+	await setUserRole(c.env.DB, id, body.role);
+	await adminInsertAudit(c.env.DB, {
+		admin_id: user.id,
+		action,
+		target_kind: "user",
+		target_id: id,
+		reason: body.reason ?? null,
+		meta: {
+			target_name: target.name,
+			from: target.role,
+			to: body.role,
+		},
+	});
+	return c.json({ ok: true, id, role: body.role });
 });
 
 const randomToken = (): string => {
