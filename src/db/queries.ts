@@ -25,6 +25,13 @@ export type Post = {
 	created_at: number;
 };
 
+export type UserRole = "user" | "mod" | "admin";
+
+export const USER_ROLES: readonly UserRole[] = ["user", "mod", "admin"] as const;
+
+export const isUserRole = (v: unknown): v is UserRole =>
+	v === "user" || v === "mod" || v === "admin";
+
 export type User = {
 	id: string;
 	provider: string;
@@ -34,6 +41,7 @@ export type User = {
 	avatar_url: string | null;
 	is_admin: boolean;
 	is_banned: boolean;
+	role: UserRole;
 	created_at: number;
 };
 
@@ -55,15 +63,17 @@ export type Comment = {
 	created_at: number;
 };
 
-type UserRow = Omit<User, "is_admin" | "is_banned"> & {
+type UserRow = Omit<User, "is_admin" | "is_banned" | "role"> & {
 	is_admin: number;
 	is_banned: number;
+	role: string;
 };
 
 const toUser = (row: UserRow): User => ({
 	...row,
 	is_admin: row.is_admin === 1,
 	is_banned: row.is_banned === 1,
+	role: isUserRole(row.role) ? row.role : "user",
 });
 
 export const upsertPost = async (
@@ -117,7 +127,7 @@ export const getOrCreateGhost = async (
 	const existing = await db
 		.prepare(
 			`SELECT id, provider, provider_id, name, email, avatar_url,
-			        is_admin, is_banned, created_at
+			        is_admin, is_banned, role, created_at
 			 FROM users WHERE provider = 'anon' AND provider_id = ?`,
 		)
 		.bind(ipHash)
@@ -144,6 +154,7 @@ export const getOrCreateGhost = async (
 		avatar_url: null,
 		is_admin: false,
 		is_banned: false,
+		role: "user",
 		created_at: now,
 	};
 };
@@ -177,7 +188,7 @@ export const upsertOauthUser = async (
 	const existing = await db
 		.prepare(
 			`SELECT id, provider, provider_id, name, email, avatar_url,
-			        is_admin, is_banned, created_at
+			        is_admin, is_banned, role, created_at
 			 FROM users WHERE provider = ? AND provider_id = ?`,
 		)
 		.bind(provider, provider_id)
@@ -203,13 +214,14 @@ export const upsertOauthUser = async (
 	const id = ulid();
 	const now = Date.now();
 	const is_admin = shouldPromote ? 1 : 0;
+	const role: UserRole = shouldPromote ? "admin" : "user";
 	await db
 		.prepare(
 			`INSERT INTO users (id, provider, provider_id, name, email,
-			                    avatar_url, is_admin, is_banned, created_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+			                    avatar_url, is_admin, is_banned, role, created_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
 		)
-		.bind(id, provider, provider_id, name, email, avatar_url, is_admin, now)
+		.bind(id, provider, provider_id, name, email, avatar_url, is_admin, role, now)
 		.run();
 	return {
 		id,
@@ -220,6 +232,7 @@ export const upsertOauthUser = async (
 		avatar_url,
 		is_admin: is_admin === 1,
 		is_banned: false,
+		role,
 		created_at: now,
 	};
 };
@@ -231,7 +244,7 @@ export const getUser = async (
 	const row = await db
 		.prepare(
 			`SELECT id, provider, provider_id, name, email, avatar_url,
-			        is_admin, is_banned, created_at
+			        is_admin, is_banned, role, created_at
 			 FROM users WHERE id = ?`,
 		)
 		.bind(id)
@@ -348,7 +361,7 @@ export const getUsersByIds = async (
 	const result = await db
 		.prepare(
 			`SELECT id, provider, provider_id, name, email, avatar_url,
-			        is_admin, is_banned, created_at
+			        is_admin, is_banned, role, created_at
 			   FROM users WHERE id IN (${placeholders})`,
 		)
 		.bind(...ids)
@@ -677,13 +690,13 @@ export const adminListUsers = async (
 		: "";
 	const sql = cursorCreatedAt != null && cursorId != null
 		? `SELECT id, provider, provider_id, name, email, avatar_url,
-		          is_admin, is_banned, created_at
+		          is_admin, is_banned, role, created_at
 		     FROM users
 		    WHERE (created_at, id) < (?, ?) ${filter}
 		    ORDER BY created_at DESC, id DESC
 		    LIMIT ?`
 		: `SELECT id, provider, provider_id, name, email, avatar_url,
-		          is_admin, is_banned, created_at
+		          is_admin, is_banned, role, created_at
 		     FROM users
 		    WHERE 1=1 ${filter}
 		    ORDER BY created_at DESC, id DESC
@@ -709,6 +722,20 @@ export const setUserBanned = async (
 	await db
 		.prepare(`UPDATE users SET is_banned = ? WHERE id = ?`)
 		.bind(banned ? 1 : 0, id)
+		.run();
+};
+
+// Writes role and is_admin together so the invariant `is_admin=1 ⇔ role='admin'`
+// is preserved while is_admin remains the public-facing column for /me.
+export const setUserRole = async (
+	db: D1Database,
+	id: string,
+	role: UserRole,
+): Promise<void> => {
+	const is_admin = role === "admin" ? 1 : 0;
+	await db
+		.prepare(`UPDATE users SET role = ?, is_admin = ? WHERE id = ?`)
+		.bind(role, is_admin, id)
 		.run();
 };
 
@@ -1110,6 +1137,10 @@ export const ADMIN_ACTIONS = [
 	"bulk.spam",
 	"bulk.delete",
 	"bulk.restore",
+	"role.grant_mod",
+	"role.revoke_mod",
+	"role.grant_admin",
+	"role.revoke_admin",
 ] as const;
 export type AdminAction = (typeof ADMIN_ACTIONS)[number];
 
