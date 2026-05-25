@@ -1155,6 +1155,7 @@ export const ADMIN_ACTIONS = [
 	"saved_reply.update",
 	"saved_reply.delete",
 	"saved_reply.post",
+	"import.disqus",
 ] as const;
 export type AdminAction = (typeof ADMIN_ACTIONS)[number];
 

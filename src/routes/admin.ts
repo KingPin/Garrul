@@ -113,6 +113,7 @@ import {
 	type SubscriptionsFilters,
 } from "../admin-ui/pages/subscriptions";
 import { CURRENT_RENDERER_VERSION, renderMarkdown } from "../lib/markdown";
+import { runDisqusImport } from "../lib/disqus-import";
 import { rerenderBatch, rerenderStats } from "../db/rerender";
 import { runSeedDemo } from "../db/seed-demo";
 import { renderConfirmEmailHtml } from "../lib/digest";
@@ -1473,6 +1474,64 @@ admin.post("/api/ops/rerender", async (c) => {
 		processed: result.processed,
 		next_cursor: result.next_cursor,
 	});
+});
+
+// ---------------------------- Disqus import --------------------------------
+//
+// Admin-only. Accepts a Disqus comment-export XML in the request body
+// (raw text/xml or application/xml). Idempotent — re-uploading the same
+// file inserts zero new rows. Capped at 50 MB to keep a hostile / huge
+// payload from running away inside the Worker; larger imports should go
+// through the CLI (`npm run import-disqus`).
+
+const MAX_IMPORT_BYTES = 50 * 1024 * 1024;
+
+admin.post("/api/ops/import-disqus", async (c) => {
+	const user = await requireAdmin(c);
+	if (user instanceof Response) return user;
+
+	const contentLength = Number(c.req.header("content-length") ?? "0");
+	if (contentLength > MAX_IMPORT_BYTES) {
+		return c.json({ error: "too_large" }, 413);
+	}
+	const xml = await c.req.text();
+	if (xml.length === 0) return c.json({ error: "empty_body" }, 400);
+	if (xml.length > MAX_IMPORT_BYTES) {
+		return c.json({ error: "too_large" }, 413);
+	}
+	// Lightweight format sanity check before we hit the parser. Reject
+	// non-XML uploads up front so an operator who picks the wrong file
+	// gets a clear error rather than a parser stack trace.
+	if (!/<disqus\b|<thread\b|<post\b/i.test(xml.slice(0, 4096))) {
+		return c.json({ error: "not_disqus_xml" }, 400);
+	}
+
+	const dryRun = c.req.header("x-dry-run") === "1";
+	const includeDeleted = c.req.header("x-include-deleted") === "1";
+	const includeSpam = c.req.header("x-include-spam") === "1";
+
+	// Reuse IP_HASH_SECRET for the importer's HMAC-derived ghost
+	// provider_id. Same secret rotation rules apply.
+	const secret = c.env.IP_HASH_SECRET;
+	if (!secret) return c.json({ error: "ip_hash_secret_missing" }, 500);
+
+	try {
+		const plan = await runDisqusImport(c.env.DB, xml, secret, {
+			dry_run: dryRun,
+			include_deleted: includeDeleted,
+			include_spam: includeSpam,
+		});
+		await adminInsertAudit(c.env.DB, {
+			admin_id: user.id,
+			action: "import.disqus",
+			target_kind: "system",
+			target_id: null,
+			meta: { dry_run: dryRun, ...plan },
+		});
+		return c.json({ ok: true, dry_run: dryRun, plan });
+	} catch (err) {
+		return c.json({ error: `import_failed:${(err as Error).message}` }, 400);
+	}
 });
 
 admin.post("/api/ops/seed-demo", async (c) => {
