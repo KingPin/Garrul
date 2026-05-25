@@ -41,13 +41,16 @@ import {
 	getComment,
 	getPost,
 	getUser,
+	isUserRole,
 	markSubscriptionUnsubscribed,
 	setUserBanned,
+	setUserRole,
 	updateCommentStatus,
 	type AdminAction,
 	type AuditTargetKind,
 	type CommentStatus,
 	type User,
+	type UserRole,
 } from "../db/queries";
 import { fireWebhook, type WebhookEvent } from "../lib/webhook";
 import {
@@ -690,6 +693,54 @@ admin.post("/api/users/:id", async (c) => {
 		meta: { target_name: target.name },
 	});
 	return c.json({ ok: true, id, banned: body.banned });
+});
+
+const roleAuditAction = (
+	from: UserRole,
+	to: UserRole,
+): AdminAction | null => {
+	if (from === to) return null;
+	if (to === "admin") return "role.grant_admin";
+	if (from === "admin") return "role.revoke_admin";
+	if (to === "mod") return "role.grant_mod";
+	return "role.revoke_mod";
+};
+
+admin.post("/api/users/:id/role", async (c) => {
+	const user = await requireAdmin(c);
+	if (user instanceof Response) return user;
+	const id = c.req.param("id");
+	const body = await c.req
+		.json<{ role?: unknown; reason?: string }>()
+		.catch(() => null);
+	if (!body || !isUserRole(body.role)) {
+		return c.json({ error: "invalid_role" }, 400);
+	}
+	// Self-demotion would leave the instance without an admin if this is the
+	// last one. Block self role changes entirely — operators must promote a
+	// peer to admin first and have them demote, or use the DB CLI for the
+	// emergency case. Same defense-in-depth as ban: easy to misclick.
+	if (id === user.id) {
+		return c.json({ error: "cannot_change_own_role" }, 400);
+	}
+	const target = await getUser(c.env.DB, id);
+	if (!target) return c.json({ error: "not_found" }, 404);
+	const action = roleAuditAction(target.role, body.role);
+	if (!action) return c.json({ ok: true, id, role: target.role });
+	await setUserRole(c.env.DB, id, body.role);
+	await adminInsertAudit(c.env.DB, {
+		admin_id: user.id,
+		action,
+		target_kind: "user",
+		target_id: id,
+		reason: body.reason ?? null,
+		meta: {
+			target_name: target.name,
+			from: target.role,
+			to: body.role,
+		},
+	});
+	return c.json({ ok: true, id, role: body.role });
 });
 
 const randomToken = (): string => {
