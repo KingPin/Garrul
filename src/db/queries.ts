@@ -1824,6 +1824,7 @@ export type AdminSubscriptionFilter = {
 	post_slug?: string;
 	confirmed?: boolean;
 	unsubscribed?: boolean;
+	host?: string;
 };
 
 export const adminListSubscriptions = async (
@@ -1851,6 +1852,12 @@ export const adminListSubscriptions = async (
 	if (filter.confirmed === false) where.push("confirmed_at IS NULL");
 	if (filter.unsubscribed === true) where.push("unsubscribed_at IS NOT NULL");
 	if (filter.unsubscribed === false) where.push("unsubscribed_at IS NULL");
+	if (filter.host) {
+		where.push(
+			`post_slug IN (SELECT slug FROM posts WHERE ${hostExpr("url")} = ?)`,
+		);
+		binds.push(filter.host);
+	}
 
 	const sql = `
 		SELECT id, post_slug, email, token, created_at,

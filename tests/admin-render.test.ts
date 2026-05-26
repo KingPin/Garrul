@@ -316,6 +316,7 @@ describe("renderSubscriptions", () => {
 		post_slug: "",
 		confirmed: "",
 		unsubscribed: "",
+		host: "",
 	};
 	const makeSub = (over: Partial<Subscription> = {}): Subscription => ({
 		id: "01HSUB",
@@ -356,6 +357,40 @@ describe("renderSubscriptions", () => {
 		expect(html).not.toContain(">Resend confirm<");
 		expect(html).not.toContain(">Unsubscribe<");
 		expect(html).toContain("unsubscribed");
+	});
+
+	it("renders the host dropdown with the provided hosts", () => {
+		const html = renderSubscriptions(
+			[makeSub()],
+			filters,
+			null,
+			["a.example.com", "b.example.com"],
+		);
+		expect(html).toContain('<select name="host"');
+		expect(html).toContain(">a.example.com<");
+		expect(html).toContain(">b.example.com<");
+	});
+
+	it("marks the selected host in the dropdown", () => {
+		const html = renderSubscriptions(
+			[makeSub()],
+			{ ...filters, host: "b.example.com" },
+			null,
+			["a.example.com", "b.example.com"],
+		);
+		expect(html).toMatch(
+			/<option value="b\.example\.com"\s+selected>b\.example\.com<\/option>/,
+		);
+	});
+
+	it("preserves host across the next-page link", () => {
+		const html = renderSubscriptions(
+			[makeSub()],
+			{ ...filters, host: "a.example.com" },
+			"1700000000000|01HSUB",
+			["a.example.com"],
+		);
+		expect(html).toMatch(/href="\/admin\/subscriptions\?[^"]*host=a\.example\.com[^"]*before=/);
 	});
 });
 

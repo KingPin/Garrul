@@ -1,4 +1,5 @@
 import type { Subscription } from "../../db/queries";
+import { renderHostFilter } from "../components/host-filter";
 import { escapeHtml } from "../escape";
 
 export type SubscriptionsFilters = {
@@ -6,6 +7,7 @@ export type SubscriptionsFilters = {
 	post_slug: string;
 	confirmed: "" | "yes" | "no";
 	unsubscribed: "" | "yes" | "no";
+	host: string;
 };
 
 const queryString = (f: SubscriptionsFilters): string => {
@@ -14,6 +16,7 @@ const queryString = (f: SubscriptionsFilters): string => {
 	if (f.post_slug) params.set("post_slug", f.post_slug);
 	if (f.confirmed) params.set("confirmed", f.confirmed);
 	if (f.unsubscribed) params.set("unsubscribed", f.unsubscribed);
+	if (f.host) params.set("host", f.host);
 	const s = params.toString();
 	return s ? `?${s}` : "";
 };
@@ -55,6 +58,7 @@ export const renderSubscriptions = (
 	rows: Subscription[],
 	filters: SubscriptionsFilters,
 	nextCursor: string | null,
+	hosts: string[] = [],
 ): string => {
 	const selOpts = (
 		name: "confirmed" | "unsubscribed",
@@ -103,6 +107,7 @@ export const renderSubscriptions = (
   <input type="text" name="post_slug" placeholder="post slug" value="${escapeHtml(filters.post_slug)}">
   <select name="confirmed">${selOpts("confirmed", filters.confirmed)}</select>
   <select name="unsubscribed">${selOpts("unsubscribed", filters.unsubscribed)}</select>
+  ${renderHostFilter({ hosts, selected: filters.host })}
   <button type="submit">Filter</button>
   <a href="/admin/subscriptions" class="muted">clear</a>
 </form>

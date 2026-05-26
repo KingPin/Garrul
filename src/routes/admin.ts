@@ -511,6 +511,8 @@ admin.get("/subscriptions", async (c) => {
 	const postSlug = (c.req.query("post_slug") ?? "").trim();
 	const confirmed = parseTriState(c.req.query("confirmed"));
 	const unsubscribed = parseTriState(c.req.query("unsubscribed"));
+	const hostRaw = (c.req.query("host") ?? "").trim();
+	const host = hostRaw.length > 0 && hostRaw.length <= 253 ? hostRaw : "";
 	const before = c.req.query("before") ?? null;
 
 	const filter: Parameters<typeof adminListSubscriptions>[1] = {};
@@ -520,6 +522,7 @@ admin.get("/subscriptions", async (c) => {
 	if (confirmed === "no") filter.confirmed = false;
 	if (unsubscribed === "yes") filter.unsubscribed = true;
 	if (unsubscribed === "no") filter.unsubscribed = false;
+	if (host) filter.host = host;
 
 	const limit = 50;
 	let cursorCreatedAt: number | null = null;
@@ -551,12 +554,14 @@ admin.get("/subscriptions", async (c) => {
 		post_slug: postSlug,
 		confirmed,
 		unsubscribed,
+		host,
 	};
+	const hosts = await adminListHosts(c.env.DB);
 	const updateInfo = await peekCachedLatestVersion(c.env);
 	return c.html(
-		renderPage(c, 
+		renderPage(c,
 			"Subscriptions",
-			renderSubscriptions(rows, filters, nextCursor),
+			renderSubscriptions(rows, filters, nextCursor, hosts),
 			user,
 			updateInfo,
 		),
