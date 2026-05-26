@@ -1569,6 +1569,29 @@ export const adminOldestPending = async (
 	return row ?? null;
 };
 
+export type CommentsByHostRow = {
+	host: string;
+	total: number;
+	pending: number;
+	spam: number;
+};
+
+export const adminCommentsByHost = async (
+	db: D1Database,
+): Promise<CommentsByHostRow[]> => {
+	const sql = `
+		SELECT ${hostExpr("p.url")} AS host,
+		       COUNT(*)                                          AS total,
+		       SUM(CASE WHEN c.status = 'pending' THEN 1 ELSE 0 END) AS pending,
+		       SUM(CASE WHEN c.status = 'spam'    THEN 1 ELSE 0 END) AS spam
+		  FROM comments c
+		  LEFT JOIN posts p ON p.slug = c.post_slug
+		 GROUP BY host
+		 ORDER BY total DESC, host ASC`;
+	const result = await db.prepare(sql).all<CommentsByHostRow>();
+	return result.results ?? [];
+};
+
 export type SpamRate = { total: number; spam: number };
 
 export const adminSpamRate = async (

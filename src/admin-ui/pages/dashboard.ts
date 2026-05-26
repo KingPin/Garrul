@@ -1,6 +1,7 @@
 import type { Bindings } from "../../index";
 import type {
 	AdminStats,
+	CommentsByHostRow,
 	SpamRate,
 	TimelinePoint,
 	TopCommenter,
@@ -17,6 +18,7 @@ export type DashboardData = {
 	top_commenters: TopCommenter[];
 	oldest_pending: { id: string; created_at: number } | null;
 	spam_rate: SpamRate;
+	by_host: CommentsByHostRow[];
 };
 
 const sparklineSvg = (points: TimelinePoint[]): string => {
@@ -97,11 +99,48 @@ const spamRatePct = (r: SpamRate): string => {
 	return `${pct.toFixed(1)}%`;
 };
 
+const HOSTS_VISIBLE = 10;
+
+const byHostPanel = (rows: CommentsByHostRow[]): string => {
+	if (rows.length === 0)
+		return `<div class="card"><h3>Comments by domain</h3><div class="muted">No comments yet.</div></div>`;
+	const visible = rows.slice(0, HOSTS_VISIBLE);
+	const overflow = rows.length - visible.length;
+	const trs = visible
+		.map((r) => {
+			const rate = r.total > 0 ? ((r.spam / r.total) * 100).toFixed(1) : "0.0";
+			const href = `/admin/queue?status=all&host=${encodeURIComponent(r.host)}`;
+			return `
+<tr>
+  <td><a href="${href}"><code>${escapeHtml(r.host)}</code></a></td>
+  <td>${r.total}</td>
+  <td>${r.pending}</td>
+  <td>${r.spam}</td>
+  <td class="muted">${rate}%</td>
+</tr>`;
+		})
+		.join("");
+	const more = overflow > 0
+		? `<div class="muted" style="font-size:0.85em;margin-top:0.4rem">…and ${overflow} more domain${overflow === 1 ? "" : "s"}</div>`
+		: "";
+	return `
+<div class="card">
+  <h3>Comments by domain</h3>
+  <table>
+    <thead><tr>
+      <th>Host</th><th>Total</th><th>Pending</th><th>Spam</th><th>Spam %</th>
+    </tr></thead>
+    <tbody>${trs}</tbody>
+  </table>
+  ${more}
+</div>`;
+};
+
 export const renderDashboard = (
 	data: DashboardData,
 	env: Bindings,
 ): string => {
-	const { stats, timeline, top_posts, top_commenters, oldest_pending, spam_rate } = data;
+	const { stats, timeline, top_posts, top_commenters, oldest_pending, spam_rate, by_host } = data;
 	return `
 <div class="card">
   <h2>Overview</h2>
@@ -138,6 +177,8 @@ export const renderDashboard = (
     <ul class="dash-list">${topCommentersList(top_commenters)}</ul>
   </div>
 </div>
+
+${byHostPanel(by_host)}
 
 <div class="card">
   <h3>Quick actions</h3>

@@ -22,6 +22,7 @@ import { readSession } from "../lib/session";
 import {
 	ADMIN_ACTIONS,
 	adminBulkUpdateCommentStatus,
+	adminCommentsByHost,
 	adminGetCommentDetail,
 	adminGetUserDetail,
 	adminInsertAudit,
@@ -214,7 +215,7 @@ admin.get("/", async (c) => {
 	const user = await requireMod(c);
 	if (user instanceof Response) return user;
 	const db = c.env.DB;
-	const [stats, timeline, topPosts, topCommenters, oldestPending, spamRate, updateInfo] =
+	const [stats, timeline, topPosts, topCommenters, oldestPending, spamRate, byHost, updateInfo] =
 		await Promise.all([
 			adminStats(db),
 			adminTimeline(db, 30),
@@ -222,6 +223,7 @@ admin.get("/", async (c) => {
 			adminTopCommenters(db, 30, 5),
 			adminOldestPending(db),
 			adminSpamRate(db, 30),
+			adminCommentsByHost(db),
 			peekCachedLatestVersion(c.env),
 		]);
 	const body = renderDashboard(
@@ -232,6 +234,7 @@ admin.get("/", async (c) => {
 			top_commenters: topCommenters,
 			oldest_pending: oldestPending,
 			spam_rate: spamRate,
+			by_host: byHost,
 		},
 		c.env,
 	);

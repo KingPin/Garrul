@@ -473,6 +473,7 @@ describe("renderDashboard", () => {
 				top_commenters: [],
 				oldest_pending: { id: "01HOLDEST", created_at: Date.now() - 3 * 3600_000 },
 				spam_rate: { total: 100, spam: 12 },
+				by_host: [],
 			},
 			env,
 		);
@@ -491,10 +492,77 @@ describe("renderDashboard", () => {
 				top_commenters: [],
 				oldest_pending: null,
 				spam_rate: { total: 0, spam: 0 },
+				by_host: [],
 			},
 			env,
 		);
 		expect(html).toContain("No activity in this range");
 		expect(html).toContain("No pending comments");
+	});
+
+	it("renders the per-domain breakdown with spam % and links to queue", () => {
+		const html = renderDashboard(
+			{
+				stats,
+				timeline: [],
+				top_posts: [],
+				top_commenters: [],
+				oldest_pending: null,
+				spam_rate: { total: 0, spam: 0 },
+				by_host: [
+					{ host: "a.example.com", total: 100, pending: 3, spam: 25 },
+					{ host: "b.example.com", total: 10, pending: 0, spam: 0 },
+				],
+			},
+			env,
+		);
+		expect(html).toContain("Comments by domain");
+		expect(html).toContain("a.example.com");
+		expect(html).toContain("25.0%");
+		expect(html).toContain("0.0%");
+		expect(html).toContain("/admin/queue?status=all&host=a.example.com");
+	});
+
+	it("shows '…and N more' when there are more than 10 hosts", () => {
+		const hosts = Array.from({ length: 13 }, (_, i) => ({
+			host: `h${i}.example.com`,
+			total: 13 - i,
+			pending: 0,
+			spam: 0,
+		}));
+		const html = renderDashboard(
+			{
+				stats,
+				timeline: [],
+				top_posts: [],
+				top_commenters: [],
+				oldest_pending: null,
+				spam_rate: { total: 0, spam: 0 },
+				by_host: hosts,
+			},
+			env,
+		);
+		expect(html).toContain("…and 3 more domains");
+		expect(html).toContain("h0.example.com");
+		expect(html).not.toContain("h12.example.com");
+	});
+
+	it("HTML-escapes hostile host strings in the breakdown", () => {
+		const html = renderDashboard(
+			{
+				stats,
+				timeline: [],
+				top_posts: [],
+				top_commenters: [],
+				oldest_pending: null,
+				spam_rate: { total: 0, spam: 0 },
+				by_host: [
+					{ host: "<svg/onload=alert(1)>", total: 1, pending: 0, spam: 0 },
+				],
+			},
+			env,
+		);
+		expect(html).not.toContain("<svg/onload=alert(1)>");
+		expect(html).toContain("&lt;svg/onload=alert(1)&gt;");
 	});
 });
