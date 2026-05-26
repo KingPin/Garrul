@@ -16,6 +16,7 @@ import {
 } from "../src/admin-ui/pages/subscriptions";
 import { renderOperator } from "../src/admin-ui/pages/operator";
 import { renderDashboard } from "../src/admin-ui/pages/dashboard";
+import { renderUpdateBanner } from "../src/admin-ui/layout";
 import type {
 	AdminComment,
 	ADMIN_ACTIONS,
@@ -308,6 +309,36 @@ describe("renderOperator", () => {
 		});
 		expect(work).toContain(">Run rerender<");
 		expect(work).toContain("oldest stale at v1");
+	});
+});
+
+describe("renderUpdateBanner", () => {
+	// Regression: the localStorage key was JSON.stringified directly into
+	// both an x-data="..." and an @click="..." attribute. The first " of
+	// the JSON-encoded string closed the attribute, breaking Alpine and
+	// disabling the Dismiss button. Fix wraps with escapeHtml.
+	it("HTML-escapes the localStorage key inside Alpine attributes", () => {
+		const html = renderUpdateBanner({
+			current: "v1.0.0",
+			latest: "v1.2.3",
+			behind: true,
+			url: "https://example.com/release",
+		});
+		expect(html).not.toMatch(/localStorage\.getItem\("/);
+		expect(html).toContain("localStorage.getItem(&quot;");
+		expect(html).toContain("localStorage.setItem(&quot;");
+	});
+
+	it("returns empty string when no update is available", () => {
+		expect(renderUpdateBanner(null)).toBe("");
+		expect(
+			renderUpdateBanner({
+				current: "v1.2.3",
+				latest: "v1.2.3",
+				behind: false,
+				url: "",
+			}),
+		).toBe("");
 	});
 });
 

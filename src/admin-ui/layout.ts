@@ -41,14 +41,15 @@ export const renderUpdateBanner = (info: UpdateInfo | null): string => {
 	const tag = escapeHtml(info.latest);
 	const url = escapeHtml(info.url);
 	const key = `garrul.dismissed.update.${info.latest}`;
+	const keyLit = escapeHtml(JSON.stringify(key));
 	return `
-<div x-data="{ shown: localStorage.getItem(${JSON.stringify(key)}) !== '1' }"
+<div x-data="{ shown: localStorage.getItem(${keyLit}) !== '1' }"
      x-show="shown"
      class="banner update">
   <span>Update available: <strong>${tag}</strong> —
     <a href="${url}" target="_blank" rel="noopener">release notes</a>.
     Run <code>npm run upgrade</code>.</span>
-  <button @click="localStorage.setItem(${JSON.stringify(key)},'1'); shown=false"
+  <button @click="localStorage.setItem(${keyLit},'1'); shown=false"
           aria-label="Dismiss update notice">Dismiss</button>
 </div>`;
 };
