@@ -143,6 +143,17 @@ describe("renderQueue", () => {
 		expect(html).toContain("$dispatch('bulk-done'");
 	});
 
+	// Regression: the bulk x-data block previously interpolated
+	// `JSON.stringify(allIds)` raw, so the first `"` of the JSON array
+	// closed the x-data="..." attribute and the rest of the JS body
+	// leaked into the page as visible text. The fix HTML-escapes the
+	// JSON (matching the `jsLiteral` helper used elsewhere in the file).
+	it("HTML-escapes the allIds JSON so it cannot break out of x-data", () => {
+		const html = renderQueue([makeComment()], emptyQueueFilters, null);
+		expect(html).not.toMatch(/allIds: \["/);
+		expect(html).toContain("allIds: [&quot;");
+	});
+
 	it("renders the latest-audit footer strip when present", () => {
 		const audit: AuditRowWithAdmin = {
 			id: "audit1",

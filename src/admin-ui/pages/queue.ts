@@ -245,7 +245,7 @@ ${filterBar}
 <div class="card" x-data="{
   selected: [],
   bulkBusy: false,
-  allIds: ${JSON.stringify(allIds)},
+  allIds: ${escapeHtml(JSON.stringify(allIds))},
   toggleAll(e) {
     this.selected = e.target.checked ? this.allIds.slice() : [];
   },
