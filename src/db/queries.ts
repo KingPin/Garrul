@@ -10,6 +10,7 @@
  *   - Booleans are 0/1 INTEGER in D1; converted to JS booleans here.
  */
 import { ulid } from "../lib/ulid";
+import { hostExpr } from "./host-expr";
 
 // Escape SQL LIKE wildcards so admin search inputs are matched as literals.
 // SQLite treats `%` and `_` as wildcards inside the pattern; without escaping
@@ -658,6 +659,17 @@ export const adminListComments = async (
 		.bind(...binds)
 		.all<AdminCommentRow>();
 	return (result.results ?? []).map(toAdminComment);
+};
+
+/**
+ * Distinct page hosts (derived from posts.url) used by every admin surface
+ * that filters by domain. Includes the NO_URL_BUCKET sentinel when posts
+ * without a url exist.
+ */
+export const adminListHosts = async (db: D1Database): Promise<string[]> => {
+	const sql = `SELECT DISTINCT ${hostExpr("url")} AS host FROM posts ORDER BY host`;
+	const result = await db.prepare(sql).all<{ host: string }>();
+	return (result.results ?? []).map((r) => r.host);
 };
 
 export const updateCommentStatus = async (
