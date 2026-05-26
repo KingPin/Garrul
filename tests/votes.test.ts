@@ -143,11 +143,18 @@ describe("castVote", () => {
 
 // -- route-level input validation -------------------------------------------
 
+// The route's ghost-user lookup falls through makeDb's `FROM users` branch,
+// which returns id="01HU000000000000000000". A comment.user_id distinct
+// from that id means the anon voter is NOT the comment author — the
+// default path. The self-vote test below overrides this to match.
+const COMMENT_AUTHOR_ID = "01HU111111111111111111";
+
 const mkRouteApp = (
 	envOver: Partial<{
 		VOTING_ENABLED: string;
 		DOWNVOTES_ENABLED: string;
 	}> = {},
+	commentAuthorId: string = COMMENT_AUTHOR_ID,
 ) => {
 	const app = new Hono<{ Bindings: Record<string, unknown> }>();
 	const { db } = makeDb({
@@ -155,7 +162,7 @@ const mkRouteApp = (
 			id: ULID_OK,
 			post_slug: "hello",
 			parent_id: null,
-			user_id: "01HU000000000000000000",
+			user_id: commentAuthorId,
 			body_md: "x",
 			body_html: "<p>x</p>",
 			renderer_version: 1,
@@ -268,5 +275,33 @@ describe("POST /votes — env flags", () => {
 		const down = await post(app, env, { comment_id: ULID_OK, value: -1 });
 		expect(up.status).toBe(200);
 		expect(down.status).toBe(200);
+	});
+});
+
+describe("POST /votes — self-vote forbidden", () => {
+	// The ghost-user lookup in makeDb returns id="01HU000000000000000000".
+	// Setting the comment's author to the same id puts the voter and the
+	// author at the same identity — the guard must reject all three values
+	// (up, down, clear) rather than letting the author game score-sort.
+	const GHOST_ID = "01HU000000000000000000";
+
+	it("403s an upvote on own comment with vote_self_forbidden", async () => {
+		const { app, env } = mkRouteApp({}, GHOST_ID);
+		const res = await post(app, env, { comment_id: ULID_OK, value: 1 });
+		expect(res.status).toBe(403);
+		const body = (await res.json()) as { error: string };
+		expect(body.error).toBe("vote_self_forbidden");
+	});
+
+	it("403s a downvote on own comment", async () => {
+		const { app, env } = mkRouteApp({}, GHOST_ID);
+		const res = await post(app, env, { comment_id: ULID_OK, value: -1 });
+		expect(res.status).toBe(403);
+	});
+
+	it("403s a clear (value=0) on own comment", async () => {
+		const { app, env } = mkRouteApp({}, GHOST_ID);
+		const res = await post(app, env, { comment_id: ULID_OK, value: 0 });
+		expect(res.status).toBe(403);
 	});
 });

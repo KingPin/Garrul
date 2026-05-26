@@ -101,6 +101,14 @@ votes.post("/", async (c) => {
 		userId = ghost.id;
 	}
 
+	// Authors can't vote on their own comment. Works for both authenticated
+	// users (session user_id) and anonymous viewers (IP-hash ghost) because
+	// comments.user_id is whichever identity posted. Without this guard a
+	// self-upvote silently floats your own thread under sort=top.
+	if (userId === comment.user_id) {
+		return c.json({ error: "vote_self_forbidden" }, 403);
+	}
+
 	const result = await castVote(c.env.DB, comment_id, userId, value);
 
 	writeEvent(c.env.ANALYTICS, "vote.cast", {
