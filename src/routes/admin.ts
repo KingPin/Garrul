@@ -29,6 +29,7 @@ import {
 	adminGetSubscription,
 	adminListAudit,
 	adminListComments,
+	adminListHosts,
 	adminListSubscriptions,
 	adminListUsers,
 	adminOldestPending,
@@ -267,6 +268,11 @@ admin.get("/queue", async (c) => {
 	// "to" is inclusive in the UI but the SQL uses < — push it forward 24h.
 	const toMs = parseDateMs(toRaw);
 	const toExclusive = toMs != null ? toMs + 86_400_000 : null;
+	// DNS hostnames cap at 253 chars; anything longer is junk/noise — drop
+	// silently rather than 4xx so a malformed bookmark just falls back to
+	// "all domains".
+	const hostRaw = (c.req.query("host") ?? "").trim();
+	const host = hostRaw.length > 0 && hostRaw.length <= 253 ? hostRaw : "";
 
 	const before = c.req.query("before");
 	let cursorTs: number | null = null;
@@ -290,6 +296,7 @@ admin.get("/queue", async (c) => {
 	if (userId) filter.user_id = userId;
 	if (fromMs != null) filter.from = fromMs;
 	if (toExclusive != null) filter.to = toExclusive;
+	if (host) filter.host = host;
 
 	const rows = await adminListComments(c.env.DB, filter, 51, cursorTs, cursorId);
 	const trimmed = rows.slice(0, 50);
@@ -303,6 +310,8 @@ admin.get("/queue", async (c) => {
 		trimmed.map((r) => r.id),
 	);
 
+	const hosts = await adminListHosts(c.env.DB);
+
 	const updateInfo = await peekCachedLatestVersion(c.env);
 	const filters: QueueFilters = {
 		status,
@@ -311,11 +320,12 @@ admin.get("/queue", async (c) => {
 		user_id: userId,
 		from: fromRaw ?? "",
 		to: toRaw ?? "",
+		host,
 	};
 	return c.html(
-		renderPage(c, 
+		renderPage(c,
 			"Queue",
-			renderQueue(trimmed, filters, nextCursor, latestAudit),
+			renderQueue(trimmed, filters, nextCursor, latestAudit, hosts),
 			user,
 			updateInfo,
 		),

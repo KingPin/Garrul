@@ -46,6 +46,7 @@ const makeComment = (over: Partial<AdminComment> = {}): AdminComment => ({
 	author_provider: "github",
 	author_is_admin: false,
 	author_is_banned: false,
+	host: "blog.example.com",
 	...over,
 });
 
@@ -56,6 +57,7 @@ const emptyQueueFilters: QueueFilters = {
 	user_id: "",
 	from: "",
 	to: "",
+	host: "",
 };
 
 describe("renderQueue", () => {
@@ -153,6 +155,49 @@ describe("renderQueue", () => {
 		const html = renderQueue([makeComment()], emptyQueueFilters, null);
 		expect(html).not.toMatch(/allIds: \["/);
 		expect(html).toContain("allIds: [&quot;");
+	});
+
+	it("renders the host dropdown populated with the supplied hosts", () => {
+		const html = renderQueue(
+			[makeComment()],
+			emptyQueueFilters,
+			null,
+			new Map(),
+			["blog.example.com", "shop.example.com", "(no url)"],
+		);
+		expect(html).toContain('<select name="host"');
+		expect(html).toContain('value="blog.example.com"');
+		expect(html).toContain('value="shop.example.com"');
+		expect(html).toContain('value="(no url)"');
+		expect(html).toContain('<option value="" selected>all domains</option>');
+	});
+
+	it("preserves the host filter across status tab links", () => {
+		const html = renderQueue(
+			[],
+			{ ...emptyQueueFilters, host: "blog.example.com" },
+			null,
+		);
+		expect(html).toContain("host=blog.example.com");
+	});
+
+	it("shows the host on the comment row", () => {
+		const html = renderQueue(
+			[makeComment({ host: "shop.example.com" })],
+			emptyQueueFilters,
+			null,
+		);
+		expect(html).toContain("shop.example.com");
+	});
+
+	it("escapes a hostile host string in the row cell", () => {
+		const html = renderQueue(
+			[makeComment({ host: `<script>alert(1)</script>` })],
+			emptyQueueFilters,
+			null,
+		);
+		expect(html).not.toContain("<script>alert");
+		expect(html).toContain("&lt;script&gt;");
 	});
 
 	it("renders the latest-audit footer strip when present", () => {

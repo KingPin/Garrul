@@ -5,6 +5,7 @@ import type {
 } from "../../db/queries";
 import { identiconSvg } from "../../lib/identicon";
 import { sanitizeForEmail as resanitizeBodyHtml } from "../../lib/markdown";
+import { renderHostFilter } from "../components/host-filter";
 import { escapeHtml } from "../escape";
 
 const relTime = (ts: number, now: number = Date.now()): string => {
@@ -31,6 +32,7 @@ export type QueueFilters = {
 	user_id: string;
 	from: string;
 	to: string;
+	host: string;
 };
 
 const queryString = (f: QueueFilters): string => {
@@ -41,6 +43,7 @@ const queryString = (f: QueueFilters): string => {
 	if (f.user_id) params.set("user_id", f.user_id);
 	if (f.from) params.set("from", f.from);
 	if (f.to) params.set("to", f.to);
+	if (f.host) params.set("host", f.host);
 	const s = params.toString();
 	return s ? `?${s}` : "";
 };
@@ -123,6 +126,7 @@ export const renderQueue = (
 	filters: QueueFilters,
 	nextCursor: string | null,
 	latestAudit: Map<string, AuditRowWithAdmin> = new Map(),
+	hosts: string[] = [],
 ): string => {
 	const tabs = ["all", "approved", "pending", "spam", "deleted"]
 		.map((s) => {
@@ -139,12 +143,14 @@ export const renderQueue = (
 		filters.post_slug ||
 		filters.user_id ||
 		filters.from ||
-		filters.to;
+		filters.to ||
+		filters.host;
 	const filterBar = `
 <form class="filter-bar queue-filter" method="get" action="/admin/queue">
   <input type="hidden" name="status" value="${escapeHtml(filters.status)}">
   <input type="text" name="q" placeholder="search body" value="${escapeHtml(filters.q)}">
   <input type="text" name="post_slug" placeholder="post slug" value="${escapeHtml(filters.post_slug)}">
+  ${renderHostFilter({ hosts, selected: filters.host })}
   <input type="date" name="from" value="${escapeHtml(filters.from)}" title="from (UTC)">
   <input type="date" name="to" value="${escapeHtml(filters.to)}" title="to (UTC, inclusive)">
   ${filters.user_id ? `<input type="hidden" name="user_id" value="${escapeHtml(filters.user_id)}"><span class="muted">user: <code>${escapeHtml(filters.user_id)}</code></span>` : ""}
@@ -165,6 +171,7 @@ export const renderQueue = (
   <td class="score-cell" title="up / down">${scoreCell(c)}</td>
   <td>
     <div class="muted">${new Date(c.created_at).toISOString().slice(0, 16).replace("T", " ")}</div>
+    <div><code>${escapeHtml(c.host)}</code></div>
     <div><code>${escapeHtml(c.post_slug)}</code></div>
     <div class="muted" style="font-size:0.75rem">${escapeHtml(c.id)}</div>
   </td>

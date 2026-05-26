@@ -573,6 +573,7 @@ export type AdminComment = Comment & {
 	author_provider: string | null;
 	author_is_admin: boolean;
 	author_is_banned: boolean;
+	host: string;
 };
 
 type AdminCommentRow = Omit<
@@ -596,6 +597,7 @@ export type AdminCommentFilter = {
 	user_id?: string;
 	from?: number;
 	to?: number;
+	host?: string;
 };
 
 export const adminListComments = async (
@@ -637,6 +639,10 @@ export const adminListComments = async (
 		where.push("c.created_at < ?");
 		binds.push(filter.to);
 	}
+	if (filter.host) {
+		where.push(`${hostExpr("p.url")} = ?`);
+		binds.push(filter.host);
+	}
 
 	const sql = `
 		SELECT c.id, c.post_slug, c.parent_id, c.user_id, c.body_md, c.body_html,
@@ -647,9 +653,11 @@ export const adminListComments = async (
 		       u.avatar_url AS author_avatar_url,
 		       u.provider   AS author_provider,
 		       u.is_admin   AS author_is_admin,
-		       u.is_banned  AS author_is_banned
+		       u.is_banned  AS author_is_banned,
+		       ${hostExpr("p.url")} AS host
 		  FROM comments c
 		  LEFT JOIN users u ON u.id = c.user_id
+		  LEFT JOIN posts p ON p.slug = c.post_slug
 		 WHERE ${where.join(" AND ")}
 		 ORDER BY c.created_at DESC, c.id DESC
 		 LIMIT ?`;
@@ -1594,9 +1602,11 @@ export const adminGetCommentDetail = async (
 			        u.avatar_url AS author_avatar_url,
 			        u.provider   AS author_provider,
 			        u.is_admin   AS author_is_admin,
-			        u.is_banned  AS author_is_banned
+			        u.is_banned  AS author_is_banned,
+			        ${hostExpr("p.url")} AS host
 			   FROM comments c
 			   LEFT JOIN users u ON u.id = c.user_id
+			   LEFT JOIN posts p ON p.slug = c.post_slug
 			  WHERE c.id = ?`,
 		)
 		.bind(id)
@@ -1635,9 +1645,11 @@ export const adminGetCommentDetail = async (
 			        u.avatar_url AS author_avatar_url,
 			        u.provider   AS author_provider,
 			        u.is_admin   AS author_is_admin,
-			        u.is_banned  AS author_is_banned
+			        u.is_banned  AS author_is_banned,
+			        ${hostExpr("p.url")} AS host
 			   FROM comments c
 			   LEFT JOIN users u ON u.id = c.user_id
+			   LEFT JOIN posts p ON p.slug = c.post_slug
 			  WHERE c.parent_id = ?
 			  ORDER BY c.created_at ASC
 			  LIMIT 20`,
@@ -1679,9 +1691,11 @@ export const adminGetCommentDetail = async (
 			        u.avatar_url AS author_avatar_url,
 			        u.provider   AS author_provider,
 			        u.is_admin   AS author_is_admin,
-			        u.is_banned  AS author_is_banned
+			        u.is_banned  AS author_is_banned,
+			        ${hostExpr("p.url")} AS host
 			   FROM comments c
 			   LEFT JOIN users u ON u.id = c.user_id
+			   LEFT JOIN posts p ON p.slug = c.post_slug
 			  WHERE c.user_id = ? AND c.id != ?
 			  ORDER BY c.created_at DESC
 			  LIMIT 5`,
