@@ -184,4 +184,27 @@ describe("renderUsageDashboard", () => {
 		const html = renderUsageDashboard(okSnapshot());
 		expect(html).toContain('aria-label="Today: ');
 	});
+
+	it("appends the comments-by-domain panel when by-host data is provided", () => {
+		const html = renderUsageDashboard(okSnapshot(), [
+			{ host: "a.example.com", total: 100, pending: 0, spam: 8 },
+		]);
+		expect(html).toContain("Comments by domain");
+		expect(html).toContain("a.example.com");
+		expect(html).toContain("8.0%");
+		expect(html).toContain("/admin/queue?status=all&host=a.example.com");
+	});
+
+	it("omits the comments-by-domain panel when by-host is empty", () => {
+		const html = renderUsageDashboard(okSnapshot(), []);
+		expect(html).not.toContain("Comments by domain");
+	});
+
+	it("HTML-escapes hostile host strings in the by-domain panel", () => {
+		const html = renderUsageDashboard(okSnapshot(), [
+			{ host: "<svg/onload=alert(1)>", total: 1, pending: 0, spam: 0 },
+		]);
+		expect(html).not.toContain("<svg/onload=alert(1)>");
+		expect(html).toContain("&lt;svg/onload=alert(1)&gt;");
+	});
 });

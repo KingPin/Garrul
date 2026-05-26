@@ -14,6 +14,7 @@
  */
 import { escapeHtml } from "../escape";
 import type { Panel, UsageSnapshot } from "../../lib/cf-usage";
+import type { CommentsByHostRow } from "../../db/queries";
 
 // Free-tier limits as of 2026-05. Update alongside Cloudflare's docs.
 const LIMITS = {
@@ -115,7 +116,42 @@ const kvPanel = (
 </div>`;
 };
 
-export const renderUsageDashboard = (snapshot: UsageSnapshot): string => {
+const HOSTS_VISIBLE = 10;
+
+const byHostPanel = (rows: CommentsByHostRow[]): string => {
+	if (rows.length === 0) return "";
+	const visible = rows.slice(0, HOSTS_VISIBLE);
+	const overflow = rows.length - visible.length;
+	const trs = visible
+		.map((r) => {
+			const rate = r.total > 0 ? ((r.spam / r.total) * 100).toFixed(1) : "0.0";
+			const href = `/admin/queue?status=all&host=${encodeURIComponent(r.host)}`;
+			return `
+<tr>
+  <td><a href="${href}"><code>${escapeHtml(r.host)}</code></a></td>
+  <td>${r.total}</td>
+  <td class="muted">${rate}%</td>
+</tr>`;
+		})
+		.join("");
+	const more = overflow > 0
+		? `<div class="muted" style="font-size:0.85em;margin-top:0.4rem">…and ${overflow} more domain${overflow === 1 ? "" : "s"}</div>`
+		: "";
+	return `
+<div class="card">
+  <h3 style="margin-top:0">Comments by domain</h3>
+  <table>
+    <thead><tr><th>Host</th><th>Total</th><th>Spam %</th></tr></thead>
+    <tbody>${trs}</tbody>
+  </table>
+  ${more}
+</div>`;
+};
+
+export const renderUsageDashboard = (
+	snapshot: UsageSnapshot,
+	byHost: CommentsByHostRow[] = [],
+): string => {
 	const asOf = new Date(snapshot.asOf).toISOString().replace("T", " ").slice(0, 16);
 	return `
 <div class="card">
@@ -129,10 +165,11 @@ export const renderUsageDashboard = (snapshot: UsageSnapshot): string => {
 </div>
 ${workersPanel(snapshot.workers)}
 ${d1Panel(snapshot.d1)}
-${kvPanel(snapshot.kv)}`;
+${kvPanel(snapshot.kv)}
+${byHostPanel(byHost)}`;
 };
 
-export const renderUsageSetup = (): string => `
+export const renderUsageSetup = (byHost: CommentsByHostRow[] = []): string => `
 <div class="card">
   <h2 style="margin-top:0">Cloudflare usage — not configured</h2>
   <p>
@@ -169,9 +206,13 @@ wrangler secret put CF_ACCOUNT_ID</code></pre>
     first load with a low-privilege <code>/user/tokens/verify</code>
     probe.
   </p>
-</div>`;
+</div>
+${byHostPanel(byHost)}`;
 
-export const renderUsageTokenError = (error: string): string => `
+export const renderUsageTokenError = (
+	error: string,
+	byHost: CommentsByHostRow[] = [],
+): string => `
 <div class="card">
   <h2 style="margin-top:0">Cloudflare usage — token error</h2>
   <p>
@@ -184,4 +225,5 @@ export const renderUsageTokenError = (error: string): string => `
     listed in the setup guide and run <code>wrangler secret put
     CF_API_TOKEN</code> again.
   </p>
-</div>`;
+</div>
+${byHostPanel(byHost)}`;

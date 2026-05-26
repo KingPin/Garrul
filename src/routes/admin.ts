@@ -820,9 +820,14 @@ admin.patch("/api/webhooks/:id", async (c) => {
 admin.get("/usage", async (c) => {
 	const user = await requireAdmin(c);
 	if (user instanceof Response) return user;
-	const updateInfo = await peekCachedLatestVersion(c.env);
+	const [updateInfo, byHost] = await Promise.all([
+		peekCachedLatestVersion(c.env),
+		adminCommentsByHost(c.env.DB),
+	]);
 	if (!isUsageConfigured(c.env)) {
-		return c.html(renderPage(c, "Usage", renderUsageSetup(), user, updateInfo));
+		return c.html(
+			renderPage(c, "Usage", renderUsageSetup(byHost), user, updateInfo),
+		);
 	}
 	// Verify the token before hitting GraphQL — surfaces revoked / wrong-
 	// scope tokens with a clear error instead of cryptic GraphQL failures.
@@ -830,17 +835,17 @@ admin.get("/usage", async (c) => {
 	if (!tokenOk.ok || tokenOk.status !== "active") {
 		const errMsg = tokenOk.ok ? `status:${tokenOk.status}` : tokenOk.error;
 		return c.html(
-			renderPage(c, "Usage", renderUsageTokenError(errMsg), user, updateInfo),
+			renderPage(c, "Usage", renderUsageTokenError(errMsg, byHost), user, updateInfo),
 		);
 	}
 	try {
 		const snapshot = await fetchUsageSnapshot(c.env);
 		return c.html(
-			renderPage(c, "Usage", renderUsageDashboard(snapshot), user, updateInfo),
+			renderPage(c, "Usage", renderUsageDashboard(snapshot, byHost), user, updateInfo),
 		);
 	} catch (err) {
 		return c.html(
-			renderPage(c, "Usage", renderUsageTokenError(String(err)), user, updateInfo),
+			renderPage(c, "Usage", renderUsageTokenError(String(err), byHost), user, updateInfo),
 		);
 	}
 });
