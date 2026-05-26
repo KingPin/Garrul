@@ -513,6 +513,16 @@ const buildVotes = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	const wrap = el("div", "gr-votes");
 	const score = n.score_up - n.score_down;
 
+	// Self-voting is blocked server-side (vote_self_forbidden) and the
+	// anonymous case can't be detected client-side without leaking ghost
+	// identities. For signed-in viewers, render a read-only score so the
+	// author still sees who's reacting to their comment, just without the
+	// affordance to game it.
+	if (ctx.me && ctx.me.id === n.author.id) {
+		wrap.appendChild(el("span", "gr-vote-score", String(score)));
+		return wrap;
+	}
+
 	const up = el("button", "gr-vote");
 	up.type = "button";
 	up.setAttribute("aria-label", "Upvote");
