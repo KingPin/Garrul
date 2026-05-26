@@ -426,6 +426,8 @@ admin.get("/audit", async (c) => {
 	const fromMs = parseDateMs(fromRaw);
 	const toMs = parseDateMs(toRaw);
 	const toExclusive = toMs != null ? toMs + 86_400_000 : null;
+	const hostRaw = (c.req.query("host") ?? "").trim();
+	const host = hostRaw.length > 0 && hostRaw.length <= 253 ? hostRaw : "";
 
 	const before = c.req.query("before");
 	let cursorTs: number | null = null;
@@ -467,12 +469,15 @@ admin.get("/audit", async (c) => {
 	if (targetId) filter.target_id = targetId;
 	if (fromMs != null) filter.from = fromMs;
 	if (toExclusive != null) filter.to = toExclusive;
+	if (host) filter.host = host;
 
 	const rows = await adminListAudit(c.env.DB, filter, 51, cursorTs, cursorId);
 	const trimmed = rows.slice(0, 50);
 	const last = trimmed[trimmed.length - 1];
 	const nextCursor =
 		rows.length > 50 && last ? `${last.created_at}|${last.id}` : null;
+
+	const hosts = await adminListHosts(c.env.DB);
 
 	const filters: AuditFilters = {
 		admin_id: adminId,
@@ -481,12 +486,13 @@ admin.get("/audit", async (c) => {
 		target_id: targetId,
 		from: fromRaw ?? "",
 		to: toRaw ?? "",
+		host,
 	};
 	const updateInfo = await peekCachedLatestVersion(c.env);
 	return c.html(
-		renderPage(c, 
+		renderPage(c,
 			"Audit",
-			renderAudit(trimmed, filters, nextCursor, ADMIN_ACTIONS),
+			renderAudit(trimmed, filters, nextCursor, ADMIN_ACTIONS, hosts),
 			user,
 			updateInfo,
 		),

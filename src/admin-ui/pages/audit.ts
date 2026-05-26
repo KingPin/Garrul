@@ -1,4 +1,5 @@
 import type { AuditRowWithAdmin, AdminAction } from "../../db/queries";
+import { renderHostFilter } from "../components/host-filter";
 import { escapeHtml } from "../escape";
 
 export type AuditFilters = {
@@ -8,6 +9,7 @@ export type AuditFilters = {
 	target_id: string;
 	from: string;
 	to: string;
+	host: string;
 };
 
 const queryString = (f: AuditFilters): string => {
@@ -18,6 +20,7 @@ const queryString = (f: AuditFilters): string => {
 	if (f.target_id) params.set("target_id", f.target_id);
 	if (f.from) params.set("from", f.from);
 	if (f.to) params.set("to", f.to);
+	if (f.host) params.set("host", f.host);
 	const s = params.toString();
 	return s ? `?${s}` : "";
 };
@@ -39,6 +42,7 @@ export const renderAudit = (
 	filters: AuditFilters,
 	nextCursor: string | null,
 	actions: ReadonlyArray<AdminAction>,
+	hosts: string[] = [],
 ): string => {
 	const actionOptions = ["", ...actions]
 		.map(
@@ -81,12 +85,18 @@ export const renderAudit = (
 		? `<a href="${nextHref}">Next →</a>`
 		: '<span class="muted">end</span>';
 
+	const hostHelper = filters.host
+		? `<span class="muted" style="font-size:0.85em">narrows to comment actions on this domain</span>`
+		: "";
+
 	return `
 <form class="filter-bar queue-filter" method="get" action="/admin/audit">
   <input type="text" name="admin_id" placeholder="admin id" value="${escapeHtml(filters.admin_id)}">
   <select name="action">${actionOptions}</select>
   <select name="target_kind">${kindOptions}</select>
   <input type="text" name="target_id" placeholder="target id" value="${escapeHtml(filters.target_id)}">
+  ${renderHostFilter({ hosts, selected: filters.host })}
+  ${hostHelper}
   <input type="date" name="from" value="${escapeHtml(filters.from)}" title="from (UTC)">
   <input type="date" name="to" value="${escapeHtml(filters.to)}" title="to (UTC, inclusive)">
   <button type="submit">Filter</button>

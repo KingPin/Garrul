@@ -228,6 +228,7 @@ describe("renderAudit", () => {
 		target_id: "",
 		from: "",
 		to: "",
+		host: "",
 	};
 	const adminActions: typeof ADMIN_ACTIONS = [
 		"approve",
@@ -278,6 +279,34 @@ describe("renderAudit", () => {
 	it("shows the empty-state row when there are no audit rows", () => {
 		const html = renderAudit([], filters, null, adminActions);
 		expect(html).toContain("No audit rows.");
+	});
+
+	it("renders the host dropdown populated with the supplied hosts", () => {
+		const html = renderAudit([], filters, null, adminActions, [
+			"blog.example.com",
+			"shop.example.com",
+		]);
+		expect(html).toContain('<select name="host"');
+		expect(html).toContain('value="blog.example.com"');
+		expect(html).toContain('value="shop.example.com"');
+	});
+
+	it("shows the comment-actions-only helper text when host is active", () => {
+		const html = renderAudit(
+			[],
+			{ ...filters, host: "blog.example.com" },
+			null,
+			adminActions,
+			["blog.example.com"],
+		);
+		expect(html).toContain("narrows to comment actions on this domain");
+	});
+
+	it("omits the helper text when host is empty", () => {
+		const html = renderAudit([], filters, null, adminActions, [
+			"blog.example.com",
+		]);
+		expect(html).not.toContain("narrows to comment actions on this domain");
 	});
 });
 

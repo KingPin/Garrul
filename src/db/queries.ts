@@ -1241,6 +1241,7 @@ export type AdminAuditFilter = {
 	target_id?: string;
 	from?: number;
 	to?: number;
+	host?: string;
 };
 
 export const adminListAudit = async (
@@ -1279,6 +1280,19 @@ export const adminListAudit = async (
 	if (filter.to != null) {
 		where.push("a.created_at < ?");
 		binds.push(filter.to);
+	}
+	if (filter.host) {
+		// Host derivation lives on posts, so the filter only narrows
+		// comment-targeted audit rows. User/post/etc. action rows are
+		// excluded when a host is active — the dropdown UX advertises this.
+		where.push(
+			`a.target_kind = 'comment' AND a.target_id IN (
+				SELECT c.id FROM comments c
+				LEFT JOIN posts p ON p.slug = c.post_slug
+				 WHERE ${hostExpr("p.url")} = ?
+			)`,
+		);
+		binds.push(filter.host);
 	}
 	const sql = `
 		SELECT a.id, a.admin_id, a.action, a.target_kind, a.target_id,
