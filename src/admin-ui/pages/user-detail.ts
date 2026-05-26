@@ -30,7 +30,7 @@ const userHeader = (d: AdminUserDetail, viewer: User): string => {
 	const canManageRole = viewer.role === "admin" && viewer.id !== u.id;
 	const roleControls = canManageRole
 		? `
-  <div class="actions" x-data="{ busy: false, role: ${JSON.stringify(u.role)} }">
+  <div class="actions" x-data="{ busy: false, role: ${escapeHtml(JSON.stringify(u.role))} }">
     <template x-if="role !== 'user'">
       <button :disabled="busy" @click="busy=true; setRole('user').then(r=>{role=r}).finally(()=>busy=false)">Demote to user</button>
     </template>

@@ -123,6 +123,16 @@ describe("renderUserDetail role controls", () => {
 		expect(html).not.toContain('pill admin">admin</span>');
 		expect(html).not.toContain('pill mod">mod</span>');
 	});
+
+	// Regression: u.role was JSON.stringified directly into x-data="...",
+	// so the leading " of the JSON string closed the attribute and
+	// silently broke the Alpine state, leaving the role buttons inert.
+	// Fix wraps with escapeHtml so the literal stays inside the attribute.
+	it("HTML-escapes the role literal inside the x-data attribute", () => {
+		const html = renderUserDetail(makeDetail(plainUser), admin);
+		expect(html).not.toMatch(/role: "/);
+		expect(html).toContain("role: &quot;user&quot;");
+	});
 });
 
 describe("renderUsers role pills", () => {
