@@ -3,6 +3,7 @@ import { health } from "./routes/health";
 import { comments } from "./routes/api.comments";
 import { config } from "./routes/api.config";
 import { reactions } from "./routes/api.reactions";
+import { votes } from "./routes/api.votes";
 import { auth } from "./routes/auth";
 import { embed } from "./routes/embed";
 import { agents } from "./routes/agents";
@@ -13,6 +14,7 @@ import { counts } from "./routes/api.counts";
 import { permalink } from "./routes/permalink";
 import { subscriptions } from "./routes/api.subscriptions";
 import { runDigest } from "./lib/digest";
+import { runWebhookRetries } from "./lib/webhook";
 import { log, requestLogger } from "./lib/log";
 import { corsAndCsrf } from "./lib/cors";
 import { sessionMiddleware } from "./lib/session";
@@ -55,6 +57,22 @@ export type Bindings = {
 	// Set to "1" or "true" to suppress the "Powered by Garrul" attribution
 	// rendered under the comment list. Unset = attribution shown.
 	BRANDING_HIDDEN?: string;
+	// Cloudflare usage dashboard (optional). When both are set, /admin/usage
+	// surfaces today's Workers / D1 / KV usage vs the free-tier ceilings via
+	// Cloudflare's GraphQL Analytics API. Unset → the page shows a setup
+	// guide instead of charts and the nav link is hidden.
+	//
+	// Token scopes required (least-privilege):
+	//   - Account.Analytics: Read
+	//   - Account.D1: Read
+	//   - Account.Workers KV Storage: Read
+	CF_API_TOKEN?: string;
+	CF_ACCOUNT_ID?: string;
+	// Authenticated voting. Both default to enabled. Set to "0" or "false"
+	// to disable. Disabling downvotes is a brigading-mitigation switch the
+	// operator can flip without redeploy.
+	VOTING_ENABLED?: string;
+	DOWNVOTES_ENABLED?: string;
 };
 
 const app = new Hono<{ Bindings: Bindings }>();
@@ -130,6 +148,7 @@ app.use("/api/*", sessionMiddleware());
 app.route("/api/v1/health", health);
 app.route("/api/v1/comments", comments);
 app.route("/api/v1/reactions", reactions);
+app.route("/api/v1/votes", votes);
 app.route("/api/v1/config", config);
 app.route("/api/v1/counts", counts);
 app.route("/api/v1/subscribe", subscriptions);
@@ -168,6 +187,14 @@ export default {
 		env: Bindings,
 		ctx: ExecutionContext,
 	): Promise<void> => {
+		// Two independent passes per cron tick. waitUntil for both so a
+		// slow digest can't starve the webhook retry queue (and vice
+		// versa) — they each own their own wallclock budget.
 		ctx.waitUntil(runDigest(env));
+		ctx.waitUntil(
+			runWebhookRetries(env).catch((err) => {
+				log.error("scheduled.webhook_retries", { error: String(err) });
+			}),
+		);
 	},
 };

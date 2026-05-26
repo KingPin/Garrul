@@ -26,7 +26,9 @@ import {
 	getOrCreateGhost,
 	getComment,
 	getPost,
+	getUserVotesOnPost,
 	insertComment,
+	isUserRole,
 	listActiveSubscriptionsForPost,
 	listCommentsForPost,
 	listReactionsForPost,
@@ -75,15 +77,20 @@ type SessionVars = {
 // D1 stores booleans as 0/1 INTEGER; we widen to a row type for `.first<…>()`
 // and `.all<…>()` callsites that hit the users table directly, then convert
 // at the boundary. (db/queries.ts has its own copy for its internal use.)
-type UserRow = Omit<User, "is_admin" | "is_banned"> & {
+// `role` is widened to `string` because D1 returns the raw column value;
+// we re-narrow at the boundary via isUserRole, falling back to "user" so a
+// stale row with an unknown role can't crash the request.
+type UserRow = Omit<User, "is_admin" | "is_banned" | "role"> & {
 	is_admin: number;
 	is_banned: number;
+	role: string;
 };
 
 const rowToUser = (row: UserRow): User => ({
 	...row,
 	is_admin: row.is_admin === 1,
 	is_banned: row.is_banned === 1,
+	role: isUserRole(row.role) ? row.role : "user",
 });
 
 const comments = new Hono<{ Bindings: Bindings; Variables: SessionVars }>();
@@ -366,7 +373,7 @@ comments.post("/", async (c) => {
 		const u = await c.env.DB
 			.prepare(
 				`SELECT id, provider, provider_id, name, email, avatar_url,
-				        is_admin, is_banned, created_at
+				        is_admin, is_banned, role, created_at
 				 FROM users WHERE id = ?`,
 			)
 			.bind(session.user_id)
@@ -437,7 +444,13 @@ comments.post("/", async (c) => {
 	// Bust the cached first page. Older pages bypass cache, so there's
 	// nothing else to invalidate. Pending comments don't appear in the
 	// public tree but the cache key is the same; busting is still correct.
-	await c.env.TREE_CACHE.delete(`tree:${slug}:first`);
+	await Promise.all([
+		c.env.TREE_CACHE.delete(`tree:${slug}:first:new`),
+		c.env.TREE_CACHE.delete(`tree:${slug}:first:top`),
+		// Legacy key from before the sort-keyed cache split. Drop after
+		// one release cycle when prod caches have rotated.
+		c.env.TREE_CACHE.delete(`tree:${slug}:first`),
+	]);
 
 	// Persist whichever spam signals ran. Fire-and-forget so a slow D1
 	// write never adds latency to the user-visible POST. Mirror the
@@ -502,7 +515,7 @@ const loadAuthors = async (
 	const result = await db
 		.prepare(
 			`SELECT id, provider, provider_id, name, email, avatar_url,
-			        is_admin, is_banned, created_at
+			        is_admin, is_banned, role, created_at
 			 FROM users WHERE id IN (${placeholders})`,
 		)
 		.bind(...userIds)
@@ -545,14 +558,24 @@ comments.get("/", async (c) => {
 	if (!slug) return c.json({ error: t("err.post.required") }, 400);
 	if (!SLUG_RE.test(slug)) return c.json({ error: t("err.post.invalid") }, 400);
 
-	const cursor = decodeCursor(c.req.query("before") ?? null);
+	const sortParam = (c.req.query("sort") ?? "new").trim();
+	const sort: "new" | "top" = sortParam === "top" ? "top" : "new";
+
+	// The cursor format (`id < cursor`) only makes sense for the time-DESC
+	// `new` ordering — applying it to score-sorted results would skip or
+	// duplicate threads as scores shift. `top` returns a single page; any
+	// supplied ?before is ignored.
+	const cursor = sort === "top"
+		? null
+		: decodeCursor(c.req.query("before") ?? null);
 	const session = await readSession(c);
 
-	// Fast path: first page is cached in KV for anonymous viewers only.
-	// Signed-in viewers see per-user "mine" flags on reactions, so they
-	// bypass the cache. (KV cache hit-rate stays high on the public reader
-	// path, which dominates traffic.)
-	const cacheKey = `tree:${slug}:first`;
+	// Fast path: first page is cached in KV for anonymous viewers only,
+	// keyed by sort so `top` and `new` don't poison each other.
+	// Signed-in viewers see per-user my_vote / mine flags so they bypass
+	// the cache. KV cache hit-rate stays high on the public reader path,
+	// which dominates traffic.
+	const cacheKey = `tree:${slug}:first:${sort}`;
 	if (!cursor && !session) {
 		const cached = await c.env.TREE_CACHE.get(cacheKey, "json");
 		if (cached) return c.json(cached);
@@ -577,11 +600,27 @@ comments.get("/", async (c) => {
 		reactionsById.set(r.comment_id, list);
 	}
 
-	const { threads: allThreads } = buildTree(rows, authors, reactionsById);
+	const myVotes = session
+		? await getUserVotesOnPost(c.env.DB, slug, session.user_id)
+		: new Map<string, -1 | 1>();
 
-	// Newest-first top-level ordering. The tree builder returns ASC so we
-	// reverse here; the widget pages with ?before=<oldest_id_on_page>.
-	allThreads.reverse();
+	const { threads: allThreads } = buildTree(rows, authors, reactionsById, myVotes);
+
+	if (sort === "top") {
+		// Top-level only — replies stay in created_at ASC so threaded
+		// conversation reads top-down. Tie-break on newer-first so a
+		// fresh comment with the same score floats above an old one.
+		allThreads.sort((a, b) => {
+			const sa = a.score_up - a.score_down;
+			const sb = b.score_up - b.score_down;
+			if (sb !== sa) return sb - sa;
+			return b.created_at - a.created_at;
+		});
+	} else {
+		// Newest-first top-level ordering. The tree builder returns ASC so
+		// we reverse here; widget pages with ?before=<oldest_id_on_page>.
+		allThreads.reverse();
+	}
 
 	// Apply cursor: slice threads with id < cursor.
 	const startIdx = cursor
@@ -589,7 +628,9 @@ comments.get("/", async (c) => {
 		: 0;
 	const sliceFrom = startIdx < 0 ? allThreads.length : startIdx;
 	const page = allThreads.slice(sliceFrom, sliceFrom + TOP_LEVEL_PAGE);
-	const more = allThreads.length > sliceFrom + TOP_LEVEL_PAGE;
+	// `top` is a single page (see cursor-decoding note above) so callers
+	// shouldn't get a next_cursor that would lead to ill-defined paging.
+	const more = sort === "new" && allThreads.length > sliceFrom + TOP_LEVEL_PAGE;
 	const next_cursor = more ? (page[page.length - 1]?.id ?? null) : null;
 
 	const payload: ListPayload = { post, threads: page, next_cursor };
@@ -635,7 +676,11 @@ comments.patch("/:id", async (c) => {
 		body_html,
 		CURRENT_RENDERER_VERSION,
 	);
-	await c.env.TREE_CACHE.delete(`tree:${existing.post_slug}:first`);
+	await Promise.all([
+		c.env.TREE_CACHE.delete(`tree:${existing.post_slug}:first:new`),
+		c.env.TREE_CACHE.delete(`tree:${existing.post_slug}:first:top`),
+		c.env.TREE_CACHE.delete(`tree:${existing.post_slug}:first`),
+	]);
 	writeEvent(c.env.ANALYTICS, "comment.edited", { post_slug: existing.post_slug });
 	fireWebhook(c.env, c.executionCtx, {
 		event: "comment.edited",
@@ -649,7 +694,7 @@ comments.patch("/:id", async (c) => {
 	const authorRow = await c.env.DB
 		.prepare(
 			`SELECT id, provider, provider_id, name, email, avatar_url,
-			        is_admin, is_banned, created_at
+			        is_admin, is_banned, role, created_at
 			 FROM users WHERE id = ?`,
 		)
 		.bind(updated.user_id)
@@ -682,7 +727,11 @@ comments.delete("/:id", async (c) => {
 	}
 
 	await softDeleteComment(c.env.DB, id);
-	await c.env.TREE_CACHE.delete(`tree:${existing.post_slug}:first`);
+	await Promise.all([
+		c.env.TREE_CACHE.delete(`tree:${existing.post_slug}:first:new`),
+		c.env.TREE_CACHE.delete(`tree:${existing.post_slug}:first:top`),
+		c.env.TREE_CACHE.delete(`tree:${existing.post_slug}:first`),
+	]);
 	writeEvent(c.env.ANALYTICS, "comment.deleted", { post_slug: existing.post_slug });
 	fireWebhook(c.env, c.executionCtx, {
 		event: "comment.deleted",

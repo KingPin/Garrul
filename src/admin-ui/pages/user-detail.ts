@@ -2,6 +2,8 @@ import type {
 	AdminComment,
 	AdminUserDetail,
 	AuditRowWithAdmin,
+	User,
+	UserRole,
 } from "../../db/queries";
 import { identiconSvg } from "../../lib/identicon";
 import { sanitizeForEmail as resanitizeBodyHtml } from "../../lib/markdown";
@@ -10,14 +12,36 @@ import { escapeHtml } from "../escape";
 const formatTs = (ts: number): string =>
 	new Date(ts).toISOString().slice(0, 16).replace("T", " ");
 
-const userHeader = (d: AdminUserDetail): string => {
+const rolePill = (role: UserRole): string => {
+	if (role === "admin") return '<span class="pill admin">admin</span>';
+	if (role === "mod") return '<span class="pill mod">mod</span>';
+	return "";
+};
+
+const userHeader = (d: AdminUserDetail, viewer: User): string => {
 	const u = d.user;
 	const avatar = u.avatar_url
 		? `<img class="author-avatar" src="${escapeHtml(u.avatar_url)}" alt="" width="64" height="64">`
 		: `<span class="author-avatar" style="width:64px;height:64px">${identiconSvg(u.id, 64)}</span>`;
 	const badges: string[] = [];
-	if (u.is_admin) badges.push('<span class="pill admin">admin</span>');
+	const pill = rolePill(u.role);
+	if (pill) badges.push(pill);
 	if (u.is_banned) badges.push('<span class="pill banned">banned</span>');
+	const canManageRole = viewer.role === "admin" && viewer.id !== u.id;
+	const roleControls = canManageRole
+		? `
+  <div class="actions" x-data="{ busy: false, role: ${JSON.stringify(u.role)} }">
+    <template x-if="role !== 'user'">
+      <button :disabled="busy" @click="busy=true; setRole('user').then(r=>{role=r}).finally(()=>busy=false)">Demote to user</button>
+    </template>
+    <template x-if="role !== 'mod'">
+      <button :disabled="busy" @click="busy=true; setRole('mod').then(r=>{role=r}).finally(()=>busy=false)">Make mod</button>
+    </template>
+    <template x-if="role !== 'admin'">
+      <button :disabled="busy" @click="busy=true; setRole('admin').then(r=>{role=r}).finally(()=>busy=false)">Make admin</button>
+    </template>
+  </div>`
+		: "";
 	return `
 <div class="user-head">
   ${avatar}
@@ -34,7 +58,8 @@ const userHeader = (d: AdminUserDetail): string => {
       <button :disabled="busy" @click="busy=true; setBanned(false).then(()=>{banned=false}).finally(()=>busy=false)">Unban</button>
     </template>
   </div>
-</div>`;
+</div>
+${roleControls}`;
 };
 
 const commentRow = (c: AdminComment): string => `
@@ -69,7 +94,10 @@ const auditTable = (rows: AuditRowWithAdmin[]): string => {
 </div>`;
 };
 
-export const renderUserDetail = (d: AdminUserDetail): string => {
+export const renderUserDetail = (
+	d: AdminUserDetail,
+	viewer: User,
+): string => {
 	const u = d.user;
 	const commentsHtml = d.comments.length
 		? d.comments.map(commentRow).join("")
@@ -95,9 +123,24 @@ export const renderUserDetail = (d: AdminUserDetail): string => {
       this.$dispatch('toast', { text: e.message, kind: 'bad' });
       throw e;
     });
+  },
+  setRole(role) {
+    return fetch('/admin/api/users/${escapeHtml(u.id)}/role', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ role }),
+    }).then(async r => {
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || ('action failed: ' + r.status));
+      this.$dispatch('toast', { text: 'Role updated to ' + j.role });
+      return j.role;
+    }).catch(e => {
+      this.$dispatch('toast', { text: e.message, kind: 'bad' });
+      throw e;
+    });
   }
 }">
-  ${userHeader(d)}
+  ${userHeader(d, viewer)}
   <div class="user-stats">
     <div><span class="muted">Reactions received:</span> ${d.reactions_received}</div>
   </div>

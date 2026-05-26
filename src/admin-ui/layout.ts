@@ -53,12 +53,39 @@ export const renderUpdateBanner = (info: UpdateInfo | null): string => {
 </div>`;
 };
 
+export type LayoutOpts = {
+	usage_link?: boolean;
+};
+
 export const layout = (
 	title: string,
 	body: string,
 	currentUser: User,
 	updateInfo: UpdateInfo | null,
-): string => `
+	opts: LayoutOpts = {},
+): string => {
+	const isAdmin = currentUser.role === "admin";
+	const rolePill =
+		currentUser.role === "admin"
+			? '<span class="pill admin">admin</span>'
+			: currentUser.role === "mod"
+				? '<span class="pill mod">mod</span>'
+				: "";
+	// Admin-only nav links. Mods see only the queue (plus Dashboard +
+	// About which are always-on) — every other surface requires admin
+	// scope. The Usage link further gates on whether CF_API_TOKEN +
+	// CF_ACCOUNT_ID are configured (see opts.usage_link).
+	const adminOnlyLinks = isAdmin
+		? `
+    <a href="/admin/users">Users</a>
+    <a href="/admin/audit">Audit</a>
+    <a href="/admin/subscriptions">Subscriptions</a>
+    <a href="/admin/webhooks">Webhooks</a>
+    ${opts.usage_link ? '<a href="/admin/usage">Usage</a>' : ""}
+    <a href="/admin/operator">Operator</a>
+    <a href="/admin/settings">Settings</a>`
+		: "";
+	return `
 <!doctype html>
 <html lang="en">
 <head>
@@ -77,14 +104,10 @@ ${renderUpdateBanner(updateInfo)}
   <nav>
     <a href="/admin">Dashboard</a>
     <a href="/admin/queue">Queue</a>
-    <a href="/admin/users">Users</a>
-    <a href="/admin/audit">Audit</a>
-    <a href="/admin/subscriptions">Subscriptions</a>
-    <a href="/admin/operator">Operator</a>
-    <a href="/admin/settings">Settings</a>
+    <a href="/admin/saved-replies">Replies</a>${adminOnlyLinks}
     <a href="/admin/about">About</a>
   </nav>
-  <span class="me">${escapeHtml(currentUser.name)} <span class="pill admin">admin</span> <button class="help-btn" @click="helpOpen = !helpOpen" aria-label="Keyboard shortcuts">?</button></span>
+  <span class="me">${escapeHtml(currentUser.name)} ${rolePill} <button class="help-btn" @click="helpOpen = !helpOpen" aria-label="Keyboard shortcuts">?</button></span>
 </header>
 <div class="toast-tray" role="status" aria-live="polite" aria-atomic="true"
      x-data="{ items: [] }"
@@ -110,3 +133,4 @@ ${body}
         defer></script>
 </body>
 </html>`;
+};

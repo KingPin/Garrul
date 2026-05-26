@@ -23,7 +23,8 @@ export type EventName =
 	| "oauth.start"
 	| "oauth.complete"
 	| "oauth.failed"
-	| "reaction.toggled";
+	| "reaction.toggled"
+	| "vote.cast";
 
 type WriteFields = {
 	post_slug?: string | null;

@@ -53,8 +53,21 @@ type TreeNode = {
 	depth: number;
 	flatten_from: string | null;
 	reactions: ReactionCount[];
+	score_up: number;
+	score_down: number;
+	my_vote: -1 | 0 | 1;
 	replies: TreeNode[];
 };
+
+type VoteResponse = {
+	ok: boolean;
+	comment_id: string;
+	score_up: number;
+	score_down: number;
+	my_vote: -1 | 0 | 1;
+};
+
+type SortKey = "new" | "top";
 
 type ListResponse = {
 	post: unknown;
@@ -166,6 +179,39 @@ const STYLE_CSS = `
 	border-color: var(--garrul-accent, #2563eb);
 }
 .gr-reaction-count { margin-left: 0.25em; font-variant-numeric: tabular-nums; }
+.gr-votes { display: flex; align-items: center; gap: 0.3rem; margin-top: 0.4rem; font-size: 0.85em; }
+.gr-vote {
+	font: inherit;
+	background: var(--garrul-input-bg, #fff);
+	color: var(--garrul-muted, #6b7280);
+	border: 1px solid var(--garrul-border, #d0d3d8);
+	border-radius: 999px;
+	width: 1.8em;
+	height: 1.8em;
+	padding: 0;
+	line-height: 1;
+	cursor: pointer;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+}
+.gr-vote:hover { color: var(--garrul-link, #2563eb); }
+.gr-vote[data-mine="1"] {
+	background: var(--garrul-badge-bg, #e0e7ff);
+	color: var(--garrul-badge-fg, #1e3a8a);
+	border-color: var(--garrul-accent, #2563eb);
+}
+.gr-vote[disabled] { opacity: 0.6; cursor: progress; }
+.gr-vote-score { font-variant-numeric: tabular-nums; min-width: 1.2em; text-align: center; }
+.gr-sort { display: flex; gap: 0.4rem; align-items: center; font-size: 0.85em; color: var(--garrul-muted, #6b7280); margin-top: 0.5rem; }
+.gr-sort select {
+	font: inherit;
+	background: var(--garrul-input-bg, #fff);
+	color: var(--garrul-fg, #1a1a1a);
+	border: 1px solid var(--garrul-border, #d0d3d8);
+	border-radius: var(--garrul-radius, 6px);
+	padding: 0.2rem 0.4rem;
+}
 .gr-reply-form { margin-top: 0.5rem; display: flex; flex-direction: column; gap: 0.4rem; }
 .gr-reply-form textarea { min-height: 4em; }
 .gr-reply-form .gr-reply-actions { display: flex; gap: 0.5rem; }
@@ -303,6 +349,8 @@ type WidgetCtx = {
 	me: Me;
 	editWindowMs: number;
 	turnstileSiteKey: string | null;
+	votingEnabled: boolean;
+	downvotesEnabled: boolean;
 	reload: () => void;
 };
 
@@ -453,6 +501,85 @@ const reactionsByKind = (rs: ReactionCount[]): Map<string, ReactionCount> => {
 	const m = new Map<string, ReactionCount>();
 	for (const r of rs) m.set(r.kind, r);
 	return m;
+};
+
+// Vote up/down buttons. Anonymous viewers can vote — the server hashes
+// their IP into a ghost user (same identity rules as anonymous comments
+// and reactions). On click we POST and patch the local TreeNode + DOM
+// rather than reloading the whole list: the vote endpoint does not bust
+// the tree cache by design, so a reload would just re-fetch the stale
+// counters until the next comment-write triggers invalidation.
+const buildVotes = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
+	const wrap = el("div", "gr-votes");
+	const score = n.score_up - n.score_down;
+
+	// Self-voting is blocked server-side (vote_self_forbidden) and the
+	// anonymous case can't be detected client-side without leaking ghost
+	// identities. For signed-in viewers, render a read-only score so the
+	// author still sees who's reacting to their comment, just without the
+	// affordance to game it.
+	if (ctx.me && ctx.me.id === n.author.id) {
+		wrap.appendChild(el("span", "gr-vote-score", String(score)));
+		return wrap;
+	}
+
+	const up = el("button", "gr-vote");
+	up.type = "button";
+	up.setAttribute("aria-label", "Upvote");
+	up.appendChild(document.createTextNode("▲"));
+	if (n.my_vote === 1) up.dataset.mine = "1";
+
+	const scoreEl = el("span", "gr-vote-score", String(score));
+
+	const down = el("button", "gr-vote");
+	down.type = "button";
+	down.setAttribute("aria-label", "Downvote");
+	down.appendChild(document.createTextNode("▼"));
+	if (n.my_vote === -1) down.dataset.mine = "1";
+
+	const cast = async (value: -1 | 0 | 1): Promise<void> => {
+		up.disabled = true;
+		down.disabled = true;
+		try {
+			const res = await fetch(`${ctx.apiBase}/api/v1/votes`, {
+				method: "POST",
+				credentials: "include",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ comment_id: n.id, value }),
+			});
+			if (!res.ok) return;
+			const body = (await res.json()) as VoteResponse;
+			// Mutate the node so a later re-render (Load more, reload) reflects
+			// the new state, and patch the DOM directly so the user sees the
+			// change without a full list reload.
+			n.score_up = body.score_up;
+			n.score_down = body.score_down;
+			n.my_vote = body.my_vote;
+			scoreEl.textContent = String(body.score_up - body.score_down);
+			if (body.my_vote === 1) up.dataset.mine = "1";
+			else delete up.dataset.mine;
+			if (body.my_vote === -1) down.dataset.mine = "1";
+			else delete down.dataset.mine;
+		} catch {
+			// Network/parse failure: leave UI untouched; user can retry.
+		} finally {
+			up.disabled = false;
+			down.disabled = false;
+		}
+	};
+
+	up.addEventListener("click", () => {
+		void cast(n.my_vote === 1 ? 0 : 1);
+	});
+	down.addEventListener("click", () => {
+		void cast(n.my_vote === -1 ? 0 : -1);
+	});
+
+	wrap.append(up, scoreEl, down);
+	// Hide the downvote button when downvotes are disabled site-wide. The
+	// flag is exposed via /api/v1/config; we read it once on widget mount.
+	if (!ctx.downvotesEnabled) down.hidden = true;
+	return wrap;
 };
 
 const buildReactions = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
@@ -773,6 +900,7 @@ const buildComment = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	main.append(meta, body);
 
 	if (n.status !== "deleted") {
+		if (ctx.votingEnabled) main.appendChild(buildVotes(n, ctx));
 		main.appendChild(buildReactions(n, ctx));
 	}
 	main.appendChild(buildActions(n, ctx, main));
@@ -1028,9 +1156,11 @@ const fetchPage = async (
 	apiBase: string,
 	slug: string,
 	cursor: string | null,
+	sort: SortKey = "new",
 ): Promise<ListResponse> => {
 	const qs = new URLSearchParams({ slug });
 	if (cursor) qs.set("before", cursor);
+	if (sort !== "new") qs.set("sort", sort);
 	const res = await fetch(`${apiBase}/api/v1/comments?${qs.toString()}`, {
 		credentials: "include",
 	});
@@ -1063,9 +1193,11 @@ const fetchMe = async (apiBase: string): Promise<Me> => {
 // second one is requested (e.g. the user reacts and submits quickly), we
 // just flag a follow-up and re-run once after the current one finishes.
 // Prevents two concurrent root.replaceChildren() calls racing each other.
+// `sort` is sticky across reloads on the same mount so an in-flight reload
+// triggered by a reply doesn't drop the user's "Top" selection.
 const loadState = new WeakMap<
 	ShadowRoot,
-	{ running: boolean; queued: boolean }
+	{ running: boolean; queued: boolean; sort: SortKey }
 >();
 
 const load = async (
@@ -1076,7 +1208,7 @@ const load = async (
 ): Promise<void> => {
 	let st = loadState.get(root);
 	if (!st) {
-		st = { running: false, queued: false };
+		st = { running: false, queued: false, sort: "new" };
 		loadState.set(root, st);
 	}
 	if (st.running) {
@@ -1085,7 +1217,7 @@ const load = async (
 	}
 	st.running = true;
 	try {
-		await loadOnce(root, slug, apiBase, host);
+		await loadOnce(root, slug, apiBase, host, st.sort);
 	} finally {
 		st.running = false;
 		if (st.queued) {
@@ -1095,16 +1227,24 @@ const load = async (
 	}
 };
 
+const setSort = (root: ShadowRoot, sort: SortKey): void => {
+	const st = loadState.get(root);
+	if (st) st.sort = sort;
+};
+
 const loadOnce = async (
 	root: ShadowRoot,
 	slug: string,
 	apiBase: string,
 	host: HTMLElement,
+	sort: SortKey,
 ) => {
 	let siteKey: string | null = null;
 	let editWindowMinutes = 5;
 	let providers: ReadonlyArray<"github" | "google"> = [];
 	let brandingHidden = false;
+	let votingEnabled = true;
+	let downvotesEnabled = true;
 	try {
 		const cfgRes = await fetch(`${apiBase}/api/v1/config`, {
 			credentials: "include",
@@ -1115,6 +1255,8 @@ const loadOnce = async (
 				edit_window_minutes?: number;
 				providers?: string[];
 				branding_hidden?: boolean;
+				voting_enabled?: boolean;
+				downvotes_enabled?: boolean;
 			};
 			siteKey = cfg.turnstile_site_key ?? null;
 			editWindowMinutes = cfg.edit_window_minutes ?? 5;
@@ -1122,6 +1264,8 @@ const loadOnce = async (
 				(p): p is "github" | "google" => p === "github" || p === "google",
 			);
 			brandingHidden = cfg.branding_hidden === true;
+			votingEnabled = cfg.voting_enabled !== false;
+			downvotesEnabled = cfg.downvotes_enabled !== false;
 		}
 	} catch {
 		// /api/v1/config is optional; the widget still renders without Turnstile
@@ -1130,7 +1274,7 @@ const loadOnce = async (
 
 	const [me, dataResult] = await Promise.all([
 		fetchMe(apiBase),
-		fetchPage(apiBase, slug, null).catch((err: unknown) => err),
+		fetchPage(apiBase, slug, null, sort).catch((err: unknown) => err),
 	]);
 	if (dataResult instanceof Error) {
 		renderError(root, String(dataResult));
@@ -1154,6 +1298,8 @@ const loadOnce = async (
 		me,
 		editWindowMs: editWindowMinutes * 60_000,
 		turnstileSiteKey: siteKey,
+		votingEnabled,
+		downvotesEnabled,
 		reload,
 	};
 	const authBlock = buildAuthBlock(me, apiBase, providers, reload, reload);
@@ -1168,7 +1314,32 @@ const loadOnce = async (
 		appendThreads(list, data.threads, ctx);
 	}
 	if (authBlock) wrap.appendChild(authBlock);
-	wrap.append(form, list);
+	wrap.append(form);
+
+	// Sort selector only when voting is on (no scores to rank without it).
+	if (votingEnabled) {
+		const sortWrap = el("div", "gr-sort");
+		const label = el("label", undefined, "Sort: ");
+		const sel = el("select") as HTMLSelectElement;
+		const newOpt = el("option") as HTMLOptionElement;
+		newOpt.value = "new";
+		newOpt.textContent = "Newest";
+		const topOpt = el("option") as HTMLOptionElement;
+		topOpt.value = "top";
+		topOpt.textContent = "Top";
+		sel.append(newOpt, topOpt);
+		sel.value = sort;
+		label.appendChild(sel);
+		sortWrap.appendChild(label);
+		sel.addEventListener("change", () => {
+			const v = sel.value === "top" ? "top" : "new";
+			setSort(root, v);
+			reload();
+		});
+		wrap.appendChild(sortWrap);
+	}
+
+	wrap.appendChild(list);
 
 	if (data.next_cursor) {
 		const more = el("button", "gr-loadmore", "Load older comments");
@@ -1178,7 +1349,7 @@ const loadOnce = async (
 			if (!cursor) return;
 			more.disabled = true;
 			try {
-				const page = await fetchPage(apiBase, slug, cursor);
+				const page = await fetchPage(apiBase, slug, cursor, sort);
 				appendThreads(list, page.threads, ctx);
 				cursor = page.next_cursor;
 				if (cursor) {

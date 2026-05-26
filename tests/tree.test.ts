@@ -42,6 +42,8 @@ const mk = (
 	ip_hash: null,
 	user_agent: null,
 	created_at,
+	score_up: 0,
+	score_down: 0,
 });
 
 describe("buildTree — basic shape and order", () => {

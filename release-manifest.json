@@ -90,6 +90,26 @@
       "name": "SPAM_FORM_TS_SECRET",
       "required": false,
       "addedIn": "1.1.1"
+    },
+    {
+      "name": "CF_API_TOKEN",
+      "required": false,
+      "addedIn": "1.8.0"
+    },
+    {
+      "name": "CF_ACCOUNT_ID",
+      "required": false,
+      "addedIn": "1.8.0"
+    },
+    {
+      "name": "VOTING_ENABLED",
+      "required": false,
+      "addedIn": "1.8.0"
+    },
+    {
+      "name": "DOWNVOTES_ENABLED",
+      "required": false,
+      "addedIn": "1.8.0"
     }
   ],
   "kvNamespaces": [
@@ -134,7 +154,12 @@
     "0001_init.sql",
     "0002_notifications.sql",
     "0003_subscription_confirm.sql",
-    "0004_admin_observability.sql"
+    "0004_admin_observability.sql",
+    "0005_user_roles.sql",
+    "0006_webhook_endpoints.sql",
+    "0007_votes.sql",
+    "0008_saved_replies.sql",
+    "0009_import_tracking.sql"
   ],
   "breakingChanges": []
 }

@@ -31,6 +31,7 @@
     "migrate": "tsx src/db/migrate.ts",
     "rerender": "tsx scripts/rerender.ts",
     "seed-demo": "tsx scripts/seed-demo.ts",
+    "import-disqus": "tsx scripts/import-disqus.ts",
     "db:export": "bash scripts/db-export.sh",
     "upgrade": "tsx scripts/upgrade.ts",
     "manifest:build": "tsx scripts/upgrade/build-manifest.ts",

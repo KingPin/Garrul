@@ -25,6 +25,13 @@ export type Post = {
 	created_at: number;
 };
 
+export type UserRole = "user" | "mod" | "admin";
+
+export const USER_ROLES: readonly UserRole[] = ["user", "mod", "admin"] as const;
+
+export const isUserRole = (v: unknown): v is UserRole =>
+	v === "user" || v === "mod" || v === "admin";
+
 export type User = {
 	id: string;
 	provider: string;
@@ -34,6 +41,7 @@ export type User = {
 	avatar_url: string | null;
 	is_admin: boolean;
 	is_banned: boolean;
+	role: UserRole;
 	created_at: number;
 };
 
@@ -53,17 +61,21 @@ export type Comment = {
 	ip_hash: string | null;
 	user_agent: string | null;
 	created_at: number;
+	score_up: number;
+	score_down: number;
 };
 
-type UserRow = Omit<User, "is_admin" | "is_banned"> & {
+type UserRow = Omit<User, "is_admin" | "is_banned" | "role"> & {
 	is_admin: number;
 	is_banned: number;
+	role: string;
 };
 
 const toUser = (row: UserRow): User => ({
 	...row,
 	is_admin: row.is_admin === 1,
 	is_banned: row.is_banned === 1,
+	role: isUserRole(row.role) ? row.role : "user",
 });
 
 export const upsertPost = async (
@@ -117,7 +129,7 @@ export const getOrCreateGhost = async (
 	const existing = await db
 		.prepare(
 			`SELECT id, provider, provider_id, name, email, avatar_url,
-			        is_admin, is_banned, created_at
+			        is_admin, is_banned, role, created_at
 			 FROM users WHERE provider = 'anon' AND provider_id = ?`,
 		)
 		.bind(ipHash)
@@ -144,6 +156,7 @@ export const getOrCreateGhost = async (
 		avatar_url: null,
 		is_admin: false,
 		is_banned: false,
+		role: "user",
 		created_at: now,
 	};
 };
@@ -177,7 +190,7 @@ export const upsertOauthUser = async (
 	const existing = await db
 		.prepare(
 			`SELECT id, provider, provider_id, name, email, avatar_url,
-			        is_admin, is_banned, created_at
+			        is_admin, is_banned, role, created_at
 			 FROM users WHERE provider = ? AND provider_id = ?`,
 		)
 		.bind(provider, provider_id)
@@ -203,13 +216,14 @@ export const upsertOauthUser = async (
 	const id = ulid();
 	const now = Date.now();
 	const is_admin = shouldPromote ? 1 : 0;
+	const role: UserRole = shouldPromote ? "admin" : "user";
 	await db
 		.prepare(
 			`INSERT INTO users (id, provider, provider_id, name, email,
-			                    avatar_url, is_admin, is_banned, created_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+			                    avatar_url, is_admin, is_banned, role, created_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
 		)
-		.bind(id, provider, provider_id, name, email, avatar_url, is_admin, now)
+		.bind(id, provider, provider_id, name, email, avatar_url, is_admin, role, now)
 		.run();
 	return {
 		id,
@@ -220,6 +234,7 @@ export const upsertOauthUser = async (
 		avatar_url,
 		is_admin: is_admin === 1,
 		is_banned: false,
+		role,
 		created_at: now,
 	};
 };
@@ -231,7 +246,7 @@ export const getUser = async (
 	const row = await db
 		.prepare(
 			`SELECT id, provider, provider_id, name, email, avatar_url,
-			        is_admin, is_banned, created_at
+			        is_admin, is_banned, role, created_at
 			 FROM users WHERE id = ?`,
 		)
 		.bind(id)
@@ -294,6 +309,8 @@ export const insertComment = async (
 		ip_hash: input.ip_hash,
 		user_agent: input.user_agent,
 		created_at: now,
+		score_up: 0,
+		score_down: 0,
 	};
 };
 
@@ -305,7 +322,7 @@ export const getComment = async (
 		.prepare(
 			`SELECT id, post_slug, parent_id, user_id, body_md, body_html,
 			        renderer_version, status, edited_at, deleted_at,
-			        ip_hash, user_agent, created_at
+			        ip_hash, user_agent, created_at, score_up, score_down
 			 FROM comments WHERE id = ?`,
 		)
 		.bind(id)
@@ -326,7 +343,7 @@ export const getCommentsByIds = async (
 		.prepare(
 			`SELECT id, post_slug, parent_id, user_id, body_md, body_html,
 			        renderer_version, status, edited_at, deleted_at,
-			        ip_hash, user_agent, created_at
+			        ip_hash, user_agent, created_at, score_up, score_down
 			   FROM comments WHERE id IN (${placeholders})`,
 		)
 		.bind(...ids)
@@ -348,7 +365,7 @@ export const getUsersByIds = async (
 	const result = await db
 		.prepare(
 			`SELECT id, provider, provider_id, name, email, avatar_url,
-			        is_admin, is_banned, created_at
+			        is_admin, is_banned, role, created_at
 			   FROM users WHERE id IN (${placeholders})`,
 		)
 		.bind(...ids)
@@ -373,7 +390,7 @@ export const listCommentsForPost = async (
 		.prepare(
 			`SELECT id, post_slug, parent_id, user_id, body_md, body_html,
 			        renderer_version, status, edited_at, deleted_at,
-			        ip_hash, user_agent, created_at
+			        ip_hash, user_agent, created_at, score_up, score_down
 			 FROM comments
 			 WHERE post_slug = ? AND status NOT IN ('spam', 'pending')
 			 ORDER BY created_at ASC, id ASC`,
@@ -396,7 +413,8 @@ export const listLatestApprovedComments = async (
 		.prepare(
 			`SELECT c.id, c.post_slug, c.parent_id, c.user_id, c.body_md, c.body_html,
 			        c.renderer_version, c.status, c.edited_at, c.deleted_at,
-			        c.ip_hash, c.user_agent, c.created_at, u.name AS author_name
+			        c.ip_hash, c.user_agent, c.created_at, c.score_up, c.score_down,
+			        u.name AS author_name
 			   FROM comments c
 			   JOIN users u ON u.id = c.user_id
 			  WHERE c.post_slug = ? AND c.status = 'approved'
@@ -622,7 +640,7 @@ export const adminListComments = async (
 	const sql = `
 		SELECT c.id, c.post_slug, c.parent_id, c.user_id, c.body_md, c.body_html,
 		       c.renderer_version, c.status, c.edited_at, c.deleted_at,
-		       c.ip_hash, c.user_agent, c.created_at,
+		       c.ip_hash, c.user_agent, c.created_at, c.score_up, c.score_down,
 		       u.name       AS author_name,
 		       u.email      AS author_email,
 		       u.avatar_url AS author_avatar_url,
@@ -677,13 +695,13 @@ export const adminListUsers = async (
 		: "";
 	const sql = cursorCreatedAt != null && cursorId != null
 		? `SELECT id, provider, provider_id, name, email, avatar_url,
-		          is_admin, is_banned, created_at
+		          is_admin, is_banned, role, created_at
 		     FROM users
 		    WHERE (created_at, id) < (?, ?) ${filter}
 		    ORDER BY created_at DESC, id DESC
 		    LIMIT ?`
 		: `SELECT id, provider, provider_id, name, email, avatar_url,
-		          is_admin, is_banned, created_at
+		          is_admin, is_banned, role, created_at
 		     FROM users
 		    WHERE 1=1 ${filter}
 		    ORDER BY created_at DESC, id DESC
@@ -710,6 +728,31 @@ export const setUserBanned = async (
 		.prepare(`UPDATE users SET is_banned = ? WHERE id = ?`)
 		.bind(banned ? 1 : 0, id)
 		.run();
+};
+
+// Writes role and is_admin together so the invariant `is_admin=1 ⇔ role='admin'`
+// is preserved while is_admin remains the public-facing column for /me.
+export const setUserRole = async (
+	db: D1Database,
+	id: string,
+	role: UserRole,
+): Promise<void> => {
+	const is_admin = role === "admin" ? 1 : 0;
+	await db
+		.prepare(`UPDATE users SET role = ?, is_admin = ? WHERE id = ?`)
+		.bind(role, is_admin, id)
+		.run();
+};
+
+// Used by the role-change endpoint to refuse a demotion that would leave
+// the instance with zero admins. Self-demotion is already blocked, so
+// this guards the parallel-demotion edge case (two admins each demoting
+// the other simultaneously).
+export const countAdmins = async (db: D1Database): Promise<number> => {
+	const row = await db
+		.prepare(`SELECT COUNT(*) AS n FROM users WHERE role = 'admin'`)
+		.first<{ n: number }>();
+	return row?.n ?? 0;
 };
 
 export type AdminStats = {
@@ -1092,6 +1135,8 @@ export type AuditTargetKind =
 	| "comment"
 	| "user"
 	| "subscription"
+	| "webhook"
+	| "saved_reply"
 	| "system";
 
 export const ADMIN_ACTIONS = [
@@ -1110,6 +1155,18 @@ export const ADMIN_ACTIONS = [
 	"bulk.spam",
 	"bulk.delete",
 	"bulk.restore",
+	"webhook.create",
+	"webhook.update",
+	"webhook.delete",
+	"role.grant_mod",
+	"role.revoke_mod",
+	"role.grant_admin",
+	"role.revoke_admin",
+	"saved_reply.create",
+	"saved_reply.update",
+	"saved_reply.delete",
+	"saved_reply.post",
+	"import.disqus",
 ] as const;
 export type AdminAction = (typeof ADMIN_ACTIONS)[number];
 
@@ -1799,4 +1856,581 @@ export const adminRotateSubscriptionConfirmToken = async (
 		)
 		.bind(new_token, id)
 		.run();
+};
+
+// -----------------------------------------------------------------------------
+// Webhook endpoints + deliveries (migration 0006).
+// -----------------------------------------------------------------------------
+
+export type WebhookAdapter = "generic" | "slack" | "discord";
+
+export const isWebhookAdapter = (v: unknown): v is WebhookAdapter =>
+	v === "generic" || v === "slack" || v === "discord";
+
+export type WebhookEndpoint = {
+	id: string;
+	url: string;
+	secret: string | null;
+	events: string[] | null; // null = all events
+	adapter: WebhookAdapter;
+	enabled: boolean;
+	fail_count: number;
+	disabled_at: number | null;
+	created_at: number;
+	updated_at: number;
+};
+
+type WebhookEndpointRow = {
+	id: string;
+	url: string;
+	secret: string | null;
+	events: string | null;
+	adapter: string;
+	enabled: number;
+	fail_count: number;
+	disabled_at: number | null;
+	created_at: number;
+	updated_at: number;
+};
+
+const toWebhookEndpoint = (row: WebhookEndpointRow): WebhookEndpoint => ({
+	id: row.id,
+	url: row.url,
+	secret: row.secret,
+	events:
+		row.events == null || row.events === ""
+			? null
+			: row.events
+					.split(",")
+					.map((s) => s.trim())
+					.filter(Boolean),
+	adapter: isWebhookAdapter(row.adapter) ? row.adapter : "generic",
+	enabled: row.enabled === 1,
+	fail_count: row.fail_count,
+	disabled_at: row.disabled_at,
+	created_at: row.created_at,
+	updated_at: row.updated_at,
+});
+
+export const listWebhookEndpoints = async (
+	db: D1Database,
+): Promise<WebhookEndpoint[]> => {
+	const rs = await db
+		.prepare(
+			`SELECT id, url, secret, events, adapter, enabled, fail_count,
+			        disabled_at, created_at, updated_at
+			   FROM webhook_endpoints
+			  ORDER BY created_at ASC`,
+		)
+		.all<WebhookEndpointRow>();
+	return (rs.results ?? []).map(toWebhookEndpoint);
+};
+
+export const listEnabledWebhookEndpoints = async (
+	db: D1Database,
+): Promise<WebhookEndpoint[]> => {
+	const rs = await db
+		.prepare(
+			`SELECT id, url, secret, events, adapter, enabled, fail_count,
+			        disabled_at, created_at, updated_at
+			   FROM webhook_endpoints
+			  WHERE enabled = 1
+			  ORDER BY created_at ASC`,
+		)
+		.all<WebhookEndpointRow>();
+	return (rs.results ?? []).map(toWebhookEndpoint);
+};
+
+export const getWebhookEndpoint = async (
+	db: D1Database,
+	id: string,
+): Promise<WebhookEndpoint | null> => {
+	const row = await db
+		.prepare(
+			`SELECT id, url, secret, events, adapter, enabled, fail_count,
+			        disabled_at, created_at, updated_at
+			   FROM webhook_endpoints WHERE id = ?`,
+		)
+		.bind(id)
+		.first<WebhookEndpointRow>();
+	return row ? toWebhookEndpoint(row) : null;
+};
+
+export type WebhookEndpointInput = {
+	url: string;
+	secret: string | null;
+	events: string[] | null;
+	adapter: WebhookAdapter;
+	enabled: boolean;
+};
+
+const serializeEvents = (events: string[] | null): string | null =>
+	events == null || events.length === 0 ? null : events.join(",");
+
+export const createWebhookEndpoint = async (
+	db: D1Database,
+	input: WebhookEndpointInput,
+): Promise<WebhookEndpoint> => {
+	const id = ulid();
+	const now = Date.now();
+	await db
+		.prepare(
+			`INSERT INTO webhook_endpoints
+			   (id, url, secret, events, adapter, enabled, fail_count,
+			    disabled_at, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?, 0, NULL, ?, ?)`,
+		)
+		.bind(
+			id,
+			input.url,
+			input.secret,
+			serializeEvents(input.events),
+			input.adapter,
+			input.enabled ? 1 : 0,
+			now,
+			now,
+		)
+		.run();
+	const created = await getWebhookEndpoint(db, id);
+	if (!created) throw new Error("webhook endpoint vanished after insert");
+	return created;
+};
+
+export const updateWebhookEndpoint = async (
+	db: D1Database,
+	id: string,
+	input: Partial<WebhookEndpointInput>,
+): Promise<void> => {
+	// Build the SET clause dynamically so callers can patch one field
+	// (e.g. just enabled, just secret) without overwriting siblings.
+	const sets: string[] = ["updated_at = ?"];
+	const values: (string | number | null)[] = [Date.now()];
+	if (input.url !== undefined) {
+		sets.push("url = ?");
+		values.push(input.url);
+	}
+	if (input.secret !== undefined) {
+		sets.push("secret = ?");
+		values.push(input.secret);
+	}
+	if (input.events !== undefined) {
+		sets.push("events = ?");
+		values.push(serializeEvents(input.events));
+	}
+	if (input.adapter !== undefined) {
+		sets.push("adapter = ?");
+		values.push(input.adapter);
+	}
+	if (input.enabled !== undefined) {
+		sets.push("enabled = ?");
+		values.push(input.enabled ? 1 : 0);
+		// Re-enabling clears the auto-disable marker + counter so the next
+		// failure cycle starts fresh, not from wherever it was paused.
+		if (input.enabled) {
+			sets.push("disabled_at = NULL");
+			sets.push("fail_count = 0");
+		}
+	}
+	values.push(id);
+	await db
+		.prepare(`UPDATE webhook_endpoints SET ${sets.join(", ")} WHERE id = ?`)
+		.bind(...values)
+		.run();
+};
+
+export const deleteWebhookEndpoint = async (
+	db: D1Database,
+	id: string,
+): Promise<void> => {
+	// ON DELETE CASCADE on webhook_deliveries.endpoint_id wipes the queue.
+	await db
+		.prepare(`DELETE FROM webhook_endpoints WHERE id = ?`)
+		.bind(id)
+		.run();
+};
+
+export const incrementWebhookFailCount = async (
+	db: D1Database,
+	id: string,
+	autoDisableAt: number | null,
+): Promise<void> => {
+	await db
+		.prepare(
+			`UPDATE webhook_endpoints
+			    SET fail_count = fail_count + 1,
+			        disabled_at = COALESCE(disabled_at, ?),
+			        enabled = CASE WHEN ? IS NULL THEN enabled ELSE 0 END,
+			        updated_at = ?
+			  WHERE id = ?`,
+		)
+		.bind(autoDisableAt, autoDisableAt, Date.now(), id)
+		.run();
+};
+
+export const resetWebhookFailCount = async (
+	db: D1Database,
+	id: string,
+): Promise<void> => {
+	await db
+		.prepare(
+			`UPDATE webhook_endpoints
+			    SET fail_count = 0, disabled_at = NULL, updated_at = ?
+			  WHERE id = ?`,
+		)
+		.bind(Date.now(), id)
+		.run();
+};
+
+export type WebhookDeliveryStatus = "pending" | "delivered" | "giveup";
+
+export type WebhookDelivery = {
+	id: string;
+	endpoint_id: string;
+	event: string;
+	payload: string;
+	status: WebhookDeliveryStatus;
+	attempts: number;
+	last_error: string | null;
+	next_attempt_at: number;
+	created_at: number;
+	delivered_at: number | null;
+};
+
+type WebhookDeliveryRow = Omit<WebhookDelivery, "status"> & { status: string };
+
+const toWebhookDelivery = (row: WebhookDeliveryRow): WebhookDelivery => {
+	const status: WebhookDeliveryStatus =
+		row.status === "delivered" || row.status === "giveup"
+			? row.status
+			: "pending";
+	return { ...row, status };
+};
+
+export const enqueueWebhookDelivery = async (
+	db: D1Database,
+	endpoint_id: string,
+	event: string,
+	payload: string,
+	next_attempt_at: number,
+): Promise<string> => {
+	const id = ulid();
+	await db
+		.prepare(
+			`INSERT INTO webhook_deliveries
+			   (id, endpoint_id, event, payload, status, attempts,
+			    last_error, next_attempt_at, created_at, delivered_at)
+			 VALUES (?, ?, ?, ?, 'pending', 0, NULL, ?, ?, NULL)`,
+		)
+		.bind(id, endpoint_id, event, payload, next_attempt_at, Date.now())
+		.run();
+	return id;
+};
+
+export const listPendingWebhookDeliveries = async (
+	db: D1Database,
+	now: number,
+	limit: number,
+): Promise<WebhookDelivery[]> => {
+	const rs = await db
+		.prepare(
+			`SELECT id, endpoint_id, event, payload, status, attempts,
+			        last_error, next_attempt_at, created_at, delivered_at
+			   FROM webhook_deliveries
+			  WHERE status = 'pending' AND next_attempt_at <= ?
+			  ORDER BY next_attempt_at ASC
+			  LIMIT ?`,
+		)
+		.bind(now, limit)
+		.all<WebhookDeliveryRow>();
+	return (rs.results ?? []).map(toWebhookDelivery);
+};
+
+export const markWebhookDelivered = async (
+	db: D1Database,
+	id: string,
+): Promise<void> => {
+	await db
+		.prepare(
+			`UPDATE webhook_deliveries
+			    SET status = 'delivered',
+			        attempts = attempts + 1,
+			        delivered_at = ?,
+			        last_error = NULL
+			  WHERE id = ?`,
+		)
+		.bind(Date.now(), id)
+		.run();
+};
+
+export const markWebhookFailed = async (
+	db: D1Database,
+	id: string,
+	next_attempt_at: number | null, // null → giveup
+	last_error: string,
+): Promise<void> => {
+	const status = next_attempt_at == null ? "giveup" : "pending";
+	const nextTs = next_attempt_at ?? 0;
+	await db
+		.prepare(
+			`UPDATE webhook_deliveries
+			    SET status = ?,
+			        attempts = attempts + 1,
+			        last_error = ?,
+			        next_attempt_at = ?
+			  WHERE id = ?`,
+		)
+		.bind(status, last_error, nextTs, id)
+		.run();
+};
+
+export const pruneWebhookDeliveries = async (
+	db: D1Database,
+	olderThan: number,
+): Promise<number> => {
+	// Keep the deliveries table from growing unbounded — delivered + giveup
+	// rows older than the threshold are removed. Pending rows are always
+	// kept so a long backoff schedule can't be silently dropped.
+	const rs = await db
+		.prepare(
+			`DELETE FROM webhook_deliveries
+			  WHERE status IN ('delivered', 'giveup')
+			    AND created_at < ?`,
+		)
+		.bind(olderThan)
+		.run();
+	return (rs.meta as { changes?: number }).changes ?? 0;
+};
+
+// -- votes -------------------------------------------------------------------
+//
+// Voting is exclusive: at most one row per (comment_id, user_id) with value
+// -1 or 1. The reactions table is the wrong shape (multi-emoji per user)
+// because a malicious client could send both up and down — see the
+// votes migration for the full rationale.
+
+export type Vote = {
+	comment_id: string;
+	user_id: string;
+	value: -1 | 1;
+	created_at: number;
+};
+
+export type VoteValue = -1 | 0 | 1;
+
+export type VoteResult = {
+	score_up: number;
+	score_down: number;
+	my_vote: -1 | 0 | 1;
+};
+
+const reselectScores = async (
+	db: D1Database,
+	comment_id: string,
+	user_id: string,
+): Promise<VoteResult> => {
+	const row = await db
+		.prepare(
+			`SELECT c.score_up, c.score_down,
+			        COALESCE((SELECT value FROM votes
+			                   WHERE comment_id = c.id AND user_id = ?), 0) AS my_vote
+			   FROM comments c WHERE c.id = ?`,
+		)
+		.bind(user_id, comment_id)
+		.first<{ score_up: number; score_down: number; my_vote: number }>();
+	if (!row) return { score_up: 0, score_down: 0, my_vote: 0 };
+	const mv = row.my_vote === 1 || row.my_vote === -1 ? row.my_vote : 0;
+	return { score_up: row.score_up, score_down: row.score_down, my_vote: mv };
+};
+
+/**
+ * Atomically upsert a vote and recompute the denormalized counters on the
+ * parent comment. value=0 means "clear my vote". The denormalization keeps
+ * the public list query as a single SELECT against `comments` — no JOIN to
+ * an aggregation against `votes` per page load.
+ *
+ * Returns the post-write counters and the requester's now-vote so the
+ * widget can patch the DOM without busting the per-post tree cache.
+ */
+export const castVote = async (
+	db: D1Database,
+	comment_id: string,
+	user_id: string,
+	value: VoteValue,
+): Promise<VoteResult> => {
+	const now = Date.now();
+	if (value === 0) {
+		await db.batch([
+			db
+				.prepare(`DELETE FROM votes WHERE comment_id = ? AND user_id = ?`)
+				.bind(comment_id, user_id),
+			db
+				.prepare(
+					`UPDATE comments SET
+					   score_up   = (SELECT COUNT(*) FROM votes WHERE comment_id = ? AND value =  1),
+					   score_down = (SELECT COUNT(*) FROM votes WHERE comment_id = ? AND value = -1)
+					 WHERE id = ?`,
+				)
+				.bind(comment_id, comment_id, comment_id),
+		]);
+	} else {
+		await db.batch([
+			db
+				.prepare(
+					`INSERT INTO votes (comment_id, user_id, value, created_at)
+					 VALUES (?, ?, ?, ?)
+					 ON CONFLICT(comment_id, user_id) DO UPDATE SET
+					   value      = excluded.value,
+					   created_at = excluded.created_at`,
+				)
+				.bind(comment_id, user_id, value, now),
+			db
+				.prepare(
+					`UPDATE comments SET
+					   score_up   = (SELECT COUNT(*) FROM votes WHERE comment_id = ? AND value =  1),
+					   score_down = (SELECT COUNT(*) FROM votes WHERE comment_id = ? AND value = -1)
+					 WHERE id = ?`,
+				)
+				.bind(comment_id, comment_id, comment_id),
+		]);
+	}
+	return reselectScores(db, comment_id, user_id);
+};
+
+/**
+ * Returns the calling user's vote on each (comment_id) for one post, as
+ * a Map keyed by comment_id. Used to populate `my_vote` on the public
+ * list endpoint for authenticated viewers; anonymous viewers bypass this
+ * (the cached payload has no my_vote field).
+ */
+export const getUserVotesOnPost = async (
+	db: D1Database,
+	post_slug: string,
+	user_id: string,
+): Promise<Map<string, -1 | 1>> => {
+	const result = await db
+		.prepare(
+			`SELECT v.comment_id, v.value
+			   FROM votes v
+			   JOIN comments c ON c.id = v.comment_id
+			  WHERE c.post_slug = ? AND v.user_id = ?`,
+		)
+		.bind(post_slug, user_id)
+		.all<{ comment_id: string; value: number }>();
+	const out = new Map<string, -1 | 1>();
+	for (const r of result.results ?? []) {
+		if (r.value === 1 || r.value === -1) out.set(r.comment_id, r.value);
+	}
+	return out;
+};
+
+// -- saved replies ----------------------------------------------------------
+//
+// Canned moderator responses. The picker fetches the visible-to-me set
+// (`listSavedRepliesForUser`) which is `OWNER = me OR scope = 'shared'`.
+// Mutations are owner-only: even an admin should not be able to silently
+// edit a different mod's private reply through the API (we audit-log the
+// post action separately).
+
+export type SavedReplyScope = "private" | "shared";
+
+export type SavedReply = {
+	id: string;
+	owner_id: string;
+	title: string;
+	body_md: string;
+	scope: SavedReplyScope;
+	created_at: number;
+	updated_at: number;
+};
+
+export const isSavedReplyScope = (v: unknown): v is SavedReplyScope =>
+	v === "private" || v === "shared";
+
+export const listSavedRepliesForUser = async (
+	db: D1Database,
+	user_id: string,
+): Promise<SavedReply[]> => {
+	const result = await db
+		.prepare(
+			`SELECT id, owner_id, title, body_md, scope, created_at, updated_at
+			   FROM saved_replies
+			  WHERE owner_id = ? OR scope = 'shared'
+			  ORDER BY created_at DESC`,
+		)
+		.bind(user_id)
+		.all<SavedReply>();
+	return result.results ?? [];
+};
+
+export const getSavedReply = async (
+	db: D1Database,
+	id: string,
+): Promise<SavedReply | null> => {
+	return await db
+		.prepare(
+			`SELECT id, owner_id, title, body_md, scope, created_at, updated_at
+			   FROM saved_replies WHERE id = ?`,
+		)
+		.bind(id)
+		.first<SavedReply>();
+};
+
+export const insertSavedReply = async (
+	db: D1Database,
+	input: {
+		owner_id: string;
+		title: string;
+		body_md: string;
+		scope: SavedReplyScope;
+	},
+): Promise<SavedReply> => {
+	const id = ulid();
+	const now = Date.now();
+	await db
+		.prepare(
+			`INSERT INTO saved_replies
+			   (id, owner_id, title, body_md, scope, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		)
+		.bind(id, input.owner_id, input.title, input.body_md, input.scope, now, now)
+		.run();
+	return {
+		id,
+		owner_id: input.owner_id,
+		title: input.title,
+		body_md: input.body_md,
+		scope: input.scope,
+		created_at: now,
+		updated_at: now,
+	};
+};
+
+export const updateSavedReply = async (
+	db: D1Database,
+	id: string,
+	owner_id: string,
+	patch: { title: string; body_md: string; scope: SavedReplyScope },
+): Promise<boolean> => {
+	const now = Date.now();
+	const result = await db
+		.prepare(
+			`UPDATE saved_replies
+			    SET title = ?, body_md = ?, scope = ?, updated_at = ?
+			  WHERE id = ? AND owner_id = ?`,
+		)
+		.bind(patch.title, patch.body_md, patch.scope, now, id, owner_id)
+		.run();
+	return (result.meta?.changes ?? 0) > 0;
+};
+
+export const deleteSavedReply = async (
+	db: D1Database,
+	id: string,
+	owner_id: string,
+): Promise<boolean> => {
+	const result = await db
+		.prepare(`DELETE FROM saved_replies WHERE id = ? AND owner_id = ?`)
+		.bind(id, owner_id)
+		.run();
+	return (result.meta?.changes ?? 0) > 0;
 };

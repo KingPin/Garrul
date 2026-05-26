@@ -24,6 +24,18 @@ const config = new Hono<{ Bindings: Bindings }>();
 const isTruthy = (v: string | undefined): boolean =>
 	v === "1" || v?.toLowerCase() === "true";
 
+// Defaults-on flag: present + falsy → off; absent → on. Mirrors the
+// VOTING_ENABLED / DOWNVOTES_ENABLED semantics in api.votes.ts so the
+// widget renders consistently with what the server will accept.
+const isBoolishOn = (v: string | undefined): boolean => {
+	if (v == null) return true;
+	const norm = v.trim().toLowerCase();
+	if (norm === "0" || norm === "false" || norm === "no" || norm === "off") {
+		return false;
+	}
+	return true;
+};
+
 config.get("/", (c) => {
 	const minutes = Number.parseInt(c.env.EDIT_WINDOW_MINUTES, 10);
 	const edit_window_minutes =
@@ -32,11 +44,16 @@ config.get("/", (c) => {
 		const cfg = PROVIDERS[p];
 		return !!c.env[cfg.client_id_env] && !!c.env[cfg.client_secret_env];
 	});
+	const voting_enabled = isBoolishOn(c.env.VOTING_ENABLED);
 	return c.json({
 		turnstile_site_key: c.env.TURNSTILE_SITE_KEY || null,
 		edit_window_minutes,
 		providers,
 		branding_hidden: isTruthy(c.env.BRANDING_HIDDEN),
+		voting_enabled,
+		// Downvotes implicitly off when voting itself is off (saves the
+		// widget a second conditional).
+		downvotes_enabled: voting_enabled && isBoolishOn(c.env.DOWNVOTES_ENABLED),
 	});
 });
 

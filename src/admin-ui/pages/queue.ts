@@ -64,6 +64,19 @@ const authorCell = (c: AdminComment): string => {
 </a>`;
 };
 
+// Net vote score with up/down split. We render the net first (the value
+// brigading mitigation cares about) and a muted sub-line with the raw
+// counts so a mod scanning the queue can spot e.g. 50↑/49↓ noise.
+const scoreCell = (c: AdminComment): string => {
+	const up = c.score_up ?? 0;
+	const down = c.score_down ?? 0;
+	const net = up - down;
+	const cls = net > 0 ? "score-pos" : net < 0 ? "score-neg" : "muted";
+	return `
+<span class="score ${cls}">${net > 0 ? "+" : ""}${net}</span>
+<div class="muted" style="font-size:0.75rem">${up}↑ ${down}↓</div>`;
+};
+
 // Embed values as JSON-stringified, HTML-escaped literals so the resulting
 // Alpine expression is well-formed regardless of the underlying string
 // content (defense in depth: ULIDs are safe today, but the typing is just
@@ -93,6 +106,13 @@ const actionButtons = (id: string, status: CommentStatus): string => {
 	if (status !== "deleted") {
 		parts.push(
 			`<button :disabled="busy" class="bad" @click="${rowAct(id, "delete", "Deleted")}">Delete</button>`,
+		);
+	}
+	// Reply opens the saved-replies picker — mods only see it on
+	// approved/pending comments. No point replying to deleted/spam.
+	if (status !== "deleted" && status !== "spam") {
+		parts.push(
+			`<button :disabled="busy" @click="$dispatch('open-reply', { id: ${jsLiteral(id)} })">Reply</button>`,
 		);
 	}
 	return parts.join("");
@@ -142,6 +162,7 @@ export const renderQueue = (
   <td class="bulk-cell"><input type="checkbox" :value="${jsLiteral(c.id)}" x-model="selected" :disabled="busy"></td>
   <td><span class="pill ${c.status}">${c.status}</span></td>
   <td>${authorCell(c)}</td>
+  <td class="score-cell" title="up / down">${scoreCell(c)}</td>
   <td>
     <div class="muted">${new Date(c.created_at).toISOString().slice(0, 16).replace("T", " ")}</div>
     <div><code>${escapeHtml(c.post_slug)}</code></div>
@@ -155,7 +176,7 @@ export const renderQueue = (
 </tr>`,
 				)
 				.join("")
-		: `<tr><td colspan="6" class="muted">No comments match.</td></tr>`;
+		: `<tr><td colspan="7" class="muted">No comments match.</td></tr>`;
 
 	const allIds = rows.map((r) => r.id);
 
@@ -170,6 +191,57 @@ export const renderQueue = (
 	return `
 <div class="filter-bar"><span class="muted">filter:</span> ${tabs}</div>
 ${filterBar}
+<div x-data="{
+  open: false,
+  commentId: null,
+  replies: [],
+  selected: null,
+  busy: false,
+  body: '',
+  loaded: false,
+  async load() {
+    if (this.loaded) return;
+    this.busy = true;
+    try {
+      const r = await fetch('/admin/api/saved-replies', { headers: { accept: 'application/json' } });
+      if (!r.ok) throw new Error('Could not load saved replies');
+      const j = await r.json();
+      this.replies = Array.isArray(j.replies) ? j.replies : [];
+      this.loaded = true;
+    } catch (e) {
+      this.$dispatch('toast', { text: e.message || 'Load failed', kind: 'bad' });
+    } finally {
+      this.busy = false;
+    }
+  },
+  pick(r) {
+    this.selected = r;
+    this.body = r.body_md;
+  },
+  async send() {
+    if (!this.selected || !this.commentId) return;
+    this.busy = true;
+    try {
+      const r = await fetch('/admin/api/saved-replies/' + this.selected.id + '/post', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ comment_id: this.commentId, body_md: this.body }),
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        throw new Error(j.error || ('Post failed: ' + r.status));
+      }
+      this.$dispatch('toast', { text: 'Reply posted' });
+      this.open = false;
+    } catch (e) {
+      this.$dispatch('toast', { text: e.message || 'Post failed', kind: 'bad' });
+    } finally {
+      this.busy = false;
+    }
+  }
+}"
+@open-reply.window="open=true; commentId=$event.detail.id; selected=null; body=''; load();"
+@keydown.escape.window="open=false">
 <div class="card" x-data="{
   selected: [],
   bulkBusy: false,
@@ -212,7 +284,7 @@ ${filterBar}
   <table>
     <thead><tr>
       <th class="bulk-cell"><input type="checkbox" @change="toggleAll($event)" :checked="selected.length > 0 && selected.length === allIds.length"></th>
-      <th>Status</th><th>Author</th><th>Meta</th><th>Body</th><th>Actions</th>
+      <th>Status</th><th>Author</th><th title="Vote score">Score</th><th>Meta</th><th>Body</th><th>Actions</th>
     </tr></thead>
     <tbody>${rowsHtml}</tbody>
   </table>
@@ -224,5 +296,38 @@ ${filterBar}
     <button :disabled="bulkBusy" class="bad" @click="bulk('delete')">Delete</button>
     <button :disabled="bulkBusy" @click="selected = []">Clear</button>
   </div>
+</div>
+<div class="reply-modal" x-show="open" x-cloak role="dialog" aria-label="Reply with a saved reply"
+     @click.self="open=false">
+  <div class="reply-modal-inner">
+    <h3 style="margin-top:0">Reply with a saved reply</h3>
+    <p class="muted" x-show="!replies.length && loaded">
+      No saved replies yet — <a href="/admin/saved-replies/new">create one</a>.
+    </p>
+    <ul class="reply-list" x-show="replies.length">
+      <template x-for="r in replies" :key="r.id">
+        <li>
+          <button type="button"
+                  :class="selected && selected.id === r.id ? 'reply-pick active' : 'reply-pick'"
+                  @click="pick(r)">
+            <strong x-text="r.title"></strong>
+            <span class="muted" x-text="r.scope"></span>
+          </button>
+        </li>
+      </template>
+    </ul>
+    <div x-show="selected">
+      <label>Body (markdown)<br>
+        <textarea x-model="body" rows="8" maxlength="8000"
+                  style="width:100%;min-height:160px;font-family:ui-monospace,monospace"></textarea>
+      </label>
+      <p>
+        <button :disabled="busy || !body.trim()" @click="send()">Post reply</button>
+        <button :disabled="busy" @click="open=false" class="btn">Cancel</button>
+      </p>
+    </div>
+    <p x-show="!selected && replies.length" class="muted">Pick a reply above to preview and post.</p>
+  </div>
+</div>
 </div>`;
 };

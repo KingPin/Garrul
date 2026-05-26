@@ -98,5 +98,67 @@ export const renderOperator = (data: OperatorData): string => {
 </div>
 
 ${seedCard}
+
+<div class="card" x-data="{
+  busy: false,
+  result: null,
+  error: null,
+  dryRun: true,
+  includeDeleted: false,
+  includeSpam: false,
+  async run(file) {
+    if (!file) return;
+    if (file.size > 50 * 1024 * 1024) {
+      this.error = 'file too large (max 50 MB)';
+      return;
+    }
+    this.busy = true; this.error = null; this.result = null;
+    try {
+      const text = await file.text();
+      const r = await fetch('/admin/api/ops/import-disqus', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/xml',
+          'x-dry-run': this.dryRun ? '1' : '0',
+          'x-include-deleted': this.includeDeleted ? '1' : '0',
+          'x-include-spam': this.includeSpam ? '1' : '0',
+        },
+        body: text,
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'import failed');
+      this.result = j;
+    } catch (e) {
+      this.error = e.message || 'import failed';
+    } finally {
+      this.busy = false;
+    }
+  }
+}">
+  <h3>Import Disqus export</h3>
+  <p class="muted">Uploads a Disqus comment-export XML file and ingests it
+    into D1. Idempotent: re-running the same file is a no-op
+    (deduplicated by Disqus comment ID). Imported HTML is stripped and
+    re-rendered through the standard markdown allowlist.</p>
+  <p>
+    <label style="display:inline-flex;gap:0.3rem;align-items:center;margin-right:0.8rem">
+      <input type="checkbox" x-model="dryRun"> Dry run (parse + plan only)
+    </label>
+    <label style="display:inline-flex;gap:0.3rem;align-items:center;margin-right:0.8rem">
+      <input type="checkbox" x-model="includeDeleted"> Include deleted
+    </label>
+    <label style="display:inline-flex;gap:0.3rem;align-items:center">
+      <input type="checkbox" x-model="includeSpam"> Include spam
+    </label>
+  </p>
+  <input type="file" accept=".xml,application/xml,text/xml"
+         :disabled="busy"
+         @change="run($event.target.files[0])">
+  <p class="muted" x-show="busy">Importing… don't navigate away.</p>
+  <pre x-show="result" x-text="result &amp;&amp; JSON.stringify(result, null, 2)"
+       style="background:var(--bg);padding:0.6rem;border-radius:4px;font-size:0.85rem"></pre>
+  <p style="color:var(--bad)" x-show="error" x-text="error"></p>
+  <p class="muted">For large exports prefer the CLI: <code>npm run import-disqus -- ./export.xml --dry-run</code>.</p>
+</div>
 `;
 };

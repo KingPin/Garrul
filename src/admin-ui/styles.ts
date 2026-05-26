@@ -67,6 +67,7 @@ th { color: var(--muted); font-weight: 500; font-size: 0.8rem; text-transform: u
 .pill.pending { color: var(--warn); border-color: var(--warn); }
 .pill.spam, .pill.deleted, .pill.banned { color: var(--bad); border-color: var(--bad); }
 .pill.admin { color: var(--accent); border-color: var(--accent); }
+.pill.mod { color: var(--warn); border-color: var(--warn); }
 button, .btn { background: var(--bg); color: var(--text); border: 1px solid var(--border);
                padding: 0.3rem 0.6rem; border-radius: 6px; cursor: pointer; font-size: 0.85rem; }
 button:hover { border-color: var(--accent); }
@@ -98,12 +99,32 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .muted { color: var(--muted); }
 .pager { display: flex; justify-content: space-between; margin-top: 1rem; }
 .bulk-cell { width: 32px; }
+.score-cell { width: 70px; text-align: center; font-variant-numeric: tabular-nums; }
+.score { font-weight: 600; }
+.score-pos { color: #15803d; }
+.score-neg { color: #b91c1c; }
 .bulk-bar { position: sticky; bottom: 0; display: flex; align-items: center;
             gap: 0.5rem; padding: 0.75rem 1rem; background: var(--panel);
             border-top: 1px solid var(--border); margin: 1rem -1rem -1rem;
             border-radius: 0 0 8px 8px; }
 .bulk-bar span:first-child { font-weight: 600; margin-right: auto; }
 [x-cloak] { display: none !important; }
+.reply-modal { position: fixed; inset: 0; background: rgba(0,0,0,0.55);
+               display: flex; align-items: flex-start; justify-content: center;
+               padding-top: 6vh; z-index: 1100; }
+.reply-modal-inner { background: var(--panel); border: 1px solid var(--border);
+                     border-radius: 8px; padding: 1.25rem; width: min(560px, 92vw);
+                     max-height: 85vh; overflow: auto; box-shadow: 0 12px 32px rgba(0,0,0,0.45); }
+.reply-list { list-style: none; padding: 0; margin: 0 0 0.75rem; max-height: 30vh;
+              overflow: auto; border: 1px solid var(--border); border-radius: 6px; }
+.reply-list li { border-bottom: 1px solid var(--border); }
+.reply-list li:last-child { border-bottom: none; }
+.reply-pick { display: flex; justify-content: space-between; gap: 0.75rem;
+              width: 100%; padding: 0.5rem 0.75rem; background: transparent;
+              border: none; color: var(--fg); text-align: left; cursor: pointer; }
+.reply-pick:hover { background: var(--bg); }
+.reply-pick.active { background: var(--accent); color: var(--bg); }
+.reply-pick.active .muted { color: var(--bg); opacity: 0.85; }
 .comment-card { border: 1px solid var(--border); border-radius: 6px;
                 padding: 0.75rem; margin: 0.5rem 0; }
 .comment-card-head { display: flex; justify-content: space-between;
