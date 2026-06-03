@@ -37,6 +37,13 @@ PUBLIC_BASE_URL = "https://comments.example.com"
 # each provider (e.g. https://comments.example.com/api/v1/auth/github/callback).
 # Leave unset in dev; the worker falls back to the request origin.
 OAUTH_CALLBACK_BASE = "https://comments.example.com"
+# Comment voting. Both default ON when unset; set "0"/"false" to disable.
+# Downvotes are implicitly off when voting itself is off.
+# VOTING_ENABLED = "true"
+# DOWNVOTES_ENABLED = "true"
+# Optional: Cloudflare account ID — paired with the CF_API_TOKEN secret to
+# enable the /admin/usage analytics page.
+# CF_ACCOUNT_ID = "0123abcd..."
 
 # Anti-spam (all optional; OFF by default). See docs/ANTISPAM.md.
 # Pluggable content classifier — "akismet" or "workers-ai". Leave unset for none.
@@ -69,7 +76,8 @@ crons = ["*/15 * * * *"]
 #   wrangler secret put GOOGLE_CLIENT_ID
 #   wrangler secret put GOOGLE_CLIENT_SECRET
 #   wrangler secret put RESEND_API_KEY
-#   wrangler secret put WEBHOOK_URL           # optional, fire-and-forget POST on new comment
+#   wrangler secret put WEBHOOK_URL           # legacy single-URL webhook; prefer /admin/webhooks endpoints
+#   wrangler secret put CF_API_TOKEN          # optional, Analytics-read token for /admin/usage (with CF_ACCOUNT_ID var)
 #   wrangler secret put SPAM_FORM_TS_SECRET   # HMAC key for signed form-timestamp tokens (set when SPAM_HONEYPOT_MIN_MS is used)
 #   wrangler secret put AKISMET_API_KEY       # required when SPAM_PROVIDER = "akismet"
 #   wrangler secret put AKISMET_SITE_URL      # public site URL for Akismet (e.g. https://yourblog.example.com)

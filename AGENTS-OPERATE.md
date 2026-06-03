@@ -108,7 +108,11 @@ Three configuration surfaces:
 | `GOOGLE_CLIENT_ID` | secret | Google OAuth client ID. Required for Google sign-in. | `1234.apps.googleusercontent.com` | `wrangler secret put` / `.dev.vars` |
 | `GOOGLE_CLIENT_SECRET` | secret | Google OAuth client secret. | `GOCSPX-...` | `wrangler secret put` / `.dev.vars` |
 | `RESEND_API_KEY` | secret | Resend API key. Required when `EMAIL_PROVIDER=resend`. | `re_...` | `wrangler secret put` / `.dev.vars` |
-| `WEBHOOK_URL` | secret | Optional fire-and-forget POST URL on new comment events. | `https://example.com/hook` | `wrangler secret put` / `.dev.vars` |
+| `WEBHOOK_URL` | secret | Legacy single-URL webhook (fire-and-forget, no retries). Only honored when no endpoints are configured on `/admin/webhooks` — prefer endpoint rows (signed, retried, per-event filters). | `https://example.com/hook` | `wrangler secret put` / `.dev.vars` |
+| `VOTING_ENABLED` | var | Comment voting (up/down buttons in the widget). Defaults **on** when unset; set `0`/`false`/`no`/`off` to disable instance-wide. | `true` | `wrangler.toml` |
+| `DOWNVOTES_ENABLED` | var | Downvote button. Same defaults-on semantics; implicitly off when voting is off. | `true` | `wrangler.toml` |
+| `CF_ACCOUNT_ID` | var | Optional. Cloudflare account ID; paired with `CF_API_TOKEN` to enable the `/admin/usage` analytics page. | `0123abcd...` | `wrangler.toml` |
+| `CF_API_TOKEN` | secret | Optional. Cloudflare API token (Analytics read scope) for `/admin/usage`. The page renders setup instructions when either value is unset. | `...` | `wrangler secret put` / `.dev.vars` |
 
 Bindings (D1, KV, Analytics) live in `wrangler.toml` outside `[vars]`
 and are populated by `./scripts/setup.sh`. Don't edit binding IDs by
@@ -278,14 +282,38 @@ emits one JSON line with a request ID via `src/lib/log.ts`. No PII
 debugging a specific user-reported issue.
 
 **Migrations.** Forward-only SQL in `src/db/migrations/NNNN_name.sql`,
-tracked by the `_migrations` table. Current: `0001_init.sql`,
-`0002_notifications.sql`. Run with `npm run migrate` (local Miniflare)
-or `npm run migrate -- --remote` (production D1). Idempotent. Never
-edit a migration after it's applied to prod — add new behavior as a new
-numbered file.
+tracked by the `_migrations` table. Current set:
 
-**Admin UI.** `/admin` requires an OAuth sign-in whose email is in
-`ADMIN_EMAILS`. Server-rendered HTML + Alpine.js, no SPA.
+- `0001_init.sql` — core schema
+- `0002_notifications.sql` — email subscriptions + digests
+- `0003_subscription_confirm.sql` — double-opt-in confirmation
+- `0004_admin_observability.sql` — audit log + spam verdicts
+- `0005_user_roles.sql` — `users.role` (`user` / `mod` / `admin`)
+- `0006_webhook_endpoints.sql` — outbound signed webhooks + retry queue
+- `0007_votes.sql` — vote storage + denormalized score counters
+- `0008_saved_replies.sql` — moderator saved replies
+- `0009_import_tracking.sql` — Disqus import idempotency
+
+Run with `npm run migrate` (local Miniflare) or
+`npm run migrate -- --remote` (production D1). Idempotent. Never edit a
+migration after it's applied to prod — add new behavior as a new
+numbered file. When upgrading an existing install, re-running
+`npm run migrate -- --remote` applies whatever the new release added.
+
+**Roles.** Since v1.8.0 there are three permission tiers
+(`0005_user_roles.sql`):
+
+- `user` — default; can comment, react, vote.
+- `mod` — can use the moderation queue (approve / spam / delete /
+  restore, bulk actions, replies, saved replies). Cannot ban users,
+  edit settings, run operator scripts, or grant/revoke roles.
+- `admin` — full access; grants/revokes `mod` and `admin` from the
+  user detail page. OAuth signups matching `ADMIN_EMAILS` are
+  auto-admin.
+
+**Admin UI.** `/admin` requires an OAuth sign-in with the `admin` role
+(or `mod` for the moderation surfaces listed above). Server-rendered
+HTML + Alpine.js, no SPA.
 
 Pages (top nav):
 
@@ -298,8 +326,11 @@ Pages (top nav):
 | `/admin/users/:id` | User detail: all their comments paginated, reactions received, audit history affecting them, Ban/Unban. |
 | `/admin/audit` | Audit log with filter form (admin, action, target kind/id, date range). |
 | `/admin/subscriptions` | Email subscription list. Filter by email/post/confirmed/unsubscribed. Actions: manual unsubscribe, resend confirmation. |
-| `/admin/operator` | Two batch operations: rerender stale comments (POSTs `/admin/api/ops/rerender` in 50-row chunks until done) and seed-demo (idempotent; gated to `ENV != "production"`). |
+| `/admin/operator` | Batch operations: rerender stale comments (POSTs `/admin/api/ops/rerender` in 50-row chunks until done), seed-demo (idempotent; gated to `ENV != "production"`), and the Disqus import upload (see below). |
 | `/admin/settings` | Read-only view of anti-spam + email config; edits still go through `wrangler secret put`. |
+| `/admin/webhooks` | Outbound webhook endpoints: add/pause/delete, per-endpoint secret + event filter, adapter (`generic` / `slack` / `discord`), failure counts and retry status. |
+| `/admin/saved-replies` | Moderator saved replies: create/edit canned responses, private or shared scope, postable onto a comment from the queue. |
+| `/admin/usage` | Cloudflare analytics (requests, comments by domain). Requires `CF_API_TOKEN` + `CF_ACCOUNT_ID`; renders setup instructions when unset. |
 
 State-changing endpoints (all under `/admin/api/...`, all require admin
 session + Origin allowlist, all write an `audit_log` row before
@@ -311,6 +342,50 @@ responding):
 - `POST /admin/api/subscriptions/:id` — `{action: unsubscribe|resend, reason?}`
 - `POST /admin/api/ops/rerender` — `{batch?: number, cursor?}` → `{processed, next_cursor}`
 - `POST /admin/api/ops/seed-demo` — disabled when `ENV=production`
+
+**Outbound webhooks.** Configured on `/admin/webhooks` (table-backed;
+the legacy `WEBHOOK_URL` env var still works only while no endpoint
+rows exist). Per endpoint: target URL (validated against an SSRF
+blocklist — private IPs, localhost, internal TLDs are rejected),
+optional HMAC secret, event filter (`comment.posted` / `edited` /
+`deleted` / `approved` / `spam`; empty = all), and an adapter that
+shapes the body (`generic` JSON, `slack`, or `discord` — the chat
+adapters neutralize `@everyone`-style mentions and truncate long
+bodies). Secured endpoints sign every request Stripe-style:
+
+```
+X-Garrul-Signature: t=<ms-epoch>,v1=<hex(hmac_sha256(secret, ts + "." + body))>
+```
+
+Receivers should reject signatures whose `t` is outside roughly ±5
+minutes of their own clock — verification recipe in `docs/webhooks.md`.
+Failed deliveries retry on a backoff schedule (1 min, 5 min, 30 min,
+2 h, 6 h, then give up), re-signed with a fresh timestamp each attempt;
+bodies over 64 KB skip the retry queue (logged, inline attempt still
+made). An endpoint that fails 10 consecutive times auto-disables —
+re-enable it from the admin page after fixing the receiver.
+
+**Saved replies.** Canned moderator responses, managed on
+`/admin/saved-replies`. Each reply is owned by its author and scoped
+`private` (only the owner sees it) or `shared` (every mod/admin sees
+it). The queue's reply box offers a picker; posting one inserts it as a
+regular comment from the moderator's identity.
+
+**Disqus import.** Two entry points, both idempotent (deduplicated by
+Disqus comment ID, tracked in `0009_import_tracking.sql`; re-running
+the same export inserts zero rows):
+
+- CLI (preferred for big exports):
+  `npm run import-disqus -- ./export.xml --dry-run`, then without
+  `--dry-run` to commit.
+- Admin upload on `/admin/operator` — capped at 50 MB, with dry-run /
+  include-deleted / include-spam toggles.
+
+Imported HTML is stripped and re-rendered through the standard
+markdown allowlist. Imported authors become `provider='anon'` ghost
+users whose `provider_id` is an HMAC (keyed by `IP_HASH_SECRET`) of
+the Disqus author identity, keeping their display names without
+storing emails.
 
 **Custom domains.** Strongly recommended. Set in `wrangler.toml`:
 

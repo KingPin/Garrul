@@ -199,6 +199,34 @@ Per-framework derivations:
 - **Plain HTML** — pick a short kebab-case string and never change it
   (e.g. `welcome`, `hello-world`, `2024-launch`).
 
+### Voting and sorting
+
+Since v1.8.0 the widget renders up/down vote buttons on each comment
+and a sort selector (`new` / `top`) above the list. Neither needs any
+host-page wiring:
+
+- **Voting is instance-wide and server-controlled.** The widget reads
+  `voting_enabled` / `downvotes_enabled` from `/api/v1/config` at boot;
+  there is no `data-*` attribute to toggle it per page. The operator
+  controls it with the `VOTING_ENABLED` / `DOWNVOTES_ENABLED` env vars
+  (both default **on**; downvotes are implicitly off when voting is
+  off). Integrators see the buttons only when the instance has them
+  enabled.
+- **API shape.** Each comment carries `score_up` and `score_down`
+  counters. Authenticated viewers also get `my_vote` (`-1 | 0 | 1`) in
+  the list response; anonymous list responses omit it (the cached tree
+  is shared). Votes are cast via `POST /api/v1/votes` with
+  `{comment_id, value}` where `value` is `-1 | 0 | 1` (`0` clears the
+  vote); the response returns the fresh counters plus `my_vote`.
+- **Anonymous viewers can vote.** They use the same IP-hashed ghost
+  identity as anonymous comments — one vote per identity per comment.
+  Authors cannot vote on their own comments.
+- **Sorting** defaults to `new` (newest top-level threads first). `top`
+  orders top-level threads by net score (`score_up - score_down`,
+  newer-first on ties); replies inside a thread always stay
+  chronological. The selection is per-mount UI state — it isn't
+  persisted and can't be preset from the host element.
+
 ## 5. Styling
 
 The widget mounts in a Shadow DOM, so host CSS does NOT leak in. The
