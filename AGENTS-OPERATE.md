@@ -111,7 +111,7 @@ Three configuration surfaces:
 | `WEBHOOK_URL` | secret | Legacy single-URL webhook (fire-and-forget, no retries). Only honored when no endpoints are configured on `/admin/webhooks` — prefer endpoint rows (signed, retried, per-event filters). | `https://example.com/hook` | `wrangler secret put` / `.dev.vars` |
 | `VOTING_ENABLED` | var | Comment voting (up/down buttons in the widget). Defaults **on** when unset; set `0`/`false`/`no`/`off` to disable instance-wide. | `true` | `wrangler.toml` |
 | `DOWNVOTES_ENABLED` | var | Downvote button. Same defaults-on semantics; implicitly off when voting is off. | `true` | `wrangler.toml` |
-| `CF_ACCOUNT_ID` | var | Optional. Cloudflare account ID; paired with `CF_API_TOKEN` to enable the `/admin/usage` analytics page. | `0123abcd...` | `wrangler.toml` |
+| `CF_ACCOUNT_ID` | var | Optional. Cloudflare account ID; paired with `CF_API_TOKEN` to enable the `/admin/usage` analytics page. | `0123abcd...` | `wrangler.toml` (or `wrangler secret put` — the in-app setup guide uses the secret form; both work) |
 | `CF_API_TOKEN` | secret | Optional. Cloudflare API token (Analytics read scope) for `/admin/usage`. The page renders setup instructions when either value is unset. | `...` | `wrangler secret put` / `.dev.vars` |
 
 Bindings (D1, KV, Analytics) live in `wrangler.toml` outside `[vars]`
@@ -311,9 +311,11 @@ numbered file. When upgrading an existing install, re-running
   user detail page. OAuth signups matching `ADMIN_EMAILS` are
   auto-admin.
 
-**Admin UI.** `/admin` requires an OAuth sign-in with the `admin` role
-(or `mod` for the moderation surfaces listed above). Server-rendered
-HTML + Alpine.js, no SPA.
+**Admin UI.** `/admin` requires an OAuth sign-in with the `mod` or
+`admin` role. Mods see the moderation surfaces — dashboard, queue,
+single-comment view, saved replies, about; everything else (users,
+audit, subscriptions, operator, settings, webhooks, usage) is
+admin-only. Server-rendered HTML + Alpine.js, no SPA.
 
 Pages (top nav):
 
