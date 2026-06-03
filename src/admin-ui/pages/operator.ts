@@ -1,9 +1,14 @@
 import type { RerenderStats } from "../../db/rerender";
+import { MAX_XML_BYTES } from "../../lib/disqus-import";
 
 export type OperatorData = {
 	rerender: RerenderStats;
 	seed_demo_allowed: boolean;
 };
+
+// Human-readable form of the shared import cap for the UI hint + client
+// error message. Whole MB by construction (MAX_XML_BYTES is N * 1024²).
+const MAX_XML_MB = Math.floor(MAX_XML_BYTES / (1024 * 1024));
 
 export const renderOperator = (data: OperatorData): string => {
 	const { rerender, seed_demo_allowed } = data;
@@ -108,8 +113,8 @@ ${seedCard}
   includeSpam: false,
   async run(file) {
     if (!file) return;
-    if (file.size > 50 * 1024 * 1024) {
-      this.error = 'file too large (max 50 MB)';
+    if (file.size > ${MAX_XML_BYTES}) {
+      this.error = 'file too large (max ${MAX_XML_MB} MB)';
       return;
     }
     this.busy = true; this.error = null; this.result = null;
@@ -158,7 +163,7 @@ ${seedCard}
   <pre x-show="result" x-text="result &amp;&amp; JSON.stringify(result, null, 2)"
        style="background:var(--bg);padding:0.6rem;border-radius:4px;font-size:0.85rem"></pre>
   <p style="color:var(--bad)" x-show="error" x-text="error"></p>
-  <p class="muted">For large exports prefer the CLI: <code>npm run import-disqus -- ./export.xml --dry-run</code>.</p>
+  <p class="muted">Max upload: ${MAX_XML_MB} MB. For larger exports use the CLI: <code>npm run import-disqus -- ./export.xml --dry-run</code>.</p>
 </div>
 `;
 };

@@ -116,7 +116,7 @@ import {
 	type SubscriptionsFilters,
 } from "../admin-ui/pages/subscriptions";
 import { CURRENT_RENDERER_VERSION, renderMarkdown } from "../lib/markdown";
-import { runDisqusImport } from "../lib/disqus-import";
+import { MAX_XML_BYTES, runDisqusImport } from "../lib/disqus-import";
 import { rerenderBatch, rerenderStats } from "../db/rerender";
 import { runSeedDemo } from "../db/seed-demo";
 import { renderConfirmEmailHtml } from "../lib/digest";
@@ -1525,23 +1525,22 @@ admin.post("/api/ops/rerender", async (c) => {
 //
 // Admin-only. Accepts a Disqus comment-export XML in the request body
 // (raw text/xml or application/xml). Idempotent — re-uploading the same
-// file inserts zero new rows. Capped at 50 MB to keep a hostile / huge
-// payload from running away inside the Worker; larger imports should go
-// through the CLI (`npm run import-disqus`).
-
-const MAX_IMPORT_BYTES = 50 * 1024 * 1024;
+// file inserts zero new rows. Capped at MAX_XML_BYTES (shared with the
+// parser and the operator page, so the three limits can't drift) to keep
+// a hostile / huge payload from running away inside the Worker; larger
+// imports should go through the CLI (`npm run import-disqus`).
 
 admin.post("/api/ops/import-disqus", async (c) => {
 	const user = await requireAdmin(c);
 	if (user instanceof Response) return user;
 
 	const contentLength = Number(c.req.header("content-length") ?? "0");
-	if (contentLength > MAX_IMPORT_BYTES) {
+	if (contentLength > MAX_XML_BYTES) {
 		return c.json({ error: "too_large" }, 413);
 	}
 	const xml = await c.req.text();
 	if (xml.length === 0) return c.json({ error: "empty_body" }, 400);
-	if (xml.length > MAX_IMPORT_BYTES) {
+	if (xml.length > MAX_XML_BYTES) {
 		return c.json({ error: "too_large" }, 413);
 	}
 	// Lightweight format sanity check before we hit the parser. Reject

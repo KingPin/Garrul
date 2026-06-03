@@ -65,7 +65,10 @@ export type DisqusExport = {
 	posts: DisqusPost[];
 };
 
-const MAX_XML_BYTES = 50 * 1024 * 1024;
+// Single source of truth for the import size cap (issue #15). The admin
+// upload route rejects content-length above this before reading the body,
+// and the operator page's client-side check + UI hint derive from it too.
+export const MAX_XML_BYTES = 50 * 1024 * 1024;
 
 const stripCdata = (s: string): string => {
 	const m = s.match(/^<!\[CDATA\[([\s\S]*?)\]\]>$/);
