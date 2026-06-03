@@ -187,10 +187,15 @@ export default {
 		env: Bindings,
 		ctx: ExecutionContext,
 	): Promise<void> => {
-		// Two independent passes per cron tick. waitUntil for both so a
-		// slow digest can't starve the webhook retry queue (and vice
-		// versa) — they each own their own wallclock budget.
-		ctx.waitUntil(runDigest(env));
+		// Two independent passes per cron tick. Each gets its OWN waitUntil
+		// so a slow digest can't starve the webhook retry queue (and vice
+		// versa), and its OWN catch so a throw in one pass never skips the
+		// other or surfaces as an unhandled rejection (issue #16).
+		ctx.waitUntil(
+			runDigest(env).catch((err) => {
+				log.error("scheduled.digest", { error: String(err) });
+			}),
+		);
 		ctx.waitUntil(
 			runWebhookRetries(env).catch((err) => {
 				log.error("scheduled.webhook_retries", { error: String(err) });
