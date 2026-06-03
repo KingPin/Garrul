@@ -10,7 +10,11 @@
  * condition that triggers the env-shim synthesis in loadEndpoints.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { dispatchWebhook, type WebhookPayload } from "../src/lib/webhook";
+import {
+	dispatchWebhook,
+	MAX_DELIVERY_BODY_BYTES,
+	type WebhookPayload,
+} from "../src/lib/webhook";
 import { log } from "../src/lib/log";
 
 // Minimal D1 stub: every .all() returns no rows (no webhook_endpoints
@@ -115,5 +119,105 @@ describe("WEBHOOK_URL env shim SSRF guard", () => {
 	it("allows public http:// for the legacy env shim (allowHttp carve-out)", async () => {
 		await dispatchWebhook(makeEnv("http://example.com/hook"), payload);
 		expect(fetchMock).toHaveBeenCalledTimes(1);
+	});
+});
+
+// D1 stub with one enabled generic endpoint row; records every
+// webhook_deliveries INSERT so tests can assert whether a retry row was
+// queued. Row shape mirrors WebhookEndpointRow (enabled as 0/1, events
+// as a comma string or null) so toWebhookEndpoint maps it for real.
+const makeDbWithEndpoint = () => {
+	const inserts: unknown[][] = [];
+	const endpointRow = {
+		id: "01HE000000000000000000",
+		url: "https://example.com/hook",
+		secret: null,
+		events: null,
+		adapter: "generic",
+		enabled: 1,
+		fail_count: 0,
+		disabled_at: null,
+		created_at: 0,
+		updated_at: 0,
+	};
+	const db = {
+		prepare(sql: string) {
+			let bound: unknown[] = [];
+			return {
+				bind(...args: unknown[]) {
+					bound = args;
+					return this;
+				},
+				async first() {
+					return null;
+				},
+				async all() {
+					if (sql.includes("FROM webhook_endpoints")) {
+						return { results: [endpointRow] };
+					}
+					return { results: [] };
+				},
+				async run() {
+					if (sql.includes("INSERT INTO webhook_deliveries")) {
+						inserts.push(bound);
+					}
+					return {};
+				},
+			};
+		},
+	} as unknown as D1Database;
+	return { db, inserts };
+};
+
+describe("webhook_deliveries body cap (issue #13)", () => {
+	let fetchMock: ReturnType<typeof vi.fn>;
+	let warnSpy: ReturnType<typeof vi.spyOn>;
+
+	beforeEach(() => {
+		// Receiver always fails → dispatch wants to queue a retry row.
+		fetchMock = vi.fn(async () => new Response("nope", { status: 500 }));
+		vi.stubGlobal("fetch", fetchMock);
+		warnSpy = vi.spyOn(log, "warn").mockImplementation(() => {});
+	});
+
+	afterEach(() => {
+		vi.unstubAllGlobals();
+		warnSpy.mockRestore();
+	});
+
+	it("queues a retry row for a normal-sized body", async () => {
+		const { db, inserts } = makeDbWithEndpoint();
+		await dispatchWebhook({ DB: db, ENV: "production" }, payload);
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		expect(inserts).toHaveLength(1);
+	});
+
+	it("skips the retry queue for an oversized body but still POSTs inline", async () => {
+		const { db, inserts } = makeDbWithEndpoint();
+		// Generic adapter stringifies the payload verbatim, so a huge slug
+		// pushes the rendered body past the cap.
+		const fat: WebhookPayload = {
+			...payload,
+			post_slug: "x".repeat(MAX_DELIVERY_BODY_BYTES + 1024),
+		};
+		await dispatchWebhook({ DB: db, ENV: "production" }, fat);
+		expect(fetchMock).toHaveBeenCalledTimes(1); // inline attempt still fires
+		expect(inserts).toHaveLength(0); // but nothing persisted
+		expect(warnSpy).toHaveBeenCalledWith(
+			"webhook.delivery_body_too_large",
+			expect.objectContaining({
+				max_bytes: MAX_DELIVERY_BODY_BYTES,
+				body_bytes: expect.any(Number),
+			}),
+		);
+	});
+
+	it("reports body_bytes on every failure log line", async () => {
+		const { db } = makeDbWithEndpoint();
+		await dispatchWebhook({ DB: db, ENV: "production" }, payload);
+		expect(warnSpy).toHaveBeenCalledWith(
+			"webhook.failed",
+			expect.objectContaining({ body_bytes: expect.any(Number) }),
+		);
 	});
 });

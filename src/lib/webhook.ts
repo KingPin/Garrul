@@ -79,6 +79,15 @@ type WebhookEnv = {
 
 const TIMEOUT_MS = 5000;
 
+// Cap on the rendered body we'll persist to webhook_deliveries for retry
+// (issue #13). The table stores bodies verbatim so retries can re-send
+// them; a chatty event filter pointed at a flapping receiver could grow
+// the table inside the 30-day prune window. 64 KB is well above anything
+// the adapters emit (Slack/Discord bodies truncate under 2 KB; generic is
+// a small fixed-shape payload), so tripping this means something upstream
+// is misbehaving — the inline POST still fires, we just skip the queue.
+export const MAX_DELIVERY_BODY_BYTES = 64 * 1024;
+
 // Exponential backoff schedule (ms). Index 0 is "first retry after the
 // initial inline failure". After we've exhausted this list we mark the
 // delivery 'giveup' and bump the endpoint's fail_count.
@@ -196,16 +205,28 @@ const dispatchToEndpoint = async (
 		return;
 	}
 	const errorTag = result.error ?? `http_${result.status}`;
+	const bodyBytes = new TextEncoder().encode(body).byteLength;
 	log.warn("webhook.failed", {
 		endpoint_id: endpoint.id,
 		event: payload.event,
 		comment_id: payload.comment_id,
 		status: result.status,
 		error: errorTag,
+		body_bytes: bodyBytes,
 	});
 	// Synthetic env endpoint has no row to queue against — legacy fire-
 	// and-forget semantics. Real endpoints get a delivery row for retry.
 	if (endpoint.id === "_env") return;
+	if (bodyBytes > MAX_DELIVERY_BODY_BYTES) {
+		log.warn("webhook.delivery_body_too_large", {
+			endpoint_id: endpoint.id,
+			event: payload.event,
+			comment_id: payload.comment_id,
+			body_bytes: bodyBytes,
+			max_bytes: MAX_DELIVERY_BODY_BYTES,
+		});
+		return;
+	}
 	await enqueueWebhookDelivery(
 		env.DB,
 		endpoint.id,
