@@ -1538,11 +1538,16 @@ admin.post("/api/ops/import-disqus", async (c) => {
 	if (contentLength > MAX_XML_BYTES) {
 		return c.json({ error: "too_large" }, 413);
 	}
-	const xml = await c.req.text();
-	if (xml.length === 0) return c.json({ error: "empty_body" }, 400);
-	if (xml.length > MAX_XML_BYTES) {
+	// Byte-accurate recheck for bodies that dodge the header check (e.g.
+	// chunked encoding with no content-length). String .length counts
+	// UTF-16 code units, which undercounts UTF-8 bytes for multibyte
+	// content — so measure the raw bytes before decoding.
+	const buf = await c.req.arrayBuffer();
+	if (buf.byteLength === 0) return c.json({ error: "empty_body" }, 400);
+	if (buf.byteLength > MAX_XML_BYTES) {
 		return c.json({ error: "too_large" }, 413);
 	}
+	const xml = new TextDecoder().decode(buf);
 	// Lightweight format sanity check before we hit the parser. Reject
 	// non-XML uploads up front so an operator who picks the wrong file
 	// gets a clear error rather than a parser stack trace.
