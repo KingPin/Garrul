@@ -15,6 +15,7 @@ import {
 	type SubscriptionsFilters,
 } from "../src/admin-ui/pages/subscriptions";
 import { renderOperator } from "../src/admin-ui/pages/operator";
+import { MAX_XML_BYTES } from "../src/lib/disqus-import";
 import { renderDashboard } from "../src/admin-ui/pages/dashboard";
 import { renderUpdateBanner } from "../src/admin-ui/layout";
 import type {
@@ -418,6 +419,19 @@ describe("renderOperator", () => {
 		});
 		expect(work).toContain(">Run rerender<");
 		expect(work).toContain("oldest stale at v1");
+	});
+
+	it("derives the import size check and UI hint from MAX_XML_BYTES (issue #15)", () => {
+		const html = renderOperator({
+			rerender: { current_version: 1, up_to_date: 10, stale: 0, oldest_version: null },
+			seed_demo_allowed: false,
+		});
+		const mb = Math.floor(MAX_XML_BYTES / (1024 * 1024));
+		// Client-side size check uses the shared constant, not a literal.
+		expect(html).toContain(`file.size > ${MAX_XML_BYTES}`);
+		// Visible hint + error message agree with it.
+		expect(html).toContain(`Max upload: ${mb} MB`);
+		expect(html).toContain(`file too large (max ${mb} MB)`);
 	});
 });
 
