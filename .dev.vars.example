@@ -19,8 +19,13 @@ GOOGLE_CLIENT_SECRET=""
 # Email — Resend default. Leave blank to disable notification sends locally.
 RESEND_API_KEY=""
 
-# Optional fire-and-forget webhook on new comment.
+# Legacy single-URL webhook (only honored while no endpoints are
+# configured on /admin/webhooks — prefer endpoint rows: signed + retried).
 WEBHOOK_URL=""
+
+# Optional: Cloudflare API token (Analytics read) for the /admin/usage
+# page. Pair with CF_ACCOUNT_ID in wrangler.toml [vars].
+CF_API_TOKEN=""
 
 # Optional: GitHub token for the "update available" check on /admin/*.
 # Unauthenticated GitHub API allows 60 req/hr per IP; Cloudflare egress IPs
