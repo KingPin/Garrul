@@ -2320,6 +2320,18 @@ const reselectScores = async (
  *
  * Returns the post-write counters and the requester's now-vote so the
  * widget can patch the DOM without busting the per-post tree cache.
+ *
+ * Perf note (issue #12): the two `(SELECT COUNT(*) …)` subqueries scan
+ * the comment's full vote set on every cast — a PK-index range scan on
+ * comment_id plus a row fetch per vote to read `value`, so O(N) per
+ * write. That's deliberate:
+ * recomputing from the source of truth means the denormalized counters
+ * can never drift, and there's no read-modify-write race surface like
+ * delta updates (`score_up = score_up + ?`) would introduce. For the
+ * target audience (small self-hosted instances) N stays in the hundreds
+ * and this is noise. It would only matter under brigade load — thousands
+ * of votes/min serializing on ONE hot comment — at which point switch to
+ * deltas computed from the prior vote value read inside the batch.
  */
 export const castVote = async (
 	db: D1Database,
