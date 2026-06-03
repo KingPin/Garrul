@@ -8,7 +8,7 @@
  * The two run* functions are mocked at the module boundary; everything
  * else in src/index.ts loads for real.
  */
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../src/lib/digest", async (importOriginal) => ({
 	...(await importOriginal<typeof import("../src/lib/digest")>()),
@@ -51,7 +51,10 @@ describe("scheduled handler pass isolation", () => {
 		vi.mocked(runDigest).mockReset().mockResolvedValue(undefined);
 		vi.mocked(runWebhookRetries).mockReset().mockResolvedValue(undefined);
 		errSpy = vi.spyOn(log, "error").mockImplementation(() => {});
-		return () => errSpy.mockRestore();
+	});
+
+	afterEach(() => {
+		errSpy.mockRestore();
 	});
 
 	it("runs both passes under separate waitUntil calls", async () => {
