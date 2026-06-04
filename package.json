@@ -1,6 +1,6 @@
 {
   "name": "garrul",
-  "version": "1.9.0",
+  "version": "1.9.1",
   "private": true,
   "description": "Self-hosted comment system on Cloudflare Workers + D1 + KV",
   "license": "Apache-2.0",
