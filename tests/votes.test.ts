@@ -185,6 +185,13 @@ const mkRouteApp = (
 			put: async () => {},
 			delete: async () => {},
 		},
+		// loadFlags() (now sourcing the vote flags) reads/writes TREE_CACHE on
+		// the hot path; an empty KV stub forces a cold resolve from env vars.
+		TREE_CACHE: {
+			get: async () => null,
+			put: async () => {},
+			delete: async () => {},
+		},
 		ANALYTICS: { writeDataPoint: () => {} },
 		SESSIONS: { get: async () => null },
 		IP_HASH_SECRET: "x".repeat(32),
