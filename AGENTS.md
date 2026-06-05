@@ -262,6 +262,34 @@ what you preview is byte-identical to what gets posted, with no
 client-side markdown library and no XSS divergence. The endpoint is
 public but rate-limited; no auth required.
 
+### Pagination and reply collapsing (since v1.10.0)
+
+The thread no longer dumps every comment into the page at once. Three
+operator-tunable settings (Settings → Display & pagination, or the
+`COMMENTS_PER_PAGE` / `REPLIES_PER_THREAD` / `AUTO_COLLAPSE_DEPTH` env vars —
+see AGENTS-OPERATE.md §5) control the volume:
+
+- **Top-level paging.** The list loads `COMMENTS_PER_PAGE` threads (default
+  **25**) with a **"Load older comments"** button that appends the next batch.
+  Paging is server-side and cursor-based; both `new` and `top` sorts paginate,
+  so a small page size never hides high-scoring threads. **Behavior change:**
+  pre-v1.10.0 installs rendered up to ~100 at once — set `COMMENTS_PER_PAGE=100`
+  to restore that.
+- **Per-comment collapse.** Any comment with replies gets a `▸`/`▾` toggle that
+  folds its reply subtree — always present, no setting needed.
+- **"Show N more replies."** Each parent renders the first `REPLIES_PER_THREAD`
+  replies (default **3**) then a button to reveal the rest. `0` = show all.
+- **Auto-collapse depth.** Replies at `AUTO_COLLAPSE_DEPTH` or deeper (default
+  **3**) start folded so a hot deep thread doesn't shove the page down. `0` =
+  never auto-collapse.
+
+Reply collapsing is **purely client-side** — all replies still arrive in the
+single list response; the widget folds them. There is no `data-*` per-page
+override; these are instance-wide. The new affordances inherit the existing
+theming variables — the collapse toggle from `--garrul-muted`, the
+"Show N more replies" / "Load older comments" buttons from `--garrul-link`
+(see `docs/THEMING.md`).
+
 ## 5. Styling
 
 The widget mounts in a Shadow DOM, so host CSS does NOT leak in. The
