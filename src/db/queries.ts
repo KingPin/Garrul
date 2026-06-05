@@ -491,6 +491,22 @@ export const setSetting = async (
 		.run();
 };
 
+/**
+ * Delete operator settings rows by key, restoring env/default inheritance for
+ * those flags. No-op for an empty list.
+ */
+export const deleteSettings = async (
+	db: D1Database,
+	keys: string[],
+): Promise<void> => {
+	if (keys.length === 0) return;
+	const placeholders = keys.map(() => "?").join(",");
+	await db
+		.prepare(`DELETE FROM settings WHERE key IN (${placeholders})`)
+		.bind(...keys)
+		.run();
+};
+
 export const updateCommentBody = async (
 	db: D1Database,
 	id: string,
@@ -1225,6 +1241,7 @@ export const ADMIN_ACTIONS = [
 	"saved_reply.delete",
 	"saved_reply.post",
 	"import.disqus",
+	"settings.update",
 ] as const;
 export type AdminAction = (typeof ADMIN_ACTIONS)[number];
 
