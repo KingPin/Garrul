@@ -13,11 +13,11 @@
  * a disabled feature's totals are never exposed, even if requested. The
  * comment count stays the default so existing callers are unaffected.
  *
- * Cached per (sorted-slug-list + include set) for 60s in KV. The slug list
- * is canonicalized (trimmed, lowercased… well, kept as-is, sorted, deduped,
- * capped at 100) so different orderings of the same slugs share a cache
- * entry; the include set is folded into the key so a plain call and an
- * extras call never collide.
+ * Cached per (canonical-slug-list + include set) for 60s in KV. The slug
+ * list is canonicalized — trimmed, deduped, sorted, capped at 100; slug case
+ * is preserved (slugs are case-sensitive) — so different orderings of the
+ * same slugs share a cache entry. The include set is folded into the key so
+ * a plain call and an extras call never collide.
  */
 import { Hono } from "hono";
 import type { Bindings } from "../index";

@@ -48,9 +48,12 @@ config.get("/", async (c) => {
 		comments_enabled: flags.comments_enabled,
 		reactions_enabled: flags.reactions_enabled,
 		voting_enabled: flags.votes_enabled,
-		// Downvotes implicitly off when voting itself is off (saves the
-		// widget a second conditional).
-		downvotes_enabled: flags.votes_enabled && flags.downvotes_enabled,
+		// Raw downvote switch, independent of comment voting. The widget
+		// already guards the comment vote UI behind voting_enabled, and page
+		// votes (page_votes_enabled) are a separate surface that also honors
+		// this flag — coupling it to votes_enabled here would wrongly hide
+		// page downvotes when only comment voting is off.
+		downvotes_enabled: flags.downvotes_enabled,
 		page_reactions_enabled: flags.page_reactions_enabled,
 		page_votes_enabled: flags.page_votes_enabled,
 	});

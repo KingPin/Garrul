@@ -1706,7 +1706,15 @@ const loadOnce = async (
 	const form = buildForm(apiBase, siteKey, me != null);
 	const list = el("div", "gr-list");
 	if (data.threads.length === 0) {
-		list.appendChild(el("p", "gr-empty", "Be the first to comment."));
+		// Don't invite a comment the reader can't leave: when comments are
+		// closed the "Comments are closed." notice below is the whole story.
+		list.appendChild(
+			el(
+				"p",
+				"gr-empty",
+				commentsEnabled ? "Be the first to comment." : "No comments yet.",
+			),
+		);
 	} else {
 		appendThreads(list, data.threads, ctx);
 	}
