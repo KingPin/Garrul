@@ -10,6 +10,11 @@
  *   - branding_hidden: when true, the widget skips the "Powered by Garrul"
  *     attribution. Operators flip this server-side via BRANDING_HIDDEN; it
  *     intentionally has no HTML/data-attribute opt-out.
+ *   - feature flags (comments_enabled, reactions_enabled, voting_enabled,
+ *     downvotes_enabled, page_reactions_enabled, page_votes_enabled): which
+ *     surfaces the widget should render. Resolved with DB-override > env >
+ *     default precedence (see src/lib/settings.ts); operators toggle them at
+ *     runtime from the admin Settings page.
  *
  * The widget calls this once on mount. Missing or empty → widget renders
  * without a Turnstile challenge (and anonymous POSTs will be rejected
@@ -18,25 +23,14 @@
 import { Hono } from "hono";
 import type { Bindings } from "../index";
 import { PROVIDERS, type ProviderId } from "../lib/oauth";
+import { loadFlags } from "../lib/settings";
 
 const config = new Hono<{ Bindings: Bindings }>();
 
 const isTruthy = (v: string | undefined): boolean =>
 	v === "1" || v?.toLowerCase() === "true";
 
-// Defaults-on flag: present + falsy → off; absent → on. Mirrors the
-// VOTING_ENABLED / DOWNVOTES_ENABLED semantics in api.votes.ts so the
-// widget renders consistently with what the server will accept.
-const isBoolishOn = (v: string | undefined): boolean => {
-	if (v == null) return true;
-	const norm = v.trim().toLowerCase();
-	if (norm === "0" || norm === "false" || norm === "no" || norm === "off") {
-		return false;
-	}
-	return true;
-};
-
-config.get("/", (c) => {
+config.get("/", async (c) => {
 	const minutes = Number.parseInt(c.env.EDIT_WINDOW_MINUTES, 10);
 	const edit_window_minutes =
 		Number.isFinite(minutes) && minutes > 0 ? minutes : 5;
@@ -44,16 +38,21 @@ config.get("/", (c) => {
 		const cfg = PROVIDERS[p];
 		return !!c.env[cfg.client_id_env] && !!c.env[cfg.client_secret_env];
 	});
-	const voting_enabled = isBoolishOn(c.env.VOTING_ENABLED);
+	// Feature flags resolved with DB-override > env > default precedence.
+	const flags = await loadFlags(c.env);
 	return c.json({
 		turnstile_site_key: c.env.TURNSTILE_SITE_KEY || null,
 		edit_window_minutes,
 		providers,
 		branding_hidden: isTruthy(c.env.BRANDING_HIDDEN),
-		voting_enabled,
+		comments_enabled: flags.comments_enabled,
+		reactions_enabled: flags.reactions_enabled,
+		voting_enabled: flags.votes_enabled,
 		// Downvotes implicitly off when voting itself is off (saves the
 		// widget a second conditional).
-		downvotes_enabled: voting_enabled && isBoolishOn(c.env.DOWNVOTES_ENABLED),
+		downvotes_enabled: flags.votes_enabled && flags.downvotes_enabled,
+		page_reactions_enabled: flags.page_reactions_enabled,
+		page_votes_enabled: flags.page_votes_enabled,
 	});
 });
 
