@@ -208,6 +208,17 @@ const STYLE_CSS = `
 	cursor: pointer;
 }
 .gr-actions button:hover { color: var(--garrul-link, #2563eb); }
+.gr-page-engage {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 0.75rem 1.25rem;
+	padding-bottom: 0.5rem;
+	border-bottom: 1px solid var(--garrul-border, #d0d3d8);
+}
+.gr-page-reactions { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+.gr-page-votes { display: flex; align-items: center; gap: 0.4rem; }
+.gr-page-vote-label { color: var(--garrul-muted, #6b7280); font-size: 0.9em; }
 .gr-reactions { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-top: 0.4rem; }
 .gr-reaction {
 	font: inherit;
@@ -547,6 +558,8 @@ type WidgetCtx = {
 	reactionsEnabled: boolean;
 	votingEnabled: boolean;
 	downvotesEnabled: boolean;
+	pageReactionsEnabled: boolean;
+	pageVotesEnabled: boolean;
 	reload: () => void;
 };
 
@@ -817,6 +830,170 @@ const buildReactions = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 		});
 		wrap.appendChild(btn);
 	}
+	return wrap;
+};
+
+type PageVoteState = { score_up: number; score_down: number; my_vote: -1 | 0 | 1 };
+
+/**
+ * Article-level engagement bar (emoji reactions + a helpful/up vote tally)
+ * shown above the thread. Gated by ctx.pageReactionsEnabled /
+ * pageVotesEnabled. Built synchronously, then populated from
+ * GET /api/v1/page-engagement; clicks optimistically patch from the
+ * authoritative totals each POST returns (same no-cache-bust pattern as
+ * comment votes).
+ */
+const buildPageEngagement = (ctx: WidgetCtx): HTMLElement => {
+	const wrap = el("div", "gr-page-engage");
+
+	// --- reactions ---
+	const reactCells = new Map<
+		string,
+		{ btn: HTMLButtonElement; count: HTMLElement }
+	>();
+	if (ctx.pageReactionsEnabled) {
+		const reactWrap = el("div", "gr-page-reactions");
+		for (const { kind, emoji } of REACTION_KINDS) {
+			const btn = el("button", "gr-reaction");
+			btn.type = "button";
+			btn.dataset.kind = kind;
+			btn.appendChild(document.createTextNode(emoji));
+			const count = el("span", "gr-reaction-count", "0");
+			btn.appendChild(count);
+			reactCells.set(kind, { btn, count });
+			reactWrap.appendChild(btn);
+		}
+		wrap.appendChild(reactWrap);
+	}
+
+	const setReactions = (
+		totals: Record<string, number>,
+		mine: string[],
+	): void => {
+		const mineSet = new Set(mine);
+		for (const [kind, cell] of reactCells) {
+			cell.count.textContent = String(totals[kind] ?? 0);
+			if (mineSet.has(kind)) cell.btn.dataset.mine = "1";
+			else delete cell.btn.dataset.mine;
+		}
+	};
+
+	const toggleReaction = async (
+		kind: string,
+		cell: { btn: HTMLButtonElement; count: HTMLElement },
+	): Promise<void> => {
+		cell.btn.disabled = true;
+		try {
+			const res = await fetch(
+				`${ctx.apiBase}/api/v1/page-engagement/reactions`,
+				{
+					method: "POST",
+					credentials: "include",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify({ slug: ctx.slug, kind }),
+				},
+			);
+			if (!res.ok) return;
+			const body = (await res.json()) as {
+				added: boolean;
+				reactions: Record<string, number>;
+			};
+			for (const [k, c] of reactCells) {
+				c.count.textContent = String(body.reactions[k] ?? 0);
+			}
+			if (body.added) cell.btn.dataset.mine = "1";
+			else delete cell.btn.dataset.mine;
+		} catch {
+			// leave UI as-is; user can retry
+		} finally {
+			cell.btn.disabled = false;
+		}
+	};
+
+	for (const [kind, cell] of reactCells) {
+		cell.btn.addEventListener("click", () => void toggleReaction(kind, cell));
+	}
+
+	// --- vote tally ---
+	let up: HTMLButtonElement | null = null;
+	let down: HTMLButtonElement | null = null;
+	let scoreEl: HTMLElement | null = null;
+	let myVote: -1 | 0 | 1 = 0;
+
+	const setVote = (s: PageVoteState): void => {
+		myVote = s.my_vote;
+		if (scoreEl) scoreEl.textContent = String(s.score_up - s.score_down);
+		if (up) {
+			if (myVote === 1) up.dataset.mine = "1";
+			else delete up.dataset.mine;
+		}
+		if (down) {
+			if (myVote === -1) down.dataset.mine = "1";
+			else delete down.dataset.mine;
+		}
+	};
+
+	const castVote = async (value: -1 | 0 | 1): Promise<void> => {
+		if (!up || !down) return;
+		up.disabled = true;
+		down.disabled = true;
+		try {
+			const res = await fetch(`${ctx.apiBase}/api/v1/page-engagement/votes`, {
+				method: "POST",
+				credentials: "include",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ slug: ctx.slug, value }),
+			});
+			if (!res.ok) return;
+			setVote((await res.json()) as PageVoteState);
+		} catch {
+			// leave UI as-is
+		} finally {
+			up.disabled = false;
+			down.disabled = false;
+		}
+	};
+
+	if (ctx.pageVotesEnabled) {
+		const voteWrap = el("div", "gr-page-votes");
+		const label = el("span", "gr-page-vote-label", "Was this helpful?");
+		up = el("button", "gr-vote");
+		up.type = "button";
+		up.setAttribute("aria-label", "Upvote this page");
+		up.appendChild(document.createTextNode("▲"));
+		scoreEl = el("span", "gr-vote-score", "0");
+		down = el("button", "gr-vote");
+		down.type = "button";
+		down.setAttribute("aria-label", "Downvote this page");
+		down.appendChild(document.createTextNode("▼"));
+		if (!ctx.downvotesEnabled) down.hidden = true;
+		up.addEventListener("click", () => void castVote(myVote === 1 ? 0 : 1));
+		down.addEventListener("click", () => void castVote(myVote === -1 ? 0 : -1));
+		voteWrap.append(label, up, scoreEl, down);
+		wrap.appendChild(voteWrap);
+	}
+
+	// Populate initial state. Anonymous viewers get totals only (their own
+	// state appears after they first interact) — matches the GET endpoint.
+	void (async () => {
+		try {
+			const res = await fetch(
+				`${ctx.apiBase}/api/v1/page-engagement?slug=${encodeURIComponent(ctx.slug)}`,
+				{ credentials: "include" },
+			);
+			if (!res.ok) return;
+			const body = (await res.json()) as {
+				reactions?: Record<string, number>;
+				my_reactions?: string[];
+				votes?: PageVoteState;
+			};
+			if (body.reactions) setReactions(body.reactions, body.my_reactions ?? []);
+			if (body.votes) setVote(body.votes);
+		} catch {
+			// initial counts stay at 0; interaction still works
+		}
+	})();
+
 	return wrap;
 };
 
@@ -1447,6 +1624,8 @@ const loadOnce = async (
 	let reactionsEnabled = true;
 	let votingEnabled = true;
 	let downvotesEnabled = true;
+	let pageReactionsEnabled = false;
+	let pageVotesEnabled = false;
 	try {
 		const cfgRes = await fetch(`${apiBase}/api/v1/config`, {
 			credentials: "include",
@@ -1461,6 +1640,8 @@ const loadOnce = async (
 				reactions_enabled?: boolean;
 				voting_enabled?: boolean;
 				downvotes_enabled?: boolean;
+				page_reactions_enabled?: boolean;
+				page_votes_enabled?: boolean;
 			};
 			siteKey = cfg.turnstile_site_key ?? null;
 			editWindowMinutes = cfg.edit_window_minutes ?? 5;
@@ -1472,6 +1653,8 @@ const loadOnce = async (
 			reactionsEnabled = cfg.reactions_enabled !== false;
 			votingEnabled = cfg.voting_enabled !== false;
 			downvotesEnabled = cfg.downvotes_enabled !== false;
+			pageReactionsEnabled = cfg.page_reactions_enabled === true;
+			pageVotesEnabled = cfg.page_votes_enabled === true;
 		}
 	} catch {
 		// /api/v1/config is optional; the widget still renders without Turnstile
@@ -1508,8 +1691,14 @@ const loadOnce = async (
 		reactionsEnabled,
 		votingEnabled,
 		downvotesEnabled,
+		pageReactionsEnabled,
+		pageVotesEnabled,
 		reload,
 	};
+	// Article-level engagement bar sits at the very top, above the composer.
+	if (pageReactionsEnabled || pageVotesEnabled) {
+		wrap.appendChild(buildPageEngagement(ctx));
+	}
 	const authBlock = buildAuthBlock(me, apiBase, providers, reload, reload);
 	// The composer is always built (its submit/Turnstile wiring lives further
 	// down) but only mounted when comments are enabled. When disabled, existing
