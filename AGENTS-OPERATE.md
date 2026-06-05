@@ -109,14 +109,38 @@ Three configuration surfaces:
 | `GOOGLE_CLIENT_SECRET` | secret | Google OAuth client secret. | `GOCSPX-...` | `wrangler secret put` / `.dev.vars` |
 | `RESEND_API_KEY` | secret | Resend API key. Required when `EMAIL_PROVIDER=resend`. | `re_...` | `wrangler secret put` / `.dev.vars` |
 | `WEBHOOK_URL` | secret | Legacy single-URL webhook (fire-and-forget, no retries). Only honored when no endpoints are configured on `/admin/webhooks` — prefer endpoint rows (signed, retried, per-event filters). | `https://example.com/hook` | `wrangler secret put` / `.dev.vars` |
+| `COMMENTS_ENABLED` | var | Master switch for new comment creation. Defaults **on**; set `0`/`false`/`no`/`off` to close commenting instance-wide (existing comments stay visible read-only, the widget shows a "Comments are closed." notice, and `POST /api/v1/comments` returns 403). | `true` | `wrangler.toml` |
+| `REACTIONS_ENABLED` | var | Comment emoji reactions. Defaults **on**; same falsy-spelling semantics. Disabling hides the reaction bar and 403s `POST /api/v1/reactions`. | `true` | `wrangler.toml` |
 | `VOTING_ENABLED` | var | Comment voting (up/down buttons in the widget). Defaults **on** when unset; set `0`/`false`/`no`/`off` to disable instance-wide. | `true` | `wrangler.toml` |
-| `DOWNVOTES_ENABLED` | var | Downvote button. Same defaults-on semantics; implicitly off when voting is off. | `true` | `wrangler.toml` |
+| `DOWNVOTES_ENABLED` | var | Downvote button. Same defaults-on semantics. Applies to **both** comment votes and page votes (a brigading-mitigation switch); independent of `VOTING_ENABLED`. | `true` | `wrangler.toml` |
+| `PAGE_REACTIONS_ENABLED` | var | Article-level emoji reaction bar (react to the page itself, no comment). Defaults **off** so an upgrade never surfaces new UI unasked. Enables `POST /api/v1/page-engagement/reactions` and the widget bar. | `false` | `wrangler.toml` |
+| `PAGE_VOTES_ENABLED` | var | Article-level "was this helpful?" up/down vote tally. Defaults **off**. Enables `POST /api/v1/page-engagement/votes`; downvotes here still honor `DOWNVOTES_ENABLED`. | `false` | `wrangler.toml` |
 | `CF_ACCOUNT_ID` | var | Optional. Cloudflare account ID; paired with `CF_API_TOKEN` to enable the `/admin/usage` analytics page. | `0123abcd...` | `wrangler.toml` (or `wrangler secret put` — the in-app setup guide uses the secret form; both work) |
 | `CF_API_TOKEN` | secret | Optional. Cloudflare API token (Analytics read scope) for `/admin/usage`. The page renders setup instructions when either value is unset. | `...` | `wrangler secret put` / `.dev.vars` |
 
 Bindings (D1, KV, Analytics) live in `wrangler.toml` outside `[vars]`
 and are populated by `./scripts/setup.sh`. Don't edit binding IDs by
 hand once a deploy has used them.
+
+### Feature flags: runtime overrides (since v1.10.0)
+
+The six feature flags — `COMMENTS_ENABLED`, `REACTIONS_ENABLED`,
+`VOTING_ENABLED`, `DOWNVOTES_ENABLED`, `PAGE_REACTIONS_ENABLED`,
+`PAGE_VOTES_ENABLED` — are **hybrid config**. The env vars above are only
+the *defaults*. Each flag is resolved with the precedence:
+
+```
+DB settings row  >  env var  >  hardcoded default
+```
+
+Operators flip them at runtime from the **admin Settings page** (`/admin`
+→ Settings), which writes a row to the `settings` D1 table — no redeploy,
+no `wrangler` round-trip. "Reset to defaults" deletes the rows so the env
+var / default applies again. The resolved set is KV-cached briefly and
+busted on save, so a toggle takes effect within seconds across the widget
+(`/api/v1/config`) and the server-side gates. Leaving a flag untouched in
+the admin UI writes no row, so existing installs that only set env vars are
+unaffected. Implementation: `src/lib/settings.ts`.
 
 ## 6. `ALLOWED_ORIGINS` deep-dive
 
