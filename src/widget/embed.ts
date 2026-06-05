@@ -105,6 +105,37 @@ const STYLE_CSS = `
 	padding: 0.5rem 0.7rem;
 }
 .gr-form textarea { min-height: 6em; resize: vertical; }
+.gr-compose { display: flex; flex-direction: column; gap: 0.4rem; }
+.gr-compose textarea[hidden] { display: none; }
+.gr-tabs { display: flex; gap: 0.25rem; }
+.gr-tab {
+	font: inherit;
+	font-size: 0.85em;
+	background: transparent;
+	color: var(--garrul-muted, #6b7280);
+	border: 1px solid transparent;
+	border-radius: var(--garrul-radius, 6px) var(--garrul-radius, 6px) 0 0;
+	padding: 0.3rem 0.7rem;
+	cursor: pointer;
+	align-self: flex-start;
+}
+.gr-tab.gr-tab-active {
+	color: var(--garrul-fg, #1a1a1a);
+	border-color: var(--garrul-border, #d0d3d8);
+	border-bottom-color: var(--garrul-input-bg, #fff);
+	background: var(--garrul-input-bg, #fff);
+	font-weight: 600;
+}
+.gr-preview {
+	min-height: 6em;
+	background: var(--garrul-input-bg, #fff);
+	border: 1px solid var(--garrul-border, #d0d3d8);
+	border-radius: var(--garrul-radius, 6px);
+	padding: 0.5rem 0.7rem;
+}
+.gr-preview[hidden] { display: none; }
+.gr-preview p { margin: 0.3em 0; }
+.gr-preview a { color: var(--garrul-link, #2563eb); }
 .gr-form .gr-honeypot { position: absolute; left: -9999px; top: -9999px; }
 .gr-form .gr-notify { display: flex; align-items: center; gap: 0.4rem; font-size: 0.9em; cursor: pointer; }
 .gr-form .gr-notify .gr-notify-cb { width: auto; }
@@ -300,6 +331,82 @@ const el = <K extends keyof HTMLElementTagNameMap>(
 const parseTrustedHtml = (html: string): DocumentFragment => {
 	const range = document.createRange();
 	return range.createContextualFragment(html);
+};
+
+/**
+ * Wrap a composer textarea in a GitHub-style "Write | Preview" tab strip.
+ * Returns a container that should be inserted where the textarea would have
+ * gone; the textarea is moved inside it.
+ *
+ * Preview renders server-side via POST /api/v1/preview, so the HTML shown is
+ * byte-identical to a posted comment (same sanitizer) — we inject it with
+ * parseTrustedHtml at the same trust level as stored body_html.
+ */
+const buildWritePreview = (
+	textarea: HTMLTextAreaElement,
+	apiBase: string,
+): HTMLElement => {
+	const wrap = el("div", "gr-compose");
+	const tabs = el("div", "gr-tabs");
+	tabs.setAttribute("role", "tablist");
+	const writeTab = el("button", "gr-tab gr-tab-active", "Write");
+	writeTab.type = "button";
+	writeTab.setAttribute("role", "tab");
+	writeTab.setAttribute("aria-selected", "true");
+	const previewTab = el("button", "gr-tab", "Preview");
+	previewTab.type = "button";
+	previewTab.setAttribute("role", "tab");
+	previewTab.setAttribute("aria-selected", "false");
+	tabs.append(writeTab, previewTab);
+
+	const pane = el("div", "gr-preview");
+	pane.hidden = true;
+
+	const showWrite = (): void => {
+		writeTab.classList.add("gr-tab-active");
+		previewTab.classList.remove("gr-tab-active");
+		writeTab.setAttribute("aria-selected", "true");
+		previewTab.setAttribute("aria-selected", "false");
+		textarea.hidden = false;
+		pane.hidden = true;
+	};
+
+	const showPreview = async (): Promise<void> => {
+		previewTab.classList.add("gr-tab-active");
+		writeTab.classList.remove("gr-tab-active");
+		previewTab.setAttribute("aria-selected", "true");
+		writeTab.setAttribute("aria-selected", "false");
+		textarea.hidden = true;
+		pane.hidden = false;
+		const body = textarea.value.trim();
+		if (!body) {
+			pane.textContent = "Nothing to preview yet.";
+			return;
+		}
+		pane.textContent = "Loading preview…";
+		try {
+			const res = await fetch(`${apiBase}/api/v1/preview`, {
+				method: "POST",
+				credentials: "include",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ body }),
+			});
+			if (!res.ok) throw new Error(String(res.status));
+			const data = (await res.json()) as { html?: string };
+			pane.textContent = "";
+			pane.appendChild(parseTrustedHtml(data.html ?? ""));
+		} catch {
+			pane.textContent = "Preview failed. Try again.";
+		}
+	};
+
+	writeTab.addEventListener("click", showWrite);
+	previewTab.addEventListener("click", () => {
+		void showPreview();
+	});
+
+	wrap.append(tabs, textarea, pane);
+	return wrap;
 };
 
 const buildSkeleton = (): DocumentFragment => {
@@ -701,7 +808,7 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 	cancel.type = "button";
 	cancel.addEventListener("click", () => wrap.remove());
 	actions.append(save, cancel);
-	wrap.append(ta, actions);
+	wrap.append(buildWritePreview(ta, ctx.apiBase), actions);
 	wrap.addEventListener("submit", async (e) => {
 		e.preventDefault();
 		save.disabled = true;
@@ -741,7 +848,7 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 		nameInput.required = true;
 		wrap.appendChild(nameInput);
 	}
-	wrap.appendChild(ta);
+	wrap.appendChild(buildWritePreview(ta, ctx.apiBase));
 
 	// Honeypot: mirrors the top-level form's anti-spam input. Hidden offscreen
 	// via .gr-honeypot, readonly to defeat browser autofill, tabIndex -1 so
@@ -980,7 +1087,11 @@ const buildAuthBlock = (
 	return wrap;
 };
 
-const buildForm = (siteKey: string | null, signedIn: boolean): HTMLFormElement => {
+const buildForm = (
+	apiBase: string,
+	siteKey: string | null,
+	signedIn: boolean,
+): HTMLFormElement => {
 	const form = document.createElement("form");
 	form.className = "gr-form";
 	form.autocomplete = "off";
@@ -1000,7 +1111,7 @@ const buildForm = (siteKey: string | null, signedIn: boolean): HTMLFormElement =
 	body.name = "body";
 	body.placeholder = "Add a comment…";
 	body.required = true;
-	form.appendChild(body);
+	form.appendChild(buildWritePreview(body, apiBase));
 
 	const honey = el("input");
 	honey.className = "gr-honeypot";
@@ -1316,7 +1427,7 @@ const loadOnce = async (
 	// The composer is always built (its submit/Turnstile wiring lives further
 	// down) but only mounted when comments are enabled. When disabled, existing
 	// comments stay visible (read-only) and we show a "closed" notice instead.
-	const form = buildForm(siteKey, me != null);
+	const form = buildForm(apiBase, siteKey, me != null);
 	const list = el("div", "gr-list");
 	if (data.threads.length === 0) {
 		list.appendChild(el("p", "gr-empty", "Be the first to comment."));
