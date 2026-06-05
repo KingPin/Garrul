@@ -14,6 +14,7 @@ import { clientIp, hashIp } from "../lib/ip-hash";
 import { checkRateLimit } from "../lib/ratelimit";
 import { readSession } from "../lib/session";
 import { writeEvent } from "../lib/analytics";
+import { loadFlags } from "../lib/settings";
 import { t } from "../i18n";
 
 const reactions = new Hono<{ Bindings: Bindings }>();
@@ -26,6 +27,11 @@ type ReactionBody = {
 };
 
 reactions.post("/", async (c) => {
+	const flags = await loadFlags(c.env);
+	if (!flags.reactions_enabled) {
+		return c.json({ error: "reactions_disabled" }, 403);
+	}
+
 	const body = await c.req.json<ReactionBody>().catch(() => null);
 	if (!body) return c.json({ error: t("err.internal") }, 400);
 

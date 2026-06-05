@@ -49,6 +49,7 @@ import { readSession } from "../lib/session";
 import { verifyTurnstile } from "../lib/turnstile";
 import { writeEvent } from "../lib/analytics";
 import { fireWebhook } from "../lib/webhook";
+import { loadFlags } from "../lib/settings";
 import { log } from "../lib/log";
 import {
 	countLinks,
@@ -301,6 +302,11 @@ const persistVerdicts = async (
 };
 
 comments.post("/", async (c) => {
+	const flags = await loadFlags(c.env);
+	if (!flags.comments_enabled) {
+		return c.json({ error: "comments_disabled" }, 403);
+	}
+
 	const body = await c.req.json<CreateBody>().catch(() => null);
 	if (!body) return c.json({ error: t("err.internal") }, 400);
 
