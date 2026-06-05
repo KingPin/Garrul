@@ -20,5 +20,10 @@ export const bustTreeCache = async (
 		prefix: `tree:${slug}:first`,
 	}).catch(() => null);
 	if (!listed) return;
-	await Promise.all(listed.keys.map((k) => env.TREE_CACHE.delete(k.name)));
+	// Swallow per-key delete failures: cache busting is best-effort and must
+	// never turn a transient KV hiccup into a failed user-visible write
+	// (comment post / edit / delete / reaction all call this).
+	await Promise.all(
+		listed.keys.map((k) => env.TREE_CACHE.delete(k.name).catch(() => {})),
+	);
 };

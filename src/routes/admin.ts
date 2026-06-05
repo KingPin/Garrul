@@ -662,7 +662,7 @@ admin.post("/settings", async (c) => {
 	const numbersObj =
 		body.numbers && typeof body.numbers === "object" ? body.numbers : null;
 	if (!flagsObj && !numbersObj) {
-		return c.json({ error: "flags_required" }, 400);
+		return c.json({ error: "settings_required" }, 400);
 	}
 
 	// Only persist known keys; ignore anything else the client sends.
@@ -698,7 +698,7 @@ admin.post("/settings", async (c) => {
 		Object.keys(writtenFlags).length === 0 &&
 		Object.keys(writtenNumbers).length === 0
 	) {
-		return c.json({ error: "flags_required" }, 400);
+		return c.json({ error: "settings_required" }, 400);
 	}
 
 	for (const [key, value] of Object.entries(writtenFlags)) {

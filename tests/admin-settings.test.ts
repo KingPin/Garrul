@@ -210,11 +210,23 @@ describe("POST /admin/settings — numeric writes", () => {
 		expect(writes.some(([k]) => k === "bogus_setting")).toBe(false);
 	});
 
-	it("400s when only unknown keys are supplied", async () => {
+	it("400s settings_required when only unknown keys are supplied", async () => {
 		const { env, runs } = mkEnv();
 		const res = await postSettings(env, { numbers: { bogus_setting: 99 } });
 		expect(res.status).toBe(400);
+		expect(((await res.json()) as { error: string }).error).toBe(
+			"settings_required",
+		);
 		expect(settingWrites(runs)).toHaveLength(0);
+	});
+
+	it("400s settings_required when neither flags nor numbers are present", async () => {
+		const { env } = mkEnv();
+		const res = await postSettings(env, { something: "else" });
+		expect(res.status).toBe(400);
+		expect(((await res.json()) as { error: string }).error).toBe(
+			"settings_required",
+		);
 	});
 
 	it("audits the settings update", async () => {
