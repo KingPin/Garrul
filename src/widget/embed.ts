@@ -349,6 +349,8 @@ type WidgetCtx = {
 	me: Me;
 	editWindowMs: number;
 	turnstileSiteKey: string | null;
+	commentsEnabled: boolean;
+	reactionsEnabled: boolean;
 	votingEnabled: boolean;
 	downvotesEnabled: boolean;
 	reload: () => void;
@@ -627,7 +629,7 @@ const buildReactions = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 const buildActions = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): HTMLElement => {
 	const row = el("div", "gr-actions");
 
-	if (n.depth < 4 && n.status !== "deleted") {
+	if (ctx.commentsEnabled && n.depth < 4 && n.status !== "deleted") {
 		const replyBtn = el("button", undefined, "Reply");
 		replyBtn.type = "button";
 		replyBtn.addEventListener("click", () => {
@@ -901,7 +903,7 @@ const buildComment = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 
 	if (n.status !== "deleted") {
 		if (ctx.votingEnabled) main.appendChild(buildVotes(n, ctx));
-		main.appendChild(buildReactions(n, ctx));
+		if (ctx.reactionsEnabled) main.appendChild(buildReactions(n, ctx));
 	}
 	main.appendChild(buildActions(n, ctx, main));
 
@@ -1243,6 +1245,8 @@ const loadOnce = async (
 	let editWindowMinutes = 5;
 	let providers: ReadonlyArray<"github" | "google"> = [];
 	let brandingHidden = false;
+	let commentsEnabled = true;
+	let reactionsEnabled = true;
 	let votingEnabled = true;
 	let downvotesEnabled = true;
 	try {
@@ -1255,6 +1259,8 @@ const loadOnce = async (
 				edit_window_minutes?: number;
 				providers?: string[];
 				branding_hidden?: boolean;
+				comments_enabled?: boolean;
+				reactions_enabled?: boolean;
 				voting_enabled?: boolean;
 				downvotes_enabled?: boolean;
 			};
@@ -1264,6 +1270,8 @@ const loadOnce = async (
 				(p): p is "github" | "google" => p === "github" || p === "google",
 			);
 			brandingHidden = cfg.branding_hidden === true;
+			commentsEnabled = cfg.comments_enabled !== false;
+			reactionsEnabled = cfg.reactions_enabled !== false;
 			votingEnabled = cfg.voting_enabled !== false;
 			downvotesEnabled = cfg.downvotes_enabled !== false;
 		}
@@ -1298,14 +1306,16 @@ const loadOnce = async (
 		me,
 		editWindowMs: editWindowMinutes * 60_000,
 		turnstileSiteKey: siteKey,
+		commentsEnabled,
+		reactionsEnabled,
 		votingEnabled,
 		downvotesEnabled,
 		reload,
 	};
 	const authBlock = buildAuthBlock(me, apiBase, providers, reload, reload);
-	// Mint the timing token now so the honeypot-timing heuristic has
-	// real elapsed seconds to measure when the user eventually submits.
-	prefetchFormToken(apiBase);
+	// The composer is always built (its submit/Turnstile wiring lives further
+	// down) but only mounted when comments are enabled. When disabled, existing
+	// comments stay visible (read-only) and we show a "closed" notice instead.
 	const form = buildForm(siteKey, me != null);
 	const list = el("div", "gr-list");
 	if (data.threads.length === 0) {
@@ -1313,8 +1323,15 @@ const loadOnce = async (
 	} else {
 		appendThreads(list, data.threads, ctx);
 	}
-	if (authBlock) wrap.appendChild(authBlock);
-	wrap.append(form);
+	if (commentsEnabled) {
+		if (authBlock) wrap.appendChild(authBlock);
+		// Mint the timing token now so the honeypot-timing heuristic has
+		// real elapsed seconds to measure when the user eventually submits.
+		prefetchFormToken(apiBase);
+		wrap.append(form);
+	} else {
+		wrap.appendChild(el("p", "gr-empty", "Comments are closed."));
+	}
 
 	// Sort selector only when voting is on (no scores to rank without it).
 	if (votingEnabled) {
@@ -1390,7 +1407,7 @@ const loadOnce = async (
 		}
 	}
 
-	if (siteKey) {
+	if (siteKey && commentsEnabled) {
 		const tsBox = form.querySelector(".gr-turnstile") as HTMLElement | null;
 		if (tsBox) {
 			const handle = mountTurnstileFrame(tsBox, apiBase, () => {
