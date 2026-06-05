@@ -453,6 +453,60 @@ export const countApprovedCommentsBySlugs = async (
 	return out;
 };
 
+/**
+ * Read every operator-set row from the `settings` key/value store as a plain
+ * map. Absent keys mean "inherit env/default" — the resolution layer
+ * (src/lib/settings.ts) decides precedence, not this function.
+ */
+export const getAllSettings = async (
+	db: D1Database,
+): Promise<Record<string, string>> => {
+	const result = await db
+		.prepare("SELECT key, value FROM settings")
+		.all<{ key: string; value: string }>();
+	const out: Record<string, string> = {};
+	for (const row of result.results ?? []) {
+		out[row.key] = row.value;
+	}
+	return out;
+};
+
+/**
+ * Upsert a single operator setting. Callers validate the key against the
+ * known flag allowlist before writing; this wrapper does not.
+ */
+export const setSetting = async (
+	db: D1Database,
+	key: string,
+	value: string,
+): Promise<void> => {
+	await db
+		.prepare(
+			`INSERT INTO settings (key, value, updated_at)
+			 VALUES (?, ?, ?)
+			 ON CONFLICT(key) DO UPDATE SET value = excluded.value,
+			                               updated_at = excluded.updated_at`,
+		)
+		.bind(key, value, Date.now())
+		.run();
+};
+
+/**
+ * Delete operator settings rows by key, restoring env/default inheritance for
+ * those flags. No-op for an empty list.
+ */
+export const deleteSettings = async (
+	db: D1Database,
+	keys: string[],
+): Promise<void> => {
+	if (keys.length === 0) return;
+	const placeholders = keys.map(() => "?").join(",");
+	await db
+		.prepare(`DELETE FROM settings WHERE key IN (${placeholders})`)
+		.bind(...keys)
+		.run();
+};
+
 export const updateCommentBody = async (
 	db: D1Database,
 	id: string,
@@ -558,6 +612,211 @@ export const listUserReactionsOnPost = async (
 	const out = new Set<string>();
 	for (const row of result.results ?? []) {
 		out.add(`${row.comment_id}|${row.kind}`);
+	}
+	return out;
+};
+
+// -- Page-level engagement (react / vote on the article itself) -------------
+//
+// Mirrors the comment-level reaction/vote helpers above but keys on
+// posts(slug). The caller must ensure the post row exists (upsertPost) before
+// inserting, since both tables FK to posts(slug). Identity is the same
+// ghost-by-ip_hash model as comments.
+
+/**
+ * Toggle a page reaction. Returns whether the row was added (true) or removed
+ * (false) — a repeat click from the same user/kind toggles it off.
+ */
+export const togglePageReaction = async (
+	db: D1Database,
+	post_slug: string,
+	user_id: string,
+	kind: string,
+): Promise<{ added: boolean }> => {
+	const now = Date.now();
+	const ins = await db
+		.prepare(
+			`INSERT INTO page_reactions (post_slug, user_id, kind, created_at)
+			 VALUES (?, ?, ?, ?)
+			 ON CONFLICT(post_slug, user_id, kind) DO NOTHING`,
+		)
+		.bind(post_slug, user_id, kind, now)
+		.run();
+	if (ins.meta.changes && ins.meta.changes > 0) {
+		return { added: true };
+	}
+	await db
+		.prepare(
+			`DELETE FROM page_reactions
+			 WHERE post_slug = ? AND user_id = ? AND kind = ?`,
+		)
+		.bind(post_slug, user_id, kind)
+		.run();
+	return { added: false };
+};
+
+export type PageReactionSummary = { kind: string; count: number };
+
+/** Totals per reaction kind for one post. */
+export const listPageReactions = async (
+	db: D1Database,
+	post_slug: string,
+): Promise<PageReactionSummary[]> => {
+	const result = await db
+		.prepare(
+			`SELECT kind, COUNT(*) AS count
+			   FROM page_reactions
+			  WHERE post_slug = ?
+			  GROUP BY kind`,
+		)
+		.bind(post_slug)
+		.all<{ kind: string; count: number }>();
+	return result.results ?? [];
+};
+
+/** The set of reaction kinds the given user has applied to one post. */
+export const listUserPageReactions = async (
+	db: D1Database,
+	post_slug: string,
+	user_id: string,
+): Promise<Set<string>> => {
+	const result = await db
+		.prepare(
+			`SELECT kind FROM page_reactions
+			  WHERE post_slug = ? AND user_id = ?`,
+		)
+		.bind(post_slug, user_id)
+		.all<{ kind: string }>();
+	const out = new Set<string>();
+	for (const row of result.results ?? []) out.add(row.kind);
+	return out;
+};
+
+export type PageVoteResult = {
+	score_up: number;
+	score_down: number;
+	my_vote: -1 | 0 | 1;
+};
+
+const reselectPageVote = async (
+	db: D1Database,
+	post_slug: string,
+	user_id: string,
+): Promise<PageVoteResult> => {
+	const row = await db
+		.prepare(
+			`SELECT
+			   (SELECT COUNT(*) FROM page_votes WHERE post_slug = ?1 AND value =  1) AS score_up,
+			   (SELECT COUNT(*) FROM page_votes WHERE post_slug = ?1 AND value = -1) AS score_down,
+			   COALESCE((SELECT value FROM page_votes
+			              WHERE post_slug = ?1 AND user_id = ?2), 0) AS my_vote`,
+		)
+		.bind(post_slug, user_id)
+		.first<{ score_up: number; score_down: number; my_vote: number }>();
+	if (!row) return { score_up: 0, score_down: 0, my_vote: 0 };
+	const mv = row.my_vote === 1 || row.my_vote === -1 ? row.my_vote : 0;
+	return { score_up: row.score_up, score_down: row.score_down, my_vote: mv };
+};
+
+/**
+ * Cast (value=±1) or clear (value=0) the caller's page vote, then return the
+ * recomputed tally and their now-vote. Unlike comment votes there's no
+ * denormalized counter on `posts`, so the tally is computed on read — page
+ * votes are far lower-volume than per-comment votes.
+ */
+export const castPageVote = async (
+	db: D1Database,
+	post_slug: string,
+	user_id: string,
+	value: VoteValue,
+): Promise<PageVoteResult> => {
+	if (value === 0) {
+		await db
+			.prepare(`DELETE FROM page_votes WHERE post_slug = ? AND user_id = ?`)
+			.bind(post_slug, user_id)
+			.run();
+	} else {
+		await db
+			.prepare(
+				`INSERT INTO page_votes (post_slug, user_id, value, created_at)
+				 VALUES (?, ?, ?, ?)
+				 ON CONFLICT(post_slug, user_id) DO UPDATE SET
+				   value      = excluded.value,
+				   created_at = excluded.created_at`,
+			)
+			.bind(post_slug, user_id, value, Date.now())
+			.run();
+	}
+	return reselectPageVote(db, post_slug, user_id);
+};
+
+/** Public read of a post's vote tally + the viewer's own vote (0 if none). */
+export const getPageVote = async (
+	db: D1Database,
+	post_slug: string,
+	user_id: string | null,
+): Promise<PageVoteResult> =>
+	reselectPageVote(db, post_slug, user_id ?? "");
+
+export type PageVoteTally = { score_up: number; score_down: number };
+
+/**
+ * Page-vote tallies for many slugs in one round-trip — the batch sibling of
+ * getPageVote, viewer-agnostic (no my_vote). Used by /api/v1/counts. Slugs
+ * with no votes are omitted; the caller defaults missing keys to a zero tally.
+ */
+export const countPageVotesBySlugs = async (
+	db: D1Database,
+	slugs: string[],
+): Promise<Map<string, PageVoteTally>> => {
+	if (slugs.length === 0) return new Map();
+	const placeholders = slugs.map(() => "?").join(",");
+	const result = await db
+		.prepare(
+			`SELECT post_slug,
+			        SUM(CASE WHEN value =  1 THEN 1 ELSE 0 END) AS score_up,
+			        SUM(CASE WHEN value = -1 THEN 1 ELSE 0 END) AS score_down
+			   FROM page_votes
+			  WHERE post_slug IN (${placeholders})
+			  GROUP BY post_slug`,
+		)
+		.bind(...slugs)
+		.all<{ post_slug: string; score_up: number; score_down: number }>();
+	const out = new Map<string, PageVoteTally>();
+	for (const row of result.results ?? []) {
+		out.set(row.post_slug, {
+			score_up: row.score_up ?? 0,
+			score_down: row.score_down ?? 0,
+		});
+	}
+	return out;
+};
+
+/**
+ * Page-reaction totals (per kind) for many slugs in one round-trip — the
+ * batch sibling of listPageReactions. Used by /api/v1/counts. Slugs with no
+ * reactions are omitted; the caller defaults missing keys to an empty map.
+ */
+export const countPageReactionsBySlugs = async (
+	db: D1Database,
+	slugs: string[],
+): Promise<Map<string, Record<string, number>>> => {
+	if (slugs.length === 0) return new Map();
+	const placeholders = slugs.map(() => "?").join(",");
+	const result = await db
+		.prepare(
+			`SELECT post_slug, kind, COUNT(*) AS count
+			   FROM page_reactions
+			  WHERE post_slug IN (${placeholders})
+			  GROUP BY post_slug, kind`,
+		)
+		.bind(...slugs)
+		.all<{ post_slug: string; kind: string; count: number }>();
+	const out = new Map<string, Record<string, number>>();
+	for (const row of result.results ?? []) {
+		const byKind = out.get(row.post_slug) ?? {};
+		byKind[row.kind] = row.count;
+		out.set(row.post_slug, byKind);
 	}
 	return out;
 };
@@ -1187,6 +1446,7 @@ export const ADMIN_ACTIONS = [
 	"saved_reply.delete",
 	"saved_reply.post",
 	"import.disqus",
+	"settings.update",
 ] as const;
 export type AdminAction = (typeof ADMIN_ACTIONS)[number];
 

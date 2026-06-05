@@ -2,6 +2,8 @@ import { Hono } from "hono";
 import { health } from "./routes/health";
 import { comments } from "./routes/api.comments";
 import { config } from "./routes/api.config";
+import { preview } from "./routes/api.preview";
+import { pageEngagement } from "./routes/api.page-engagement";
 import { reactions } from "./routes/api.reactions";
 import { votes } from "./routes/api.votes";
 import { auth } from "./routes/auth";
@@ -73,6 +75,15 @@ export type Bindings = {
 	// operator can flip without redeploy.
 	VOTING_ENABLED?: string;
 	DOWNVOTES_ENABLED?: string;
+	// Per-feature toggles. These are the env-var *defaults*; a row in the
+	// `settings` table overrides the matching one at runtime (see
+	// src/lib/settings.ts). Comment-level features default ON to preserve
+	// existing behavior; the new page-level features default OFF so an
+	// upgrade doesn't surface new UI on instances that didn't ask for it.
+	COMMENTS_ENABLED?: string;
+	REACTIONS_ENABLED?: string;
+	PAGE_REACTIONS_ENABLED?: string;
+	PAGE_VOTES_ENABLED?: string;
 };
 
 const app = new Hono<{ Bindings: Bindings }>();
@@ -148,8 +159,10 @@ app.use("/api/*", sessionMiddleware());
 app.route("/api/v1/health", health);
 app.route("/api/v1/comments", comments);
 app.route("/api/v1/reactions", reactions);
+app.route("/api/v1/page-engagement", pageEngagement);
 app.route("/api/v1/votes", votes);
 app.route("/api/v1/config", config);
+app.route("/api/v1/preview", preview);
 app.route("/api/v1/counts", counts);
 app.route("/api/v1/subscribe", subscriptions);
 app.route("/api/v1/auth", auth);

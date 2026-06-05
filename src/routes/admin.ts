@@ -42,6 +42,7 @@ import {
 	adminTopPosts,
 	countAdmins,
 	createWebhookEndpoint,
+	deleteSettings,
 	deleteWebhookEndpoint,
 	getComment,
 	getPost,
@@ -57,6 +58,7 @@ import {
 	listSavedRepliesForUser,
 	listWebhookEndpoints,
 	markSubscriptionUnsubscribed,
+	setSetting,
 	setUserBanned,
 	setUserRole,
 	updateCommentStatus,
@@ -96,6 +98,7 @@ import { renderUserDetail } from "../admin-ui/pages/user-detail";
 import { renderUsers } from "../admin-ui/pages/users";
 import { renderOperator } from "../admin-ui/pages/operator";
 import { renderSettings } from "../admin-ui/pages/settings";
+import { bustFlagsCache, FLAG_KEYS, loadFlags } from "../lib/settings";
 import {
 	renderWebhookForm,
 	renderWebhooksList,
@@ -598,8 +601,73 @@ admin.get("/operator", async (c) => {
 admin.get("/settings", async (c) => {
 	const user = await requireAdmin(c);
 	if (user instanceof Response) return user;
-	const updateInfo = await peekCachedLatestVersion(c.env);
-	return c.html(renderPage(c, "Settings", renderSettings(c.env), user, updateInfo));
+	const [updateInfo, flags] = await Promise.all([
+		peekCachedLatestVersion(c.env),
+		loadFlags(c.env),
+	]);
+	return c.html(
+		renderPage(c, "Settings", renderSettings(c.env, flags), user, updateInfo),
+	);
+});
+
+// Persist runtime feature-flag overrides. Body is either
+//   { flags: { comments_enabled: bool, … } }  — write an override per flag
+//   { reset: true }                            — clear all overrides
+// Admin-only; same-origin CSRF check is enforced by the admin middleware.
+type SettingsBody = {
+	flags?: Record<string, unknown>;
+	reset?: unknown;
+};
+
+admin.post("/settings", async (c) => {
+	const user = await requireAdmin(c);
+	if (user instanceof Response) return user;
+	const body = await c.req.json<SettingsBody>().catch(() => null);
+	if (!body) return c.json({ error: "invalid_body" }, 400);
+
+	if (body.reset === true) {
+		await deleteSettings(c.env.DB, FLAG_KEYS);
+		await bustFlagsCache(c.env);
+		await adminInsertAudit(c.env.DB, {
+			admin_id: user.id,
+			action: "settings.update",
+			target_kind: "system",
+			target_id: "flags",
+			meta: { reset: true },
+		});
+		return c.json({ ok: true, reset: true });
+	}
+
+	if (!body.flags || typeof body.flags !== "object") {
+		return c.json({ error: "flags_required" }, 400);
+	}
+
+	// Only persist known flags; ignore anything else the client sends.
+	const written: Record<string, boolean> = {};
+	for (const key of FLAG_KEYS) {
+		const raw = body.flags[key];
+		if (raw === undefined) continue;
+		if (typeof raw !== "boolean") {
+			return c.json({ error: `invalid_flag:${key}` }, 400);
+		}
+		written[key] = raw;
+	}
+	if (Object.keys(written).length === 0) {
+		return c.json({ error: "flags_required" }, 400);
+	}
+
+	for (const [key, value] of Object.entries(written)) {
+		await setSetting(c.env.DB, key, value ? "true" : "false");
+	}
+	await bustFlagsCache(c.env);
+	await adminInsertAudit(c.env.DB, {
+		admin_id: user.id,
+		action: "settings.update",
+		target_kind: "system",
+		target_id: "flags",
+		meta: written,
+	});
+	return c.json({ ok: true, flags: written });
 });
 
 admin.get("/about", async (c) => {

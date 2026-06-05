@@ -79,5 +79,13 @@ useful for a single demo page.
   WordPress nonce wiring needed.
 - WordPress core's comment count helpers (`comments_number`,
   `get_comments_number`) won't reflect Garrul comments. If you want the
-  count badge in your post list, fetch `GET /api/v1/counts?posts=a,b,c`
+  count badge in your post list, fetch `GET /api/v1/counts?slugs=a,b,c`
   from your theme footer JS and replace `.comments-link` text yourself.
+  The response is `{ "counts": { "a": 12 } }` — slugs with zero comments
+  are omitted, so default a missing key to 0.
+- To also show page-level engagement (only if you've enabled the
+  `page_votes` / `page_reactions` flags), add
+  `&include=votes,reactions`. The response then gains
+  `votes: { slug: { score_up, score_down } }` and
+  `reactions: { slug: { kind: count } }` for the enabled features —
+  e.g. render "12 💬 · 30 👍".

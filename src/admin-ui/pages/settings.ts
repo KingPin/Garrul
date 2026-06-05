@@ -1,7 +1,43 @@
 import type { Bindings } from "../../index";
+import type { FlagKey, ResolvedFlags } from "../../lib/settings";
 import { escapeHtml } from "../escape";
 
-export const renderSettings = (env: Bindings): string => {
+// Operator-facing labels + help for each runtime feature flag. Order here is
+// the order rendered in the toggles card.
+const FLAG_META: { key: FlagKey; label: string; help: string }[] = [
+	{
+		key: "comments_enabled",
+		label: "Comments",
+		help: "Accept new comments. When off, the composer is hidden and posting is rejected.",
+	},
+	{
+		key: "reactions_enabled",
+		label: "Emoji reactions (comments)",
+		help: "Per-comment emoji reactions (like / love / laugh / hmm / cry).",
+	},
+	{
+		key: "votes_enabled",
+		label: "Votes (comments)",
+		help: "Up/down voting on comments and the sort-by-top option.",
+	},
+	{
+		key: "downvotes_enabled",
+		label: "Downvotes",
+		help: "Allow the downvote arrow. Ignored while comment votes are off.",
+	},
+	{
+		key: "page_reactions_enabled",
+		label: "Page reactions",
+		help: "Let readers react to the article itself with an emoji, without leaving a comment.",
+	},
+	{
+		key: "page_votes_enabled",
+		label: "Page vote",
+		help: "A simple helpful/up vote tally on the article itself.",
+	},
+];
+
+export const renderSettings = (env: Bindings, flags: ResolvedFlags): string => {
 	const rows: [string, string][] = [
 		["ENV", env.ENV ?? "(unset)"],
 		["ALLOWED_ORIGINS", env.ALLOWED_ORIGINS ?? "(unset)"],
@@ -29,10 +65,87 @@ export const renderSettings = (env: Bindings): string => {
 				`<tr><td><code>${k}</code></td><td>${escapeHtml(v)}</td></tr>`,
 		)
 		.join("");
+
+	// Feature-flag toggles. Each checkbox reflects the *resolved* effective
+	// value (DB override > env > default). Saving writes an explicit DB row
+	// per flag (overriding env); "Reset to defaults" clears the rows so the
+	// env vars / built-in defaults apply again.
+	const toggles = FLAG_META.map((f) => {
+		const on = flags[f.key];
+		return `
+    <div class="flag-row">
+      <label>
+        <input type="checkbox" name="${f.key}" x-model="flags.${f.key}">
+        <strong>${escapeHtml(f.label)}</strong>
+      </label>
+      <span class="muted">${escapeHtml(f.help)}</span>
+    </div>`;
+	}).join("");
+
+	const initial = JSON.stringify(
+		Object.fromEntries(FLAG_META.map((f) => [f.key, flags[f.key]])),
+	);
+
 	return `
+<div class="card" x-data="{
+  busy: false,
+  flags: ${escapeHtml(initial)},
+  async save() {
+    this.busy = true;
+    try {
+      const r = await fetch('/admin/settings', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ flags: this.flags }),
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        throw new Error(j.error || ('Save failed: ' + r.status));
+      }
+      this.$dispatch('toast', { text: 'Settings saved' });
+    } catch (err) {
+      this.$dispatch('toast', { text: err.message || 'Save failed', kind: 'bad' });
+    } finally {
+      this.busy = false;
+    }
+  },
+  async reset() {
+    if (!confirm('Clear all runtime overrides and fall back to env vars / defaults?')) return;
+    this.busy = true;
+    try {
+      const r = await fetch('/admin/settings', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ reset: true }),
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        throw new Error(j.error || ('Reset failed: ' + r.status));
+      }
+      this.$dispatch('toast', { text: 'Reset to defaults' });
+      setTimeout(() => location.reload(), 300);
+    } catch (err) {
+      this.$dispatch('toast', { text: err.message || 'Reset failed', kind: 'bad' });
+      this.busy = false;
+    }
+  },
+}">
+  <h2>Features</h2>
+  <p class="muted">Toggle features without a redeploy. A toggle here overrides
+  the matching env var (<code>VOTING_ENABLED</code>, <code>REACTIONS_ENABLED</code>,
+  …); "Reset to defaults" clears the overrides so the env vars / built-in
+  defaults apply again.</p>
+  <form @submit.prevent="save()">
+    ${toggles}
+    <p style="margin-top:1rem">
+      <button type="submit" :disabled="busy">Save features</button>
+      <button type="button" class="secondary" @click="reset()" :disabled="busy">Reset to defaults</button>
+    </p>
+  </form>
+</div>
 <div class="card">
   <h2>Configuration</h2>
-  <p class="muted">All settings are environment variables. Change them with
+  <p class="muted">These remain environment variables. Change them with
   <code>wrangler secret put NAME</code> (or edit <code>wrangler.toml</code>
   <code>[vars]</code> for non-secrets) and redeploy.</p>
   <table>

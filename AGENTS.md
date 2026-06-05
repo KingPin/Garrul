@@ -209,9 +209,11 @@ host-page wiring:
   `voting_enabled` / `downvotes_enabled` from `/api/v1/config` at boot;
   there is no `data-*` attribute to toggle it per page. The operator
   controls it with the `VOTING_ENABLED` / `DOWNVOTES_ENABLED` env vars
-  (both default **on**; downvotes are implicitly off when voting is
-  off). Integrators see the buttons only when the instance has them
-  enabled.
+  (both default **on**), or at runtime from the admin Settings page
+  (DB overrides the env default — see AGENTS-OPERATE.md §5). The comment
+  vote UI renders only when `voting_enabled` is on; `downvotes_enabled`
+  is an independent switch (it also governs page votes, below).
+  Integrators see the buttons only when the instance has them enabled.
 - **API shape.** Each comment carries `score_up`, `score_down`, and
   `my_vote` (`-1 | 0 | 1`). `my_vote` is only meaningful for
   authenticated viewers — anonymous list responses always carry `0`
@@ -227,6 +229,38 @@ host-page wiring:
   newer-first on ties); replies inside a thread always stay
   chronological. The selection is per-mount UI state — it isn't
   persisted and can't be preset from the host element.
+
+### Page-level reactions and votes (since v1.10.0)
+
+Separate from comment-level engagement, the widget can render an
+**article-level** bar at the top of the thread — react to the page
+itself (emoji) and/or a "was this helpful?" up/down tally — without
+writing a comment. Both surfaces default **off** and are server-gated:
+
+- The operator enables them via `PAGE_REACTIONS_ENABLED` /
+  `PAGE_VOTES_ENABLED` (env default, or runtime toggle on the admin
+  Settings page). The widget reads `page_reactions_enabled` /
+  `page_votes_enabled` from `/api/v1/config` and only mounts the bar when
+  at least one is on. No `data-*` wiring is needed.
+- **API.** Initial state: `GET /api/v1/page-engagement?slug=<slug>` →
+  `{ reactions, my_reactions, votes }` (only the enabled sections appear).
+  Toggle a reaction: `POST /api/v1/page-engagement/reactions`
+  `{slug, kind}` (`kind` ∈ `like|love|laugh|hmm|cry`). Cast/clear a vote:
+  `POST /api/v1/page-engagement/votes` `{slug, value}` (`-1|0|1`; `0`
+  clears). A disabled surface returns 403.
+- **Identity & dedup** mirror comments: authed users by session, anonymous
+  viewers by the IP-hashed ghost — one reaction-kind and one vote per
+  identity per page.
+
+### Markdown preview (since v1.10.0)
+
+The composer (and the reply/edit forms) include a **Write | Preview** tab
+strip and a formatting toolbar (bold, italic, link, code, quote, list).
+Preview renders server-side via `POST /api/v1/preview` `{body}` →
+`{html}`, using the *same* allowlist sanitizer as stored comments — so
+what you preview is byte-identical to what gets posted, with no
+client-side markdown library and no XSS divergence. The endpoint is
+public but rate-limited; no auth required.
 
 ## 5. Styling
 
@@ -457,8 +491,17 @@ If the host site sets a CSP, allow the Worker origin in:
 The widget itself only renders the current page's thread. For an index
 or archive page that needs counts next to each post link, hit
 `GET {{INSTANCE_URL}}/api/v1/counts?slugs=slug-a,slug-b,slug-c` and
-replace your link badges client-side. WordPress's native
-`comments_number()` will NOT include Garrul comments.
+replace your link badges client-side. Response is
+`{ "counts": { "slug-a": 12 } }` — slugs with zero comments are omitted,
+so default a missing key to 0. WordPress's native `comments_number()`
+will NOT include Garrul comments.
+
+Since v1.10.0 you can also request page-engagement totals with
+`&include=votes,reactions` (comma-separated). The default shape is
+unchanged (backward compatible); each extra is added only when requested
+**and** the matching page flag is enabled, gaining
+`votes: { slug: { score_up, score_down } }` and
+`reactions: { slug: { kind: count } }` — e.g. render "12 💬 · 30 👍".
 
 ### `*.workers.dev`
 

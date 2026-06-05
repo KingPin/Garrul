@@ -105,6 +105,53 @@ const STYLE_CSS = `
 	padding: 0.5rem 0.7rem;
 }
 .gr-form textarea { min-height: 6em; resize: vertical; }
+.gr-compose { display: flex; flex-direction: column; gap: 0.4rem; }
+.gr-compose textarea[hidden] { display: none; }
+.gr-tabs { display: flex; gap: 0.25rem; }
+.gr-tab {
+	font: inherit;
+	font-size: 0.85em;
+	background: transparent;
+	color: var(--garrul-muted, #6b7280);
+	border: 1px solid transparent;
+	border-radius: var(--garrul-radius, 6px) var(--garrul-radius, 6px) 0 0;
+	padding: 0.3rem 0.7rem;
+	cursor: pointer;
+	align-self: flex-start;
+}
+.gr-tab.gr-tab-active {
+	color: var(--garrul-fg, #1a1a1a);
+	border-color: var(--garrul-border, #d0d3d8);
+	border-bottom-color: var(--garrul-input-bg, #fff);
+	background: var(--garrul-input-bg, #fff);
+	font-weight: 600;
+}
+.gr-preview {
+	min-height: 6em;
+	background: var(--garrul-input-bg, #fff);
+	border: 1px solid var(--garrul-border, #d0d3d8);
+	border-radius: var(--garrul-radius, 6px);
+	padding: 0.5rem 0.7rem;
+}
+.gr-preview[hidden] { display: none; }
+.gr-toolbar { display: flex; gap: 0.2rem; flex-wrap: wrap; }
+.gr-toolbar[hidden] { display: none; }
+.gr-toolbar-btn {
+	font: inherit;
+	font-size: 0.85em;
+	line-height: 1.4;
+	min-width: 1.9em;
+	background: var(--garrul-input-bg, #fff);
+	color: var(--garrul-fg, #1a1a1a);
+	border: 1px solid var(--garrul-border, #d0d3d8);
+	border-radius: var(--garrul-radius, 6px);
+	padding: 0.2rem 0.45rem;
+	cursor: pointer;
+	align-self: flex-start;
+}
+.gr-toolbar-btn:hover { border-color: var(--garrul-accent, #2563eb); }
+.gr-preview p { margin: 0.3em 0; }
+.gr-preview a { color: var(--garrul-link, #2563eb); }
 .gr-form .gr-honeypot { position: absolute; left: -9999px; top: -9999px; }
 .gr-form .gr-notify { display: flex; align-items: center; gap: 0.4rem; font-size: 0.9em; cursor: pointer; }
 .gr-form .gr-notify .gr-notify-cb { width: auto; }
@@ -161,6 +208,17 @@ const STYLE_CSS = `
 	cursor: pointer;
 }
 .gr-actions button:hover { color: var(--garrul-link, #2563eb); }
+.gr-page-engage {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 0.75rem 1.25rem;
+	padding-bottom: 0.5rem;
+	border-bottom: 1px solid var(--garrul-border, #d0d3d8);
+}
+.gr-page-reactions { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+.gr-page-votes { display: flex; align-items: center; gap: 0.4rem; }
+.gr-page-vote-label { color: var(--garrul-muted, #6b7280); font-size: 0.9em; }
 .gr-reactions { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-top: 0.4rem; }
 .gr-reaction {
 	font: inherit;
@@ -302,6 +360,153 @@ const parseTrustedHtml = (html: string): DocumentFragment => {
 	return range.createContextualFragment(html);
 };
 
+type MdFormat = {
+	before?: string;
+	after?: string;
+	linePrefix?: string;
+	placeholder?: string;
+};
+
+/**
+ * Apply a markdown formatting action to the textarea's current selection.
+ * Inline formats wrap the selection (or a placeholder when empty); block
+ * formats prefix every selected line. Keeps focus and re-fires `input` so the
+ * preview/required state stays in sync.
+ */
+const applyMarkdown = (ta: HTMLTextAreaElement, fmt: MdFormat): void => {
+	const { selectionStart, selectionEnd, value } = ta;
+	if (fmt.linePrefix) {
+		const lineStart = value.lastIndexOf("\n", selectionStart - 1) + 1;
+		const block = value.slice(lineStart, selectionEnd);
+		const prefixed = block
+			.split("\n")
+			.map((line) => fmt.linePrefix + line)
+			.join("\n");
+		ta.value = value.slice(0, lineStart) + prefixed + value.slice(selectionEnd);
+		ta.selectionStart = lineStart;
+		ta.selectionEnd = lineStart + prefixed.length;
+	} else {
+		const before = fmt.before ?? "";
+		const after = fmt.after ?? "";
+		const inner = value.slice(selectionStart, selectionEnd) || fmt.placeholder || "";
+		ta.value =
+			value.slice(0, selectionStart) +
+			before +
+			inner +
+			after +
+			value.slice(selectionEnd);
+		ta.selectionStart = selectionStart + before.length;
+		ta.selectionEnd = selectionStart + before.length + inner.length;
+	}
+	ta.focus();
+	ta.dispatchEvent(new Event("input", { bubbles: true }));
+};
+
+// Toolbar buttons, left to right. `label` is the visible glyph; `title` is the
+// tooltip / aria-label.
+const TOOLBAR: { label: string; title: string; fmt: MdFormat }[] = [
+	{ label: "B", title: "Bold", fmt: { before: "**", after: "**", placeholder: "bold" } },
+	{ label: "I", title: "Italic", fmt: { before: "_", after: "_", placeholder: "italic" } },
+	{ label: "🔗", title: "Link", fmt: { before: "[", after: "](https://)", placeholder: "text" } },
+	{ label: "</>", title: "Inline code", fmt: { before: "`", after: "`", placeholder: "code" } },
+	{ label: "❝", title: "Quote", fmt: { linePrefix: "> " } },
+	{ label: "•", title: "Bulleted list", fmt: { linePrefix: "- " } },
+];
+
+const buildToolbar = (ta: HTMLTextAreaElement): HTMLElement => {
+	const bar = el("div", "gr-toolbar");
+	bar.setAttribute("role", "toolbar");
+	bar.setAttribute("aria-label", "Formatting");
+	for (const item of TOOLBAR) {
+		const btn = el("button", "gr-toolbar-btn", item.label);
+		btn.type = "button";
+		btn.title = item.title;
+		btn.setAttribute("aria-label", item.title);
+		btn.addEventListener("click", () => applyMarkdown(ta, item.fmt));
+		bar.appendChild(btn);
+	}
+	return bar;
+};
+
+/**
+ * Wrap a composer textarea in a GitHub-style "Write | Preview" tab strip.
+ * Returns a container that should be inserted where the textarea would have
+ * gone; the textarea is moved inside it.
+ *
+ * Preview renders server-side via POST /api/v1/preview, so the HTML shown is
+ * byte-identical to a posted comment (same sanitizer) — we inject it with
+ * parseTrustedHtml at the same trust level as stored body_html.
+ */
+const buildWritePreview = (
+	textarea: HTMLTextAreaElement,
+	apiBase: string,
+): HTMLElement => {
+	const wrap = el("div", "gr-compose");
+	const tabs = el("div", "gr-tabs");
+	tabs.setAttribute("role", "tablist");
+	const writeTab = el("button", "gr-tab gr-tab-active", "Write");
+	writeTab.type = "button";
+	writeTab.setAttribute("role", "tab");
+	writeTab.setAttribute("aria-selected", "true");
+	const previewTab = el("button", "gr-tab", "Preview");
+	previewTab.type = "button";
+	previewTab.setAttribute("role", "tab");
+	previewTab.setAttribute("aria-selected", "false");
+	tabs.append(writeTab, previewTab);
+
+	const toolbar = buildToolbar(textarea);
+	const pane = el("div", "gr-preview");
+	pane.hidden = true;
+
+	const showWrite = (): void => {
+		writeTab.classList.add("gr-tab-active");
+		previewTab.classList.remove("gr-tab-active");
+		writeTab.setAttribute("aria-selected", "true");
+		previewTab.setAttribute("aria-selected", "false");
+		toolbar.hidden = false;
+		textarea.hidden = false;
+		pane.hidden = true;
+	};
+
+	const showPreview = async (): Promise<void> => {
+		previewTab.classList.add("gr-tab-active");
+		writeTab.classList.remove("gr-tab-active");
+		previewTab.setAttribute("aria-selected", "true");
+		writeTab.setAttribute("aria-selected", "false");
+		toolbar.hidden = true;
+		textarea.hidden = true;
+		pane.hidden = false;
+		const body = textarea.value.trim();
+		if (!body) {
+			pane.textContent = "Nothing to preview yet.";
+			return;
+		}
+		pane.textContent = "Loading preview…";
+		try {
+			const res = await fetch(`${apiBase}/api/v1/preview`, {
+				method: "POST",
+				credentials: "include",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ body }),
+			});
+			if (!res.ok) throw new Error(String(res.status));
+			const data = (await res.json()) as { html?: string };
+			pane.textContent = "";
+			pane.appendChild(parseTrustedHtml(data.html ?? ""));
+		} catch {
+			pane.textContent = "Preview failed. Try again.";
+		}
+	};
+
+	writeTab.addEventListener("click", showWrite);
+	previewTab.addEventListener("click", () => {
+		void showPreview();
+	});
+
+	wrap.append(tabs, toolbar, textarea, pane);
+	return wrap;
+};
+
 const buildSkeleton = (): DocumentFragment => {
 	const frag = document.createDocumentFragment();
 	const root = el("div", "gr-root");
@@ -349,8 +554,12 @@ type WidgetCtx = {
 	me: Me;
 	editWindowMs: number;
 	turnstileSiteKey: string | null;
+	commentsEnabled: boolean;
+	reactionsEnabled: boolean;
 	votingEnabled: boolean;
 	downvotesEnabled: boolean;
+	pageReactionsEnabled: boolean;
+	pageVotesEnabled: boolean;
 	reload: () => void;
 };
 
@@ -624,10 +833,174 @@ const buildReactions = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	return wrap;
 };
 
+type PageVoteState = { score_up: number; score_down: number; my_vote: -1 | 0 | 1 };
+
+/**
+ * Article-level engagement bar (emoji reactions + a helpful/up vote tally)
+ * shown above the thread. Gated by ctx.pageReactionsEnabled /
+ * pageVotesEnabled. Built synchronously, then populated from
+ * GET /api/v1/page-engagement; clicks optimistically patch from the
+ * authoritative totals each POST returns (same no-cache-bust pattern as
+ * comment votes).
+ */
+const buildPageEngagement = (ctx: WidgetCtx): HTMLElement => {
+	const wrap = el("div", "gr-page-engage");
+
+	// --- reactions ---
+	const reactCells = new Map<
+		string,
+		{ btn: HTMLButtonElement; count: HTMLElement }
+	>();
+	if (ctx.pageReactionsEnabled) {
+		const reactWrap = el("div", "gr-page-reactions");
+		for (const { kind, emoji } of REACTION_KINDS) {
+			const btn = el("button", "gr-reaction");
+			btn.type = "button";
+			btn.dataset.kind = kind;
+			btn.appendChild(document.createTextNode(emoji));
+			const count = el("span", "gr-reaction-count", "0");
+			btn.appendChild(count);
+			reactCells.set(kind, { btn, count });
+			reactWrap.appendChild(btn);
+		}
+		wrap.appendChild(reactWrap);
+	}
+
+	const setReactions = (
+		totals: Record<string, number>,
+		mine: string[],
+	): void => {
+		const mineSet = new Set(mine);
+		for (const [kind, cell] of reactCells) {
+			cell.count.textContent = String(totals[kind] ?? 0);
+			if (mineSet.has(kind)) cell.btn.dataset.mine = "1";
+			else delete cell.btn.dataset.mine;
+		}
+	};
+
+	const toggleReaction = async (
+		kind: string,
+		cell: { btn: HTMLButtonElement; count: HTMLElement },
+	): Promise<void> => {
+		cell.btn.disabled = true;
+		try {
+			const res = await fetch(
+				`${ctx.apiBase}/api/v1/page-engagement/reactions`,
+				{
+					method: "POST",
+					credentials: "include",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify({ slug: ctx.slug, kind }),
+				},
+			);
+			if (!res.ok) return;
+			const body = (await res.json()) as {
+				added: boolean;
+				reactions: Record<string, number>;
+			};
+			for (const [k, c] of reactCells) {
+				c.count.textContent = String(body.reactions[k] ?? 0);
+			}
+			if (body.added) cell.btn.dataset.mine = "1";
+			else delete cell.btn.dataset.mine;
+		} catch {
+			// leave UI as-is; user can retry
+		} finally {
+			cell.btn.disabled = false;
+		}
+	};
+
+	for (const [kind, cell] of reactCells) {
+		cell.btn.addEventListener("click", () => void toggleReaction(kind, cell));
+	}
+
+	// --- vote tally ---
+	let up: HTMLButtonElement | null = null;
+	let down: HTMLButtonElement | null = null;
+	let scoreEl: HTMLElement | null = null;
+	let myVote: -1 | 0 | 1 = 0;
+
+	const setVote = (s: PageVoteState): void => {
+		myVote = s.my_vote;
+		if (scoreEl) scoreEl.textContent = String(s.score_up - s.score_down);
+		if (up) {
+			if (myVote === 1) up.dataset.mine = "1";
+			else delete up.dataset.mine;
+		}
+		if (down) {
+			if (myVote === -1) down.dataset.mine = "1";
+			else delete down.dataset.mine;
+		}
+	};
+
+	const castVote = async (value: -1 | 0 | 1): Promise<void> => {
+		if (!up || !down) return;
+		up.disabled = true;
+		down.disabled = true;
+		try {
+			const res = await fetch(`${ctx.apiBase}/api/v1/page-engagement/votes`, {
+				method: "POST",
+				credentials: "include",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ slug: ctx.slug, value }),
+			});
+			if (!res.ok) return;
+			setVote((await res.json()) as PageVoteState);
+		} catch {
+			// leave UI as-is
+		} finally {
+			up.disabled = false;
+			down.disabled = false;
+		}
+	};
+
+	if (ctx.pageVotesEnabled) {
+		const voteWrap = el("div", "gr-page-votes");
+		const label = el("span", "gr-page-vote-label", "Was this helpful?");
+		up = el("button", "gr-vote");
+		up.type = "button";
+		up.setAttribute("aria-label", "Upvote this page");
+		up.appendChild(document.createTextNode("▲"));
+		scoreEl = el("span", "gr-vote-score", "0");
+		down = el("button", "gr-vote");
+		down.type = "button";
+		down.setAttribute("aria-label", "Downvote this page");
+		down.appendChild(document.createTextNode("▼"));
+		if (!ctx.downvotesEnabled) down.hidden = true;
+		up.addEventListener("click", () => void castVote(myVote === 1 ? 0 : 1));
+		down.addEventListener("click", () => void castVote(myVote === -1 ? 0 : -1));
+		voteWrap.append(label, up, scoreEl, down);
+		wrap.appendChild(voteWrap);
+	}
+
+	// Populate initial state. Anonymous viewers get totals only (their own
+	// state appears after they first interact) — matches the GET endpoint.
+	void (async () => {
+		try {
+			const res = await fetch(
+				`${ctx.apiBase}/api/v1/page-engagement?slug=${encodeURIComponent(ctx.slug)}`,
+				{ credentials: "include" },
+			);
+			if (!res.ok) return;
+			const body = (await res.json()) as {
+				reactions?: Record<string, number>;
+				my_reactions?: string[];
+				votes?: PageVoteState;
+			};
+			if (body.reactions) setReactions(body.reactions, body.my_reactions ?? []);
+			if (body.votes) setVote(body.votes);
+		} catch {
+			// initial counts stay at 0; interaction still works
+		}
+	})();
+
+	return wrap;
+};
+
 const buildActions = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): HTMLElement => {
 	const row = el("div", "gr-actions");
 
-	if (n.depth < 4 && n.status !== "deleted") {
+	if (ctx.commentsEnabled && n.depth < 4 && n.status !== "deleted") {
 		const replyBtn = el("button", undefined, "Reply");
 		replyBtn.type = "button";
 		replyBtn.addEventListener("click", () => {
@@ -699,7 +1072,7 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 	cancel.type = "button";
 	cancel.addEventListener("click", () => wrap.remove());
 	actions.append(save, cancel);
-	wrap.append(ta, actions);
+	wrap.append(buildWritePreview(ta, ctx.apiBase), actions);
 	wrap.addEventListener("submit", async (e) => {
 		e.preventDefault();
 		save.disabled = true;
@@ -739,7 +1112,7 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 		nameInput.required = true;
 		wrap.appendChild(nameInput);
 	}
-	wrap.appendChild(ta);
+	wrap.appendChild(buildWritePreview(ta, ctx.apiBase));
 
 	// Honeypot: mirrors the top-level form's anti-spam input. Hidden offscreen
 	// via .gr-honeypot, readonly to defeat browser autofill, tabIndex -1 so
@@ -901,7 +1274,7 @@ const buildComment = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 
 	if (n.status !== "deleted") {
 		if (ctx.votingEnabled) main.appendChild(buildVotes(n, ctx));
-		main.appendChild(buildReactions(n, ctx));
+		if (ctx.reactionsEnabled) main.appendChild(buildReactions(n, ctx));
 	}
 	main.appendChild(buildActions(n, ctx, main));
 
@@ -978,7 +1351,11 @@ const buildAuthBlock = (
 	return wrap;
 };
 
-const buildForm = (siteKey: string | null, signedIn: boolean): HTMLFormElement => {
+const buildForm = (
+	apiBase: string,
+	siteKey: string | null,
+	signedIn: boolean,
+): HTMLFormElement => {
 	const form = document.createElement("form");
 	form.className = "gr-form";
 	form.autocomplete = "off";
@@ -998,7 +1375,7 @@ const buildForm = (siteKey: string | null, signedIn: boolean): HTMLFormElement =
 	body.name = "body";
 	body.placeholder = "Add a comment…";
 	body.required = true;
-	form.appendChild(body);
+	form.appendChild(buildWritePreview(body, apiBase));
 
 	const honey = el("input");
 	honey.className = "gr-honeypot";
@@ -1243,8 +1620,12 @@ const loadOnce = async (
 	let editWindowMinutes = 5;
 	let providers: ReadonlyArray<"github" | "google"> = [];
 	let brandingHidden = false;
+	let commentsEnabled = true;
+	let reactionsEnabled = true;
 	let votingEnabled = true;
 	let downvotesEnabled = true;
+	let pageReactionsEnabled = false;
+	let pageVotesEnabled = false;
 	try {
 		const cfgRes = await fetch(`${apiBase}/api/v1/config`, {
 			credentials: "include",
@@ -1255,8 +1636,12 @@ const loadOnce = async (
 				edit_window_minutes?: number;
 				providers?: string[];
 				branding_hidden?: boolean;
+				comments_enabled?: boolean;
+				reactions_enabled?: boolean;
 				voting_enabled?: boolean;
 				downvotes_enabled?: boolean;
+				page_reactions_enabled?: boolean;
+				page_votes_enabled?: boolean;
 			};
 			siteKey = cfg.turnstile_site_key ?? null;
 			editWindowMinutes = cfg.edit_window_minutes ?? 5;
@@ -1264,8 +1649,12 @@ const loadOnce = async (
 				(p): p is "github" | "google" => p === "github" || p === "google",
 			);
 			brandingHidden = cfg.branding_hidden === true;
+			commentsEnabled = cfg.comments_enabled !== false;
+			reactionsEnabled = cfg.reactions_enabled !== false;
 			votingEnabled = cfg.voting_enabled !== false;
 			downvotesEnabled = cfg.downvotes_enabled !== false;
+			pageReactionsEnabled = cfg.page_reactions_enabled === true;
+			pageVotesEnabled = cfg.page_votes_enabled === true;
 		}
 	} catch {
 		// /api/v1/config is optional; the widget still renders without Turnstile
@@ -1298,23 +1687,46 @@ const loadOnce = async (
 		me,
 		editWindowMs: editWindowMinutes * 60_000,
 		turnstileSiteKey: siteKey,
+		commentsEnabled,
+		reactionsEnabled,
 		votingEnabled,
 		downvotesEnabled,
+		pageReactionsEnabled,
+		pageVotesEnabled,
 		reload,
 	};
+	// Article-level engagement bar sits at the very top, above the composer.
+	if (pageReactionsEnabled || pageVotesEnabled) {
+		wrap.appendChild(buildPageEngagement(ctx));
+	}
 	const authBlock = buildAuthBlock(me, apiBase, providers, reload, reload);
-	// Mint the timing token now so the honeypot-timing heuristic has
-	// real elapsed seconds to measure when the user eventually submits.
-	prefetchFormToken(apiBase);
-	const form = buildForm(siteKey, me != null);
+	// The composer is always built (its submit/Turnstile wiring lives further
+	// down) but only mounted when comments are enabled. When disabled, existing
+	// comments stay visible (read-only) and we show a "closed" notice instead.
+	const form = buildForm(apiBase, siteKey, me != null);
 	const list = el("div", "gr-list");
 	if (data.threads.length === 0) {
-		list.appendChild(el("p", "gr-empty", "Be the first to comment."));
+		// Don't invite a comment the reader can't leave: when comments are
+		// closed the "Comments are closed." notice below is the whole story.
+		list.appendChild(
+			el(
+				"p",
+				"gr-empty",
+				commentsEnabled ? "Be the first to comment." : "No comments yet.",
+			),
+		);
 	} else {
 		appendThreads(list, data.threads, ctx);
 	}
-	if (authBlock) wrap.appendChild(authBlock);
-	wrap.append(form);
+	if (commentsEnabled) {
+		if (authBlock) wrap.appendChild(authBlock);
+		// Mint the timing token now so the honeypot-timing heuristic has
+		// real elapsed seconds to measure when the user eventually submits.
+		prefetchFormToken(apiBase);
+		wrap.append(form);
+	} else {
+		wrap.appendChild(el("p", "gr-empty", "Comments are closed."));
+	}
 
 	// Sort selector only when voting is on (no scores to rank without it).
 	if (votingEnabled) {
@@ -1390,7 +1802,7 @@ const loadOnce = async (
 		}
 	}
 
-	if (siteKey) {
+	if (siteKey && commentsEnabled) {
 		const tsBox = form.querySelector(".gr-turnstile") as HTMLElement | null;
 		if (tsBox) {
 			const handle = mountTurnstileFrame(tsBox, apiBase, () => {

@@ -29,6 +29,7 @@ import { clientIp, hashIp } from "../lib/ip-hash";
 import { checkRateLimit } from "../lib/ratelimit";
 import { readSession } from "../lib/session";
 import { writeEvent } from "../lib/analytics";
+import { loadFlags } from "../lib/settings";
 import { t } from "../i18n";
 
 const votes = new Hono<{ Bindings: Bindings }>();
@@ -36,13 +37,6 @@ const votes = new Hono<{ Bindings: Bindings }>();
 type VoteBody = {
 	comment_id?: string;
 	value?: unknown;
-};
-
-const isBoolish = (raw: string | undefined, defaultOn: boolean): boolean => {
-	if (raw == null) return defaultOn;
-	const v = raw.trim().toLowerCase();
-	if (v === "0" || v === "false" || v === "no" || v === "off") return false;
-	return true;
 };
 
 const normalizeValue = (raw: unknown): VoteValue | null => {
@@ -56,7 +50,8 @@ const normalizeValue = (raw: unknown): VoteValue | null => {
 };
 
 votes.post("/", async (c) => {
-	if (!isBoolish(c.env.VOTING_ENABLED, true)) {
+	const flags = await loadFlags(c.env);
+	if (!flags.votes_enabled) {
 		return c.json({ error: "voting_disabled" }, 403);
 	}
 
@@ -72,7 +67,7 @@ votes.post("/", async (c) => {
 	// Optional site-wide brigading mitigation. We reject downvotes outright
 	// — telling the client value=-1 is not allowed is a more honest UX than
 	// silently clamping to 0.
-	if (value === -1 && !isBoolish(c.env.DOWNVOTES_ENABLED, true)) {
+	if (value === -1 && !flags.downvotes_enabled) {
 		return c.json({ error: "downvotes_disabled" }, 403);
 	}
 

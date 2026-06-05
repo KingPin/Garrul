@@ -37,10 +37,22 @@ PUBLIC_BASE_URL = "https://comments.example.com"
 # each provider (e.g. https://comments.example.com/api/v1/auth/github/callback).
 # Leave unset in dev; the worker falls back to the request origin.
 OAUTH_CALLBACK_BASE = "https://comments.example.com"
-# Comment voting. Both default ON when unset; set "0"/"false" to disable.
-# Downvotes are implicitly off when voting itself is off.
+# Feature flags. These are env-var DEFAULTS — an operator can override any of
+# them at runtime from the admin Settings page (a DB row wins over the env
+# var). Set "0"/"false" to disable. Comment-level features default ON; the
+# page-level features default OFF so an upgrade doesn't surface new UI on an
+# instance that didn't opt in.
+#
+# Comment voting (downvotes are implicitly off when voting itself is off):
 # VOTING_ENABLED = "true"
 # DOWNVOTES_ENABLED = "true"
+# Accepting new comments:
+# COMMENTS_ENABLED = "true"
+# Per-comment emoji reactions:
+# REACTIONS_ENABLED = "true"
+# Page-level engagement — react / vote on the article itself (default off):
+# PAGE_REACTIONS_ENABLED = "false"
+# PAGE_VOTES_ENABLED = "false"
 # Optional: Cloudflare account ID — paired with the CF_API_TOKEN secret to
 # enable the /admin/usage analytics page.
 # CF_ACCOUNT_ID = "0123abcd..."

@@ -1,5 +1,5 @@
 {
-  "version": "1.9.1",
+  "version": "1.10.0",
   "minPreviousVersion": "1.0.0",
   "renderer": {
     "version": 1,
@@ -110,6 +110,26 @@
       "name": "DOWNVOTES_ENABLED",
       "required": false,
       "addedIn": "1.8.0"
+    },
+    {
+      "name": "COMMENTS_ENABLED",
+      "required": false,
+      "addedIn": "1.10.0"
+    },
+    {
+      "name": "REACTIONS_ENABLED",
+      "required": false,
+      "addedIn": "1.10.0"
+    },
+    {
+      "name": "PAGE_REACTIONS_ENABLED",
+      "required": false,
+      "addedIn": "1.10.0"
+    },
+    {
+      "name": "PAGE_VOTES_ENABLED",
+      "required": false,
+      "addedIn": "1.10.0"
     }
   ],
   "kvNamespaces": [
@@ -159,7 +179,9 @@
     "0006_webhook_endpoints.sql",
     "0007_votes.sql",
     "0008_saved_replies.sql",
-    "0009_import_tracking.sql"
+    "0009_import_tracking.sql",
+    "0010_settings.sql",
+    "0011_page_engagement.sql"
   ],
   "breakingChanges": []
 }
