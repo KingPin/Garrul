@@ -758,6 +758,69 @@ export const getPageVote = async (
 ): Promise<PageVoteResult> =>
 	reselectPageVote(db, post_slug, user_id ?? "");
 
+export type PageVoteTally = { score_up: number; score_down: number };
+
+/**
+ * Page-vote tallies for many slugs in one round-trip — the batch sibling of
+ * getPageVote, viewer-agnostic (no my_vote). Used by /api/v1/counts. Slugs
+ * with no votes are omitted; the caller defaults missing keys to a zero tally.
+ */
+export const countPageVotesBySlugs = async (
+	db: D1Database,
+	slugs: string[],
+): Promise<Map<string, PageVoteTally>> => {
+	if (slugs.length === 0) return new Map();
+	const placeholders = slugs.map(() => "?").join(",");
+	const result = await db
+		.prepare(
+			`SELECT post_slug,
+			        SUM(CASE WHEN value =  1 THEN 1 ELSE 0 END) AS score_up,
+			        SUM(CASE WHEN value = -1 THEN 1 ELSE 0 END) AS score_down
+			   FROM page_votes
+			  WHERE post_slug IN (${placeholders})
+			  GROUP BY post_slug`,
+		)
+		.bind(...slugs)
+		.all<{ post_slug: string; score_up: number; score_down: number }>();
+	const out = new Map<string, PageVoteTally>();
+	for (const row of result.results ?? []) {
+		out.set(row.post_slug, {
+			score_up: row.score_up ?? 0,
+			score_down: row.score_down ?? 0,
+		});
+	}
+	return out;
+};
+
+/**
+ * Page-reaction totals (per kind) for many slugs in one round-trip — the
+ * batch sibling of listPageReactions. Used by /api/v1/counts. Slugs with no
+ * reactions are omitted; the caller defaults missing keys to an empty map.
+ */
+export const countPageReactionsBySlugs = async (
+	db: D1Database,
+	slugs: string[],
+): Promise<Map<string, Record<string, number>>> => {
+	if (slugs.length === 0) return new Map();
+	const placeholders = slugs.map(() => "?").join(",");
+	const result = await db
+		.prepare(
+			`SELECT post_slug, kind, COUNT(*) AS count
+			   FROM page_reactions
+			  WHERE post_slug IN (${placeholders})
+			  GROUP BY post_slug, kind`,
+		)
+		.bind(...slugs)
+		.all<{ post_slug: string; kind: string; count: number }>();
+	const out = new Map<string, Record<string, number>>();
+	for (const row of result.results ?? []) {
+		const byKind = out.get(row.post_slug) ?? {};
+		byKind[row.kind] = row.count;
+		out.set(row.post_slug, byKind);
+	}
+	return out;
+};
+
 /**
  * Admin: page through comments by status, newest first. Cursor is the
  * created_at,id pair of the last row from the previous page.
