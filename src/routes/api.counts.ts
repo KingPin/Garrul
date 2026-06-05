@@ -6,13 +6,28 @@
  * Response shape: { counts: { [slug]: number } } — slugs with zero
  * comments are omitted, so the client should default missing keys to 0.
  *
- * Cached per (sorted-slug-list) for 60s in KV. The slug list is
- * canonicalized (trimmed, lowercased, sorted, deduped, capped at 100)
- * so different orderings of the same slugs share a cache entry.
+ * Opt-in extras via ?include=votes,reactions (comma-separated):
+ *   - votes     → { votes: { [slug]: { score_up, score_down } } }
+ *   - reactions → { reactions: { [slug]: { [kind]: count } } }
+ * Each extra is only included when its page-level feature flag is enabled;
+ * a disabled feature's totals are never exposed, even if requested. The
+ * comment count stays the default so existing callers are unaffected.
+ *
+ * Cached per (sorted-slug-list + include set) for 60s in KV. The slug list
+ * is canonicalized (trimmed, lowercased… well, kept as-is, sorted, deduped,
+ * capped at 100) so different orderings of the same slugs share a cache
+ * entry; the include set is folded into the key so a plain call and an
+ * extras call never collide.
  */
 import { Hono } from "hono";
 import type { Bindings } from "../index";
-import { countApprovedCommentsBySlugs } from "../db/queries";
+import {
+	countApprovedCommentsBySlugs,
+	countPageReactionsBySlugs,
+	countPageVotesBySlugs,
+	type PageVoteTally,
+} from "../db/queries";
+import { loadFlags } from "../lib/settings";
 
 const counts = new Hono<{ Bindings: Bindings }>();
 
@@ -29,6 +44,24 @@ const canonicalize = (raw: string): string[] => {
 	return dedup.slice(0, MAX_SLUGS);
 };
 
+// Parse ?include= into a normalized, sorted set of recognized extras. Unknown
+// tokens are dropped so a typo can't poison the cache key with junk.
+const parseInclude = (raw: string): ("votes" | "reactions")[] => {
+	const want = new Set(
+		raw
+			.split(",")
+			.map((s) => s.trim().toLowerCase())
+			.filter((s) => s === "votes" || s === "reactions"),
+	);
+	return [...want].sort() as ("votes" | "reactions")[];
+};
+
+type CountsPayload = {
+	counts: Record<string, number>;
+	votes?: Record<string, PageVoteTally>;
+	reactions?: Record<string, Record<string, number>>;
+};
+
 counts.get("/", async (c) => {
 	const raw = c.req.query("slugs") ?? "";
 	const slugs = canonicalize(raw);
@@ -36,11 +69,27 @@ counts.get("/", async (c) => {
 		return c.json({ counts: {} });
 	}
 
-	const cacheKey = `counts:${slugs.join(",")}`;
+	const include = parseInclude(c.req.query("include") ?? "");
+
+	// Resolve flags up front so the cache key reflects only the extras we
+	// will actually compute — a requested-but-disabled extra collapses to the
+	// same key (and payload) as not requesting it, maximizing cache reuse.
+	const flags = include.length ? await loadFlags(c.env) : null;
+	const wantVotes = include.includes("votes") && !!flags?.page_votes_enabled;
+	const wantReactions =
+		include.includes("reactions") && !!flags?.page_reactions_enabled;
+
+	const effective = [
+		...(wantVotes ? ["votes"] : []),
+		...(wantReactions ? ["reactions"] : []),
+	];
+	const keySuffix = effective.length ? `:${effective.join(",")}` : "";
+	const cacheKey = `counts:${slugs.join(",")}${keySuffix}`;
+
 	const cached = await c.env.TREE_CACHE.get(cacheKey, { type: "json" });
 	if (cached) {
 		c.header("cache-control", "public, max-age=60");
-		return c.json(cached as { counts: Record<string, number> });
+		return c.json(cached as CountsPayload);
 	}
 
 	const map = await countApprovedCommentsBySlugs(c.env.DB, slugs);
@@ -48,7 +97,22 @@ counts.get("/", async (c) => {
 	for (const [slug, count] of map) {
 		result[slug] = count;
 	}
-	const payload = { counts: result };
+	const payload: CountsPayload = { counts: result };
+
+	if (wantVotes) {
+		const tallies = await countPageVotesBySlugs(c.env.DB, slugs);
+		const votes: Record<string, PageVoteTally> = {};
+		for (const [slug, tally] of tallies) votes[slug] = tally;
+		payload.votes = votes;
+	}
+
+	if (wantReactions) {
+		const totals = await countPageReactionsBySlugs(c.env.DB, slugs);
+		const reactions: Record<string, Record<string, number>> = {};
+		for (const [slug, byKind] of totals) reactions[slug] = byKind;
+		payload.reactions = reactions;
+	}
+
 	await c.env.TREE_CACHE.put(cacheKey, JSON.stringify(payload), {
 		expirationTtl: COUNTS_CACHE_TTL,
 	});
