@@ -1,6 +1,6 @@
 # Anti-spam
 
-Garrul defends against spam in layers. Everything documented here is **off by default** — turn on what you need.
+Garrul defends against spam in layers. The base protections below are **always on** and ship with every instance; the optional layers are **off by default** — turn on what you need.
 
 ## What's always on
 

@@ -102,8 +102,8 @@ webhook. Adapter changes do not require receiver changes.
 
 ## Legacy `WEBHOOK_URL`
 
-Operators on the pre-v2 release shipped a single `WEBHOOK_URL` env var
-with no signing and no retries. That still works: when set with no
+Operators upgrading from the original single-`WEBHOOK_URL` setup used one
+env var with no signing and no retries. That still works: when set with no
 table rows, Garrul synthesizes an unsigned, retry-less endpoint at
 dispatch time. The admin page flags this with a banner so you know to
 migrate. Add a real endpoint (with a secret) and unset the env var to
