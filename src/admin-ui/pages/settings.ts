@@ -1,5 +1,11 @@
 import type { Bindings } from "../../index";
-import type { FlagKey, ResolvedFlags } from "../../lib/settings";
+import {
+	type FlagKey,
+	type NumberKey,
+	type ResolvedFlags,
+	type ResolvedNumbers,
+	numberBounds,
+} from "../../lib/settings";
 import { escapeHtml } from "../escape";
 
 // Operator-facing labels + help for each runtime feature flag. Order here is
@@ -37,7 +43,32 @@ const FLAG_META: { key: FlagKey; label: string; help: string }[] = [
 	},
 ];
 
-export const renderSettings = (env: Bindings, flags: ResolvedFlags): string => {
+// Operator-facing labels + help for each numeric display setting. Bounds are
+// pulled from the settings registry so the input min/max can't drift from the
+// server-side clamp.
+const NUMBER_META: { key: NumberKey; label: string; help: string }[] = [
+	{
+		key: "comments_per_page",
+		label: "Comments per page",
+		help: "Top-level comments shown per initial load. \"Load older comments\" reveals the next batch.",
+	},
+	{
+		key: "replies_per_thread",
+		label: "Replies before “show more”",
+		help: "Replies shown under each comment before a “Show N more replies” button. 0 = show all.",
+	},
+	{
+		key: "auto_collapse_depth",
+		label: "Auto-collapse depth",
+		help: "Replies nested at this depth or deeper start collapsed. 0 = never auto-collapse.",
+	},
+];
+
+export const renderSettings = (
+	env: Bindings,
+	flags: ResolvedFlags,
+	numbers: ResolvedNumbers,
+): string => {
 	const rows: [string, string][] = [
 		["ENV", env.ENV ?? "(unset)"],
 		["ALLOWED_ORIGINS", env.ALLOWED_ORIGINS ?? "(unset)"],
@@ -82,21 +113,40 @@ export const renderSettings = (env: Bindings, flags: ResolvedFlags): string => {
     </div>`;
 	}).join("");
 
+	// Numeric display settings. Each input reflects the resolved effective
+	// value; min/max mirror the server-side clamp (numberBounds).
+	const numberInputs = NUMBER_META.map((f) => {
+		const b = numberBounds(f.key);
+		return `
+    <div class="flag-row">
+      <label>
+        <input type="number" name="${f.key}" min="${b.min}" max="${b.max}" step="1"
+               x-model.number="nums.${f.key}" style="width:5rem">
+        <strong>${escapeHtml(f.label)}</strong>
+      </label>
+      <span class="muted">${escapeHtml(f.help)}</span>
+    </div>`;
+	}).join("");
+
 	const initial = JSON.stringify(
 		Object.fromEntries(FLAG_META.map((f) => [f.key, flags[f.key]])),
+	);
+	const numInitial = JSON.stringify(
+		Object.fromEntries(NUMBER_META.map((f) => [f.key, numbers[f.key]])),
 	);
 
 	return `
 <div class="card" x-data="{
   busy: false,
   flags: ${escapeHtml(initial)},
+  nums: ${escapeHtml(numInitial)},
   async save() {
     this.busy = true;
     try {
       const r = await fetch('/admin/settings', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ flags: this.flags }),
+        body: JSON.stringify({ flags: this.flags, numbers: this.nums }),
       });
       if (!r.ok) {
         const j = await r.json().catch(() => ({}));
@@ -137,8 +187,13 @@ export const renderSettings = (env: Bindings, flags: ResolvedFlags): string => {
   defaults apply again.</p>
   <form @submit.prevent="save()">
     ${toggles}
+    <h3 style="margin-top:1.25rem">Display &amp; pagination</h3>
+    <p class="muted">Control how many comments load at once and how nested
+    replies collapse. Smaller values keep a busy thread from pushing the rest
+    of the page down.</p>
+    ${numberInputs}
     <p style="margin-top:1rem">
-      <button type="submit" :disabled="busy">Save features</button>
+      <button type="submit" :disabled="busy">Save settings</button>
       <button type="button" class="secondary" @click="reset()" :disabled="busy">Reset to defaults</button>
     </p>
   </form>
