@@ -134,6 +134,22 @@ const STYLE_CSS = `
 	padding: 0.5rem 0.7rem;
 }
 .gr-preview[hidden] { display: none; }
+.gr-toolbar { display: flex; gap: 0.2rem; flex-wrap: wrap; }
+.gr-toolbar[hidden] { display: none; }
+.gr-toolbar-btn {
+	font: inherit;
+	font-size: 0.85em;
+	line-height: 1.4;
+	min-width: 1.9em;
+	background: var(--garrul-input-bg, #fff);
+	color: var(--garrul-fg, #1a1a1a);
+	border: 1px solid var(--garrul-border, #d0d3d8);
+	border-radius: var(--garrul-radius, 6px);
+	padding: 0.2rem 0.45rem;
+	cursor: pointer;
+	align-self: flex-start;
+}
+.gr-toolbar-btn:hover { border-color: var(--garrul-accent, #2563eb); }
 .gr-preview p { margin: 0.3em 0; }
 .gr-preview a { color: var(--garrul-link, #2563eb); }
 .gr-form .gr-honeypot { position: absolute; left: -9999px; top: -9999px; }
@@ -333,6 +349,74 @@ const parseTrustedHtml = (html: string): DocumentFragment => {
 	return range.createContextualFragment(html);
 };
 
+type MdFormat = {
+	before?: string;
+	after?: string;
+	linePrefix?: string;
+	placeholder?: string;
+};
+
+/**
+ * Apply a markdown formatting action to the textarea's current selection.
+ * Inline formats wrap the selection (or a placeholder when empty); block
+ * formats prefix every selected line. Keeps focus and re-fires `input` so the
+ * preview/required state stays in sync.
+ */
+const applyMarkdown = (ta: HTMLTextAreaElement, fmt: MdFormat): void => {
+	const { selectionStart, selectionEnd, value } = ta;
+	if (fmt.linePrefix) {
+		const lineStart = value.lastIndexOf("\n", selectionStart - 1) + 1;
+		const block = value.slice(lineStart, selectionEnd);
+		const prefixed = block
+			.split("\n")
+			.map((line) => fmt.linePrefix + line)
+			.join("\n");
+		ta.value = value.slice(0, lineStart) + prefixed + value.slice(selectionEnd);
+		ta.selectionStart = lineStart;
+		ta.selectionEnd = lineStart + prefixed.length;
+	} else {
+		const before = fmt.before ?? "";
+		const after = fmt.after ?? "";
+		const inner = value.slice(selectionStart, selectionEnd) || fmt.placeholder || "";
+		ta.value =
+			value.slice(0, selectionStart) +
+			before +
+			inner +
+			after +
+			value.slice(selectionEnd);
+		ta.selectionStart = selectionStart + before.length;
+		ta.selectionEnd = selectionStart + before.length + inner.length;
+	}
+	ta.focus();
+	ta.dispatchEvent(new Event("input", { bubbles: true }));
+};
+
+// Toolbar buttons, left to right. `label` is the visible glyph; `title` is the
+// tooltip / aria-label.
+const TOOLBAR: { label: string; title: string; fmt: MdFormat }[] = [
+	{ label: "B", title: "Bold", fmt: { before: "**", after: "**", placeholder: "bold" } },
+	{ label: "I", title: "Italic", fmt: { before: "_", after: "_", placeholder: "italic" } },
+	{ label: "🔗", title: "Link", fmt: { before: "[", after: "](https://)", placeholder: "text" } },
+	{ label: "</>", title: "Inline code", fmt: { before: "`", after: "`", placeholder: "code" } },
+	{ label: "❝", title: "Quote", fmt: { linePrefix: "> " } },
+	{ label: "•", title: "Bulleted list", fmt: { linePrefix: "- " } },
+];
+
+const buildToolbar = (ta: HTMLTextAreaElement): HTMLElement => {
+	const bar = el("div", "gr-toolbar");
+	bar.setAttribute("role", "toolbar");
+	bar.setAttribute("aria-label", "Formatting");
+	for (const item of TOOLBAR) {
+		const btn = el("button", "gr-toolbar-btn", item.label);
+		btn.type = "button";
+		btn.title = item.title;
+		btn.setAttribute("aria-label", item.title);
+		btn.addEventListener("click", () => applyMarkdown(ta, item.fmt));
+		bar.appendChild(btn);
+	}
+	return bar;
+};
+
 /**
  * Wrap a composer textarea in a GitHub-style "Write | Preview" tab strip.
  * Returns a container that should be inserted where the textarea would have
@@ -359,6 +443,7 @@ const buildWritePreview = (
 	previewTab.setAttribute("aria-selected", "false");
 	tabs.append(writeTab, previewTab);
 
+	const toolbar = buildToolbar(textarea);
 	const pane = el("div", "gr-preview");
 	pane.hidden = true;
 
@@ -367,6 +452,7 @@ const buildWritePreview = (
 		previewTab.classList.remove("gr-tab-active");
 		writeTab.setAttribute("aria-selected", "true");
 		previewTab.setAttribute("aria-selected", "false");
+		toolbar.hidden = false;
 		textarea.hidden = false;
 		pane.hidden = true;
 	};
@@ -376,6 +462,7 @@ const buildWritePreview = (
 		writeTab.classList.remove("gr-tab-active");
 		previewTab.setAttribute("aria-selected", "true");
 		writeTab.setAttribute("aria-selected", "false");
+		toolbar.hidden = true;
 		textarea.hidden = true;
 		pane.hidden = false;
 		const body = textarea.value.trim();
@@ -405,7 +492,7 @@ const buildWritePreview = (
 		void showPreview();
 	});
 
-	wrap.append(tabs, textarea, pane);
+	wrap.append(tabs, toolbar, textarea, pane);
 	return wrap;
 };
 
