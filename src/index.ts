@@ -84,6 +84,14 @@ export type Bindings = {
 	REACTIONS_ENABLED?: string;
 	PAGE_REACTIONS_ENABLED?: string;
 	PAGE_VOTES_ENABLED?: string;
+	// Numeric display settings. Env-var *defaults*; a row in the `settings`
+	// table overrides the matching one at runtime (see src/lib/settings.ts).
+	//   COMMENTS_PER_PAGE   — top-level threads per initial load + Load-more.
+	//   REPLIES_PER_THREAD  — replies shown per parent before "Show N more"; 0 = all.
+	//   AUTO_COLLAPSE_DEPTH — replies at depth >= this start collapsed; 0 = never.
+	COMMENTS_PER_PAGE?: string;
+	REPLIES_PER_THREAD?: string;
+	AUTO_COLLAPSE_DEPTH?: string;
 };
 
 const app = new Hono<{ Bindings: Bindings }>();
