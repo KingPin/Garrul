@@ -299,6 +299,17 @@ const STYLE_CSS = `
 	align-self: center;
 }
 .gr-loadmore[disabled] { opacity: 0.6; cursor: progress; }
+.gr-collapse, .gr-showmore {
+	font: inherit;
+	font-size: 0.85em;
+	background: transparent;
+	border: 0;
+	padding: 0;
+	cursor: pointer;
+	align-self: flex-start;
+}
+.gr-collapse { color: var(--garrul-muted, #6b7280); }
+.gr-showmore { color: var(--garrul-link, #2563eb); margin-top: 0.25rem; }
 .gr-signin { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
 .gr-signin button {
 	font: inherit;
@@ -560,6 +571,11 @@ type WidgetCtx = {
 	downvotesEnabled: boolean;
 	pageReactionsEnabled: boolean;
 	pageVotesEnabled: boolean;
+	// Reply-collapse tuning (server config). repliesPerThread: replies shown
+	// under a parent before a "Show N more" button (0 = all). autoCollapseDepth:
+	// a comment at depth >= this starts with its replies collapsed (0 = never).
+	repliesPerThread: number;
+	autoCollapseDepth: number;
 	reload: () => void;
 };
 
@@ -1282,6 +1298,72 @@ const buildComment = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	return row;
 };
 
+/** Total nested replies under a node (whole subtree), for the toggle label. */
+const countDescendants = (n: TreeNode): number => {
+	let total = n.replies.length;
+	for (const r of n.replies) total += countDescendants(r);
+	return total;
+};
+
+const plural = (n: number, one: string, many: string): string =>
+	`${n} ${n === 1 ? one : many}`;
+
+/**
+ * Collapse/expand control for a node's replies. Hides/shows the replies
+ * container in place (all replies are already in the DOM). `startCollapsed`
+ * comes from the auto-collapse-depth setting.
+ */
+const buildCollapseToggle = (
+	repliesEl: HTMLElement,
+	count: number,
+	startCollapsed: boolean,
+): HTMLButtonElement => {
+	const btn = el("button", "gr-collapse") as HTMLButtonElement;
+	btn.type = "button";
+	let collapsed = startCollapsed;
+	const apply = () => {
+		repliesEl.style.display = collapsed ? "none" : "";
+		btn.textContent = `${collapsed ? "▸" : "▾"} ${plural(count, "reply", "replies")}`;
+		btn.setAttribute("aria-expanded", String(!collapsed));
+	};
+	btn.addEventListener("click", () => {
+		collapsed = !collapsed;
+		apply();
+	});
+	apply();
+	return btn;
+};
+
+/**
+ * Render a parent's direct replies into `container`, capping at
+ * repliesPerThread and appending a "Show N more replies" button for the rest
+ * (0 = show all). The cap applies recursively as each reply is itself a thread.
+ */
+const renderReplyList = (
+	container: HTMLElement,
+	replies: TreeNode[],
+	ctx: WidgetCtx,
+): void => {
+	const limit = ctx.repliesPerThread;
+	const initial = limit > 0 && replies.length > limit ? limit : replies.length;
+	for (let i = 0; i < initial; i++) {
+		container.appendChild(buildThread(replies[i]!, ctx));
+	}
+	if (initial < replies.length) {
+		const hidden = replies.slice(initial);
+		const more = el("button", "gr-showmore") as HTMLButtonElement;
+		more.type = "button";
+		more.textContent = `Show ${plural(hidden.length, "more reply", "more replies")}`;
+		more.addEventListener("click", () => {
+			for (const r of hidden) {
+				container.insertBefore(buildThread(r, ctx), more);
+			}
+			more.remove();
+		});
+		container.appendChild(more);
+	}
+};
+
 const buildThread = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	const wrap = el("div", "gr-thread");
 	wrap.dataset.id = n.id;
@@ -1290,8 +1372,17 @@ const buildThread = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	wrap.appendChild(buildComment(n, ctx));
 	if (n.replies.length > 0) {
 		const replies = el("div", "gr-replies");
-		for (const r of n.replies) replies.appendChild(buildThread(r, ctx));
-		wrap.appendChild(replies);
+		renderReplyList(replies, n.replies, ctx);
+		// Per-comment collapse toggle; auto-collapsed when this node is nested
+		// at/deeper than the configured depth (0 = never auto-collapse).
+		const startCollapsed =
+			ctx.autoCollapseDepth > 0 && n.depth >= ctx.autoCollapseDepth;
+		const toggle = buildCollapseToggle(
+			replies,
+			countDescendants(n),
+			startCollapsed,
+		);
+		wrap.append(toggle, replies);
 	}
 	return wrap;
 };
@@ -1626,6 +1717,10 @@ const loadOnce = async (
 	let downvotesEnabled = true;
 	let pageReactionsEnabled = false;
 	let pageVotesEnabled = false;
+	// Defaults mirror the server (src/lib/settings.ts) so a failed/absent
+	// config fetch degrades gracefully to the same behavior.
+	let repliesPerThread = 3;
+	let autoCollapseDepth = 3;
 	try {
 		const cfgRes = await fetch(`${apiBase}/api/v1/config`, {
 			credentials: "include",
@@ -1642,6 +1737,8 @@ const loadOnce = async (
 				downvotes_enabled?: boolean;
 				page_reactions_enabled?: boolean;
 				page_votes_enabled?: boolean;
+				replies_per_thread?: number;
+				auto_collapse_depth?: number;
 			};
 			siteKey = cfg.turnstile_site_key ?? null;
 			editWindowMinutes = cfg.edit_window_minutes ?? 5;
@@ -1655,6 +1752,10 @@ const loadOnce = async (
 			downvotesEnabled = cfg.downvotes_enabled !== false;
 			pageReactionsEnabled = cfg.page_reactions_enabled === true;
 			pageVotesEnabled = cfg.page_votes_enabled === true;
+			if (typeof cfg.replies_per_thread === "number")
+				repliesPerThread = cfg.replies_per_thread;
+			if (typeof cfg.auto_collapse_depth === "number")
+				autoCollapseDepth = cfg.auto_collapse_depth;
 		}
 	} catch {
 		// /api/v1/config is optional; the widget still renders without Turnstile
@@ -1693,6 +1794,8 @@ const loadOnce = async (
 		downvotesEnabled,
 		pageReactionsEnabled,
 		pageVotesEnabled,
+		repliesPerThread,
+		autoCollapseDepth,
 		reload,
 	};
 	// Article-level engagement bar sits at the very top, above the composer.
