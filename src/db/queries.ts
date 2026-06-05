@@ -453,6 +453,44 @@ export const countApprovedCommentsBySlugs = async (
 	return out;
 };
 
+/**
+ * Read every operator-set row from the `settings` key/value store as a plain
+ * map. Absent keys mean "inherit env/default" — the resolution layer
+ * (src/lib/settings.ts) decides precedence, not this function.
+ */
+export const getAllSettings = async (
+	db: D1Database,
+): Promise<Record<string, string>> => {
+	const result = await db
+		.prepare("SELECT key, value FROM settings")
+		.all<{ key: string; value: string }>();
+	const out: Record<string, string> = {};
+	for (const row of result.results ?? []) {
+		out[row.key] = row.value;
+	}
+	return out;
+};
+
+/**
+ * Upsert a single operator setting. Callers validate the key against the
+ * known flag allowlist before writing; this wrapper does not.
+ */
+export const setSetting = async (
+	db: D1Database,
+	key: string,
+	value: string,
+): Promise<void> => {
+	await db
+		.prepare(
+			`INSERT INTO settings (key, value, updated_at)
+			 VALUES (?, ?, ?)
+			 ON CONFLICT(key) DO UPDATE SET value = excluded.value,
+			                               updated_at = excluded.updated_at`,
+		)
+		.bind(key, value, Date.now())
+		.run();
+};
+
 export const updateCommentBody = async (
 	db: D1Database,
 	id: string,

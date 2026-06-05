@@ -73,6 +73,15 @@ export type Bindings = {
 	// operator can flip without redeploy.
 	VOTING_ENABLED?: string;
 	DOWNVOTES_ENABLED?: string;
+	// Per-feature toggles. These are the env-var *defaults*; a row in the
+	// `settings` table overrides the matching one at runtime (see
+	// src/lib/settings.ts). Comment-level features default ON to preserve
+	// existing behavior; the new page-level features default OFF so an
+	// upgrade doesn't surface new UI on instances that didn't ask for it.
+	COMMENTS_ENABLED?: string;
+	REACTIONS_ENABLED?: string;
+	PAGE_REACTIONS_ENABLED?: string;
+	PAGE_VOTES_ENABLED?: string;
 };
 
 const app = new Hono<{ Bindings: Bindings }>();
