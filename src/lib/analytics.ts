@@ -24,7 +24,9 @@ export type EventName =
 	| "oauth.complete"
 	| "oauth.failed"
 	| "reaction.toggled"
-	| "vote.cast";
+	| "vote.cast"
+	| "page_reaction.toggled"
+	| "page_vote.cast";
 
 type WriteFields = {
 	post_slug?: string | null;
