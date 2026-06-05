@@ -130,6 +130,21 @@
       "name": "PAGE_VOTES_ENABLED",
       "required": false,
       "addedIn": "1.10.0"
+    },
+    {
+      "name": "COMMENTS_PER_PAGE",
+      "required": false,
+      "addedIn": "1.10.0"
+    },
+    {
+      "name": "REPLIES_PER_THREAD",
+      "required": false,
+      "addedIn": "1.10.0"
+    },
+    {
+      "name": "AUTO_COLLAPSE_DEPTH",
+      "required": false,
+      "addedIn": "1.10.0"
     }
   ],
   "kvNamespaces": [
