@@ -99,6 +99,7 @@ import { renderUsers } from "../admin-ui/pages/users";
 import { renderOperator } from "../admin-ui/pages/operator";
 import { renderSettings } from "../admin-ui/pages/settings";
 import { bustFlagsCache, FLAG_KEYS, loadFlags } from "../lib/settings";
+import { bustTreeCache } from "../lib/tree-cache";
 import {
 	renderWebhookForm,
 	renderWebhooksList,
@@ -1219,11 +1220,7 @@ admin.post("/api/saved-replies/:id/post", async (c) => {
 		},
 	});
 	// Bust the post's tree caches so the new reply is visible immediately.
-	await Promise.all([
-		c.env.TREE_CACHE.delete(`tree:${target.post_slug}:first:new`),
-		c.env.TREE_CACHE.delete(`tree:${target.post_slug}:first:top`),
-		c.env.TREE_CACHE.delete(`tree:${target.post_slug}:first`),
-	]);
+	await bustTreeCache(c.env, target.post_slug);
 	fireWebhook(c.env, c.executionCtx, {
 		event: "comment.posted",
 		comment_id: inserted.id,
@@ -1273,7 +1270,7 @@ admin.post("/api/comments/:id", async (c) => {
 		meta: { prev_status: existing.status, new_status: newStatus },
 	});
 	// Bust the cached first page so the moderation result is visible.
-	await c.env.TREE_CACHE.delete(`tree:${existing.post_slug}:first`);
+	await bustTreeCache(c.env, existing.post_slug);
 	const webhookEvent: WebhookEvent | null =
 		newStatus === "approved"
 			? "comment.approved"
@@ -1358,7 +1355,7 @@ admin.post("/api/comments/bulk", async (c) => {
 			target_id: id,
 			meta: { batch_size: touched.length, new_status: newStatus },
 		});
-		await c.env.TREE_CACHE.delete(`tree:${existing.post_slug}:first`);
+		await bustTreeCache(c.env, existing.post_slug);
 		if (webhookEvent) {
 			fireWebhook(c.env, c.executionCtx, {
 				event: webhookEvent,

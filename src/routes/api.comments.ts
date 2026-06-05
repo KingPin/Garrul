@@ -49,7 +49,8 @@ import { readSession } from "../lib/session";
 import { verifyTurnstile } from "../lib/turnstile";
 import { writeEvent } from "../lib/analytics";
 import { fireWebhook } from "../lib/webhook";
-import { loadFlags } from "../lib/settings";
+import { loadFlags, loadNumbers } from "../lib/settings";
+import { bustTreeCache } from "../lib/tree-cache";
 import { log } from "../lib/log";
 import {
 	countLinks,
@@ -67,7 +68,6 @@ import {
 } from "../lib/tree";
 import { t } from "../i18n";
 
-const TOP_LEVEL_PAGE = 100;
 const TREE_CACHE_TTL = 300; // seconds; busted on every write, so a long TTL is fine
 
 type SessionVars = {
@@ -450,13 +450,7 @@ comments.post("/", async (c) => {
 	// Bust the cached first page. Older pages bypass cache, so there's
 	// nothing else to invalidate. Pending comments don't appear in the
 	// public tree but the cache key is the same; busting is still correct.
-	await Promise.all([
-		c.env.TREE_CACHE.delete(`tree:${slug}:first:new`),
-		c.env.TREE_CACHE.delete(`tree:${slug}:first:top`),
-		// Legacy key from before the sort-keyed cache split. Drop after
-		// one release cycle when prod caches have rotated.
-		c.env.TREE_CACHE.delete(`tree:${slug}:first`),
-	]);
+	await bustTreeCache(c.env, slug);
 
 	// Persist whichever spam signals ran. Fire-and-forget so a slow D1
 	// write never adds latency to the user-visible POST. Mirror the
@@ -547,17 +541,40 @@ type ListPayload = {
 	next_cursor: string | null;
 };
 
+const ULID_RE = /^[0-9A-HJKMNP-TV-Z]{26}$/;
+
 /**
- * Cursor format: just the ULID of the oldest top-level thread on the
- * current page. Top-level threads are sorted DESC by created_at, so the
- * next page is `WHERE id < cursor_id`. Using the ULID (which is a
- * lexicographically-comparable time-prefixed ID) sidesteps the
- * timestamp-collision edge case.
+ * `new`-sort cursor: just the ULID of the oldest top-level thread on the
+ * current page. Threads are sorted DESC by created_at, so the next page is
+ * `id < cursor`. The ULID (lexicographically-comparable, time-prefixed)
+ * sidesteps the timestamp-collision edge case.
  */
 const decodeCursor = (raw: string | null): string | null => {
 	if (!raw) return null;
-	return /^[0-9A-HJKMNP-TV-Z]{26}$/.test(raw) ? raw : null;
+	return ULID_RE.test(raw) ? raw : null;
 };
+
+/** Net score (up − down) of a thread, the `top`-sort key. */
+const threadScore = (t: TreeNode): number => t.score_up - t.score_down;
+
+/**
+ * `top`-sort cursor: `<score>:<ulid>` of the last thread on the current page.
+ * `top` is ordered by (score DESC, id DESC) — a total order, since ULIDs are
+ * unique — so the next page is everything ranked strictly after the cursor:
+ * `score < cur.score || (score === cur.score && id < cur.id)`. Tie-breaking on
+ * id (rather than created_at) keeps the cursor stable against ms collisions.
+ */
+type TopCursor = { score: number; id: string };
+const decodeTopCursor = (raw: string | null): TopCursor | null => {
+	if (!raw) return null;
+	const sep = raw.indexOf(":");
+	if (sep <= 0) return null;
+	const score = Number.parseInt(raw.slice(0, sep), 10);
+	const id = raw.slice(sep + 1);
+	if (!Number.isFinite(score) || !ULID_RE.test(id)) return null;
+	return { score, id };
+};
+const encodeTopCursor = (t: TreeNode): string => `${threadScore(t)}:${t.id}`;
 
 comments.get("/", async (c) => {
 	const slug = (c.req.query("slug") ?? "").trim();
@@ -567,22 +584,26 @@ comments.get("/", async (c) => {
 	const sortParam = (c.req.query("sort") ?? "new").trim();
 	const sort: "new" | "top" = sortParam === "top" ? "top" : "new";
 
-	// The cursor format (`id < cursor`) only makes sense for the time-DESC
-	// `new` ordering — applying it to score-sorted results would skip or
-	// duplicate threads as scores shift. `top` returns a single page; any
-	// supplied ?before is ignored.
-	const cursor = sort === "top"
-		? null
-		: decodeCursor(c.req.query("before") ?? null);
+	// Each sort has its own cursor encoding: `new` pages by ULID (id < cursor),
+	// `top` pages by a composite score:id (see decodeTopCursor). A cursor from
+	// the wrong sort decodes to null → treated as the first page.
+	const beforeRaw = c.req.query("before") ?? null;
+	const cursor = sort === "new" ? decodeCursor(beforeRaw) : null;
+	const topCursor = sort === "top" ? decodeTopCursor(beforeRaw) : null;
 	const session = await readSession(c);
 
+	// Top-level threads per page, operator-tunable (DB > env > default 25),
+	// clamped to [1,200] in the settings layer.
+	const pageSize = (await loadNumbers(c.env)).comments_per_page;
+
 	// Fast path: first page is cached in KV for anonymous viewers only,
-	// keyed by sort so `top` and `new` don't poison each other.
-	// Signed-in viewers see per-user my_vote / mine flags so they bypass
-	// the cache. KV cache hit-rate stays high on the public reader path,
-	// which dominates traffic.
-	const cacheKey = `tree:${slug}:first:${sort}`;
-	if (!cursor && !session) {
+	// keyed by sort AND page size so `top`/`new` and a changed page size
+	// don't serve each other's slices. Signed-in viewers see per-user
+	// my_vote / mine flags so they bypass the cache. KV cache hit-rate stays
+	// high on the public reader path, which dominates traffic.
+	const cacheKey = `tree:${slug}:first:${sort}:n${pageSize}`;
+	const hasCursor = cursor !== null || topCursor !== null;
+	if (!hasCursor && !session) {
 		const cached = await c.env.TREE_CACHE.get(cacheKey, "json");
 		if (cached) return c.json(cached);
 	}
@@ -614,13 +635,14 @@ comments.get("/", async (c) => {
 
 	if (sort === "top") {
 		// Top-level only — replies stay in created_at ASC so threaded
-		// conversation reads top-down. Tie-break on newer-first so a
-		// fresh comment with the same score floats above an old one.
+		// conversation reads top-down. Order by (score DESC, id DESC): a total
+		// order over unique ULIDs, which the composite score:id cursor pages
+		// through. id-desc also floats a fresher same-score comment above an
+		// older one (ULIDs are time-monotonic).
 		allThreads.sort((a, b) => {
-			const sa = a.score_up - a.score_down;
-			const sb = b.score_up - b.score_down;
-			if (sb !== sa) return sb - sa;
-			return b.created_at - a.created_at;
+			const d = threadScore(b) - threadScore(a);
+			if (d !== 0) return d;
+			return a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
 		});
 	} else {
 		// Newest-first top-level ordering. The tree builder returns ASC so
@@ -628,20 +650,32 @@ comments.get("/", async (c) => {
 		allThreads.reverse();
 	}
 
-	// Apply cursor: slice threads with id < cursor.
-	const startIdx = cursor
-		? allThreads.findIndex((t) => t.id < cursor)
-		: 0;
-	const sliceFrom = startIdx < 0 ? allThreads.length : startIdx;
-	const page = allThreads.slice(sliceFrom, sliceFrom + TOP_LEVEL_PAGE);
-	// `top` is a single page (see cursor-decoding note above) so callers
-	// shouldn't get a next_cursor that would lead to ill-defined paging.
-	const more = sort === "new" && allThreads.length > sliceFrom + TOP_LEVEL_PAGE;
-	const next_cursor = more ? (page[page.length - 1]?.id ?? null) : null;
+	// Apply the cursor: drop everything up to and including it, in the sort's
+	// own order. `new` → id < cursor; `top` → ranked strictly after (score,id).
+	let startIdx = 0;
+	if (cursor) {
+		const i = allThreads.findIndex((t) => t.id < cursor);
+		startIdx = i < 0 ? allThreads.length : i;
+	} else if (topCursor) {
+		const i = allThreads.findIndex(
+			(t) =>
+				threadScore(t) < topCursor.score ||
+				(threadScore(t) === topCursor.score && t.id < topCursor.id),
+		);
+		startIdx = i < 0 ? allThreads.length : i;
+	}
+	const page = allThreads.slice(startIdx, startIdx + pageSize);
+	const more = allThreads.length > startIdx + pageSize;
+	const last = page[page.length - 1];
+	const next_cursor = more && last
+		? sort === "top"
+			? encodeTopCursor(last)
+			: last.id
+		: null;
 
 	const payload: ListPayload = { post, threads: page, next_cursor };
 
-	if (!cursor && !session) {
+	if (!hasCursor && !session) {
 		// Write-through cache. expirationTtl is in seconds.
 		await c.env.TREE_CACHE.put(cacheKey, JSON.stringify(payload), {
 			expirationTtl: TREE_CACHE_TTL,
@@ -682,11 +716,7 @@ comments.patch("/:id", async (c) => {
 		body_html,
 		CURRENT_RENDERER_VERSION,
 	);
-	await Promise.all([
-		c.env.TREE_CACHE.delete(`tree:${existing.post_slug}:first:new`),
-		c.env.TREE_CACHE.delete(`tree:${existing.post_slug}:first:top`),
-		c.env.TREE_CACHE.delete(`tree:${existing.post_slug}:first`),
-	]);
+	await bustTreeCache(c.env, existing.post_slug);
 	writeEvent(c.env.ANALYTICS, "comment.edited", { post_slug: existing.post_slug });
 	fireWebhook(c.env, c.executionCtx, {
 		event: "comment.edited",
@@ -733,11 +763,7 @@ comments.delete("/:id", async (c) => {
 	}
 
 	await softDeleteComment(c.env.DB, id);
-	await Promise.all([
-		c.env.TREE_CACHE.delete(`tree:${existing.post_slug}:first:new`),
-		c.env.TREE_CACHE.delete(`tree:${existing.post_slug}:first:top`),
-		c.env.TREE_CACHE.delete(`tree:${existing.post_slug}:first`),
-	]);
+	await bustTreeCache(c.env, existing.post_slug);
 	writeEvent(c.env.ANALYTICS, "comment.deleted", { post_slug: existing.post_slug });
 	fireWebhook(c.env, c.executionCtx, {
 		event: "comment.deleted",
