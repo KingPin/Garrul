@@ -21,7 +21,7 @@
  * read.
  */
 
-export type ProviderId = "github" | "google";
+export type ProviderId = "github" | "google" | "facebook";
 
 export type ProviderProfile = {
 	provider_id: string; // stable per-provider user id (string form)
@@ -112,6 +112,31 @@ const fetchGoogleProfile = async (token: string): Promise<ProviderProfile> => {
 	};
 };
 
+// Facebook Login (Graph API). Returns email only for accounts with a
+// confirmed email that grant the `email` scope; Graph omits unverified
+// addresses, so we treat a returned address as trusted.
+const fetchFacebookProfile = async (
+	token: string,
+): Promise<ProviderProfile> => {
+	const res = await fetch(
+		"https://graph.facebook.com/v21.0/me?fields=id,name,email,picture.type(large)",
+		{ headers: { authorization: `Bearer ${token}` } },
+	);
+	if (!res.ok) throw new Error(`facebook me ${res.status}`);
+	const u = (await res.json()) as {
+		id: string;
+		name?: string;
+		email?: string;
+		picture?: { data?: { url?: string } };
+	};
+	return {
+		provider_id: u.id,
+		email: u.email ?? null,
+		name: u.name?.trim() || u.email || "user",
+		avatar_url: u.picture?.data?.url ?? null,
+	};
+};
+
 export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
 	github: {
 		authorize_url: "https://github.com/login/oauth/authorize",
@@ -129,10 +154,18 @@ export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
 		client_secret_env: "GOOGLE_CLIENT_SECRET",
 		fetch_profile: fetchGoogleProfile,
 	},
+	facebook: {
+		authorize_url: "https://www.facebook.com/v21.0/dialog/oauth",
+		token_url: "https://graph.facebook.com/v21.0/oauth/access_token",
+		scope: "email public_profile",
+		client_id_env: "FACEBOOK_CLIENT_ID",
+		client_secret_env: "FACEBOOK_CLIENT_SECRET",
+		fetch_profile: fetchFacebookProfile,
+	},
 };
 
 export const isProvider = (s: string): s is ProviderId =>
-	s === "github" || s === "google";
+	s === "github" || s === "google" || s === "facebook";
 
 const randomState = (): string => {
 	const bytes = new Uint8Array(24);

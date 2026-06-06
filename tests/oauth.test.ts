@@ -38,10 +38,11 @@ class StubKV {
 const kv = () => new StubKV() as unknown as KVNamespace;
 
 describe("isProvider", () => {
-	it("accepts github and google only", () => {
+	it("accepts known providers and rejects others", () => {
 		expect(isProvider("github")).toBe(true);
 		expect(isProvider("google")).toBe(true);
-		expect(isProvider("twitter")).toBe(false);
+		expect(isProvider("facebook")).toBe(true);
+		expect(isProvider("myspace")).toBe(false);
 		expect(isProvider("")).toBe(false);
 	});
 });

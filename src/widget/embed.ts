@@ -1509,15 +1509,22 @@ const buildThread = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	return wrap;
 };
 
-const PROVIDER_LABELS: Record<"github" | "google", string> = {
+// Mirror of src/lib/oauth.ts ProviderId. The widget is bundled separately
+// (no server imports) so the union is duplicated here; PROVIDER_LABELS is the
+// single source of which ids the widget will render, and the /config filter
+// keys off it.
+type OAuthProvider = "github" | "google" | "facebook";
+
+const PROVIDER_LABELS: Record<OAuthProvider, string> = {
 	github: "GitHub",
 	google: "Google",
+	facebook: "Facebook",
 };
 
 const buildAuthBlock = (
 	me: Me,
 	apiBase: string,
-	providers: ReadonlyArray<"github" | "google">,
+	providers: ReadonlyArray<OAuthProvider>,
 	onSignedIn: () => void,
 	onSignedOut: () => void,
 ): HTMLElement | null => {
@@ -1649,7 +1656,7 @@ const buildForm = (
 };
 
 const startOauth = (
-	provider: "github" | "google",
+	provider: OAuthProvider,
 	apiBase: string,
 	onSuccess: () => void,
 ): void => {
@@ -1831,7 +1838,7 @@ const loadOnce = async (
 ) => {
 	let siteKey: string | null = null;
 	let editWindowMinutes = 5;
-	let providers: ReadonlyArray<"github" | "google"> = [];
+	let providers: ReadonlyArray<OAuthProvider> = [];
 	let brandingHidden = false;
 	let commentsEnabled = true;
 	let reactionsEnabled = true;
@@ -1864,8 +1871,8 @@ const loadOnce = async (
 			};
 			siteKey = cfg.turnstile_site_key ?? null;
 			editWindowMinutes = cfg.edit_window_minutes ?? 5;
-			providers = (cfg.providers ?? []).filter(
-				(p): p is "github" | "google" => p === "github" || p === "google",
+			providers = (cfg.providers ?? []).filter((p): p is OAuthProvider =>
+				Object.prototype.hasOwnProperty.call(PROVIDER_LABELS, p),
 			);
 			brandingHidden = cfg.branding_hidden === true;
 			commentsEnabled = cfg.comments_enabled !== false;
