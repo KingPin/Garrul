@@ -31,10 +31,53 @@ export const ADMIN_CSP = [
 ].join("; ");
 
 export const ADMIN_CSS = `
+/* ── Design tokens ──────────────────────────────────────────────────────
+   Light is the default (:root). Dark is opt-in via [data-theme="dark"] on
+   <html>. When the operator has made no explicit choice, the OS preference
+   wins via the prefers-color-scheme block below (scoped to :not([data-theme])
+   so an explicit data-theme="light" always beats a dark OS).
+
+   --panel / --fg are transitional aliases for the old token names so existing
+   component CSS keeps working during the redesign; they're removed once every
+   reference is migrated. */
 :root {
-  --bg: #0b0d10; --panel: #131820; --border: #1e2530; --text: #e7eaf0;
-  --muted: #8a93a6; --accent: #6aa9ff; --warn: #f7b955; --bad: #ef6a6a;
-  --ok: #4ad295;
+  --bg: #f6f8fa; --surface: #ffffff; --surface-2: #f0f3f6;
+  --border: #e2e7ec; --border-strong: #cdd5dd;
+  --text: #1b2733; --muted: #5c6b7a;
+  --accent: #2563eb; --accent-fg: #ffffff; --accent-weak: #e8f0fe;
+  --ok: #15803d; --ok-weak: #e7f6ec;
+  --warn: #b45309; --warn-weak: #fdf2e3;
+  --bad: #dc2626; --bad-weak: #fdeaea;
+  --shadow: 0 1px 2px rgba(16,24,40,.06), 0 1px 3px rgba(16,24,40,.10);
+  --shadow-lg: 0 8px 28px rgba(16,24,40,.16);
+  --radius: 10px; --radius-sm: 7px;
+  --panel: var(--surface); --fg: var(--text);
+}
+[data-theme="dark"] {
+  --bg: #0b0d10; --surface: #131820; --surface-2: #0f141b;
+  --border: #1e2530; --border-strong: #2a3340;
+  --text: #e7eaf0; --muted: #8a93a6;
+  --accent: #6aa9ff; --accent-fg: #0b0d10; --accent-weak: #16243a;
+  --ok: #4ad295; --ok-weak: #11251c;
+  --warn: #f7b955; --warn-weak: #2a2113;
+  --bad: #ef6a6a; --bad-weak: #2a1717;
+  --shadow: 0 1px 2px rgba(0,0,0,.4);
+  --shadow-lg: 0 8px 28px rgba(0,0,0,.55);
+  --radius: 10px; --radius-sm: 7px;
+  --panel: var(--surface); --fg: var(--text);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    --bg: #0b0d10; --surface: #131820; --surface-2: #0f141b;
+    --border: #1e2530; --border-strong: #2a3340;
+    --text: #e7eaf0; --muted: #8a93a6;
+    --accent: #6aa9ff; --accent-fg: #0b0d10; --accent-weak: #16243a;
+    --ok: #4ad295; --ok-weak: #11251c;
+    --warn: #f7b955; --warn-weak: #2a2113;
+    --bad: #ef6a6a; --bad-weak: #2a1717;
+    --shadow: 0 1px 2px rgba(0,0,0,.4);
+    --shadow-lg: 0 8px 28px rgba(0,0,0,.55);
+  }
 }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--text);
@@ -101,8 +144,8 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .bulk-cell { width: 32px; }
 .score-cell { width: 70px; text-align: center; font-variant-numeric: tabular-nums; }
 .score { font-weight: 600; }
-.score-pos { color: #15803d; }
-.score-neg { color: #b91c1c; }
+.score-pos { color: var(--ok); }
+.score-neg { color: var(--bad); }
 .bulk-bar { position: sticky; bottom: 0; display: flex; align-items: center;
             gap: 0.5rem; padding: 0.75rem 1rem; background: var(--panel);
             border-top: 1px solid var(--border); margin: 1rem -1rem -1rem;
@@ -123,8 +166,8 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
               width: 100%; padding: 0.5rem 0.75rem; background: transparent;
               border: none; color: var(--fg); text-align: left; cursor: pointer; }
 .reply-pick:hover { background: var(--bg); }
-.reply-pick.active { background: var(--accent); color: var(--bg); }
-.reply-pick.active .muted { color: var(--bg); opacity: 0.85; }
+.reply-pick.active { background: var(--accent); color: var(--accent-fg); }
+.reply-pick.active .muted { color: var(--accent-fg); opacity: 0.85; }
 .comment-card { border: 1px solid var(--border); border-radius: 6px;
                 padding: 0.75rem; margin: 0.5rem 0; }
 .comment-card-head { display: flex; justify-content: space-between;
