@@ -186,6 +186,15 @@ const STYLE_CSS = `
 	padding: 0.6rem;
 	box-shadow: var(--gr-shadow);
 }
+/* Nested reply/edit composers sit inside an already-bordered thread, so drop
+   the card chrome (surface fill, border, shadow, padding) to avoid a box in a
+   box — they blend into the thread instead of stacking another raised card. */
+.gr-compose.gr-compose-nested {
+	background: transparent;
+	border: 0;
+	box-shadow: none;
+	padding: 0;
+}
 .gr-compose textarea[hidden] { display: none; }
 .gr-tabs { display: flex; gap: 0.25rem; }
 .gr-tab {
@@ -551,8 +560,9 @@ const buildToolbar = (ta: HTMLTextAreaElement): HTMLElement => {
 const buildWritePreview = (
 	textarea: HTMLTextAreaElement,
 	apiBase: string,
+	compact = false,
 ): HTMLElement => {
-	const wrap = el("div", "gr-compose");
+	const wrap = el("div", compact ? "gr-compose gr-compose-nested" : "gr-compose");
 	const tabs = el("div", "gr-tabs");
 	tabs.setAttribute("role", "tablist");
 	const writeTab = el("button", "gr-tab gr-tab-active", "Write");
@@ -1191,7 +1201,7 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 	cancel.type = "button";
 	cancel.addEventListener("click", () => wrap.remove());
 	actions.append(save, cancel);
-	wrap.append(buildWritePreview(ta, ctx.apiBase), actions);
+	wrap.append(buildWritePreview(ta, ctx.apiBase, true), actions);
 	wrap.addEventListener("submit", async (e) => {
 		e.preventDefault();
 		save.disabled = true;
@@ -1231,7 +1241,7 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 		nameInput.required = true;
 		wrap.appendChild(nameInput);
 	}
-	wrap.appendChild(buildWritePreview(ta, ctx.apiBase));
+	wrap.appendChild(buildWritePreview(ta, ctx.apiBase, true));
 
 	// Honeypot: mirrors the top-level form's anti-spam input. Hidden offscreen
 	// via .gr-honeypot, readonly to defeat browser autofill, tabIndex -1 so
