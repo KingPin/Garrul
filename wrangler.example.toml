@@ -53,6 +53,14 @@ OAUTH_CALLBACK_BASE = "https://comments.example.com"
 # Page-level engagement — react / vote on the article itself (default off):
 # PAGE_REACTIONS_ENABLED = "false"
 # PAGE_VOTES_ENABLED = "false"
+# Display & pagination (all optional; clamped server-side). Also editable at
+# runtime from the admin Settings page. Top-level comments per initial load /
+# "Load older" click (default 25, range 1-200 — set 100 for pre-v1.10 behavior):
+# COMMENTS_PER_PAGE = "25"
+# Replies shown per parent before a "Show N more replies" button (0 = all):
+# REPLIES_PER_THREAD = "3"
+# Replies at this nesting depth or deeper start collapsed (0 = never):
+# AUTO_COLLAPSE_DEPTH = "3"
 # Optional: Cloudflare account ID — paired with the CF_API_TOKEN secret to
 # enable the /admin/usage analytics page.
 # CF_ACCOUNT_ID = "0123abcd..."

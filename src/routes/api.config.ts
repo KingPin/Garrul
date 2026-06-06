@@ -15,6 +15,9 @@
  *     surfaces the widget should render. Resolved with DB-override > env >
  *     default precedence (see src/lib/settings.ts); operators toggle them at
  *     runtime from the admin Settings page.
+ *   - numeric display settings (comments_per_page, replies_per_thread,
+ *     auto_collapse_depth): page size and reply-collapse tuning, same
+ *     DB-override > env > default precedence (see src/lib/settings.ts).
  *
  * The widget calls this once on mount. Missing or empty → widget renders
  * without a Turnstile challenge (and anonymous POSTs will be rejected
@@ -23,7 +26,7 @@
 import { Hono } from "hono";
 import type { Bindings } from "../index";
 import { PROVIDERS, type ProviderId } from "../lib/oauth";
-import { loadFlags } from "../lib/settings";
+import { loadFlags, loadNumbers } from "../lib/settings";
 
 const config = new Hono<{ Bindings: Bindings }>();
 
@@ -38,8 +41,12 @@ config.get("/", async (c) => {
 		const cfg = PROVIDERS[p];
 		return !!c.env[cfg.client_id_env] && !!c.env[cfg.client_secret_env];
 	});
-	// Feature flags resolved with DB-override > env > default precedence.
-	const flags = await loadFlags(c.env);
+	// Feature flags + numeric display settings, both resolved with
+	// DB-override > env > default precedence.
+	const [flags, numbers] = await Promise.all([
+		loadFlags(c.env),
+		loadNumbers(c.env),
+	]);
 	return c.json({
 		turnstile_site_key: c.env.TURNSTILE_SITE_KEY || null,
 		edit_window_minutes,
@@ -56,6 +63,13 @@ config.get("/", async (c) => {
 		downvotes_enabled: flags.downvotes_enabled,
 		page_reactions_enabled: flags.page_reactions_enabled,
 		page_votes_enabled: flags.page_votes_enabled,
+		// Display/pagination. comments_per_page drives the server-side page
+		// slice (included here for parity/debuggability); the widget consumes
+		// replies_per_thread and auto_collapse_depth for client-side reply
+		// collapsing.
+		comments_per_page: numbers.comments_per_page,
+		replies_per_thread: numbers.replies_per_thread,
+		auto_collapse_depth: numbers.auto_collapse_depth,
 	});
 });
 

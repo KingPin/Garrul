@@ -15,6 +15,7 @@ import { checkRateLimit } from "../lib/ratelimit";
 import { readSession } from "../lib/session";
 import { writeEvent } from "../lib/analytics";
 import { loadFlags } from "../lib/settings";
+import { bustTreeCache } from "../lib/tree-cache";
 import { t } from "../i18n";
 
 const reactions = new Hono<{ Bindings: Bindings }>();
@@ -72,11 +73,7 @@ reactions.post("/", async (c) => {
 	const result = await toggleReaction(c.env.DB, comment_id, userId, kind);
 
 	// Bust the cached first page so reaction counts reflect immediately.
-	await Promise.all([
-		c.env.TREE_CACHE.delete(`tree:${comment.post_slug}:first:new`),
-		c.env.TREE_CACHE.delete(`tree:${comment.post_slug}:first:top`),
-		c.env.TREE_CACHE.delete(`tree:${comment.post_slug}:first`),
-	]);
+	await bustTreeCache(c.env, comment.post_slug);
 
 	writeEvent(c.env.ANALYTICS, "reaction.toggled", {
 		post_slug: comment.post_slug,

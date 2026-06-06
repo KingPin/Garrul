@@ -40,13 +40,13 @@ Or in a stylesheet:
 | `--garrul-font-size`      | `15px`                                   | Base font size                        |
 | `--garrul-fg`             | `#1a1a1a`                                | Primary text color                    |
 | `--garrul-bg`             | `transparent`                            | Widget background                     |
-| `--garrul-muted`          | `#6b7280`                                | Timestamps, "be the first…" message   |
+| `--garrul-muted`          | `#6b7280`                                | Timestamps, "be the first…" message, the reply collapse toggle (`▸`/`▾`) |
 | `--garrul-border`         | `#d0d3d8`                                | Input borders                         |
 | `--garrul-radius`         | `6px`                                    | Border-radius on inputs and buttons   |
 | `--garrul-input-bg`       | `#fff`                                   | Input + textarea background           |
 | `--garrul-accent`         | `#2563eb`                                | Submit button background              |
 | `--garrul-accent-fg`      | `#fff`                                   | Submit button text                    |
-| `--garrul-link`           | `#2563eb`                                | Link color in comment bodies          |
+| `--garrul-link`           | `#2563eb`                                | Link color in comment bodies, the "Show N more replies" / "Load older comments" buttons |
 | `--garrul-error`          | `#b91c1c`                                | Error message color                   |
 | `--garrul-badge-bg`       | `#e0e7ff`                                | "Verified" badge background           |
 | `--garrul-badge-fg`       | `#1e3a8a`                                | "Verified" badge text                 |

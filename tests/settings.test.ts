@@ -17,8 +17,14 @@ import { Hono } from "hono";
 import {
 	loadFlags,
 	bustFlagsCache,
+	loadNumbers,
+	bustNumbersCache,
+	parseIntSetting,
 	FLAG_KEYS,
+	NUMBER_KEYS,
+	numberBounds,
 	type FlagKey,
+	type NumberKey,
 } from "../src/lib/settings";
 import { reactions } from "../src/routes/api.reactions";
 import { comments } from "../src/routes/api.comments";
@@ -235,6 +241,163 @@ describe("bustFlagsCache", () => {
 		expect(db.reads()).toBe(1);
 		await bustFlagsCache(env);
 		await loadFlags(env);
+		expect(db.reads()).toBe(2);
+	});
+});
+
+// -- numeric display settings ------------------------------------------------
+//
+// loadNumbers() mirrors loadFlags()'s precedence (DB > env > default) and KV
+// cache, but resolves integers with a per-key [min,max] clamp. It caches under
+// its own key ("settings:numbers") so it never disturbs the flag cache entry.
+
+describe("parseIntSetting — clamp + fallback", () => {
+	it("returns the fallback for undefined / empty / junk", () => {
+		expect(parseIntSetting(undefined, 25, 1, 200)).toBe(25);
+		expect(parseIntSetting("", 25, 1, 200)).toBe(25);
+		expect(parseIntSetting("   ", 25, 1, 200)).toBe(25);
+		expect(parseIntSetting("abc", 25, 1, 200)).toBe(25);
+	});
+
+	it("clamps below min and above max", () => {
+		expect(parseIntSetting("-5", 25, 1, 200)).toBe(1);
+		expect(parseIntSetting("0", 25, 1, 200)).toBe(1);
+		expect(parseIntSetting("9999", 25, 1, 200)).toBe(200);
+	});
+
+	it("passes an in-range value through", () => {
+		expect(parseIntSetting("50", 25, 1, 200)).toBe(50);
+	});
+
+	it("parses a leading integer from a decimal-ish string", () => {
+		// Number.parseInt semantics: "12.9" -> 12.
+		expect(parseIntSetting("12.9", 25, 1, 200)).toBe(12);
+	});
+});
+
+describe("loadNumbers — defaults", () => {
+	it("returns built-in defaults when no DB rows and no env vars", async () => {
+		const { env } = mkEnv();
+		const numbers = await loadNumbers(env);
+		expect(numbers).toEqual({
+			comments_per_page: 25,
+			replies_per_thread: 3,
+			auto_collapse_depth: 3,
+		});
+	});
+
+	it("resolves a number for every canonical number key", async () => {
+		const { env } = mkEnv();
+		const numbers = await loadNumbers(env);
+		for (const key of NUMBER_KEYS) {
+			expect(typeof numbers[key as NumberKey]).toBe("number");
+		}
+	});
+
+	it("every default sits within its own clamp bounds", async () => {
+		for (const key of NUMBER_KEYS) {
+			const b = numberBounds(key as NumberKey);
+			expect(b.default).toBeGreaterThanOrEqual(b.min);
+			expect(b.default).toBeLessThanOrEqual(b.max);
+		}
+	});
+});
+
+describe("loadNumbers — env var over default", () => {
+	it("env var overrides the default", async () => {
+		const { env } = mkEnv({}, { COMMENTS_PER_PAGE: "50" });
+		const numbers = await loadNumbers(env);
+		expect(numbers.comments_per_page).toBe(50);
+	});
+
+	it("clamps an out-of-range env value", async () => {
+		const { env } = mkEnv({}, { COMMENTS_PER_PAGE: "9999" });
+		const numbers = await loadNumbers(env);
+		expect(numbers.comments_per_page).toBe(200);
+	});
+
+	it("falls back to default for a junk env value", async () => {
+		const { env } = mkEnv({}, { REPLIES_PER_THREAD: "lots" });
+		const numbers = await loadNumbers(env);
+		expect(numbers.replies_per_thread).toBe(3);
+	});
+});
+
+describe("loadNumbers — DB row over env var", () => {
+	it("DB row beats a conflicting env var", async () => {
+		const { env } = mkEnv(
+			{ comments_per_page: "10" },
+			{ COMMENTS_PER_PAGE: "100" },
+		);
+		const numbers = await loadNumbers(env);
+		expect(numbers.comments_per_page).toBe(10);
+	});
+
+	it("clamps a hostile DB value (no DoS-via-huge-slice)", async () => {
+		const { env } = mkEnv({ comments_per_page: "1000000" });
+		const numbers = await loadNumbers(env);
+		expect(numbers.comments_per_page).toBe(200);
+	});
+
+	it("clamps a negative DB value up to min", async () => {
+		const { env } = mkEnv({ replies_per_thread: "-1" });
+		const numbers = await loadNumbers(env);
+		expect(numbers.replies_per_thread).toBe(0);
+	});
+
+	it("a row for one number does not disturb the others", async () => {
+		const { env } = mkEnv({ comments_per_page: "10" });
+		const numbers = await loadNumbers(env);
+		expect(numbers.comments_per_page).toBe(10);
+		expect(numbers.replies_per_thread).toBe(3);
+		expect(numbers.auto_collapse_depth).toBe(3);
+	});
+});
+
+describe("loadNumbers — KV cache", () => {
+	it("caches under its own key, leaving the flag cache untouched", async () => {
+		const { env, kv } = mkEnv({ comments_per_page: "10" });
+		await loadNumbers(env);
+		expect(kv.store.has("settings:numbers")).toBe(true);
+		expect(kv.store.has("settings:flags")).toBe(false);
+	});
+
+	it("serves a warm cache without touching D1", async () => {
+		const { env, db } = mkEnv({ comments_per_page: "10" });
+		const first = await loadNumbers(env);
+		expect(db.reads()).toBe(1);
+		const second = await loadNumbers(env);
+		expect(db.reads()).toBe(1);
+		expect(second).toEqual(first);
+	});
+
+	it("loadFlags and loadNumbers don't share a cache entry", async () => {
+		const { env } = mkEnv({ comments_enabled: "false", comments_per_page: "10" });
+		const flags = await loadFlags(env);
+		const numbers = await loadNumbers(env);
+		expect(flags.comments_enabled).toBe(false);
+		expect(numbers.comments_per_page).toBe(10);
+	});
+});
+
+describe("bustNumbersCache", () => {
+	it("deletes only the numbers cache entry", async () => {
+		const { env, kv } = mkEnv({ comments_per_page: "10" });
+		await loadFlags(env);
+		await loadNumbers(env);
+		expect(kv.store.has("settings:numbers")).toBe(true);
+		await bustNumbersCache(env);
+		expect(kv.store.has("settings:numbers")).toBe(false);
+		// The flag cache survives an independent numbers bust.
+		expect(kv.store.has("settings:flags")).toBe(true);
+	});
+
+	it("forces a fresh D1 read on the next load", async () => {
+		const { env, db } = mkEnv({ comments_per_page: "10" });
+		await loadNumbers(env);
+		expect(db.reads()).toBe(1);
+		await bustNumbersCache(env);
+		await loadNumbers(env);
 		expect(db.reads()).toBe(2);
 	});
 });

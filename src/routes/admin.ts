@@ -98,7 +98,16 @@ import { renderUserDetail } from "../admin-ui/pages/user-detail";
 import { renderUsers } from "../admin-ui/pages/users";
 import { renderOperator } from "../admin-ui/pages/operator";
 import { renderSettings } from "../admin-ui/pages/settings";
-import { bustFlagsCache, FLAG_KEYS, loadFlags } from "../lib/settings";
+import {
+	bustFlagsCache,
+	bustNumbersCache,
+	FLAG_KEYS,
+	loadFlags,
+	loadNumbers,
+	NUMBER_KEYS,
+	numberBounds,
+} from "../lib/settings";
+import { bustTreeCache } from "../lib/tree-cache";
 import {
 	renderWebhookForm,
 	renderWebhooksList,
@@ -601,21 +610,31 @@ admin.get("/operator", async (c) => {
 admin.get("/settings", async (c) => {
 	const user = await requireAdmin(c);
 	if (user instanceof Response) return user;
-	const [updateInfo, flags] = await Promise.all([
+	const [updateInfo, flags, numbers] = await Promise.all([
 		peekCachedLatestVersion(c.env),
 		loadFlags(c.env),
+		loadNumbers(c.env),
 	]);
 	return c.html(
-		renderPage(c, "Settings", renderSettings(c.env, flags), user, updateInfo),
+		renderPage(
+			c,
+			"Settings",
+			renderSettings(c.env, flags, numbers),
+			user,
+			updateInfo,
+		),
 	);
 });
 
-// Persist runtime feature-flag overrides. Body is either
-//   { flags: { comments_enabled: bool, … } }  — write an override per flag
-//   { reset: true }                            — clear all overrides
+// Persist runtime settings overrides. Body is either
+//   { flags: { comments_enabled: bool, … },     — boolean feature toggles
+//     numbers: { comments_per_page: 25, … } }    — numeric display settings
+//   { reset: true }                              — clear all overrides
+// flags and numbers are independent; either or both may be present.
 // Admin-only; same-origin CSRF check is enforced by the admin middleware.
 type SettingsBody = {
 	flags?: Record<string, unknown>;
+	numbers?: Record<string, unknown>;
 	reset?: unknown;
 };
 
@@ -626,48 +645,81 @@ admin.post("/settings", async (c) => {
 	if (!body) return c.json({ error: "invalid_body" }, 400);
 
 	if (body.reset === true) {
-		await deleteSettings(c.env.DB, FLAG_KEYS);
-		await bustFlagsCache(c.env);
+		await deleteSettings(c.env.DB, [...FLAG_KEYS, ...NUMBER_KEYS]);
+		await Promise.all([bustFlagsCache(c.env), bustNumbersCache(c.env)]);
 		await adminInsertAudit(c.env.DB, {
 			admin_id: user.id,
 			action: "settings.update",
 			target_kind: "system",
-			target_id: "flags",
+			target_id: "settings",
 			meta: { reset: true },
 		});
 		return c.json({ ok: true, reset: true });
 	}
 
-	if (!body.flags || typeof body.flags !== "object") {
-		return c.json({ error: "flags_required" }, 400);
+	const flagsObj =
+		body.flags && typeof body.flags === "object" ? body.flags : null;
+	const numbersObj =
+		body.numbers && typeof body.numbers === "object" ? body.numbers : null;
+	if (!flagsObj && !numbersObj) {
+		return c.json({ error: "settings_required" }, 400);
 	}
 
-	// Only persist known flags; ignore anything else the client sends.
-	const written: Record<string, boolean> = {};
-	for (const key of FLAG_KEYS) {
-		const raw = body.flags[key];
-		if (raw === undefined) continue;
-		if (typeof raw !== "boolean") {
-			return c.json({ error: `invalid_flag:${key}` }, 400);
+	// Only persist known keys; ignore anything else the client sends.
+	const writtenFlags: Record<string, boolean> = {};
+	if (flagsObj) {
+		for (const key of FLAG_KEYS) {
+			const raw = flagsObj[key];
+			if (raw === undefined) continue;
+			if (typeof raw !== "boolean") {
+				return c.json({ error: `invalid_flag:${key}` }, 400);
+			}
+			writtenFlags[key] = raw;
 		}
-		written[key] = raw;
-	}
-	if (Object.keys(written).length === 0) {
-		return c.json({ error: "flags_required" }, 400);
 	}
 
-	for (const [key, value] of Object.entries(written)) {
+	// Numbers are validated and clamped into their declared [min,max] so a
+	// hostile or fat-fingered value can't reach the slice/render paths.
+	const writtenNumbers: Record<string, number> = {};
+	if (numbersObj) {
+		for (const key of NUMBER_KEYS) {
+			const raw = numbersObj[key];
+			if (raw === undefined) continue;
+			const n = typeof raw === "number" ? raw : Number.parseInt(String(raw), 10);
+			if (!Number.isFinite(n)) {
+				return c.json({ error: `invalid_number:${key}` }, 400);
+			}
+			const { min, max } = numberBounds(key);
+			writtenNumbers[key] = Math.min(max, Math.max(min, Math.trunc(n)));
+		}
+	}
+
+	if (
+		Object.keys(writtenFlags).length === 0 &&
+		Object.keys(writtenNumbers).length === 0
+	) {
+		return c.json({ error: "settings_required" }, 400);
+	}
+
+	for (const [key, value] of Object.entries(writtenFlags)) {
 		await setSetting(c.env.DB, key, value ? "true" : "false");
 	}
-	await bustFlagsCache(c.env);
+	for (const [key, value] of Object.entries(writtenNumbers)) {
+		await setSetting(c.env.DB, key, String(value));
+	}
+	const busts: Promise<void>[] = [];
+	if (Object.keys(writtenFlags).length > 0) busts.push(bustFlagsCache(c.env));
+	if (Object.keys(writtenNumbers).length > 0)
+		busts.push(bustNumbersCache(c.env));
+	await Promise.all(busts);
 	await adminInsertAudit(c.env.DB, {
 		admin_id: user.id,
 		action: "settings.update",
 		target_kind: "system",
-		target_id: "flags",
-		meta: written,
+		target_id: "settings",
+		meta: { ...writtenFlags, ...writtenNumbers },
 	});
-	return c.json({ ok: true, flags: written });
+	return c.json({ ok: true, flags: writtenFlags, numbers: writtenNumbers });
 });
 
 admin.get("/about", async (c) => {
@@ -1219,11 +1271,7 @@ admin.post("/api/saved-replies/:id/post", async (c) => {
 		},
 	});
 	// Bust the post's tree caches so the new reply is visible immediately.
-	await Promise.all([
-		c.env.TREE_CACHE.delete(`tree:${target.post_slug}:first:new`),
-		c.env.TREE_CACHE.delete(`tree:${target.post_slug}:first:top`),
-		c.env.TREE_CACHE.delete(`tree:${target.post_slug}:first`),
-	]);
+	await bustTreeCache(c.env, target.post_slug);
 	fireWebhook(c.env, c.executionCtx, {
 		event: "comment.posted",
 		comment_id: inserted.id,
@@ -1273,7 +1321,7 @@ admin.post("/api/comments/:id", async (c) => {
 		meta: { prev_status: existing.status, new_status: newStatus },
 	});
 	// Bust the cached first page so the moderation result is visible.
-	await c.env.TREE_CACHE.delete(`tree:${existing.post_slug}:first`);
+	await bustTreeCache(c.env, existing.post_slug);
 	const webhookEvent: WebhookEvent | null =
 		newStatus === "approved"
 			? "comment.approved"
@@ -1358,7 +1406,7 @@ admin.post("/api/comments/bulk", async (c) => {
 			target_id: id,
 			meta: { batch_size: touched.length, new_status: newStatus },
 		});
-		await c.env.TREE_CACHE.delete(`tree:${existing.post_slug}:first`);
+		await bustTreeCache(c.env, existing.post_slug);
 		if (webhookEvent) {
 			fireWebhook(c.env, c.executionCtx, {
 				event: webhookEvent,
