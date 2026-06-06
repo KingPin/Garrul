@@ -262,7 +262,15 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
 }
 .gr-form button:hover:not([disabled]) { background: var(--gr-accent-hover); }
 .gr-form button[disabled] { opacity: 0.6; cursor: progress; }
-.gr-error { color: var(--gr-error); font-size: 0.9em; }
+.gr-error {
+	color: var(--gr-error);
+	font-size: 0.9em;
+	background: var(--gr-surface);
+	border: 1px solid var(--gr-border);
+	border-radius: var(--gr-radius);
+	padding: 0.5rem 0.7rem;
+}
+.gr-error[hidden] { display: none; }
 .gr-error.is-notice { color: var(--gr-notice); }
 .gr-list { display: flex; flex-direction: column; gap: 1rem; }
 .gr-thread { display: flex; flex-direction: column; gap: 0.75rem; }
@@ -377,7 +385,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
 	color: var(--gr-accent-fg);
 	border-color: var(--gr-accent);
 }
-.gr-empty { color: var(--gr-muted); margin: 0; }
+.gr-empty { color: var(--gr-muted); margin: 0; text-align: center; padding: 1.5rem 1rem; }
 .gr-loadmore {
 	font: inherit;
 	background: transparent;
