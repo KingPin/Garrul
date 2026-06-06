@@ -35,11 +35,7 @@ export const ADMIN_CSS = `
    Light is the default (:root). Dark is opt-in via [data-theme="dark"] on
    <html>. When the operator has made no explicit choice, the OS preference
    wins via the prefers-color-scheme block below (scoped to :not([data-theme])
-   so an explicit data-theme="light" always beats a dark OS).
-
-   --panel / --fg are transitional aliases for the old token names so existing
-   component CSS keeps working during the redesign; they're removed once every
-   reference is migrated. */
+   so an explicit data-theme="light" always beats a dark OS). */
 :root {
   --bg: #f6f8fa; --surface: #ffffff; --surface-2: #f0f3f6;
   --border: #e2e7ec; --border-strong: #cdd5dd;
@@ -51,7 +47,6 @@ export const ADMIN_CSS = `
   --shadow: 0 1px 2px rgba(16,24,40,.06), 0 1px 3px rgba(16,24,40,.10);
   --shadow-lg: 0 8px 28px rgba(16,24,40,.16);
   --radius: 10px; --radius-sm: 7px;
-  --panel: var(--surface); --fg: var(--text);
 }
 [data-theme="dark"] {
   --bg: #0b0d10; --surface: #131820; --surface-2: #0f141b;
@@ -64,7 +59,6 @@ export const ADMIN_CSS = `
   --shadow: 0 1px 2px rgba(0,0,0,.4);
   --shadow-lg: 0 8px 28px rgba(0,0,0,.55);
   --radius: 10px; --radius-sm: 7px;
-  --panel: var(--surface); --fg: var(--text);
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme]) {
