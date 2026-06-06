@@ -224,6 +224,45 @@ kbd { background: var(--bg); border: 1px solid var(--border);
 .release-body { font-size: 0.9rem; }
 .release-body p:first-child { margin-top: 0; }
 .release-body p:last-child { margin-bottom: 0; }
+/* ── Shared controls (icons, switches, steppers, tabs, charts) ──────────── */
+.icon { display: inline-block; vertical-align: -0.18em; flex: 0 0 auto; }
+.field-row, .switch-row { display: flex; gap: 0.75rem; align-items: flex-start;
+                          padding: 0.6rem 0; border-bottom: 1px solid var(--border); }
+.field-row:last-child, .switch-row:last-child { border-bottom: 0; }
+.switch-row { cursor: pointer; }
+.field-text { display: flex; flex-direction: column; gap: 0.1rem; min-width: 0; }
+.field-text .muted { font-size: 0.8rem; }
+.switch { position: relative; display: inline-flex; flex: 0 0 auto; margin-top: 0.1rem; }
+.switch input { position: absolute; inset: 0; width: 100%; height: 100%;
+                margin: 0; opacity: 0; cursor: pointer; }
+.switch-track { width: 38px; height: 22px; border-radius: 999px;
+                background: var(--border-strong); transition: background 0.15s;
+                display: inline-block; position: relative; }
+.switch-thumb { position: absolute; top: 2px; left: 2px; width: 18px; height: 18px;
+                border-radius: 50%; background: #fff; transition: transform 0.15s;
+                box-shadow: 0 1px 2px rgba(0,0,0,0.35); }
+.switch input:checked + .switch-track { background: var(--accent); }
+.switch input:checked + .switch-track .switch-thumb { transform: translateX(16px); }
+.switch input:focus-visible + .switch-track { outline: 2px solid var(--accent); outline-offset: 2px; }
+.stepper { display: inline-flex; align-items: stretch; flex: 0 0 auto;
+           border: 1px solid var(--border); border-radius: var(--radius-sm);
+           overflow: hidden; background: var(--surface-2); }
+.stepper-btn { background: transparent; border: 0; border-radius: 0;
+               padding: 0 0.6rem; font-size: 1rem; line-height: 1; color: var(--muted); }
+.stepper-btn:hover { background: var(--accent-weak); color: var(--text); border-color: transparent; }
+.stepper input[type=number] { width: 3.5rem; border: 0; border-left: 1px solid var(--border);
+                              border-right: 1px solid var(--border); background: var(--surface);
+                              color: var(--text); text-align: center; padding: 0.35rem 0.25rem;
+                              font-variant-numeric: tabular-nums; }
+.tabs { display: flex; gap: 0.25rem; border-bottom: 1px solid var(--border);
+        margin-bottom: 1rem; flex-wrap: wrap; }
+.tab { background: transparent; border: 0; border-bottom: 2px solid transparent;
+       border-radius: 0; padding: 0.5rem 0.75rem; color: var(--muted);
+       font-size: 0.9rem; cursor: pointer; }
+.tab:hover { color: var(--text); border-color: transparent; }
+.tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.chart { display: block; width: 100%; }
+
 @media (max-width: 720px) {
   header { flex-wrap: wrap; gap: 0.5rem; padding: 0.5rem 0.75rem; }
   header nav { flex-wrap: wrap; gap: 0.5rem 0.75rem; font-size: 0.9rem; }
