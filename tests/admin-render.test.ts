@@ -15,9 +15,16 @@ import {
 	type SubscriptionsFilters,
 } from "../src/admin-ui/pages/subscriptions";
 import { renderOperator } from "../src/admin-ui/pages/operator";
+import { renderSettings } from "../src/admin-ui/pages/settings";
 import { MAX_XML_BYTES } from "../src/lib/disqus-import";
 import { renderDashboard } from "../src/admin-ui/pages/dashboard";
 import { renderUpdateBanner } from "../src/admin-ui/layout";
+import {
+	FLAG_KEYS,
+	NUMBER_KEYS,
+	type ResolvedFlags,
+	type ResolvedNumbers,
+} from "../src/lib/settings";
 import type {
 	AdminComment,
 	ADMIN_ACTIONS,
@@ -579,5 +586,50 @@ describe("renderDashboard", () => {
 		);
 		expect(html).not.toContain("<svg/onload=alert(1)>");
 		expect(html).toContain("&lt;svg/onload=alert(1)&gt;");
+	});
+});
+
+describe("renderSettings field-name contract", () => {
+	// The render side (this form) and the write side (POST /admin/settings,
+	// which whitelists FLAG_KEYS / NUMBER_KEYS) are wired independently. A typo
+	// or rename on only one side would silently break form submission while
+	// both suites still pass, so pin the rendered name/x-model bindings to the
+	// exact keys the handler persists.
+	const flags = Object.fromEntries(
+		FLAG_KEYS.map((k) => [k, false]),
+	) as ResolvedFlags;
+	const numbers = Object.fromEntries(
+		NUMBER_KEYS.map((k) => [k, 10]),
+	) as ResolvedNumbers;
+	const html = renderSettings({} as Bindings, flags, numbers);
+
+	it("emits a switch for every flag key the POST handler whitelists", () => {
+		for (const key of FLAG_KEYS) {
+			// `name` drives any native submit; `x-model` (= flags.<key>) is what
+			// the Alpine JSON submit actually reads — pin both.
+			expect(html).toContain(`name="${key}"`);
+			expect(html).toContain(`x-model="flags.${key}"`);
+		}
+	});
+
+	it("emits a stepper for every number key the POST handler whitelists", () => {
+		for (const key of NUMBER_KEYS) {
+			expect(html).toContain(`name="${key}"`);
+			expect(html).toContain(`x-model.number="nums.${key}"`);
+		}
+	});
+
+	it("does not emit a settings input bound to an unknown key", () => {
+		// Catches a stray control whose name isn't in the whitelist (would be
+		// silently dropped by the handler). Every checkbox/number input name
+		// must be a known flag or number key.
+		const known = new Set<string>([...FLAG_KEYS, ...NUMBER_KEYS]);
+		const inputNames = [
+			...html.matchAll(/<input\b[^>]*\bname="([^"]+)"/g),
+		].map((m) => m[1]);
+		expect(inputNames.length).toBeGreaterThan(0);
+		for (const name of inputNames) {
+			expect(known.has(name)).toBe(true);
+		}
 	});
 });
