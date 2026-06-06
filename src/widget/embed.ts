@@ -178,7 +178,14 @@ const STYLE_CSS = `
 	padding: 0.5rem 0.7rem;
 }
 .gr-form textarea { min-height: 6em; resize: vertical; }
-.gr-compose { display: flex; flex-direction: column; gap: 0.4rem; }
+.gr-compose {
+	display: flex; flex-direction: column; gap: 0.4rem;
+	background: var(--gr-surface);
+	border: 1px solid var(--gr-border);
+	border-radius: var(--gr-radius);
+	padding: 0.6rem;
+	box-shadow: var(--gr-shadow);
+}
 .gr-compose textarea[hidden] { display: none; }
 .gr-tabs { display: flex; gap: 0.25rem; }
 .gr-tab {
@@ -222,7 +229,14 @@ const STYLE_CSS = `
 	cursor: pointer;
 	align-self: flex-start;
 }
-.gr-toolbar-btn:hover { border-color: var(--gr-accent); }
+.gr-toolbar-btn:hover { background: var(--gr-hover); border-color: var(--gr-accent); }
+/* One focus ring for every interactive control in the shadow tree. */
+button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-visible {
+	outline: 2px solid var(--gr-accent);
+	outline-offset: 2px;
+}
+.gr-md-hint { font-size: 0.8em; color: var(--gr-muted); }
+.gr-md-hint[hidden] { display: none; }
 .gr-preview p { margin: 0.3em 0; }
 .gr-preview a { color: var(--gr-link); }
 .gr-form .gr-honeypot { position: absolute; left: -9999px; top: -9999px; }
@@ -246,6 +260,7 @@ const STYLE_CSS = `
 	cursor: pointer;
 	align-self: flex-start;
 }
+.gr-form button:hover:not([disabled]) { background: var(--gr-accent-hover); }
 .gr-form button[disabled] { opacity: 0.6; cursor: progress; }
 .gr-error { color: var(--gr-error); font-size: 0.9em; }
 .gr-error.is-notice { color: var(--gr-notice); }
@@ -393,6 +408,7 @@ const STYLE_CSS = `
 	padding: 0.4rem 0.8rem;
 	cursor: pointer;
 }
+.gr-signin button:hover { background: var(--gr-hover); border-color: var(--gr-accent); }
 .gr-signed { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; color: var(--gr-muted); font-size: 0.9em; }
 .gr-signed .gr-signed-name { color: var(--gr-fg); font-weight: 600; }
 .gr-signed button {
@@ -539,6 +555,7 @@ const buildWritePreview = (
 	tabs.append(writeTab, previewTab);
 
 	const toolbar = buildToolbar(textarea);
+	const hint = el("span", "gr-md-hint", "Styling with Markdown is supported");
 	const pane = el("div", "gr-preview");
 	pane.hidden = true;
 
@@ -548,6 +565,7 @@ const buildWritePreview = (
 		writeTab.setAttribute("aria-selected", "true");
 		previewTab.setAttribute("aria-selected", "false");
 		toolbar.hidden = false;
+		hint.hidden = false;
 		textarea.hidden = false;
 		pane.hidden = true;
 	};
@@ -558,6 +576,7 @@ const buildWritePreview = (
 		previewTab.setAttribute("aria-selected", "true");
 		writeTab.setAttribute("aria-selected", "false");
 		toolbar.hidden = true;
+		hint.hidden = true;
 		textarea.hidden = true;
 		pane.hidden = false;
 		const body = textarea.value.trim();
@@ -587,7 +606,7 @@ const buildWritePreview = (
 		void showPreview();
 	});
 
-	wrap.append(tabs, toolbar, textarea, pane);
+	wrap.append(tabs, toolbar, textarea, hint, pane);
 	return wrap;
 };
 
