@@ -99,6 +99,8 @@ crons = ["*/15 * * * *"]
 #   wrangler secret put FACEBOOK_CLIENT_SECRET
 #   wrangler secret put TWITTER_CLIENT_ID       # optional, X/Twitter OAuth 2.0 from developer.x.com
 #   wrangler secret put TWITTER_CLIENT_SECRET
+#   wrangler secret put DISCORD_CLIENT_ID       # optional, from discord.com/developers → OAuth2
+#   wrangler secret put DISCORD_CLIENT_SECRET
 #   wrangler secret put RESEND_API_KEY
 #   wrangler secret put WEBHOOK_URL           # legacy single-URL webhook; prefer /admin/webhooks endpoints
 #   wrangler secret put CF_API_TOKEN          # optional, Analytics-read token for /admin/usage (with CF_ACCOUNT_ID var)

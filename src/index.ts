@@ -45,6 +45,8 @@ export type Bindings = {
 	FACEBOOK_CLIENT_SECRET: string;
 	TWITTER_CLIENT_ID: string;
 	TWITTER_CLIENT_SECRET: string;
+	DISCORD_CLIENT_ID: string;
+	DISCORD_CLIENT_SECRET: string;
 	OAUTH_CALLBACK_BASE: string;
 	RESEND_API_KEY: string;
 	EMAIL_FROM: string;

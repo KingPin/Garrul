@@ -44,6 +44,7 @@ describe("isProvider", () => {
 		expect(isProvider("google")).toBe(true);
 		expect(isProvider("facebook")).toBe(true);
 		expect(isProvider("twitter")).toBe(true);
+		expect(isProvider("discord")).toBe(true);
 		expect(isProvider("myspace")).toBe(false);
 		expect(isProvider("")).toBe(false);
 	});

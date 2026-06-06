@@ -21,7 +21,12 @@
  * read.
  */
 
-export type ProviderId = "github" | "google" | "facebook" | "twitter";
+export type ProviderId =
+	| "github"
+	| "google"
+	| "facebook"
+	| "twitter"
+	| "discord";
 
 export type ProviderProfile = {
 	provider_id: string; // stable per-provider user id (string form)
@@ -167,6 +172,34 @@ const fetchTwitterProfile = async (
 	};
 };
 
+// Discord. Standard auth-code flow. Trust the email only when Discord flags
+// it `verified` (mirrors the GitHub verified-email handling); the avatar is
+// assembled from the CDN hash.
+const fetchDiscordProfile = async (
+	token: string,
+): Promise<ProviderProfile> => {
+	const res = await fetch("https://discord.com/api/users/@me", {
+		headers: { authorization: `Bearer ${token}` },
+	});
+	if (!res.ok) throw new Error(`discord me ${res.status}`);
+	const u = (await res.json()) as {
+		id: string;
+		username: string;
+		global_name?: string | null;
+		email?: string | null;
+		verified?: boolean;
+		avatar?: string | null;
+	};
+	return {
+		provider_id: u.id,
+		email: u.verified ? (u.email ?? null) : null,
+		name: u.global_name?.trim() || u.username,
+		avatar_url: u.avatar
+			? `https://cdn.discordapp.com/avatars/${u.id}/${u.avatar}.png`
+			: null,
+	};
+};
+
 export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
 	github: {
 		authorize_url: "https://github.com/login/oauth/authorize",
@@ -202,10 +235,22 @@ export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
 		token_auth: "basic",
 		fetch_profile: fetchTwitterProfile,
 	},
+	discord: {
+		authorize_url: "https://discord.com/oauth2/authorize",
+		token_url: "https://discord.com/api/oauth2/token",
+		scope: "identify email",
+		client_id_env: "DISCORD_CLIENT_ID",
+		client_secret_env: "DISCORD_CLIENT_SECRET",
+		fetch_profile: fetchDiscordProfile,
+	},
 };
 
 export const isProvider = (s: string): s is ProviderId =>
-	s === "github" || s === "google" || s === "facebook" || s === "twitter";
+	s === "github" ||
+	s === "google" ||
+	s === "facebook" ||
+	s === "twitter" ||
+	s === "discord";
 
 const randomState = (): string => {
 	const bytes = new Uint8Array(24);
