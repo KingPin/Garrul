@@ -46,7 +46,7 @@ const usageBar = (used: number, ceiling: number, label: string): string => {
     <span class="muted">${fmt(used)} / ${fmt(ceiling)}</span>
   </div>
   <svg viewBox="0 0 200 14" preserveAspectRatio="none"
-       style="width:100%;height:14px;background:var(--card-soft);border-radius:3px"
+       style="width:100%;height:14px;background:var(--surface-2);border-radius:3px"
        role="img" aria-label="${escapeHtml(`${label}: ${p.toFixed(1)}%`)}">
     <rect x="0" y="0" width="${p * 2}" height="14" fill="${c}"/>
   </svg>

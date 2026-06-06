@@ -332,6 +332,13 @@ kbd { background: var(--surface-2); border: 1px solid var(--border);
 .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
 .chart { display: block; width: 100%; }
 .settings-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 1rem; }
+/* Usage page bars (Cloudflare dashboard) and the queue audit strip. */
+.usage-row { margin: 0.75rem 0; }
+.usage-row:first-of-type { margin-top: 0.25rem; }
+.usage-label { display: flex; justify-content: space-between; align-items: baseline;
+               gap: 0.5rem; margin-bottom: 0.3rem; font-size: 0.9rem; }
+.usage-label .muted { font-variant-numeric: tabular-nums; }
+.audit-strip { font-size: 0.8rem; margin-top: 0.4rem; }
 
 /* Below 880px the sidebar becomes an off-canvas drawer toggled by the
    hamburger; a scrim covers the content behind it. navOpen drives both. */
