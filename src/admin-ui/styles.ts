@@ -332,6 +332,7 @@ kbd { background: var(--surface-2); border: 1px solid var(--border);
 .tab:hover { color: var(--text); border-color: transparent; }
 .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
 .chart { display: block; width: 100%; }
+.settings-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 1rem; }
 
 /* Below 880px the sidebar becomes an off-canvas drawer toggled by the
    hamburger; a scrim covers the content behind it. navOpen drives both. */
