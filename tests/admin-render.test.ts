@@ -493,8 +493,9 @@ describe("renderDashboard", () => {
 		);
 		expect(html).toContain("12.0%");
 		expect(html).toContain("/admin/comments/01HOLDEST");
-		// sparkline path renders both days
-		expect(html).toContain("<path");
+		// the comments-per-day bar chart renders a <rect> bar per day
+		expect(html).toContain("<rect");
+		expect(html).toContain("Comments per day bar chart");
 	});
 
 	it("renders an empty-state message when there is no timeline", () => {

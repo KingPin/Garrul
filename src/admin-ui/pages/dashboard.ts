@@ -9,6 +9,7 @@ import type {
 } from "../../db/queries";
 import { spamSummary } from "../components/spam-summary";
 import { identiconSvg } from "../../lib/identicon";
+import { barChartSvg } from "../charts";
 import { escapeHtml } from "../escape";
 
 export type DashboardData = {
@@ -19,33 +20,6 @@ export type DashboardData = {
 	oldest_pending: { id: string; created_at: number } | null;
 	spam_rate: SpamRate;
 	by_host: CommentsByHostRow[];
-};
-
-const sparklineSvg = (points: TimelinePoint[]): string => {
-	if (points.length === 0)
-		return '<div class="muted">No activity in this range.</div>';
-	const w = 320;
-	const h = 60;
-	const pad = 4;
-	const max = Math.max(1, ...points.map((p) => p.count));
-	const step = points.length > 1 ? (w - pad * 2) / (points.length - 1) : 0;
-	const coords = points.map((p, i) => {
-		const x = pad + i * step;
-		const y = h - pad - ((h - pad * 2) * p.count) / max;
-		return `${x.toFixed(1)},${y.toFixed(1)}`;
-	});
-	const path = `M ${coords.join(" L ")}`;
-	const last = points[points.length - 1];
-	const first = points[0];
-	return `
-<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" role="img"
-     aria-label="Comments per day sparkline">
-  <path d="${path}" fill="none" stroke="var(--accent)" stroke-width="1.5"/>
-  <title>${points.length} days · peak ${max}/day</title>
-</svg>
-<div class="muted" style="font-size:0.75rem">
-  ${escapeHtml(first?.day ?? "")} → ${escapeHtml(last?.day ?? "")} · peak ${max}/day
-</div>`;
 };
 
 const relAge = (ts: number, now: number = Date.now()): string => {
@@ -136,6 +110,37 @@ const byHostPanel = (rows: CommentsByHostRow[]): string => {
 </div>`;
 };
 
+// Best-effort public origin for the embed snippet. PUBLIC_BASE_URL is the
+// operator-configured canonical URL of this Worker; if it's unset (e.g. a
+// fresh dev instance) we fall back to a clearly-placeholder host so the
+// snippet still reads correctly and the operator knows what to replace.
+const embedOrigin = (env: Bindings): string => {
+	const raw = (env.PUBLIC_BASE_URL || "").trim().replace(/\/+$/, "");
+	return raw || "https://comments.example.com";
+};
+
+const embedCard = (env: Bindings): string => {
+	const origin = escapeHtml(embedOrigin(env));
+	// The snippet is shown verbatim AND copied from $refs.embed.textContent,
+	// so it must be valid host markup with entities the browser decodes back
+	// to real characters on copy. data-slug is a placeholder the operator
+	// swaps per page.
+	const snippet = `&lt;div id="garrul" data-slug="YOUR_PAGE_SLUG" data-api="${origin}"&gt;&lt;/div&gt;
+&lt;script src="${origin}/embed.js" defer&gt;&lt;/script&gt;`;
+	return `
+<div class="card" x-data>
+  <div class="card-head">
+    <h3>Embed on your site</h3>
+    <button class="btn btn-secondary"
+            @click="navigator.clipboard && navigator.clipboard.writeText($refs.embed.textContent).then(
+              () => $dispatch('toast', { text: 'Embed code copied' }),
+              () => $dispatch('toast', { text: 'Copy failed', kind: 'bad' }))">Copy</button>
+  </div>
+  <p class="muted">Paste this where comments should appear. Set <code>data-slug</code> to a stable per-page id.</p>
+  <pre class="embed-snippet" x-ref="embed"><code>${snippet}</code></pre>
+</div>`;
+};
+
 export const renderDashboard = (
 	data: DashboardData,
 	env: Bindings,
@@ -145,11 +150,11 @@ export const renderDashboard = (
 <div class="card">
   <h2>Overview</h2>
   <div class="stat-grid">
-    <div class="stat"><div class="v">${stats.total_comments}</div><div class="l">total comments</div></div>
-    <div class="stat"><div class="v">${stats.pending_comments}</div><div class="l">pending</div></div>
-    <div class="stat"><div class="v">${stats.spam_comments}</div><div class="l">spam</div></div>
+    <div class="stat accent"><div class="v">${stats.total_comments}</div><div class="l">total comments</div></div>
+    <div class="stat${stats.pending_comments > 0 ? " warn" : ""}"><div class="v">${stats.pending_comments}</div><div class="l">pending</div></div>
+    <div class="stat${stats.spam_comments > 0 ? " bad" : ""}"><div class="v">${stats.spam_comments}</div><div class="l">spam</div></div>
     <div class="stat"><div class="v">${stats.total_users}</div><div class="l">users</div></div>
-    <div class="stat"><div class="v">${stats.banned_users}</div><div class="l">banned</div></div>
+    <div class="stat${stats.banned_users > 0 ? " bad" : ""}"><div class="v">${stats.banned_users}</div><div class="l">banned</div></div>
     <div class="stat">
       <div class="v" style="font-size:1.1rem">${oldestPendingCell(oldest_pending)}</div>
       <div class="l">oldest pending</div>
@@ -162,9 +167,11 @@ export const renderDashboard = (
   <p class="muted">Anti-spam: ${spamSummary(env)}. See <a href="/admin/settings">Settings</a> to change.</p>
 </div>
 
+${embedCard(env)}
+
 <div class="card">
   <h3>Comments per day (30d)</h3>
-  ${sparklineSvg(timeline)}
+  ${barChartSvg(timeline)}
 </div>
 
 <div class="dash-cols">

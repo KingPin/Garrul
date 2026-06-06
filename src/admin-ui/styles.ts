@@ -127,6 +127,13 @@ main { width: 100%; max-width: 1100px; margin: 1.5rem auto; padding: 0 1.25rem; 
         border-radius: var(--radius); padding: 1rem 1.25rem; margin-bottom: 1rem;
         box-shadow: var(--shadow); }
 .card h2, .card h3 { margin-top: 0; }
+.card-head { display: flex; align-items: center; justify-content: space-between;
+             gap: 1rem; margin-bottom: 0.5rem; }
+.card-head h2, .card-head h3 { margin: 0; }
+.embed-snippet { background: var(--surface-2); border: 1px solid var(--border);
+                 border-radius: var(--radius-sm); padding: 0.75rem 0.9rem; margin: 0;
+                 overflow-x: auto; font-size: 0.82rem; line-height: 1.5; }
+.embed-snippet code { background: transparent; padding: 0; }
 .stat-grid { display: grid; gap: 0.75rem; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
 .stat { background: var(--surface); border: 1px solid var(--border);
         border-radius: var(--radius); padding: 0.85rem 1.1rem; box-shadow: var(--shadow); }
