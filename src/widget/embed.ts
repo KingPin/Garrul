@@ -1513,12 +1513,13 @@ const buildThread = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 // (no server imports) so the union is duplicated here; PROVIDER_LABELS is the
 // single source of which ids the widget will render, and the /config filter
 // keys off it.
-type OAuthProvider = "github" | "google" | "facebook";
+type OAuthProvider = "github" | "google" | "facebook" | "twitter";
 
 const PROVIDER_LABELS: Record<OAuthProvider, string> = {
 	github: "GitHub",
 	google: "Google",
 	facebook: "Facebook",
+	twitter: "X",
 };
 
 const buildAuthBlock = (

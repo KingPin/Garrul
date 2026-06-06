@@ -6,7 +6,7 @@
  * boundary in fetch_profile / exchangeCodeForToken. Those callers are
  * exercised by integration tests once wrangler-dev is wired in.
  */
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
 	buildAuthorizeUrl,
 	callbackUrl,
@@ -14,6 +14,7 @@ import {
 	constantTimeEqual,
 	consumeHandoff,
 	consumeState,
+	exchangeCodeForToken,
 	genCodeVerifier,
 	isProvider,
 	issueHandoff,
@@ -42,6 +43,7 @@ describe("isProvider", () => {
 		expect(isProvider("github")).toBe(true);
 		expect(isProvider("google")).toBe(true);
 		expect(isProvider("facebook")).toBe(true);
+		expect(isProvider("twitter")).toBe(true);
 		expect(isProvider("myspace")).toBe(false);
 		expect(isProvider("")).toBe(false);
 	});
@@ -271,5 +273,60 @@ describe("buildAuthorizeUrl", () => {
 			"E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
 		);
 		expect(url.searchParams.get("code_challenge_method")).toBe("S256");
+	});
+});
+
+describe("exchangeCodeForToken", () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	const stubFetch = () => {
+		const calls: { url: string; init: RequestInit }[] = [];
+		vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+			calls.push({ url, init });
+			return new Response(JSON.stringify({ access_token: "tok-123" }), {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			});
+		});
+		return calls;
+	};
+
+	it("uses HTTP Basic auth + code_verifier and omits client_secret from the body for token_auth:basic (twitter)", async () => {
+		const calls = stubFetch();
+		const token = await exchangeCodeForToken(
+			"twitter",
+			"the-code",
+			"cid",
+			"csecret",
+			"https://x.test/cb",
+			"the-verifier",
+		);
+		expect(token).toBe("tok-123");
+		expect(calls[0].url).toBe(PROVIDERS.twitter.token_url);
+		const headers = calls[0].init.headers as Record<string, string>;
+		expect(headers.authorization).toBe(`Basic ${btoa("cid:csecret")}`);
+		const body = (calls[0].init.body as URLSearchParams).toString();
+		expect(body).toContain("code_verifier=the-verifier");
+		// The secret must never appear in the body when using Basic auth.
+		expect(body).not.toContain("csecret");
+		expect(body).not.toContain("client_secret");
+	});
+
+	it("puts client_secret in the body and sends no auth header for token_auth:body (github)", async () => {
+		const calls = stubFetch();
+		await exchangeCodeForToken(
+			"github",
+			"the-code",
+			"id",
+			"sec",
+			"https://x.test/cb",
+		);
+		const headers = calls[0].init.headers as Record<string, string>;
+		expect(headers.authorization).toBeUndefined();
+		const body = (calls[0].init.body as URLSearchParams).toString();
+		expect(body).toContain("client_secret=sec");
+		expect(body).not.toContain("code_verifier");
 	});
 });

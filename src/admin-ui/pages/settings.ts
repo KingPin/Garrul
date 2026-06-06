@@ -87,6 +87,7 @@ export const renderSettings = (
 		["GH_CLIENT_ID", env.GH_CLIENT_ID ? "(set)" : "(unset)"],
 		["GOOGLE_CLIENT_ID", env.GOOGLE_CLIENT_ID ? "(set)" : "(unset)"],
 		["FACEBOOK_CLIENT_ID", env.FACEBOOK_CLIENT_ID ? "(set)" : "(unset)"],
+		["TWITTER_CLIENT_ID", env.TWITTER_CLIENT_ID ? "(set)" : "(unset)"],
 		[
 			"OAUTH_CALLBACK_BASE",
 			env.OAUTH_CALLBACK_BASE ?? "(falls back to request origin)",

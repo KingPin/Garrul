@@ -17,6 +17,8 @@ GOOGLE_CLIENT_ID=""
 GOOGLE_CLIENT_SECRET=""
 FACEBOOK_CLIENT_ID=""
 FACEBOOK_CLIENT_SECRET=""
+TWITTER_CLIENT_ID=""
+TWITTER_CLIENT_SECRET=""
 
 # Email — Resend default. Leave blank to disable notification sends locally.
 RESEND_API_KEY=""

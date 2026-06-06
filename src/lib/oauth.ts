@@ -21,7 +21,7 @@
  * read.
  */
 
-export type ProviderId = "github" | "google" | "facebook";
+export type ProviderId = "github" | "google" | "facebook" | "twitter";
 
 export type ProviderProfile = {
 	provider_id: string; // stable per-provider user id (string form)
@@ -137,6 +137,36 @@ const fetchFacebookProfile = async (
 	};
 };
 
+// X/Twitter (API v2). OAuth2 with mandatory PKCE and HTTP Basic token auth.
+// The v2 API exposes no email under these scopes, so email is always null —
+// users sign in with name + avatar only (the schema allows a null email).
+const fetchTwitterProfile = async (
+	token: string,
+): Promise<ProviderProfile> => {
+	const res = await fetch(
+		"https://api.twitter.com/2/users/me?user.fields=profile_image_url",
+		{ headers: { authorization: `Bearer ${token}` } },
+	);
+	if (!res.ok) throw new Error(`twitter me ${res.status}`);
+	const { data } = (await res.json()) as {
+		data?: {
+			id: string;
+			name?: string;
+			username?: string;
+			profile_image_url?: string;
+		};
+	};
+	if (!data?.id) throw new Error("twitter me: no user id");
+	return {
+		provider_id: data.id,
+		email: null,
+		name: data.name?.trim() || data.username || "user",
+		// Default avatar is the 48px "_normal" variant; dropping the suffix
+		// yields the original full-size image.
+		avatar_url: data.profile_image_url?.replace("_normal", "") ?? null,
+	};
+};
+
 export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
 	github: {
 		authorize_url: "https://github.com/login/oauth/authorize",
@@ -162,10 +192,20 @@ export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
 		client_secret_env: "FACEBOOK_CLIENT_SECRET",
 		fetch_profile: fetchFacebookProfile,
 	},
+	twitter: {
+		authorize_url: "https://twitter.com/i/oauth2/authorize",
+		token_url: "https://api.twitter.com/2/oauth2/token",
+		scope: "tweet.read users.read",
+		client_id_env: "TWITTER_CLIENT_ID",
+		client_secret_env: "TWITTER_CLIENT_SECRET",
+		pkce: true,
+		token_auth: "basic",
+		fetch_profile: fetchTwitterProfile,
+	},
 };
 
 export const isProvider = (s: string): s is ProviderId =>
-	s === "github" || s === "google" || s === "facebook";
+	s === "github" || s === "google" || s === "facebook" || s === "twitter";
 
 const randomState = (): string => {
 	const bytes = new Uint8Array(24);
