@@ -51,6 +51,47 @@ Or in a stylesheet:
 | `--garrul-badge-bg`       | `#e0e7ff`                                | "Verified" badge background           |
 | `--garrul-badge-fg`       | `#1e3a8a`                                | "Verified" badge text                 |
 | `--garrul-skel`           | `#e7e9ec`                                | Skeleton-loading placeholder color    |
+| `--garrul-notice`         | `#1e6091`                                | Informational notice messages (e.g. a closed thread) |
+| `--garrul-surface`        | `#f7f8fa`                                | Raised surface fill: composer card, error/notice box |
+| `--garrul-hover`          | `#eef0f3`                                | Hover background on toolbar/icon buttons |
+| `--garrul-accent-hover`   | `#1d4ed8`                                | Submit button hover background        |
+| `--garrul-vote-active`    | `--garrul-badge-bg`                      | Active vote / reaction highlight (defaults to the badge background) |
+| `--garrul-shadow`         | `0 1px 2px rgba(0,0,0,.06)`              | Box-shadow on raised surfaces         |
+
+## Dark mode
+
+The widget ships with a built-in dark palette — hosts no longer have to
+override every variable by hand to support dark backgrounds.
+
+**Automatic (default).** With no configuration, the widget follows the
+visitor's OS/browser preference via `prefers-color-scheme`. A reader on a
+dark system sees the dark palette; a reader on a light system sees light.
+
+**Forced.** Set `data-theme` on the `#garrul` host element to pin a theme
+regardless of OS preference:
+
+```html
+<div id="garrul" data-slug="hello-world" data-theme="dark"></div>
+```
+
+| `data-theme` value      | Behavior                                    |
+| ----------------------- | ------------------------------------------- |
+| absent / `auto`         | Follow `prefers-color-scheme` (default)     |
+| `light`                 | Always light                                |
+| `dark`                  | Always dark                                 |
+
+**Precedence (highest wins):**
+
+1. An explicit `--garrul-*` override you set on the host or an ancestor.
+2. `data-theme="dark"` / `data-theme="light"` on `#garrul`.
+3. The OS `prefers-color-scheme` preference.
+4. The built-in light defaults.
+
+Because every theme level resolves through the public `--garrul-*`
+variables, **your manual overrides always win** — the "How to override"
+stylesheet above (or any subset of it) keeps working unchanged, layering
+on top of whichever base theme is active. Override only the variables you
+care about; the rest fall back to the active theme's defaults.
 
 ## Stability
 
