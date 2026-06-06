@@ -65,19 +65,35 @@ export const renderStepper = ({ name, model, min, max, label, help }: StepperOpt
 
 export type TabDef = { id: string; label: string };
 
+// `stateVar` and `t.id` are interpolated raw into Alpine *expression* strings
+// (:class / @click), not just HTML text. HTML-escaping them is NOT sufficient:
+// the HTML parser decodes entities before Alpine evaluates, so an encoded quote
+// would decode back to a real quote and could break out of the JS string into
+// an Alpine expression (which runs under script-src 'unsafe-eval'). These are
+// always developer-defined constants, so enforce that with a strict identifier
+// allowlist — a stray or user-derived value fails loudly instead of injecting.
+const SAFE_STATE_VAR = /^[A-Za-z_$][\w$.]*$/;
+const SAFE_TAB_ID = /^[A-Za-z0-9_-]+$/;
+
 /**
  * A tab strip bound to an Alpine state property. `stateVar` is the property on
  * the surrounding x-data scope that holds the active tab id (e.g. "tab").
  */
 export const renderTabs = (stateVar: string, tabs: TabDef[]): string => {
+	if (!SAFE_STATE_VAR.test(stateVar)) {
+		throw new Error(`renderTabs: unsafe stateVar ${JSON.stringify(stateVar)}`);
+	}
 	const buttons = tabs
-		.map(
-			(t) => `
+		.map((t) => {
+			if (!SAFE_TAB_ID.test(t.id)) {
+				throw new Error(`renderTabs: unsafe tab id ${JSON.stringify(t.id)}`);
+			}
+			return `
   <button type="button" class="tab" role="tab"
           :class="${stateVar} === '${t.id}' && 'active'"
           :aria-selected="${stateVar} === '${t.id}'"
-          @click="${stateVar} = '${t.id}'">${escapeHtml(t.label)}</button>`,
-		)
+          @click="${stateVar} = '${t.id}'">${escapeHtml(t.label)}</button>`;
+		})
 		.join("");
 	return `<div class="tabs" role="tablist">${buttons}</div>`;
 };
