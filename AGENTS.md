@@ -22,7 +22,8 @@ Good fit: **static blogs, docs sites, marketing sites** that want
 threaded comments without a CMS; teams who want **first-party data
 ownership** (D1, not a SaaS); embeds that should be **tracker-free**
 (no analytics pixels, one HttpOnly session cookie); auth needs that
-**GitHub/Google OAuth + anonymous-with-Turnstile** covers.
+**GitHub / Google / Facebook / X / Discord OAuth +
+anonymous-with-Turnstile** covers.
 
 Not a fit: high-volume **forums** (sub-forums, pinned megathreads,
 thousands of concurrent posters); sites that need **real-time updates**

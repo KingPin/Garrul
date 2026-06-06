@@ -163,8 +163,11 @@ echo "These prompt one at a time. Skip any you don't have yet."
 put_random_secret JWT_SECRET     "auto-generated 32-byte secret; reserved for future JWT use (sessions are KV-backed)"
 put_random_secret IP_HASH_SECRET "auto-generated 32-byte HMAC pepper for IP hashing — generate once and keep it"
 put_secret_pair "Turnstile"     "from dash.cloudflare.com → Turnstile"            TURNSTILE_SITE_KEY  TURNSTILE_SECRET
-put_secret_pair "GitHub OAuth"  "from github.com/settings/developers"             GH_CLIENT_ID        GH_CLIENT_SECRET
-put_secret_pair "Google OAuth"  "from console.cloud.google.com → OAuth credentials" GOOGLE_CLIENT_ID  GOOGLE_CLIENT_SECRET
+put_secret_pair "GitHub OAuth"   "from github.com/settings/developers"             GH_CLIENT_ID        GH_CLIENT_SECRET
+put_secret_pair "Google OAuth"   "from console.cloud.google.com → OAuth credentials" GOOGLE_CLIENT_ID  GOOGLE_CLIENT_SECRET
+put_secret_pair "Facebook OAuth" "from developers.facebook.com → Facebook Login"   FACEBOOK_CLIENT_ID  FACEBOOK_CLIENT_SECRET
+put_secret_pair "X/Twitter OAuth" "from developer.x.com → OAuth 2.0 (no email)"    TWITTER_CLIENT_ID   TWITTER_CLIENT_SECRET
+put_secret_pair "Discord OAuth"  "from discord.com/developers → OAuth2"            DISCORD_CLIENT_ID   DISCORD_CLIENT_SECRET
 put_secret RESEND_API_KEY        "from resend.com/api-keys"
 put_secret WEBHOOK_URL           "optional fire-and-forget POST on new comment"
 

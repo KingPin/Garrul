@@ -22,8 +22,8 @@ When you post a comment, the following is stored:
   for rate limiting and (if applicable) anonymous-author identity.
 - A **timestamp**.
 
-If you signed in with **OAuth** (GitHub or Google), we additionally
-store:
+If you signed in with **OAuth** (GitHub, Google, Facebook, X, or
+Discord), we additionally store:
 
 - Your **email address** as returned by the provider (we never read
   your inbox or anything else from the provider).
