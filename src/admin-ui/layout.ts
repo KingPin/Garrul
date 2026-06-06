@@ -47,12 +47,22 @@ export const accessDeniedHtml = (
 <meta charset="utf-8">
 <title>${statusTitle(status)} — Garrul Admin</title>
 <style>
+  /* Light default; flip to dark on OS preference. Mirrors the admin theme
+     tokens but standalone (this page renders before the app shell / Alpine,
+     and the admin CSP forbids the usual inline no-FOUC script). */
+  :root { --bg: #f6f8fa; --fg: #1b2733; --muted: #5c6b7a;
+          --accent: #2563eb; --code-bg: #f0f3f6; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0b0d10; --fg: #e7eaf0; --muted: #8a93a6;
+            --accent: #6aa9ff; --code-bg: #1e2530; }
+  }
   body { font-family: system-ui, -apple-system, Segoe UI, sans-serif;
-         background: #0b0d10; color: #e7eaf0; max-width: 480px;
+         background: var(--bg); color: var(--fg); max-width: 480px;
          margin: 4rem auto; padding: 0 1rem; line-height: 1.55; }
   h1 { margin-top: 0; }
-  a { color: #6aa9ff; }
-  code { background: #1e2530; padding: 0.1rem 0.3rem; border-radius: 3px; }
+  a { color: var(--accent); }
+  .muted { color: var(--muted); }
+  code { background: var(--code-bg); padding: 0.1rem 0.3rem; border-radius: 3px; }
 </style>
 </head>
 <body>

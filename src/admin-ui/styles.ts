@@ -84,6 +84,11 @@ body { margin: 0; background: var(--bg); color: var(--text);
        font: 14px/1.5 system-ui, -apple-system, Segoe UI, sans-serif; }
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
+/* Consistent keyboard focus ring across all interactive chrome. The switch
+   input manages its own ring (it's visually hidden), so exclude it here. */
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px;
+                 border-radius: var(--radius-sm); }
+.switch input:focus-visible { outline: none; }
 /* ── App shell: fixed sidebar + scrolling content ───────────────────────── */
 .app-shell { display: flex; min-height: 100vh; }
 .sidebar { position: sticky; top: 0; align-self: flex-start; flex: 0 0 240px;
@@ -258,7 +263,7 @@ code { background: var(--surface-2); padding: 0.1rem 0.3rem; border-radius: 3px;
          padding: 0.6rem 0.9rem; box-shadow: var(--shadow-lg);
          max-width: 320px; font-size: 0.85rem; }
 .toast.bad { border-left-color: var(--bad); }
-.help-popover { position: fixed; top: 3.5rem; right: 1rem;
+.help-popover { position: fixed; bottom: 1rem; left: 1rem;
                 background: var(--surface); border: 1px solid var(--border);
                 border-radius: var(--radius); padding: 1rem 1.25rem; min-width: 220px;
                 z-index: 900; box-shadow: var(--shadow-lg); }
