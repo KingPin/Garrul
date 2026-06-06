@@ -281,6 +281,15 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
 }
 .gr-error[hidden] { display: none; }
 .gr-error.is-notice { color: var(--gr-notice); }
+/* Composer submit errors are inline (text only) — a box-in-a-box reads too
+   heavy next to the composer. The :not(.is-notice) guard keeps the boxed
+   styling for the in-form "awaiting moderation" notice, which reuses this
+   same element by toggling .is-notice. */
+.gr-error.is-inline:not(.is-notice) {
+	background: transparent;
+	border: 0;
+	padding: 0;
+}
 .gr-list { display: flex; flex-direction: column; gap: 1rem; }
 .gr-thread { display: flex; flex-direction: column; gap: 0.75rem; }
 .gr-replies { display: flex; flex-direction: column; gap: 0.75rem; margin-top: 0.5rem; padding-left: 1.25rem; border-left: 2px solid var(--gr-border); }
@@ -1273,7 +1282,7 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	actions.append(submit, cancel);
 	wrap.appendChild(actions);
 
-	const errBox = el("div", "gr-error");
+	const errBox = el("div", "gr-error is-inline");
 	errBox.hidden = true;
 	wrap.appendChild(errBox);
 
@@ -1632,7 +1641,7 @@ const buildForm = (
 	const submit = el("button", undefined, "Post comment");
 	submit.type = "submit";
 
-	const errBox = el("div", "gr-error");
+	const errBox = el("div", "gr-error is-inline");
 	errBox.hidden = true;
 
 	form.append(submit, errBox);
