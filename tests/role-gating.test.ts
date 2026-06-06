@@ -198,16 +198,20 @@ describe("admin layout role-aware nav", () => {
 describe("admin layout active-link highlighting", () => {
 	const admin = makeUser({ role: "admin", is_admin: true, name: "Admin" });
 
-	// Read the class attribute of the *nav* anchor for an exact href. The
-	// trailing quote in `href="${href}"` makes the match exact (so `/admin`
-	// won't also match `/admin/users`), and requiring `class="nav-link..."`
-	// skips the brand/logo anchor, which also points at `/admin`.
+	// Read the class attribute of the *nav* anchor for an exact href. Plain
+	// string scanning (not a regex built from the href, which would need
+	// metacharacter escaping): the `"` after href and the ` class="` that
+	// immediately follows make the match exact (so `/admin` won't also match
+	// `/admin/users`), and requiring the class to start with `nav-link` skips
+	// the brand/logo anchor, which also points at `/admin`.
 	const navLinkClass = (html: string, href: string): string => {
-		const m = html.match(
-			new RegExp(`href="${href.replace(/[/]/g, "\\/")}"\\s+class="(nav-link[^"]*)"`),
-		);
-		if (!m) throw new Error(`no nav link for ${href}`);
-		return m[1];
+		const marker = `href="${href}" class="`;
+		for (let at = html.indexOf(marker); at !== -1; at = html.indexOf(marker, at + 1)) {
+			const start = at + marker.length;
+			const cls = html.slice(start, html.indexOf('"', start));
+			if (cls.startsWith("nav-link")) return cls;
+		}
+		throw new Error(`no nav link for ${href}`);
 	};
 	const isActive = (html: string, href: string): boolean =>
 		navLinkClass(html, href).split(/\s+/).includes("active");
