@@ -11,7 +11,11 @@
  * to a plain message rather than an empty/again broken SVG.
  */
 import { describe, it, expect } from "vitest";
-import { renderTabs } from "../src/admin-ui/controls";
+import {
+	renderSwitch,
+	renderStepper,
+	renderTabs,
+} from "../src/admin-ui/controls";
 import { barChartSvg, sparklineSvg } from "../src/admin-ui/charts";
 
 describe("renderTabs", () => {
@@ -43,22 +47,79 @@ describe("renderTabs", () => {
 	it("throws on a state var that is not a plain identifier", () => {
 		expect(() =>
 			renderTabs("tab'); alert(1); //", [{ id: "x", label: "X" }]),
-		).toThrow(/unsafe stateVar/);
+		).toThrow(/unsafe expression/);
 	});
 
 	it("accepts dotted state-var paths but rejects spaces/quotes", () => {
 		expect(() => renderTabs("settings.tab", [{ id: "a", label: "A" }])).not.toThrow();
 		expect(() => renderTabs("a b", [{ id: "a", label: "A" }])).toThrow(
-			/unsafe stateVar/,
+			/unsafe expression/,
 		);
 	});
 
 	it("rejects malformed dotted paths (empty segments)", () => {
 		for (const bad of ["a..b", "a.", ".a", "a.b.", ".", "a..b.c"]) {
 			expect(() => renderTabs(bad, [{ id: "a", label: "A" }])).toThrow(
-				/unsafe stateVar/,
+				/unsafe expression/,
 			);
 		}
+	});
+});
+
+describe("renderSwitch", () => {
+	it("renders a checkbox bound to the model", () => {
+		const html = renderSwitch({
+			name: "comments_enabled",
+			model: "flags.comments_enabled",
+			label: "Comments",
+			help: "Allow new comments",
+		});
+		expect(html).toContain('name="comments_enabled"');
+		expect(html).toContain('x-model="flags.comments_enabled"');
+		expect(html).toContain("<strong>Comments</strong>");
+	});
+
+	it("throws when the model is not a plain identifier path", () => {
+		// `model` lands in an Alpine x-model expression (unsafe-eval), so a
+		// quote-breakout must fail loudly rather than escape into the expression.
+		expect(() =>
+			renderSwitch({
+				name: "ok",
+				model: "x'); alert(1); //",
+				label: "Evil",
+				help: "",
+			}),
+		).toThrow(/unsafe expression/);
+	});
+});
+
+describe("renderStepper", () => {
+	it("renders a numeric input bound to the model", () => {
+		const html = renderStepper({
+			name: "comments_per_page",
+			model: "nums.comments_per_page",
+			min: 1,
+			max: 100,
+			label: "Per page",
+			help: "How many comments per page",
+		});
+		expect(html).toContain('name="comments_per_page"');
+		expect(html).toContain('x-model.number="nums.comments_per_page"');
+		expect(html).toContain('min="1"');
+		expect(html).toContain('max="100"');
+	});
+
+	it("throws when the model is not a plain identifier path", () => {
+		expect(() =>
+			renderStepper({
+				name: "ok",
+				model: "x') + alert(1) + ('",
+				min: 0,
+				max: 10,
+				label: "Evil",
+				help: "",
+			}),
+		).toThrow(/unsafe expression/);
 	});
 });
 
