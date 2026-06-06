@@ -72,7 +72,10 @@ export type TabDef = { id: string; label: string };
 // an Alpine expression (which runs under script-src 'unsafe-eval'). These are
 // always developer-defined constants, so enforce that with a strict identifier
 // allowlist — a stray or user-derived value fails loudly instead of injecting.
-const SAFE_STATE_VAR = /^[A-Za-z_$][\w$.]*$/;
+// A dot-separated identifier path (e.g. "tab" or "settings.tab"): every
+// segment must itself be a valid identifier. A looser `[\w$.]*` body would also
+// admit malformed paths like `a..b`, `a.`, or `.a`, which defeat the point.
+const SAFE_STATE_VAR = /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$/;
 const SAFE_TAB_ID = /^[A-Za-z0-9_-]+$/;
 
 /**

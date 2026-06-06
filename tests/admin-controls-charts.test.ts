@@ -52,6 +52,14 @@ describe("renderTabs", () => {
 			/unsafe stateVar/,
 		);
 	});
+
+	it("rejects malformed dotted paths (empty segments)", () => {
+		for (const bad of ["a..b", "a.", ".a", "a.b.", ".", "a..b.c"]) {
+			expect(() => renderTabs(bad, [{ id: "a", label: "A" }])).toThrow(
+				/unsafe stateVar/,
+			);
+		}
+	});
 });
 
 describe("barChartSvg", () => {

@@ -202,8 +202,9 @@ ${navHtml}
       <span class="me">${escapeHtml(currentUser.name)} ${rolePill}</span>
       <span class="footer-actions">
         <button class="icon-btn" @click="setTheme(theme === 'dark' ? 'light' : 'dark')"
+                aria-label="Toggle theme"
                 :aria-label="theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'">
-          <span x-show="theme === 'dark'">${icon("sun")}</span>
+          <span x-show="theme === 'dark'" x-cloak>${icon("sun")}</span>
           <span x-show="theme !== 'dark'" x-cloak>${icon("moon")}</span>
         </button>
         <button class="icon-btn" @click="helpOpen = !helpOpen" aria-label="Keyboard shortcuts">?</button>
