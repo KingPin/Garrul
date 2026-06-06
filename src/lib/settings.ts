@@ -22,6 +22,7 @@
  */
 import type { Bindings } from "../index";
 import { getAllSettings } from "../db/queries";
+import { MAX_DEPTH } from "./tree";
 
 export type FlagKey =
 	| "comments_enabled"
@@ -69,8 +70,14 @@ const NUMBERS: Record<
 	// 0 = show all replies.
 	replies_per_thread: { env: "REPLIES_PER_THREAD", default: 3, min: 0, max: 100 },
 	// A comment at depth >= this starts with its replies collapsed (widget).
-	// 0 = never auto-collapse. Capped at the tree's MAX_DEPTH (4).
-	auto_collapse_depth: { env: "AUTO_COLLAPSE_DEPTH", default: 3, min: 0, max: 4 },
+	// 0 = never auto-collapse. Capped at the tree's MAX_DEPTH so the clamp
+	// tracks the depth cap if it ever changes.
+	auto_collapse_depth: {
+		env: "AUTO_COLLAPSE_DEPTH",
+		default: 3,
+		min: 0,
+		max: MAX_DEPTH,
+	},
 };
 
 export const NUMBER_KEYS = Object.keys(NUMBERS) as NumberKey[];
