@@ -262,7 +262,7 @@ what you preview is byte-identical to what gets posted, with no
 client-side markdown library and no XSS divergence. The endpoint is
 public but rate-limited; no auth required.
 
-### Pagination and reply collapsing (since v1.10.0)
+### Pagination and reply collapsing (since v1.11.0)
 
 The thread no longer dumps every comment into the page at once. Three
 operator-tunable settings (Settings → Display & pagination, or the
@@ -273,7 +273,7 @@ see AGENTS-OPERATE.md §5) control the volume:
   **25**) with a **"Load older comments"** button that appends the next batch.
   Paging is server-side and cursor-based; both `new` and `top` sorts paginate,
   so a small page size never hides high-scoring threads. **Behavior change:**
-  pre-v1.10.0 installs rendered up to ~100 at once — set `COMMENTS_PER_PAGE=100`
+  pre-v1.11.0 installs rendered up to ~100 at once — set `COMMENTS_PER_PAGE=100`
   to restore that.
 - **Per-comment collapse.** Any comment with replies gets a `▸`/`▾` toggle that
   folds its reply subtree — always present, no setting needed.

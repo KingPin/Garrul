@@ -115,7 +115,7 @@ Three configuration surfaces:
 | `DOWNVOTES_ENABLED` | var | Downvote button. Same defaults-on semantics. Applies to **both** comment votes and page votes (a brigading-mitigation switch); independent of `VOTING_ENABLED`. | `true` | `wrangler.toml` |
 | `PAGE_REACTIONS_ENABLED` | var | Article-level emoji reaction bar (react to the page itself, no comment). Defaults **off** so an upgrade never surfaces new UI unasked. Enables `POST /api/v1/page-engagement/reactions` and the widget bar. | `false` | `wrangler.toml` |
 | `PAGE_VOTES_ENABLED` | var | Article-level "was this helpful?" up/down vote tally. Defaults **off**. Enables `POST /api/v1/page-engagement/votes`; downvotes here still honor `DOWNVOTES_ENABLED`. | `false` | `wrangler.toml` |
-| `COMMENTS_PER_PAGE` | var | Top-level comments shown per initial load and per "Load older comments" click (server-side slice in `api.comments.ts`). Defaults **25**; clamped to `[1, 200]`. **Behavior change in v1.10.0:** older installs rendered up to 100 at once — set this to `100` to restore that. | `25` | `wrangler.toml` |
+| `COMMENTS_PER_PAGE` | var | Top-level comments shown per initial load and per "Load older comments" click (server-side slice in `api.comments.ts`). Defaults **25**; clamped to `[1, 200]`. **Behavior change in v1.11.0:** older installs rendered up to 100 at once — set this to `100` to restore that. | `25` | `wrangler.toml` |
 | `REPLIES_PER_THREAD` | var | Replies shown under each comment before a "Show N more replies" button (widget). `0` = show all. Defaults **3**; clamped to `[0, 100]`. | `3` | `wrangler.toml` |
 | `AUTO_COLLAPSE_DEPTH` | var | Replies nested at this depth or deeper start collapsed in the widget. `0` = never auto-collapse. Defaults **3**; clamped to `[0, 4]` (the tree depth cap). | `3` | `wrangler.toml` |
 | `CF_ACCOUNT_ID` | var | Optional. Cloudflare account ID; paired with `CF_API_TOKEN` to enable the `/admin/usage` analytics page. | `0123abcd...` | `wrangler.toml` (or `wrangler secret put` — the in-app setup guide uses the secret form; both work) |
@@ -145,7 +145,7 @@ busted on save, so a toggle takes effect within seconds across the widget
 the admin UI writes no row, so existing installs that only set env vars are
 unaffected. Implementation: `src/lib/settings.ts`.
 
-### Display & pagination: numeric settings (since v1.10.0)
+### Display & pagination: numeric settings (since v1.11.0)
 
 `COMMENTS_PER_PAGE`, `REPLIES_PER_THREAD`, and `AUTO_COLLAPSE_DEPTH` follow the
 **same hybrid precedence** as the feature flags (DB settings row > env var >
@@ -164,7 +164,7 @@ out-of-range values clamp, non-numeric values fall back to the default.
   the widget reads them from `/api/v1/config` and uses them purely for reply
   folding (no API/payload change — all replies still arrive in one response).
 
-**Upgrade note:** installs upgrading to v1.10.0 that never set `COMMENTS_PER_PAGE`
+**Upgrade note:** installs upgrading to v1.11.0 that never set `COMMENTS_PER_PAGE`
 will see **25** initial comments instead of the previous ~100. Set it to `100`
 (env var or Settings page) to restore the old behavior.
 
