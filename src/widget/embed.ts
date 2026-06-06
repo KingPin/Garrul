@@ -109,11 +109,63 @@ const STYLE_CSS = `
 	--gr-badge-bg: var(--garrul-badge-bg, #e0e7ff);
 	--gr-badge-fg: var(--garrul-badge-fg, #1e3a8a);
 	--gr-skel: var(--garrul-skel, #e7e9ec);
+	/* Additive vars (new in this release; non-breaking). See docs/THEMING.md. */
+	--gr-surface: var(--garrul-surface, #f7f8fa);
+	--gr-hover: var(--garrul-hover, #eef0f3);
+	--gr-accent-hover: var(--garrul-accent-hover, #1d4ed8);
+	--gr-vote-active: var(--garrul-vote-active, var(--gr-badge-bg));
+	--gr-shadow: var(--garrul-shadow, 0 1px 2px rgba(0,0,0,.06));
 	font-family: var(--gr-font);
 	color: var(--gr-fg);
 	background: var(--gr-bg);
 	font-size: var(--gr-font-size);
 	line-height: 1.5;
+}
+/* Built-in dark mode. Each --gr-* is redefined with a DARK fallback but still
+   reads the public --garrul-* first, so a host's explicit override keeps
+   winning in dark too. Precedence (highest first): host --garrul-* override >
+   data-theme="dark"|"light" > OS prefers-color-scheme > light default.
+   Zero JS: CSS reacts to a static data-theme attribute the host may set on
+   #garrul (like data-slug). The media block excludes data-theme="light" so an
+   explicit light choice always beats a dark OS; the [data-theme="dark"] rule
+   forces dark regardless of OS and, coming later in source order, wins. */
+@media (prefers-color-scheme: dark) {
+	:host(:not([data-theme="light"])) {
+		--gr-fg: var(--garrul-fg, #e6e8eb);
+		--gr-input-bg: var(--garrul-input-bg, #1b1f24);
+		--gr-border: var(--garrul-border, #2e353d);
+		--gr-muted: var(--garrul-muted, #9aa3b0);
+		--gr-accent: var(--garrul-accent, #3b82f6);
+		--gr-accent-fg: var(--garrul-accent-fg, #ffffff);
+		--gr-link: var(--garrul-link, #6aa9ff);
+		--gr-error: var(--garrul-error, #f08a8a);
+		--gr-notice: var(--garrul-notice, #6cb6e8);
+		--gr-badge-bg: var(--garrul-badge-bg, #1e2a44);
+		--gr-badge-fg: var(--garrul-badge-fg, #c9d9f5);
+		--gr-skel: var(--garrul-skel, #2a2f36);
+		--gr-surface: var(--garrul-surface, #1b1f24);
+		--gr-hover: var(--garrul-hover, #23282e);
+		--gr-accent-hover: var(--garrul-accent-hover, #2563eb);
+		--gr-shadow: var(--garrul-shadow, 0 1px 2px rgba(0,0,0,.5));
+	}
+}
+:host([data-theme="dark"]) {
+	--gr-fg: var(--garrul-fg, #e6e8eb);
+	--gr-input-bg: var(--garrul-input-bg, #1b1f24);
+	--gr-border: var(--garrul-border, #2e353d);
+	--gr-muted: var(--garrul-muted, #9aa3b0);
+	--gr-accent: var(--garrul-accent, #3b82f6);
+	--gr-accent-fg: var(--garrul-accent-fg, #ffffff);
+	--gr-link: var(--garrul-link, #6aa9ff);
+	--gr-error: var(--garrul-error, #f08a8a);
+	--gr-notice: var(--garrul-notice, #6cb6e8);
+	--gr-badge-bg: var(--garrul-badge-bg, #1e2a44);
+	--gr-badge-fg: var(--garrul-badge-fg, #c9d9f5);
+	--gr-skel: var(--garrul-skel, #2a2f36);
+	--gr-surface: var(--garrul-surface, #1b1f24);
+	--gr-hover: var(--garrul-hover, #23282e);
+	--gr-accent-hover: var(--garrul-accent-hover, #2563eb);
+	--gr-shadow: var(--garrul-shadow, 0 1px 2px rgba(0,0,0,.5));
 }
 * { box-sizing: border-box; }
 .gr-root { display: flex; flex-direction: column; gap: 1rem; }
