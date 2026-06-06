@@ -86,19 +86,32 @@ export const layout = (
     <a href="/admin/operator">Operator</a>
     <a href="/admin/settings">Settings</a>`
 		: "";
+	// The theme lives on <html> as data-theme. We can't use the usual inline
+	// <head> script to set it before first paint (admin CSP forbids inline
+	// <script>), so the CSS handles the no-JS case: :root is light and a
+	// prefers-color-scheme block flips to dark, so the first paint already
+	// respects the OS preference. Alpine then reconciles the stored choice on
+	// x-init. localStorage key matches the renderUpdateBanner convention.
 	return `
 <!doctype html>
-<html lang="en">
+<html lang="en"
+      x-data="{
+        theme: localStorage.getItem('garrul.theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'),
+        helpOpen: false,
+        navOpen: false,
+        setTheme(t) { this.theme = t; localStorage.setItem('garrul.theme', t); document.documentElement.setAttribute('data-theme', t); }
+      }"
+      x-init="document.documentElement.setAttribute('data-theme', theme)"
+      @keydown.window.slash.prevent="(() => { const el = document.querySelector('input[type=text],input[type=search]'); if (el) el.focus(); })()"
+      @keydown.window.question-mark.prevent="helpOpen = !helpOpen"
+      @keydown.window.escape="helpOpen = false">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escapeHtml(title)} — Garrul Admin</title>
 <style>${ADMIN_CSS}</style>
 </head>
-<body x-data="{ helpOpen: false }"
-      @keydown.window.slash.prevent="(() => { const el = document.querySelector('input[type=text],input[type=search]'); if (el) el.focus(); })()"
-      @keydown.window.question-mark.prevent="helpOpen = !helpOpen"
-      @keydown.window.escape="helpOpen = false">
+<body>
 ${renderUpdateBanner(updateInfo)}
 <header>
   <h1>Garrul Admin</h1>
@@ -108,7 +121,11 @@ ${renderUpdateBanner(updateInfo)}
     <a href="/admin/saved-replies">Replies</a>${adminOnlyLinks}
     <a href="/admin/about">About</a>
   </nav>
-  <span class="me">${escapeHtml(currentUser.name)} ${rolePill} <button class="help-btn" @click="helpOpen = !helpOpen" aria-label="Keyboard shortcuts">?</button></span>
+  <span class="me">${escapeHtml(currentUser.name)} ${rolePill}
+    <button class="help-btn theme-btn" @click="setTheme(theme === 'dark' ? 'light' : 'dark')"
+            :aria-label="theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'"
+            x-text="theme === 'dark' ? '☀' : '☾'"></button>
+    <button class="help-btn" @click="helpOpen = !helpOpen" aria-label="Keyboard shortcuts">?</button></span>
 </header>
 <div class="toast-tray" role="status" aria-live="polite" aria-atomic="true"
      x-data="{ items: [] }"
