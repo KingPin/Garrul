@@ -10,9 +10,11 @@ import { describe, it, expect, beforeEach } from "vitest";
 import {
 	buildAuthorizeUrl,
 	callbackUrl,
+	computeCodeChallenge,
 	constantTimeEqual,
 	consumeHandoff,
 	consumeState,
+	genCodeVerifier,
 	isProvider,
 	issueHandoff,
 	issueState,
@@ -91,6 +93,42 @@ describe("issueState / consumeState", () => {
 		});
 		const got = await consumeState(store, state);
 		expect(got?.browser_token).toBe(tok);
+	});
+
+	it("carries the PKCE code_verifier through KV roundtrip", async () => {
+		const verifier = genCodeVerifier();
+		const state = await issueState(store, {
+			provider: "github",
+			return_origin: "https://x.test",
+			created_at: 3,
+			browser_token: "tok",
+			code_verifier: verifier,
+		});
+		const got = await consumeState(store, state);
+		expect(got?.code_verifier).toBe(verifier);
+	});
+});
+
+describe("PKCE helpers", () => {
+	it("genCodeVerifier produces a 64-hex-char string within RFC 7636 limits", () => {
+		const v = genCodeVerifier();
+		expect(v).toMatch(/^[0-9a-f]{64}$/);
+		expect(v.length).toBeGreaterThanOrEqual(43);
+		expect(v.length).toBeLessThanOrEqual(128);
+		expect(genCodeVerifier()).not.toBe(v);
+	});
+
+	it("computeCodeChallenge matches the RFC 7636 §B test vector", async () => {
+		// Appendix B: verifier → base64url(SHA-256(verifier)) without padding.
+		const challenge = await computeCodeChallenge(
+			"dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk",
+		);
+		expect(challenge).toBe("E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM");
+	});
+
+	it("produces base64url output (no +, /, or = padding)", async () => {
+		const challenge = await computeCodeChallenge(genCodeVerifier());
+		expect(challenge).not.toMatch(/[+/=]/);
 	});
 });
 
@@ -208,5 +246,29 @@ describe("buildAuthorizeUrl", () => {
 			buildAuthorizeUrl("google", "id", "https://x.test/cb", "s"),
 		);
 		expect(url.searchParams.get("prompt")).toBe("select_account");
+	});
+
+	it("omits PKCE params when no code_challenge is passed", () => {
+		const url = new URL(
+			buildAuthorizeUrl("github", "id", "https://x.test/cb", "s"),
+		);
+		expect(url.searchParams.get("code_challenge")).toBeNull();
+		expect(url.searchParams.get("code_challenge_method")).toBeNull();
+	});
+
+	it("adds S256 code_challenge when one is passed", () => {
+		const url = new URL(
+			buildAuthorizeUrl(
+				"github",
+				"id",
+				"https://x.test/cb",
+				"s",
+				"E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+			),
+		);
+		expect(url.searchParams.get("code_challenge")).toBe(
+			"E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+		);
+		expect(url.searchParams.get("code_challenge_method")).toBe("S256");
 	});
 });

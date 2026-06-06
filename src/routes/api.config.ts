@@ -37,9 +37,12 @@ config.get("/", async (c) => {
 	const minutes = Number.parseInt(c.env.EDIT_WINDOW_MINUTES, 10);
 	const edit_window_minutes =
 		Number.isFinite(minutes) && minutes > 0 ? minutes : 5;
+	// Provider client-id/secret env-var names are typed as plain strings on
+	// ProviderConfig, so index the bindings through a string-keyed view.
+	const env = c.env as unknown as Record<string, string | undefined>;
 	const providers = (Object.keys(PROVIDERS) as ProviderId[]).filter((p) => {
 		const cfg = PROVIDERS[p];
-		return !!c.env[cfg.client_id_env] && !!c.env[cfg.client_secret_env];
+		return !!env[cfg.client_id_env] && !!env[cfg.client_secret_env];
 	});
 	// Feature flags + numeric display settings, both resolved with
 	// DB-override > env > default precedence.

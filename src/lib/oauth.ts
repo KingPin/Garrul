@@ -34,8 +34,17 @@ type ProviderConfig = {
 	authorize_url: string;
 	token_url: string;
 	scope: string;
-	client_id_env: "GH_CLIENT_ID" | "GOOGLE_CLIENT_ID";
-	client_secret_env: "GH_CLIENT_SECRET" | "GOOGLE_CLIENT_SECRET";
+	client_id_env: string;
+	client_secret_env: string;
+	// PKCE (RFC 7636). Required by X/Twitter; harmless for the others. When
+	// true, /start mints a code_verifier + S256 challenge and the token
+	// exchange replays the verifier.
+	pkce?: boolean;
+	// How the token endpoint authenticates the client. "body" (default) puts
+	// client_secret in the POST body; "basic" sends an HTTP Basic header
+	// (client_id:client_secret) and keeps the secret out of the body — X's
+	// confidential-client token endpoint requires this.
+	token_auth?: "body" | "basic";
 	fetch_profile: (access_token: string) => Promise<ProviderProfile>;
 };
 
@@ -137,6 +146,27 @@ export const randomHex = (n: number): string => {
 	return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 };
 
+// PKCE (RFC 7636). The verifier is a high-entropy secret minted at /start,
+// stashed server-side in the KV state payload (never sent to the browser),
+// and replayed at the token exchange to prove the client that redeems the
+// code is the same one that started the flow. 32 random bytes → 64 hex chars,
+// well within PKCE's 43–128-char unreserved-charset range.
+export const genCodeVerifier = (): string => randomHex(32);
+
+// SHA-256(verifier), base64url-encoded without padding — the `S256` challenge
+// sent in the authorize redirect. Workers ship crypto.subtle + btoa natively.
+export const computeCodeChallenge = async (
+	verifier: string,
+): Promise<string> => {
+	const digest = await crypto.subtle.digest(
+		"SHA-256",
+		new TextEncoder().encode(verifier),
+	);
+	let bin = "";
+	for (const b of new Uint8Array(digest)) bin += String.fromCharCode(b);
+	return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+};
+
 // Length-independent constant-time string compare. The browser_token /
 // handoff tokens we mint are fixed-length hex, so the early length
 // branch doesn't leak useful information to an attacker. A naive `===`
@@ -164,6 +194,10 @@ export type StatePayload = {
 	// /api/v1/auth/:provider/start; pre-existing state payloads in KV
 	// from before this column shipped may lack it.
 	browser_token?: string;
+	// PKCE code_verifier for providers with `pkce: true` (e.g. X/Twitter).
+	// Lives only here in KV — never sent to the browser — and is replayed at
+	// the token exchange. Absent for non-PKCE providers.
+	code_verifier?: string;
 };
 
 const STATE_TTL = 600; // 10 minutes
@@ -247,6 +281,7 @@ export const buildAuthorizeUrl = (
 	client_id: string,
 	redirect_uri: string,
 	state: string,
+	code_challenge?: string,
 ): string => {
 	const cfg = PROVIDERS[provider];
 	const params = new URLSearchParams({
@@ -256,6 +291,10 @@ export const buildAuthorizeUrl = (
 		scope: cfg.scope,
 		state,
 	});
+	if (code_challenge) {
+		params.set("code_challenge", code_challenge);
+		params.set("code_challenge_method", "S256");
+	}
 	if (provider === "google") {
 		// Force the account chooser when re-authorizing.
 		params.set("prompt", "select_account");
@@ -269,21 +308,32 @@ export const exchangeCodeForToken = async (
 	client_id: string,
 	client_secret: string,
 	redirect_uri: string,
+	code_verifier?: string,
 ): Promise<string> => {
 	const cfg = PROVIDERS[provider];
 	const body = new URLSearchParams({
 		client_id,
-		client_secret,
 		code,
 		redirect_uri,
 		grant_type: "authorization_code",
 	});
+	const headers: Record<string, string> = {
+		accept: "application/json",
+		"content-type": "application/x-www-form-urlencoded",
+	};
+	// PKCE providers replay the verifier minted at /start (RFC 7636 §4.5).
+	if (code_verifier) body.set("code_verifier", code_verifier);
+	if (cfg.token_auth === "basic") {
+		// X/Twitter's confidential-client token endpoint authenticates via an
+		// HTTP Basic header, not a body param. Keeping the secret out of the
+		// body also keeps it off any body-logging path.
+		headers.authorization = `Basic ${btoa(`${client_id}:${client_secret}`)}`;
+	} else {
+		body.set("client_secret", client_secret);
+	}
 	const res = await fetch(cfg.token_url, {
 		method: "POST",
-		headers: {
-			accept: "application/json",
-			"content-type": "application/x-www-form-urlencoded",
-		},
+		headers,
 		body,
 	});
 	if (!res.ok) {
