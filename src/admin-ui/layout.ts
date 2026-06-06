@@ -19,7 +19,14 @@ const renderNavSection = (
 	if (section.links.length === 0) return "";
 	const links = section.links
 		.map((l) => {
-			const isActive = activePath === l.href;
+			// The dashboard root ("/admin") is a prefix of every admin path, so it
+			// must match exactly; all other links highlight on their sub-pages too
+			// (e.g. /admin/users/:id keeps "Users" active) via a prefix match.
+			const isActive =
+				activePath !== undefined &&
+				(l.href === "/admin"
+					? activePath === "/admin"
+					: activePath === l.href || activePath.startsWith(`${l.href}/`));
 			return `<a href="${l.href}" class="nav-link${isActive ? " active" : ""}"
        ${isActive ? 'aria-current="page"' : ""}
        @click="navOpen = false">${icon(l.icon)}<span>${escapeHtml(l.label)}</span></a>`;
