@@ -84,12 +84,45 @@ body { margin: 0; background: var(--bg); color: var(--text);
        font: 14px/1.5 system-ui, -apple-system, Segoe UI, sans-serif; }
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
-header { background: var(--panel); border-bottom: 1px solid var(--border);
-         padding: 0.75rem 1rem; display: flex; gap: 1.5rem; align-items: center; }
-header h1 { font-size: 1rem; margin: 0; }
-header nav { display: flex; gap: 1rem; flex: 1; }
-header .me { color: var(--muted); }
-main { max-width: 1100px; margin: 1.5rem auto; padding: 0 1rem; }
+/* ── App shell: fixed sidebar + scrolling content ───────────────────────── */
+.app-shell { display: flex; min-height: 100vh; }
+.sidebar { position: sticky; top: 0; align-self: flex-start; flex: 0 0 240px;
+           width: 240px; height: 100vh; background: var(--surface);
+           border-right: 1px solid var(--border); display: flex;
+           flex-direction: column; overflow-y: auto; z-index: 50; }
+.brand { display: flex; align-items: center; gap: 0.5rem; padding: 1rem 1.1rem;
+         font-size: 1.1rem; font-weight: 700; color: var(--text);
+         text-decoration: none; }
+.brand:hover { text-decoration: none; }
+.brand .icon { color: var(--accent); }
+.sidebar-nav { flex: 1; padding: 0.25rem 0.6rem; }
+.nav-section { margin-bottom: 1rem; }
+.nav-heading { margin: 0.5rem 0.6rem 0.35rem; font-size: 0.68rem; font-weight: 600;
+               text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+.nav-link { display: flex; align-items: center; gap: 0.6rem; padding: 0.45rem 0.6rem;
+            border-radius: var(--radius-sm); color: var(--text); font-size: 0.9rem;
+            text-decoration: none; }
+.nav-link .icon { color: var(--muted); transition: color 0.12s; }
+.nav-link:hover { background: var(--surface-2); text-decoration: none; }
+.nav-link.active { background: var(--accent-weak); color: var(--accent); font-weight: 600; }
+.nav-link.active .icon { color: var(--accent); }
+.sidebar-footer { display: flex; align-items: center; gap: 0.5rem;
+                  padding: 0.75rem 1.1rem; border-top: 1px solid var(--border); }
+.sidebar-footer .me { color: var(--muted); font-size: 0.85rem; flex: 1; min-width: 0;
+                      display: flex; align-items: center; gap: 0.4rem; }
+.footer-actions { display: flex; gap: 0.3rem; flex: 0 0 auto; }
+.icon-btn { display: inline-flex; align-items: center; justify-content: center;
+            min-width: 30px; height: 30px; padding: 0 0.4rem; background: transparent;
+            border: 1px solid transparent; border-radius: var(--radius-sm); color: var(--muted); }
+.icon-btn:hover { background: var(--surface-2); color: var(--text); border-color: transparent; }
+.content { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.topbar { display: flex; align-items: center; gap: 0.6rem; padding: 0.6rem 1.25rem;
+          border-bottom: 1px solid var(--border); background: var(--surface);
+          position: sticky; top: 0; z-index: 40; }
+.topbar h1 { font-size: 1.05rem; margin: 0; font-weight: 600; }
+.hamburger { display: none; }
+.scrim { display: none; }
+main { width: 100%; max-width: 1100px; margin: 1.5rem auto; padding: 0 1.25rem; }
 .card { background: var(--panel); border: 1px solid var(--border);
         border-radius: 8px; padding: 1rem 1.25rem; margin-bottom: 1rem; }
 .stat-grid { display: grid; gap: 0.75rem; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
@@ -187,7 +220,6 @@ code { background: var(--bg); padding: 0.1rem 0.3rem; border-radius: 3px;
          padding: 0.6rem 0.9rem; box-shadow: 0 2px 8px rgba(0,0,0,0.4);
          max-width: 320px; font-size: 0.85rem; }
 .toast.bad { border-left-color: var(--bad); }
-.help-btn { margin-left: 0.4rem; padding: 0.1rem 0.5rem; font-size: 0.8rem; }
 .help-popover { position: fixed; top: 3.5rem; right: 1rem;
                 background: var(--panel); border: 1px solid var(--border);
                 border-radius: 8px; padding: 1rem 1.25rem; min-width: 220px;
@@ -205,11 +237,11 @@ kbd { background: var(--bg); border: 1px solid var(--border);
 .dash-list li:last-child { border-bottom: 0; }
 .banner { display: flex; gap: 1rem; align-items: center; justify-content: space-between;
           padding: 0.6rem 1rem; border-bottom: 1px solid var(--border); font-size: 0.9rem; }
-.banner.update { background: #2a1f08; color: #f7d77a; border-bottom-color: #4a3a14; }
-.banner.update a { color: #ffd57a; text-decoration: underline; }
-.banner.update code { background: rgba(0,0,0,0.25); color: inherit; }
-.banner.update button { background: transparent; color: inherit; border-color: #4a3a14; }
-.banner.update button:hover { border-color: #f7d77a; }
+.banner.update { background: var(--warn-weak); color: var(--warn); border-bottom-color: var(--border-strong); }
+.banner.update a { color: var(--warn); text-decoration: underline; }
+.banner.update code { background: rgba(0,0,0,0.08); color: inherit; }
+.banner.update button { background: transparent; color: inherit; border-color: var(--border-strong); }
+.banner.update button:hover { border-color: var(--warn); }
 .link-list { list-style: none; padding: 0; margin: 0.5rem 0; display: grid;
              gap: 0.25rem; }
 .link-list li { padding: 0.15rem 0; }
@@ -263,10 +295,21 @@ kbd { background: var(--bg); border: 1px solid var(--border);
 .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
 .chart { display: block; width: 100%; }
 
+/* Below 880px the sidebar becomes an off-canvas drawer toggled by the
+   hamburger; a scrim covers the content behind it. navOpen drives both. */
+@media (max-width: 880px) {
+  .sidebar { position: fixed; top: 0; left: 0; height: 100vh;
+             transform: translateX(-100%); transition: transform 0.2s ease;
+             box-shadow: var(--shadow-lg); }
+  .sidebar.open { transform: translateX(0); }
+  .scrim { display: block; position: fixed; inset: 0; z-index: 45;
+           background: rgba(0,0,0,0.45); }
+  .hamburger { display: inline-flex; }
+}
+
 @media (max-width: 720px) {
-  header { flex-wrap: wrap; gap: 0.5rem; padding: 0.5rem 0.75rem; }
-  header nav { flex-wrap: wrap; gap: 0.5rem 0.75rem; font-size: 0.9rem; }
-  header .me { margin-left: auto; font-size: 0.85rem; }
+  .topbar { padding: 0.5rem 0.75rem; }
+  .topbar h1 { font-size: 0.95rem; }
   main { margin: 0.75rem auto; padding: 0 0.6rem; }
   .card { padding: 0.75rem 0.85rem; border-radius: 6px; }
   .card table { display: block; overflow-x: auto; }
