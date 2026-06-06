@@ -88,49 +88,138 @@ const STYLE_CSS = `
 :host {
 	all: initial;
 	display: block;
-	font-family: var(--garrul-font, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif);
-	color: var(--garrul-fg, #1a1a1a);
-	background: var(--garrul-bg, transparent);
-	font-size: var(--garrul-font-size, 15px);
+	/* Private theme layer. Every rule below uses these --gr-* vars; each one
+	   chains through the public, semver-protected --garrul-* contract var (so a
+	   host's explicit override always wins) down to a light default. Dark mode
+	   redefines ONLY these --gr-* values — the public vars are never renamed or
+	   given new meaning. In light mode this is pixel-identical to the old CSS. */
+	--gr-font: var(--garrul-font, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif);
+	--gr-fg: var(--garrul-fg, #1a1a1a);
+	--gr-bg: var(--garrul-bg, transparent);
+	--gr-font-size: var(--garrul-font-size, 15px);
+	--gr-input-bg: var(--garrul-input-bg, #fff);
+	--gr-border: var(--garrul-border, #d0d3d8);
+	--gr-radius: var(--garrul-radius, 6px);
+	--gr-muted: var(--garrul-muted, #6b7280);
+	--gr-accent: var(--garrul-accent, #2563eb);
+	--gr-accent-fg: var(--garrul-accent-fg, #fff);
+	--gr-link: var(--garrul-link, #2563eb);
+	--gr-error: var(--garrul-error, #b91c1c);
+	--gr-notice: var(--garrul-notice, #1e6091);
+	--gr-badge-bg: var(--garrul-badge-bg, #e0e7ff);
+	--gr-badge-fg: var(--garrul-badge-fg, #1e3a8a);
+	--gr-skel: var(--garrul-skel, #e7e9ec);
+	/* Additive vars (new in this release; non-breaking). See docs/THEMING.md. */
+	--gr-surface: var(--garrul-surface, #f7f8fa);
+	--gr-hover: var(--garrul-hover, #eef0f3);
+	--gr-accent-hover: var(--garrul-accent-hover, #1d4ed8);
+	--gr-vote-active: var(--garrul-vote-active, var(--gr-badge-bg));
+	--gr-shadow: var(--garrul-shadow, 0 1px 2px rgba(0,0,0,.06));
+	font-family: var(--gr-font);
+	color: var(--gr-fg);
+	background: var(--gr-bg);
+	font-size: var(--gr-font-size);
 	line-height: 1.5;
+}
+/* Built-in dark mode. Each --gr-* is redefined with a DARK fallback but still
+   reads the public --garrul-* first, so a host's explicit override keeps
+   winning in dark too. Precedence (highest first): host --garrul-* override >
+   data-theme="dark"|"light" > OS prefers-color-scheme > light default.
+   Zero JS: CSS reacts to a static data-theme attribute the host may set on
+   #garrul (like data-slug). The media block excludes data-theme="light" so an
+   explicit light choice always beats a dark OS; the [data-theme="dark"] rule
+   forces dark regardless of OS and, coming later in source order, wins. */
+@media (prefers-color-scheme: dark) {
+	:host(:not([data-theme="light"])) {
+		--gr-fg: var(--garrul-fg, #e6e8eb);
+		--gr-input-bg: var(--garrul-input-bg, #1b1f24);
+		--gr-border: var(--garrul-border, #2e353d);
+		--gr-muted: var(--garrul-muted, #9aa3b0);
+		--gr-accent: var(--garrul-accent, #3b82f6);
+		--gr-accent-fg: var(--garrul-accent-fg, #ffffff);
+		--gr-link: var(--garrul-link, #6aa9ff);
+		--gr-error: var(--garrul-error, #f08a8a);
+		--gr-notice: var(--garrul-notice, #6cb6e8);
+		--gr-badge-bg: var(--garrul-badge-bg, #1e2a44);
+		--gr-badge-fg: var(--garrul-badge-fg, #c9d9f5);
+		--gr-skel: var(--garrul-skel, #2a2f36);
+		--gr-surface: var(--garrul-surface, #1b1f24);
+		--gr-hover: var(--garrul-hover, #23282e);
+		--gr-accent-hover: var(--garrul-accent-hover, #2563eb);
+		--gr-shadow: var(--garrul-shadow, 0 1px 2px rgba(0,0,0,.5));
+	}
+}
+:host([data-theme="dark"]) {
+	--gr-fg: var(--garrul-fg, #e6e8eb);
+	--gr-input-bg: var(--garrul-input-bg, #1b1f24);
+	--gr-border: var(--garrul-border, #2e353d);
+	--gr-muted: var(--garrul-muted, #9aa3b0);
+	--gr-accent: var(--garrul-accent, #3b82f6);
+	--gr-accent-fg: var(--garrul-accent-fg, #ffffff);
+	--gr-link: var(--garrul-link, #6aa9ff);
+	--gr-error: var(--garrul-error, #f08a8a);
+	--gr-notice: var(--garrul-notice, #6cb6e8);
+	--gr-badge-bg: var(--garrul-badge-bg, #1e2a44);
+	--gr-badge-fg: var(--garrul-badge-fg, #c9d9f5);
+	--gr-skel: var(--garrul-skel, #2a2f36);
+	--gr-surface: var(--garrul-surface, #1b1f24);
+	--gr-hover: var(--garrul-hover, #23282e);
+	--gr-accent-hover: var(--garrul-accent-hover, #2563eb);
+	--gr-shadow: var(--garrul-shadow, 0 1px 2px rgba(0,0,0,.5));
 }
 * { box-sizing: border-box; }
 .gr-root { display: flex; flex-direction: column; gap: 1rem; }
 .gr-form { display: flex; flex-direction: column; gap: 0.5rem; }
 .gr-form input, .gr-form textarea {
 	font: inherit; color: inherit;
-	background: var(--garrul-input-bg, #fff);
-	border: 1px solid var(--garrul-border, #d0d3d8);
-	border-radius: var(--garrul-radius, 6px);
+	background: var(--gr-input-bg);
+	border: 1px solid var(--gr-border);
+	border-radius: var(--gr-radius);
 	padding: 0.5rem 0.7rem;
 }
 .gr-form textarea { min-height: 6em; resize: vertical; }
-.gr-compose { display: flex; flex-direction: column; gap: 0.4rem; }
+.gr-compose {
+	display: flex; flex-direction: column; gap: 0.4rem;
+	background: var(--gr-surface);
+	border: 1px solid var(--gr-border);
+	border-radius: var(--gr-radius);
+	padding: 0.6rem;
+	box-shadow: var(--gr-shadow);
+}
+/* Nested reply/edit composers sit inside an already-bordered thread, so drop
+   the card chrome (surface fill, border, shadow, padding) to avoid a box in a
+   box — they blend into the thread instead of stacking another raised card. */
+.gr-compose.gr-compose-nested {
+	background: transparent;
+	border: 0;
+	box-shadow: none;
+	padding: 0;
+}
 .gr-compose textarea[hidden] { display: none; }
 .gr-tabs { display: flex; gap: 0.25rem; }
 .gr-tab {
 	font: inherit;
 	font-size: 0.85em;
 	background: transparent;
-	color: var(--garrul-muted, #6b7280);
+	color: var(--gr-muted);
 	border: 1px solid transparent;
-	border-radius: var(--garrul-radius, 6px) var(--garrul-radius, 6px) 0 0;
+	border-radius: var(--gr-radius) var(--gr-radius) 0 0;
 	padding: 0.3rem 0.7rem;
 	cursor: pointer;
 	align-self: flex-start;
 }
 .gr-tab.gr-tab-active {
-	color: var(--garrul-fg, #1a1a1a);
-	border-color: var(--garrul-border, #d0d3d8);
-	border-bottom-color: var(--garrul-input-bg, #fff);
-	background: var(--garrul-input-bg, #fff);
+	color: var(--gr-fg);
+	border-color: var(--gr-border);
+	border-bottom-color: var(--gr-input-bg);
+	background: var(--gr-input-bg);
 	font-weight: 600;
 }
 .gr-preview {
 	min-height: 6em;
-	background: var(--garrul-input-bg, #fff);
-	border: 1px solid var(--garrul-border, #d0d3d8);
-	border-radius: var(--garrul-radius, 6px);
+	background: var(--gr-input-bg);
+	border: 1px solid var(--gr-border);
+	border-radius: var(--gr-radius);
 	padding: 0.5rem 0.7rem;
 }
 .gr-preview[hidden] { display: none; }
@@ -141,17 +230,24 @@ const STYLE_CSS = `
 	font-size: 0.85em;
 	line-height: 1.4;
 	min-width: 1.9em;
-	background: var(--garrul-input-bg, #fff);
-	color: var(--garrul-fg, #1a1a1a);
-	border: 1px solid var(--garrul-border, #d0d3d8);
-	border-radius: var(--garrul-radius, 6px);
+	background: var(--gr-input-bg);
+	color: var(--gr-fg);
+	border: 1px solid var(--gr-border);
+	border-radius: var(--gr-radius);
 	padding: 0.2rem 0.45rem;
 	cursor: pointer;
 	align-self: flex-start;
 }
-.gr-toolbar-btn:hover { border-color: var(--garrul-accent, #2563eb); }
+.gr-toolbar-btn:hover { background: var(--gr-hover); border-color: var(--gr-accent); }
+/* One focus ring for every interactive control in the shadow tree. */
+button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-visible {
+	outline: 2px solid var(--gr-accent);
+	outline-offset: 2px;
+}
+.gr-md-hint { font-size: 0.8em; color: var(--gr-muted); }
+.gr-md-hint[hidden] { display: none; }
 .gr-preview p { margin: 0.3em 0; }
-.gr-preview a { color: var(--garrul-link, #2563eb); }
+.gr-preview a { color: var(--gr-link); }
 .gr-form .gr-honeypot { position: absolute; left: -9999px; top: -9999px; }
 .gr-form .gr-notify { display: flex; align-items: center; gap: 0.4rem; font-size: 0.9em; cursor: pointer; }
 .gr-form .gr-notify .gr-notify-cb { width: auto; }
@@ -165,66 +261,85 @@ const STYLE_CSS = `
 }
 .gr-form button {
 	font: inherit;
-	background: var(--garrul-accent, #2563eb);
-	color: var(--garrul-accent-fg, #fff);
+	background: var(--gr-accent);
+	color: var(--gr-accent-fg);
 	border: none;
-	border-radius: var(--garrul-radius, 6px);
+	border-radius: var(--gr-radius);
 	padding: 0.55rem 1rem;
 	cursor: pointer;
 	align-self: flex-start;
 }
+.gr-form button:hover:not([disabled]) { background: var(--gr-accent-hover); }
 .gr-form button[disabled] { opacity: 0.6; cursor: progress; }
-.gr-error { color: var(--garrul-error, #b91c1c); font-size: 0.9em; }
-.gr-error.is-notice { color: var(--garrul-notice, #1e6091); }
+.gr-error {
+	color: var(--gr-error);
+	font-size: 0.9em;
+	background: var(--gr-surface);
+	border: 1px solid var(--gr-border);
+	border-radius: var(--gr-radius);
+	padding: 0.5rem 0.7rem;
+}
+.gr-error[hidden] { display: none; }
+.gr-error.is-notice { color: var(--gr-notice); }
+/* Composer submit errors are inline (text only) — a box-in-a-box reads too
+   heavy next to the composer. The :not(.is-notice) guard keeps the boxed
+   styling for the in-form "awaiting moderation" notice, which reuses this
+   same element by toggling .is-notice. */
+.gr-error.is-inline:not(.is-notice) {
+	background: transparent;
+	border: 0;
+	padding: 0;
+}
 .gr-list { display: flex; flex-direction: column; gap: 1rem; }
 .gr-thread { display: flex; flex-direction: column; gap: 0.75rem; }
-.gr-replies { display: flex; flex-direction: column; gap: 0.75rem; margin-top: 0.5rem; padding-left: 1.25rem; border-left: 2px solid var(--garrul-border, #d0d3d8); }
+.gr-replies { display: flex; flex-direction: column; gap: 0.75rem; margin-top: 0.5rem; padding-left: 1.25rem; border-left: 2px solid var(--gr-border); }
 .gr-comment { display: flex; gap: 0.75rem; }
-.gr-comment[data-flat="1"] .gr-flatten { font-size: 0.85em; color: var(--garrul-muted, #6b7280); margin-right: 0.3em; }
-.gr-avatar { flex: 0 0 auto; width: 40px; height: 40px; border-radius: 50%; overflow: hidden; }
+.gr-comment[data-flat="1"] .gr-flatten { font-size: 0.85em; color: var(--gr-muted); margin-right: 0.3em; }
+.gr-avatar { flex: 0 0 auto; width: 40px; height: 40px; border-radius: 50%; overflow: hidden; background: var(--gr-surface); box-shadow: 0 0 0 1px var(--gr-border); }
 .gr-avatar svg, .gr-avatar img { width: 100%; height: 100%; display: block; }
 .gr-main { flex: 1; min-width: 0; }
 .gr-meta { display: flex; gap: 0.5rem; align-items: baseline; flex-wrap: wrap; }
 .gr-name { font-weight: 600; }
 .gr-verified {
-	background: var(--garrul-badge-bg, #e0e7ff);
-	color: var(--garrul-badge-fg, #1e3a8a);
+	background: var(--gr-badge-bg);
+	color: var(--gr-badge-fg);
 	font-size: 0.75em;
 	padding: 0.05em 0.4em;
 	border-radius: 999px;
 }
-.gr-time { color: var(--garrul-muted, #6b7280); font-size: 0.85em; }
+.gr-time { color: var(--gr-muted); font-size: 0.85em; }
+.gr-edited { color: var(--gr-muted); font-size: 0.85em; font-style: italic; }
 .gr-body { margin: 0.25rem 0 0; }
 .gr-body p { margin: 0.3em 0; }
-.gr-body a { color: var(--garrul-link, #2563eb); }
-.gr-deleted { color: var(--garrul-muted, #6b7280); font-style: italic; }
+.gr-body a { color: var(--gr-link); }
+.gr-deleted { color: var(--gr-muted); font-style: italic; }
 .gr-actions { display: flex; gap: 0.75rem; margin-top: 0.35rem; font-size: 0.85em; }
 .gr-actions button {
 	font: inherit;
 	background: transparent;
-	color: var(--garrul-muted, #6b7280);
+	color: var(--gr-muted);
 	border: none;
 	padding: 0;
 	cursor: pointer;
 }
-.gr-actions button:hover { color: var(--garrul-link, #2563eb); }
+.gr-actions button:hover { color: var(--gr-link); }
 .gr-page-engage {
 	display: flex;
 	flex-wrap: wrap;
 	align-items: center;
 	gap: 0.75rem 1.25rem;
 	padding-bottom: 0.5rem;
-	border-bottom: 1px solid var(--garrul-border, #d0d3d8);
+	border-bottom: 1px solid var(--gr-border);
 }
 .gr-page-reactions { display: flex; gap: 0.4rem; flex-wrap: wrap; }
 .gr-page-votes { display: flex; align-items: center; gap: 0.4rem; }
-.gr-page-vote-label { color: var(--garrul-muted, #6b7280); font-size: 0.9em; }
+.gr-page-vote-label { color: var(--gr-muted); font-size: 0.9em; }
 .gr-reactions { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-top: 0.4rem; }
 .gr-reaction {
 	font: inherit;
-	background: var(--garrul-input-bg, #fff);
-	color: var(--garrul-fg, #1a1a1a);
-	border: 1px solid var(--garrul-border, #d0d3d8);
+	background: var(--gr-input-bg);
+	color: var(--gr-fg);
+	border: 1px solid var(--gr-border);
 	border-radius: 999px;
 	padding: 0.05em 0.55em;
 	font-size: 0.85em;
@@ -232,17 +347,17 @@ const STYLE_CSS = `
 	line-height: 1.5;
 }
 .gr-reaction[data-mine="1"] {
-	background: var(--garrul-badge-bg, #e0e7ff);
-	color: var(--garrul-badge-fg, #1e3a8a);
-	border-color: var(--garrul-accent, #2563eb);
+	background: var(--gr-vote-active);
+	color: var(--gr-badge-fg);
+	border-color: var(--gr-accent);
 }
 .gr-reaction-count { margin-left: 0.25em; font-variant-numeric: tabular-nums; }
 .gr-votes { display: flex; align-items: center; gap: 0.3rem; margin-top: 0.4rem; font-size: 0.85em; }
 .gr-vote {
 	font: inherit;
-	background: var(--garrul-input-bg, #fff);
-	color: var(--garrul-muted, #6b7280);
-	border: 1px solid var(--garrul-border, #d0d3d8);
+	background: var(--gr-input-bg);
+	color: var(--gr-muted);
+	border: 1px solid var(--gr-border);
 	border-radius: 999px;
 	width: 1.8em;
 	height: 1.8em;
@@ -253,47 +368,48 @@ const STYLE_CSS = `
 	align-items: center;
 	justify-content: center;
 }
-.gr-vote:hover { color: var(--garrul-link, #2563eb); }
+.gr-vote:hover { color: var(--gr-link); }
 .gr-vote[data-mine="1"] {
-	background: var(--garrul-badge-bg, #e0e7ff);
-	color: var(--garrul-badge-fg, #1e3a8a);
-	border-color: var(--garrul-accent, #2563eb);
+	background: var(--gr-vote-active);
+	color: var(--gr-badge-fg);
+	border-color: var(--gr-accent);
 }
 .gr-vote[disabled] { opacity: 0.6; cursor: progress; }
 .gr-vote-score { font-variant-numeric: tabular-nums; min-width: 1.2em; text-align: center; }
-.gr-sort { display: flex; gap: 0.4rem; align-items: center; font-size: 0.85em; color: var(--garrul-muted, #6b7280); margin-top: 0.5rem; }
+.gr-sort { display: flex; gap: 0.4rem; align-items: center; font-size: 0.85em; color: var(--gr-muted); margin-top: 0.5rem; }
 .gr-sort select {
 	font: inherit;
-	background: var(--garrul-input-bg, #fff);
-	color: var(--garrul-fg, #1a1a1a);
-	border: 1px solid var(--garrul-border, #d0d3d8);
-	border-radius: var(--garrul-radius, 6px);
+	background: var(--gr-input-bg);
+	color: var(--gr-fg);
+	border: 1px solid var(--gr-border);
+	border-radius: var(--gr-radius);
 	padding: 0.2rem 0.4rem;
 }
+.gr-sort select:hover { border-color: var(--gr-accent); }
 .gr-reply-form { margin-top: 0.5rem; display: flex; flex-direction: column; gap: 0.4rem; }
 .gr-reply-form textarea { min-height: 4em; }
 .gr-reply-form .gr-reply-actions { display: flex; gap: 0.5rem; }
 .gr-reply-form .gr-reply-actions button {
 	font: inherit;
-	border-radius: var(--garrul-radius, 6px);
+	border-radius: var(--gr-radius);
 	padding: 0.4rem 0.9rem;
 	cursor: pointer;
-	border: 1px solid var(--garrul-border, #d0d3d8);
-	background: var(--garrul-input-bg, #fff);
-	color: var(--garrul-fg, #1a1a1a);
+	border: 1px solid var(--gr-border);
+	background: var(--gr-input-bg);
+	color: var(--gr-fg);
 }
 .gr-reply-form .gr-reply-actions button[type="submit"] {
-	background: var(--garrul-accent, #2563eb);
-	color: var(--garrul-accent-fg, #fff);
-	border-color: var(--garrul-accent, #2563eb);
+	background: var(--gr-accent);
+	color: var(--gr-accent-fg);
+	border-color: var(--gr-accent);
 }
-.gr-empty { color: var(--garrul-muted, #6b7280); margin: 0; }
+.gr-empty { color: var(--gr-muted); margin: 0; text-align: center; padding: 1.5rem 1rem; }
 .gr-loadmore {
 	font: inherit;
 	background: transparent;
-	color: var(--garrul-link, #2563eb);
-	border: 1px solid var(--garrul-border, #d0d3d8);
-	border-radius: var(--garrul-radius, 6px);
+	color: var(--gr-link);
+	border: 1px solid var(--gr-border);
+	border-radius: var(--gr-radius);
 	padding: 0.5rem 1rem;
 	cursor: pointer;
 	align-self: center;
@@ -308,30 +424,32 @@ const STYLE_CSS = `
 	cursor: pointer;
 	align-self: flex-start;
 }
-.gr-collapse { color: var(--garrul-muted, #6b7280); }
-.gr-showmore { color: var(--garrul-link, #2563eb); margin-top: 0.25rem; }
+.gr-collapse { color: var(--gr-muted); }
+.gr-collapse:hover { color: var(--gr-link); }
+.gr-showmore { color: var(--gr-link); margin-top: 0.25rem; }
 .gr-signin { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
 .gr-signin button {
 	font: inherit;
-	background: var(--garrul-input-bg, #fff);
-	color: var(--garrul-fg, #1a1a1a);
-	border: 1px solid var(--garrul-border, #d0d3d8);
-	border-radius: var(--garrul-radius, 6px);
+	background: var(--gr-input-bg);
+	color: var(--gr-fg);
+	border: 1px solid var(--gr-border);
+	border-radius: var(--gr-radius);
 	padding: 0.4rem 0.8rem;
 	cursor: pointer;
 }
-.gr-signed { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; color: var(--garrul-muted, #6b7280); font-size: 0.9em; }
-.gr-signed .gr-signed-name { color: var(--garrul-fg, #1a1a1a); font-weight: 600; }
+.gr-signin button:hover { background: var(--gr-hover); border-color: var(--gr-accent); }
+.gr-signed { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; color: var(--gr-muted); font-size: 0.9em; }
+.gr-signed .gr-signed-name { color: var(--gr-fg); font-weight: 600; }
 .gr-signed button {
 	font: inherit;
 	background: transparent;
-	color: var(--garrul-link, #2563eb);
+	color: var(--gr-link);
 	border: none;
 	padding: 0;
 	cursor: pointer;
 	text-decoration: underline;
 }
-.gr-skel { background: var(--garrul-skel, #e7e9ec); border-radius: 6px; animation: gr-pulse 1.2s ease-in-out infinite; }
+.gr-skel { background: var(--gr-skel); border-radius: 6px; animation: gr-pulse 1.2s ease-in-out infinite; }
 .gr-skel-line { height: 0.9em; }
 .gr-skel-avatar { width: 40px; height: 40px; border-radius: 50%; }
 @keyframes gr-pulse {
@@ -340,7 +458,7 @@ const STYLE_CSS = `
 }
 .gr-attribution {
 	font-size: 0.8em;
-	color: var(--garrul-muted, #6b7280);
+	color: var(--gr-muted);
 	text-align: right;
 	margin: 0.5rem 0 0;
 }
@@ -451,8 +569,9 @@ const buildToolbar = (ta: HTMLTextAreaElement): HTMLElement => {
 const buildWritePreview = (
 	textarea: HTMLTextAreaElement,
 	apiBase: string,
+	compact = false,
 ): HTMLElement => {
-	const wrap = el("div", "gr-compose");
+	const wrap = el("div", compact ? "gr-compose gr-compose-nested" : "gr-compose");
 	const tabs = el("div", "gr-tabs");
 	tabs.setAttribute("role", "tablist");
 	const writeTab = el("button", "gr-tab gr-tab-active", "Write");
@@ -466,6 +585,7 @@ const buildWritePreview = (
 	tabs.append(writeTab, previewTab);
 
 	const toolbar = buildToolbar(textarea);
+	const hint = el("span", "gr-md-hint", "Styling with Markdown is supported");
 	const pane = el("div", "gr-preview");
 	pane.hidden = true;
 
@@ -475,6 +595,7 @@ const buildWritePreview = (
 		writeTab.setAttribute("aria-selected", "true");
 		previewTab.setAttribute("aria-selected", "false");
 		toolbar.hidden = false;
+		hint.hidden = false;
 		textarea.hidden = false;
 		pane.hidden = true;
 	};
@@ -485,6 +606,7 @@ const buildWritePreview = (
 		previewTab.setAttribute("aria-selected", "true");
 		writeTab.setAttribute("aria-selected", "false");
 		toolbar.hidden = true;
+		hint.hidden = true;
 		textarea.hidden = true;
 		pane.hidden = false;
 		const body = textarea.value.trim();
@@ -514,7 +636,7 @@ const buildWritePreview = (
 		void showPreview();
 	});
 
-	wrap.append(tabs, toolbar, textarea, pane);
+	wrap.append(tabs, toolbar, textarea, hint, pane);
 	return wrap;
 };
 
@@ -1088,7 +1210,7 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 	cancel.type = "button";
 	cancel.addEventListener("click", () => wrap.remove());
 	actions.append(save, cancel);
-	wrap.append(buildWritePreview(ta, ctx.apiBase), actions);
+	wrap.append(buildWritePreview(ta, ctx.apiBase, true), actions);
 	wrap.addEventListener("submit", async (e) => {
 		e.preventDefault();
 		save.disabled = true;
@@ -1128,7 +1250,7 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 		nameInput.required = true;
 		wrap.appendChild(nameInput);
 	}
-	wrap.appendChild(buildWritePreview(ta, ctx.apiBase));
+	wrap.appendChild(buildWritePreview(ta, ctx.apiBase, true));
 
 	// Honeypot: mirrors the top-level form's anti-spam input. Hidden offscreen
 	// via .gr-honeypot, readonly to defeat browser autofill, tabIndex -1 so
@@ -1160,7 +1282,7 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	actions.append(submit, cancel);
 	wrap.appendChild(actions);
 
-	const errBox = el("div", "gr-error");
+	const errBox = el("div", "gr-error is-inline");
 	errBox.hidden = true;
 	wrap.appendChild(errBox);
 
@@ -1269,8 +1391,8 @@ const buildComment = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	if (n.author.provider !== "anon") {
 		meta.appendChild(el("span", "gr-verified", "verified"));
 	}
-	const timeText = `${fmtTime(n.created_at)}${n.edited_at ? " · edited" : ""}`;
-	meta.appendChild(el("span", "gr-time", timeText));
+	meta.appendChild(el("span", "gr-time", fmtTime(n.created_at)));
+	if (n.edited_at) meta.appendChild(el("span", "gr-edited", "· edited"));
 
 	const body = el("div", "gr-body");
 	if (n.status === "deleted") {
@@ -1519,7 +1641,7 @@ const buildForm = (
 	const submit = el("button", undefined, "Post comment");
 	submit.type = "submit";
 
-	const errBox = el("div", "gr-error");
+	const errBox = el("div", "gr-error is-inline");
 	errBox.hidden = true;
 
 	form.append(submit, errBox);
@@ -1834,7 +1956,7 @@ const loadOnce = async (
 	// Sort selector only when voting is on (no scores to rank without it).
 	if (votingEnabled) {
 		const sortWrap = el("div", "gr-sort");
-		const label = el("label", undefined, "Sort: ");
+		const label = el("label", undefined, "Sort by ");
 		const sel = el("select") as HTMLSelectElement;
 		const newOpt = el("option") as HTMLOptionElement;
 		newOpt.value = "new";

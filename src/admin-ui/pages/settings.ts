@@ -6,7 +6,16 @@ import {
 	type ResolvedNumbers,
 	numberBounds,
 } from "../../lib/settings";
+import { renderStepper, renderSwitch, renderTabs } from "../controls";
 import { escapeHtml } from "../escape";
+
+// Settings tabs. Email / Moderation tabs can slot in here later without
+// touching the panel-toggle wiring (each panel just keys off `tab`).
+const TABS = [
+	{ id: "features", label: "Features" },
+	{ id: "display", label: "Display" },
+	{ id: "config", label: "Configuration" },
+];
 
 // Operator-facing labels + help for each runtime feature flag. Order here is
 // the order rendered in the toggles card.
@@ -101,31 +110,27 @@ export const renderSettings = (
 	// value (DB override > env > default). Saving writes an explicit DB row
 	// per flag (overriding env); "Reset to defaults" clears the rows so the
 	// env vars / built-in defaults apply again.
-	const toggles = FLAG_META.map((f) => {
-		const on = flags[f.key];
-		return `
-    <div class="flag-row">
-      <label>
-        <input type="checkbox" name="${f.key}" x-model="flags.${f.key}">
-        <strong>${escapeHtml(f.label)}</strong>
-      </label>
-      <span class="muted">${escapeHtml(f.help)}</span>
-    </div>`;
-	}).join("");
+	const toggles = FLAG_META.map((f) =>
+		renderSwitch({
+			name: f.key,
+			model: `flags.${f.key}`,
+			label: f.label,
+			help: f.help,
+		}),
+	).join("");
 
-	// Numeric display settings. Each input reflects the resolved effective
+	// Numeric display settings. Each stepper reflects the resolved effective
 	// value; min/max mirror the server-side clamp (numberBounds).
 	const numberInputs = NUMBER_META.map((f) => {
 		const b = numberBounds(f.key);
-		return `
-    <div class="flag-row">
-      <label>
-        <input type="number" name="${f.key}" min="${b.min}" max="${b.max}" step="1"
-               x-model.number="nums.${f.key}" style="width:5rem">
-        <strong>${escapeHtml(f.label)}</strong>
-      </label>
-      <span class="muted">${escapeHtml(f.help)}</span>
-    </div>`;
+		return renderStepper({
+			name: f.key,
+			model: `nums.${f.key}`,
+			min: b.min,
+			max: b.max,
+			label: f.label,
+			help: f.help,
+		});
 	}).join("");
 
 	const initial = JSON.stringify(
@@ -136,7 +141,8 @@ export const renderSettings = (
 	);
 
 	return `
-<div class="card" x-data="{
+<div x-data="{
+  tab: 'features',
   busy: false,
   flags: ${escapeHtml(initial)},
   nums: ${escapeHtml(numInitial)},
@@ -180,40 +186,47 @@ export const renderSettings = (
     }
   },
 }">
-  <h2>Features</h2>
-  <p class="muted">Toggle features without a redeploy. A toggle here overrides
-  the matching env var (<code>VOTING_ENABLED</code>, <code>REACTIONS_ENABLED</code>,
-  …); "Reset to defaults" clears the overrides so the env vars / built-in
-  defaults apply again.</p>
+  ${renderTabs("tab", TABS)}
+
   <form @submit.prevent="save()">
-    ${toggles}
-    <h3 style="margin-top:1.25rem">Display &amp; pagination</h3>
-    <p class="muted">Control how many comments load at once and how nested
-    replies collapse. Smaller values keep a busy thread from pushing the rest
-    of the page down.</p>
-    ${numberInputs}
-    <p style="margin-top:1rem">
-      <button type="submit" :disabled="busy">Save settings</button>
+    <div class="card" x-show="tab === 'features'">
+      <h2>Features</h2>
+      <p class="muted">Toggle features without a redeploy. A toggle here overrides
+      the matching env var (<code>VOTING_ENABLED</code>, <code>REACTIONS_ENABLED</code>,
+      …); "Reset to defaults" clears the overrides so the env vars / built-in
+      defaults apply again.</p>
+      ${toggles}
+    </div>
+
+    <div class="card" x-show="tab === 'display'" x-cloak>
+      <h2>Display &amp; pagination</h2>
+      <p class="muted">Control how many comments load at once and how nested
+      replies collapse. Smaller values keep a busy thread from pushing the rest
+      of the page down.</p>
+      ${numberInputs}
+    </div>
+
+    <p class="settings-actions" x-show="tab !== 'config'">
+      <button type="submit" class="btn-primary" :disabled="busy">Save settings</button>
       <button type="button" class="secondary" @click="reset()" :disabled="busy">Reset to defaults</button>
     </p>
   </form>
-</div>
-<div class="card">
-  <h2>Configuration</h2>
-  <p class="muted">These remain environment variables. Change them with
-  <code>wrangler secret put NAME</code> (or edit <code>wrangler.toml</code>
-  <code>[vars]</code> for non-secrets) and redeploy.</p>
-  <table>
-    <thead><tr><th>Variable</th><th>Value</th></tr></thead>
-    <tbody>${body}</tbody>
-  </table>
-</div>
-<div class="card">
-  <h3>Bindings</h3>
-  <ul>
-    <li><code>DB</code> — D1 database (comments, users, reactions, posts)</li>
-    <li><code>RATE_LIMITS</code>, <code>OAUTH_STATE</code>, <code>SESSIONS</code>, <code>TREE_CACHE</code> — KV namespaces</li>
-    <li><code>ANALYTICS</code> — Workers Analytics Engine dataset (optional)</li>
-  </ul>
+
+  <div class="card" x-show="tab === 'config'" x-cloak>
+    <h2>Configuration</h2>
+    <p class="muted">These remain environment variables. Change them with
+    <code>wrangler secret put NAME</code> (or edit <code>wrangler.toml</code>
+    <code>[vars]</code> for non-secrets) and redeploy.</p>
+    <table>
+      <thead><tr><th>Variable</th><th>Value</th></tr></thead>
+      <tbody>${body}</tbody>
+    </table>
+    <h3>Bindings</h3>
+    <ul>
+      <li><code>DB</code> — D1 database (comments, users, reactions, posts)</li>
+      <li><code>RATE_LIMITS</code>, <code>OAUTH_STATE</code>, <code>SESSIONS</code>, <code>TREE_CACHE</code> — KV namespaces</li>
+      <li><code>ANALYTICS</code> — Workers Analytics Engine dataset (optional)</li>
+    </ul>
+  </div>
 </div>`;
 };

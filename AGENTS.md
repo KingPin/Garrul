@@ -316,18 +316,32 @@ ancestor.
 | `--garrul-badge-bg`   | `#e0e7ff`                                                | "Verified" badge background            |
 | `--garrul-badge-fg`   | `#1e3a8a`                                                | "Verified" badge text                  |
 | `--garrul-skel`       | `#e7e9ec`                                                | Skeleton-loading placeholder color     |
+| `--garrul-surface`    | `#f7f8fa`                                                | Raised surface fill: composer card, error/notice box |
+| `--garrul-hover`      | `#eef0f3`                                                | Hover background on toolbar/icon buttons |
+| `--garrul-accent-hover` | `#1d4ed8`                                              | Submit button hover background         |
+| `--garrul-vote-active` | `--garrul-badge-bg`                                     | Active vote / reaction highlight (defaults to the badge background) |
+| `--garrul-shadow`     | `0 1px 2px rgba(0,0,0,.06)`                              | Box-shadow on raised surfaces          |
 
-Dark theme starter — override on the host element:
+### Dark mode
+
+The widget ships with a **built-in dark palette**, so hosts no longer have to
+override every variable by hand. By default it follows the visitor's OS/browser
+`prefers-color-scheme`. Pin a theme with `data-theme` on the `#garrul` host:
 
 ```html
 <div id="garrul" data-slug="hello-world" data-api="{{INSTANCE_URL}}"
-  style="--garrul-fg:#f3f4f6;--garrul-bg:#18181b;--garrul-input-bg:#27272a;
-    --garrul-border:#3f3f46;--garrul-muted:#a1a1aa;--garrul-accent:#818cf8;
-    --garrul-accent-fg:#0b0b0e;--garrul-link:#a5b4fc;--garrul-badge-bg:#312e81;
-    --garrul-badge-fg:#c7d2fe;--garrul-skel:#27272a;"></div>
+  data-theme="dark"></div>
 ```
 
-For the full reference and stability policy, see `docs/THEMING.md`.
+| `data-theme` value | Behavior                                |
+| ------------------ | --------------------------------------- |
+| absent / `auto`    | Follow `prefers-color-scheme` (default) |
+| `light`            | Always light                            |
+| `dark`             | Always dark                             |
+
+Host `--garrul-*` overrides still win at every theme level, so the table above
+remains the supported customization surface. For the full reference and
+stability policy, see `docs/THEMING.md`.
 
 ## 6. Iframe fallback
 

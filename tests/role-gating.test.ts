@@ -195,6 +195,67 @@ describe("admin layout role-aware nav", () => {
 	});
 });
 
+describe("admin layout active-link highlighting", () => {
+	const admin = makeUser({ role: "admin", is_admin: true, name: "Admin" });
+
+	// Read the class attribute of the *nav* anchor for an exact href. Plain
+	// string scanning (not a regex built from the href, which would need
+	// metacharacter escaping): the `"` after href and the ` class="` that
+	// immediately follows make the match exact (so `/admin` won't also match
+	// `/admin/users`), and requiring the class to start with `nav-link` skips
+	// the brand/logo anchor, which also points at `/admin`.
+	const navLinkClass = (html: string, href: string): string => {
+		const marker = `href="${href}" class="`;
+		for (let at = html.indexOf(marker); at !== -1; at = html.indexOf(marker, at + 1)) {
+			const start = at + marker.length;
+			const cls = html.slice(start, html.indexOf('"', start));
+			if (cls.startsWith("nav-link")) return cls;
+		}
+		throw new Error(`no nav link for ${href}`);
+	};
+	const isActive = (html: string, href: string): boolean =>
+		navLinkClass(html, href).split(/\s+/).includes("active");
+
+	it("does not mark any link active without an activePath", () => {
+		const html = layout("test", "<p>x</p>", admin, null);
+		expect(isActive(html, "/admin")).toBe(false);
+		expect(isActive(html, "/admin/users")).toBe(false);
+	});
+
+	it("matches the dashboard root exactly, not as a prefix", () => {
+		// "/admin" is a prefix of every admin path, so it must NOT light up on
+		// sub-pages — otherwise Dashboard would always look active.
+		const onSub = layout("test", "<p>x</p>", admin, null, {
+			activePath: "/admin/users",
+		});
+		expect(isActive(onSub, "/admin")).toBe(false);
+		expect(isActive(onSub, "/admin/users")).toBe(true);
+
+		const onRoot = layout("test", "<p>x</p>", admin, null, {
+			activePath: "/admin",
+		});
+		expect(isActive(onRoot, "/admin")).toBe(true);
+		expect(isActive(onRoot, "/admin/users")).toBe(false);
+	});
+
+	it("keeps a section active on its sub-pages (prefix match)", () => {
+		const html = layout("test", "<p>x</p>", admin, null, {
+			activePath: "/admin/users/01HU00000000000000000000A",
+		});
+		expect(isActive(html, "/admin/users")).toBe(true);
+		expect(isActive(html, "/admin/queue")).toBe(false);
+	});
+
+	it("requires a slash boundary so sibling prefixes don't spuriously match", () => {
+		// "/admin/queuexyz" shares a string prefix with "/admin/queue" but is a
+		// different route; the `${href}/` guard must keep Queue inactive.
+		const html = layout("test", "<p>x</p>", admin, null, {
+			activePath: "/admin/queuexyz",
+		});
+		expect(isActive(html, "/admin/queue")).toBe(false);
+	});
+});
+
 describe("countAdmins", () => {
 	it("counts users WHERE role = 'admin' (not is_admin)", async () => {
 		let captured: { sql: string; binds: unknown[] } | null = null;

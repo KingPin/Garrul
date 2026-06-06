@@ -157,6 +157,7 @@ const renderPage = (
 ): string =>
 	layout(title, body, user, updateInfo, {
 		usage_link: isUsageConfigured(c.env),
+		activePath: c.req.path,
 	});
 
 // Gate the admin-area pages and APIs. `level: "admin"` is the historical
