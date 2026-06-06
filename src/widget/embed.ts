@@ -269,7 +269,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
 .gr-replies { display: flex; flex-direction: column; gap: 0.75rem; margin-top: 0.5rem; padding-left: 1.25rem; border-left: 2px solid var(--gr-border); }
 .gr-comment { display: flex; gap: 0.75rem; }
 .gr-comment[data-flat="1"] .gr-flatten { font-size: 0.85em; color: var(--gr-muted); margin-right: 0.3em; }
-.gr-avatar { flex: 0 0 auto; width: 40px; height: 40px; border-radius: 50%; overflow: hidden; }
+.gr-avatar { flex: 0 0 auto; width: 40px; height: 40px; border-radius: 50%; overflow: hidden; background: var(--gr-surface); box-shadow: 0 0 0 1px var(--gr-border); }
 .gr-avatar svg, .gr-avatar img { width: 100%; height: 100%; display: block; }
 .gr-main { flex: 1; min-width: 0; }
 .gr-meta { display: flex; gap: 0.5rem; align-items: baseline; flex-wrap: wrap; }
@@ -282,6 +282,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
 	border-radius: 999px;
 }
 .gr-time { color: var(--gr-muted); font-size: 0.85em; }
+.gr-edited { color: var(--gr-muted); font-size: 0.85em; font-style: italic; }
 .gr-body { margin: 0.25rem 0 0; }
 .gr-body p { margin: 0.3em 0; }
 .gr-body a { color: var(--gr-link); }
@@ -320,7 +321,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
 	line-height: 1.5;
 }
 .gr-reaction[data-mine="1"] {
-	background: var(--gr-badge-bg);
+	background: var(--gr-vote-active);
 	color: var(--gr-badge-fg);
 	border-color: var(--gr-accent);
 }
@@ -343,7 +344,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
 }
 .gr-vote:hover { color: var(--gr-link); }
 .gr-vote[data-mine="1"] {
-	background: var(--gr-badge-bg);
+	background: var(--gr-vote-active);
 	color: var(--gr-badge-fg);
 	border-color: var(--gr-accent);
 }
@@ -358,6 +359,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
 	border-radius: var(--gr-radius);
 	padding: 0.2rem 0.4rem;
 }
+.gr-sort select:hover { border-color: var(--gr-accent); }
 .gr-reply-form { margin-top: 0.5rem; display: flex; flex-direction: column; gap: 0.4rem; }
 .gr-reply-form textarea { min-height: 4em; }
 .gr-reply-form .gr-reply-actions { display: flex; gap: 0.5rem; }
@@ -397,6 +399,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
 	align-self: flex-start;
 }
 .gr-collapse { color: var(--gr-muted); }
+.gr-collapse:hover { color: var(--gr-link); }
 .gr-showmore { color: var(--gr-link); margin-top: 0.25rem; }
 .gr-signin { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
 .gr-signin button {
@@ -1361,8 +1364,8 @@ const buildComment = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	if (n.author.provider !== "anon") {
 		meta.appendChild(el("span", "gr-verified", "verified"));
 	}
-	const timeText = `${fmtTime(n.created_at)}${n.edited_at ? " · edited" : ""}`;
-	meta.appendChild(el("span", "gr-time", timeText));
+	meta.appendChild(el("span", "gr-time", fmtTime(n.created_at)));
+	if (n.edited_at) meta.appendChild(el("span", "gr-edited", "· edited"));
 
 	const body = el("div", "gr-body");
 	if (n.status === "deleted") {
@@ -1926,7 +1929,7 @@ const loadOnce = async (
 	// Sort selector only when voting is on (no scores to rank without it).
 	if (votingEnabled) {
 		const sortWrap = el("div", "gr-sort");
-		const label = el("label", undefined, "Sort: ");
+		const label = el("label", undefined, "Sort by ");
 		const sel = el("select") as HTMLSelectElement;
 		const newOpt = el("option") as HTMLOptionElement;
 		newOpt.value = "new";
