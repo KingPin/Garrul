@@ -1,5 +1,5 @@
 {
-  "version": "1.12.0",
+  "version": "1.13.0",
   "minPreviousVersion": "1.0.0",
   "renderer": {
     "version": 1,
@@ -45,6 +45,36 @@
       "name": "GOOGLE_CLIENT_SECRET",
       "required": false,
       "addedIn": "1.0.0"
+    },
+    {
+      "name": "FACEBOOK_CLIENT_ID",
+      "required": false,
+      "addedIn": "1.13.0"
+    },
+    {
+      "name": "FACEBOOK_CLIENT_SECRET",
+      "required": false,
+      "addedIn": "1.13.0"
+    },
+    {
+      "name": "TWITTER_CLIENT_ID",
+      "required": false,
+      "addedIn": "1.13.0"
+    },
+    {
+      "name": "TWITTER_CLIENT_SECRET",
+      "required": false,
+      "addedIn": "1.13.0"
+    },
+    {
+      "name": "DISCORD_CLIENT_ID",
+      "required": false,
+      "addedIn": "1.13.0"
+    },
+    {
+      "name": "DISCORD_CLIENT_SECRET",
+      "required": false,
+      "addedIn": "1.13.0"
     },
     {
       "name": "RESEND_API_KEY",
