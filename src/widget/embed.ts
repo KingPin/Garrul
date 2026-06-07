@@ -1510,9 +1510,11 @@ const buildThread = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 };
 
 // Mirror of src/lib/oauth.ts ProviderId. The widget is bundled separately
-// (no server imports) so the union is duplicated here; PROVIDER_LABELS is the
-// single source of which ids the widget will render, and the /config filter
-// keys off it.
+// (no server imports) so the union is duplicated here. The server's
+// /api/v1/config derives the provider list from PROVIDERS + env presence
+// (see src/routes/api.config.ts); PROVIDER_LABELS is the widget-side set of
+// ids it knows how to render, and the widget filters the /config response
+// against it so an unknown id can never reach the button renderer.
 type OAuthProvider = "github" | "google" | "facebook" | "twitter" | "discord";
 
 const PROVIDER_LABELS: Record<OAuthProvider, string> = {
