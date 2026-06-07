@@ -116,15 +116,39 @@ Fix sequence:
 If that still fails, the widget falls back to a top-level redirect
 when popup is blocked. The user navigates manually back to the blog.
 
-### "redirect_uri_mismatch" on GitHub or Google
+### "redirect_uri_mismatch" (any provider)
 
 The redirect URI registered in your OAuth app must exactly match
 `OAUTH_CALLBACK_BASE` + `/api/v1/auth/<provider>/callback`. No trailing
-slash, no `www.` if your worker doesn't serve `www.`.
+slash, no `www.` if your worker doesn't serve `www.`. The `<provider>`
+path segment is the internal id, which differs from the display name in
+one case — X uses `twitter`:
+
+- GitHub → `/api/v1/auth/github/callback`
+- Google → `/api/v1/auth/google/callback`
+- Facebook → `/api/v1/auth/facebook/callback`
+- X → `/api/v1/auth/twitter/callback`
+- Discord → `/api/v1/auth/discord/callback`
 
 GitHub OAuth apps allow exactly one callback URL. For staging +
 production, register two OAuth apps and switch credentials per
 deployment.
+
+### Supported providers / why no Instagram
+
+Configured providers are GitHub, Google, Facebook, X (Twitter), and
+Discord. A provider's sign-in button appears only when **both** its
+`*_CLIENT_ID` and `*_CLIENT_SECRET` are set.
+
+- **X (Twitter)** uses OAuth 2.0 with PKCE and returns **no email** — X
+  users sign in with name + avatar only. Because `ADMIN_EMAILS`
+  auto-promotion matches on a verified email, X accounts can't be
+  auto-promoted to admin; promote them from the admin Users page
+  instead.
+- **Instagram is intentionally not supported.** Meta shut down the
+  Instagram Basic Display API (Dec 2024); the replacement login flows
+  are aimed at business/creator accounts, return no email, and aren't
+  suited to a "sign in to comment" use case.
 
 ### Google sign-in works for me but not for other users
 

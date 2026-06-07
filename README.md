@@ -9,8 +9,8 @@ Workers + D1 + KV + Turnstile. One Worker per site, no per-comment
 billing, your data stays in your account.
 
 - **Threaded comments** with markdown, reactions, edit/delete window
-- **OAuth sign-in** (GitHub + Google) + anonymous posting with rate
-  limiting and Turnstile
+- **OAuth sign-in** (GitHub, Google, Facebook, X, Discord) + anonymous
+  posting with rate limiting and Turnstile
 - **Embeddable widget** (~17 KB) with Shadow-DOM isolation, theme
   variables, and an iframe alternative
 - **Email digests**, RSS feeds, comment counts, permalinks

@@ -16,10 +16,12 @@ import {
 	PROVIDERS,
 	buildAuthorizeUrl,
 	callbackUrl,
+	computeCodeChallenge,
 	constantTimeEqual,
 	consumeHandoff,
 	consumeState,
 	exchangeCodeForToken,
+	genCodeVerifier,
 	isProvider,
 	issueHandoff,
 	issueState,
@@ -109,11 +111,20 @@ auth.get("/:provider/start", async (c) => {
 	// browser into completing the callback, planting the attacker's
 	// session on the victim (RFC 6749 §10.12 login-CSRF).
 	const browser_token = randomHex(16);
+	// PKCE: providers that require it (X/Twitter) get a per-flow verifier
+	// stashed server-side in the state payload and an S256 challenge in the
+	// authorize redirect. Non-PKCE providers (GitHub/Google/Facebook/Discord)
+	// skip this entirely.
+	const code_verifier = cfg.pkce ? genCodeVerifier() : undefined;
+	const code_challenge = code_verifier
+		? await computeCodeChallenge(code_verifier)
+		: undefined;
 	const state = await issueState(c.env.OAUTH_STATE, {
 		provider,
 		return_origin,
 		created_at: Date.now(),
 		browser_token,
+		...(code_verifier ? { code_verifier } : {}),
 	});
 
 	c.header(
@@ -128,7 +139,13 @@ auth.get("/:provider/start", async (c) => {
 	);
 
 	const redirect = callbackUrl(c.env, c.req.url, provider);
-	const url = buildAuthorizeUrl(provider, clientId, redirect, state);
+	const url = buildAuthorizeUrl(
+		provider,
+		clientId,
+		redirect,
+		state,
+		code_challenge,
+	);
 	writeEvent(c.env.ANALYTICS, "oauth.start", { provider });
 	return c.redirect(url, 302);
 });
@@ -242,6 +259,7 @@ auth.get("/:provider/callback", async (c) => {
 			clientId,
 			clientSecret,
 			redirect,
+			payload.code_verifier,
 		);
 	} catch (err) {
 		log.error("oauth.token", { provider, error: String(err) });

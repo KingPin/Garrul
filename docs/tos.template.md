@@ -47,7 +47,7 @@ try to give one when reasonable.
 ## Account and email
 
 If you sign in with OAuth, your provider's terms also apply (GitHub,
-Google).
+Google, Facebook, X, Discord).
 
 If you opt in to email notifications, we'll send digest emails to
 the address you provide. Each email contains an unsubscribe link.

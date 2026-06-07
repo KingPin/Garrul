@@ -21,7 +21,12 @@
  * read.
  */
 
-export type ProviderId = "github" | "google";
+export type ProviderId =
+	| "github"
+	| "google"
+	| "facebook"
+	| "twitter"
+	| "discord";
 
 export type ProviderProfile = {
 	provider_id: string; // stable per-provider user id (string form)
@@ -34,8 +39,17 @@ type ProviderConfig = {
 	authorize_url: string;
 	token_url: string;
 	scope: string;
-	client_id_env: "GH_CLIENT_ID" | "GOOGLE_CLIENT_ID";
-	client_secret_env: "GH_CLIENT_SECRET" | "GOOGLE_CLIENT_SECRET";
+	client_id_env: string;
+	client_secret_env: string;
+	// PKCE (RFC 7636). Required by X/Twitter; harmless for the others. When
+	// true, /start mints a code_verifier + S256 challenge and the token
+	// exchange replays the verifier.
+	pkce?: boolean;
+	// How the token endpoint authenticates the client. "body" (default) puts
+	// client_secret in the POST body; "basic" sends an HTTP Basic header
+	// (client_id:client_secret) and keeps the secret out of the body — X's
+	// confidential-client token endpoint requires this.
+	token_auth?: "body" | "basic";
 	fetch_profile: (access_token: string) => Promise<ProviderProfile>;
 };
 
@@ -103,6 +117,89 @@ const fetchGoogleProfile = async (token: string): Promise<ProviderProfile> => {
 	};
 };
 
+// Facebook Login (Graph API). Returns email only for accounts with a
+// confirmed email that grant the `email` scope; Graph omits unverified
+// addresses, so we treat a returned address as trusted.
+const fetchFacebookProfile = async (
+	token: string,
+): Promise<ProviderProfile> => {
+	const res = await fetch(
+		"https://graph.facebook.com/v21.0/me?fields=id,name,email,picture.type(large)",
+		{ headers: { authorization: `Bearer ${token}` } },
+	);
+	if (!res.ok) throw new Error(`facebook me ${res.status}`);
+	const u = (await res.json()) as {
+		id: string;
+		name?: string;
+		email?: string;
+		picture?: { data?: { url?: string } };
+	};
+	return {
+		provider_id: u.id,
+		email: u.email ?? null,
+		name: u.name?.trim() || u.email || "user",
+		avatar_url: u.picture?.data?.url ?? null,
+	};
+};
+
+// X/Twitter (API v2). OAuth2 with mandatory PKCE and HTTP Basic token auth.
+// The v2 API exposes no email under these scopes, so email is always null —
+// users sign in with name + avatar only (the schema allows a null email).
+const fetchTwitterProfile = async (
+	token: string,
+): Promise<ProviderProfile> => {
+	const res = await fetch(
+		"https://api.twitter.com/2/users/me?user.fields=profile_image_url",
+		{ headers: { authorization: `Bearer ${token}` } },
+	);
+	if (!res.ok) throw new Error(`twitter me ${res.status}`);
+	const { data } = (await res.json()) as {
+		data?: {
+			id: string;
+			name?: string;
+			username?: string;
+			profile_image_url?: string;
+		};
+	};
+	if (!data?.id) throw new Error("twitter me: no user id");
+	return {
+		provider_id: data.id,
+		email: null,
+		name: data.name?.trim() || data.username || "user",
+		// Default avatar is the 48px "_normal" variant; dropping the suffix
+		// yields the original full-size image.
+		avatar_url: data.profile_image_url?.replace("_normal", "") ?? null,
+	};
+};
+
+// Discord. Standard auth-code flow. Trust the email only when Discord flags
+// it `verified` (mirrors the GitHub verified-email handling); the avatar is
+// assembled from the CDN hash.
+const fetchDiscordProfile = async (
+	token: string,
+): Promise<ProviderProfile> => {
+	const res = await fetch("https://discord.com/api/users/@me", {
+		headers: { authorization: `Bearer ${token}` },
+	});
+	if (!res.ok) throw new Error(`discord me ${res.status}`);
+	const u = (await res.json()) as {
+		id: string;
+		username: string;
+		global_name?: string | null;
+		email?: string | null;
+		verified?: boolean;
+		avatar?: string | null;
+	};
+	return {
+		provider_id: u.id,
+		email: u.verified ? (u.email ?? null) : null,
+		name: u.global_name?.trim() || u.username,
+		avatar_url: u.avatar
+			? `https://cdn.discordapp.com/avatars/${u.id}/${u.avatar}.png`
+			: null,
+	};
+};
+
 export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
 	github: {
 		authorize_url: "https://github.com/login/oauth/authorize",
@@ -120,10 +217,40 @@ export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
 		client_secret_env: "GOOGLE_CLIENT_SECRET",
 		fetch_profile: fetchGoogleProfile,
 	},
+	facebook: {
+		authorize_url: "https://www.facebook.com/v21.0/dialog/oauth",
+		token_url: "https://graph.facebook.com/v21.0/oauth/access_token",
+		scope: "email public_profile",
+		client_id_env: "FACEBOOK_CLIENT_ID",
+		client_secret_env: "FACEBOOK_CLIENT_SECRET",
+		fetch_profile: fetchFacebookProfile,
+	},
+	twitter: {
+		authorize_url: "https://twitter.com/i/oauth2/authorize",
+		token_url: "https://api.twitter.com/2/oauth2/token",
+		scope: "tweet.read users.read",
+		client_id_env: "TWITTER_CLIENT_ID",
+		client_secret_env: "TWITTER_CLIENT_SECRET",
+		pkce: true,
+		token_auth: "basic",
+		fetch_profile: fetchTwitterProfile,
+	},
+	discord: {
+		authorize_url: "https://discord.com/oauth2/authorize",
+		token_url: "https://discord.com/api/oauth2/token",
+		scope: "identify email",
+		client_id_env: "DISCORD_CLIENT_ID",
+		client_secret_env: "DISCORD_CLIENT_SECRET",
+		fetch_profile: fetchDiscordProfile,
+	},
 };
 
 export const isProvider = (s: string): s is ProviderId =>
-	s === "github" || s === "google";
+	s === "github" ||
+	s === "google" ||
+	s === "facebook" ||
+	s === "twitter" ||
+	s === "discord";
 
 const randomState = (): string => {
 	const bytes = new Uint8Array(24);
@@ -135,6 +262,27 @@ export const randomHex = (n: number): string => {
 	const bytes = new Uint8Array(n);
 	crypto.getRandomValues(bytes);
 	return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+};
+
+// PKCE (RFC 7636). The verifier is a high-entropy secret minted at /start,
+// stashed server-side in the KV state payload (never sent to the browser),
+// and replayed at the token exchange to prove the client that redeems the
+// code is the same one that started the flow. 32 random bytes → 64 hex chars,
+// well within PKCE's 43–128-char unreserved-charset range.
+export const genCodeVerifier = (): string => randomHex(32);
+
+// SHA-256(verifier), base64url-encoded without padding — the `S256` challenge
+// sent in the authorize redirect. Workers ship crypto.subtle + btoa natively.
+export const computeCodeChallenge = async (
+	verifier: string,
+): Promise<string> => {
+	const digest = await crypto.subtle.digest(
+		"SHA-256",
+		new TextEncoder().encode(verifier),
+	);
+	let bin = "";
+	for (const b of new Uint8Array(digest)) bin += String.fromCharCode(b);
+	return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 };
 
 // Length-independent constant-time string compare. The browser_token /
@@ -164,6 +312,10 @@ export type StatePayload = {
 	// /api/v1/auth/:provider/start; pre-existing state payloads in KV
 	// from before this column shipped may lack it.
 	browser_token?: string;
+	// PKCE code_verifier for providers with `pkce: true` (e.g. X/Twitter).
+	// Lives only here in KV — never sent to the browser — and is replayed at
+	// the token exchange. Absent for non-PKCE providers.
+	code_verifier?: string;
 };
 
 const STATE_TTL = 600; // 10 minutes
@@ -247,6 +399,7 @@ export const buildAuthorizeUrl = (
 	client_id: string,
 	redirect_uri: string,
 	state: string,
+	code_challenge?: string,
 ): string => {
 	const cfg = PROVIDERS[provider];
 	const params = new URLSearchParams({
@@ -256,6 +409,10 @@ export const buildAuthorizeUrl = (
 		scope: cfg.scope,
 		state,
 	});
+	if (code_challenge) {
+		params.set("code_challenge", code_challenge);
+		params.set("code_challenge_method", "S256");
+	}
 	if (provider === "google") {
 		// Force the account chooser when re-authorizing.
 		params.set("prompt", "select_account");
@@ -269,21 +426,32 @@ export const exchangeCodeForToken = async (
 	client_id: string,
 	client_secret: string,
 	redirect_uri: string,
+	code_verifier?: string,
 ): Promise<string> => {
 	const cfg = PROVIDERS[provider];
 	const body = new URLSearchParams({
 		client_id,
-		client_secret,
 		code,
 		redirect_uri,
 		grant_type: "authorization_code",
 	});
+	const headers: Record<string, string> = {
+		accept: "application/json",
+		"content-type": "application/x-www-form-urlencoded",
+	};
+	// PKCE providers replay the verifier minted at /start (RFC 7636 §4.5).
+	if (code_verifier) body.set("code_verifier", code_verifier);
+	if (cfg.token_auth === "basic") {
+		// X/Twitter's confidential-client token endpoint authenticates via an
+		// HTTP Basic header, not a body param. Keeping the secret out of the
+		// body also keeps it off any body-logging path.
+		headers.authorization = `Basic ${btoa(`${client_id}:${client_secret}`)}`;
+	} else {
+		body.set("client_secret", client_secret);
+	}
 	const res = await fetch(cfg.token_url, {
 		method: "POST",
-		headers: {
-			accept: "application/json",
-			"content-type": "application/x-www-form-urlencoded",
-		},
+		headers,
 		body,
 	});
 	if (!res.ok) {
