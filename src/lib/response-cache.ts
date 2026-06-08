@@ -32,8 +32,11 @@ type EdgeCache = {
  * uncached — the read falls through to D1.
  */
 export const edgeCache = (): EdgeCache | null => {
-	const cs = (globalThis as { caches?: { default: EdgeCache } }).caches;
-	return cs ? cs.default : null;
+	const cs = (globalThis as { caches?: { default?: EdgeCache } }).caches;
+	// `?? null` also covers a partial polyfill where `caches` exists but
+	// `caches.default` does not, so we never return `undefined` (matches the
+	// declared `EdgeCache | null` contract).
+	return cs?.default ?? null;
 };
 
 /**
