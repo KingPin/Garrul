@@ -50,7 +50,13 @@ import { verifyTurnstile } from "../lib/turnstile";
 import { writeEvent } from "../lib/analytics";
 import { fireWebhook } from "../lib/webhook";
 import { loadFlags, loadNumbers } from "../lib/settings";
-import { bustTreeCache } from "../lib/tree-cache";
+import { bustTreeCache, TREE_CACHE_TTL, treeCacheKey } from "../lib/tree-cache";
+import {
+	cacheJson,
+	jsonResponse,
+	matchCache,
+	tryWaitUntil,
+} from "../lib/response-cache";
 import { log } from "../lib/log";
 import {
 	countLinks,
@@ -67,8 +73,6 @@ import {
 	type TreeNode,
 } from "../lib/tree";
 import { t } from "../i18n";
-
-const TREE_CACHE_TTL = 300; // seconds; busted on every write, so a long TTL is fine
 
 type SessionVars = {
 	userId: string | null;
@@ -596,16 +600,21 @@ comments.get("/", async (c) => {
 	// clamped to [1,200] in the settings layer.
 	const pageSize = (await loadNumbers(c.env)).comments_per_page;
 
-	// Fast path: first page is cached in KV for anonymous viewers only,
-	// keyed by sort AND page size so `top`/`new` and a changed page size
-	// don't serve each other's slices. Signed-in viewers see per-user
-	// my_vote / mine flags so they bypass the cache. KV cache hit-rate stays
-	// high on the public reader path, which dominates traffic.
-	const cacheKey = `tree:${slug}:first:${sort}:n${pageSize}`;
+	// Fast path: first page is cached at the edge (Cache API, not KV — see
+	// response-cache.ts) for anonymous viewers only, keyed by sort AND page
+	// size so `top`/`new` and a changed page size don't serve each other's
+	// slices. Signed-in viewers see per-user my_vote / mine flags so they
+	// bypass the cache. Hit-rate stays high on the public reader path, which
+	// dominates traffic.
+	const cacheReq = treeCacheKey(slug, sort, pageSize);
 	const hasCursor = cursor !== null || topCursor !== null;
-	if (!hasCursor && !session) {
-		const cached = await c.env.TREE_CACHE.get(cacheKey, "json");
-		if (cached) return c.json(cached);
+	const cacheable = !hasCursor && !session;
+	if (cacheable) {
+		const hit = await matchCache(cacheReq);
+		// Re-emit the body WITHOUT the edge copy's public Cache-Control: the
+		// widget fetches this credentialed, and a browser-cached anonymous page
+		// must never be reused for the same user after they sign in.
+		if (hit) return jsonResponse(await hit.text());
 	}
 
 	const post = await getPost(c.env.DB, slug);
@@ -675,11 +684,15 @@ comments.get("/", async (c) => {
 
 	const payload: ListPayload = { post, threads: page, next_cursor };
 
-	if (!hasCursor && !session) {
-		// Write-through cache. expirationTtl is in seconds.
-		await c.env.TREE_CACHE.put(cacheKey, JSON.stringify(payload), {
-			expirationTtl: TREE_CACHE_TTL,
-		});
+	if (cacheable) {
+		// Write-through to the edge cache; the put runs after the response when
+		// an ExecutionContext is available (real requests), else inline.
+		return cacheJson(
+			cacheReq,
+			JSON.stringify(payload),
+			TREE_CACHE_TTL,
+			tryWaitUntil(c),
+		);
 	}
 
 	return c.json(payload);

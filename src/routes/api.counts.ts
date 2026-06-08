@@ -13,7 +13,8 @@
  * a disabled feature's totals are never exposed, even if requested. The
  * comment count stays the default so existing callers are unaffected.
  *
- * Cached per (canonical-slug-list + include set) for 60s in KV. The slug
+ * Cached per (canonical-slug-list + include set) for 60s at the edge (Cache
+ * API, not KV — see lib/response-cache.ts). The slug
  * list is canonicalized — trimmed, deduped, sorted, capped at 100; slug case
  * is preserved (slugs are case-sensitive) — so different orderings of the
  * same slugs share a cache entry. The include set is folded into the key so
@@ -28,6 +29,7 @@ import {
 	type PageVoteTally,
 } from "../db/queries";
 import { loadFlags } from "../lib/settings";
+import { cacheJson, cacheKey, matchCache, tryWaitUntil } from "../lib/response-cache";
 
 const counts = new Hono<{ Bindings: Bindings }>();
 
@@ -84,13 +86,10 @@ counts.get("/", async (c) => {
 		...(wantReactions ? ["reactions"] : []),
 	];
 	const keySuffix = effective.length ? `:${effective.join(",")}` : "";
-	const cacheKey = `counts:${slugs.join(",")}${keySuffix}`;
+	const cacheReq = cacheKey("counts", { k: `${slugs.join(",")}${keySuffix}` });
 
-	const cached = await c.env.TREE_CACHE.get(cacheKey, { type: "json" });
-	if (cached) {
-		c.header("cache-control", "public, max-age=60");
-		return c.json(cached as CountsPayload);
-	}
+	const hit = await matchCache(cacheReq);
+	if (hit) return hit;
 
 	const map = await countApprovedCommentsBySlugs(c.env.DB, slugs);
 	const result: Record<string, number> = {};
@@ -113,11 +112,15 @@ counts.get("/", async (c) => {
 		payload.reactions = reactions;
 	}
 
-	await c.env.TREE_CACHE.put(cacheKey, JSON.stringify(payload), {
-		expirationTtl: COUNTS_CACHE_TTL,
-	});
-	c.header("cache-control", "public, max-age=60");
-	return c.json(payload);
+	// Counts are non-personalized, so the client copy stays publicly cacheable
+	// for the same window (preserving the prior Cache-Control behavior).
+	return cacheJson(
+		cacheReq,
+		JSON.stringify(payload),
+		COUNTS_CACHE_TTL,
+		tryWaitUntil(c),
+		`public, max-age=${COUNTS_CACHE_TTL}`,
+	);
 });
 
 export { counts };
