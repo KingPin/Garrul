@@ -454,7 +454,7 @@ comments.post("/", async (c) => {
 	// Bust the cached first page. Older pages bypass cache, so there's
 	// nothing else to invalidate. Pending comments don't appear in the
 	// public tree but the cache key is the same; busting is still correct.
-	await bustTreeCache(c.env, slug);
+	await bustTreeCache(c.env, c.req.url, slug);
 
 	// Persist whichever spam signals ran. Fire-and-forget so a slow D1
 	// write never adds latency to the user-visible POST. Mirror the
@@ -606,7 +606,7 @@ comments.get("/", async (c) => {
 	// slices. Signed-in viewers see per-user my_vote / mine flags so they
 	// bypass the cache. Hit-rate stays high on the public reader path, which
 	// dominates traffic.
-	const cacheReq = treeCacheKey(slug, sort, pageSize);
+	const cacheReq = treeCacheKey(c.req.url, slug, sort, pageSize);
 	const hasCursor = cursor !== null || topCursor !== null;
 	const cacheable = !hasCursor && !session;
 	if (cacheable) {
@@ -729,7 +729,7 @@ comments.patch("/:id", async (c) => {
 		body_html,
 		CURRENT_RENDERER_VERSION,
 	);
-	await bustTreeCache(c.env, existing.post_slug);
+	await bustTreeCache(c.env, c.req.url, existing.post_slug);
 	writeEvent(c.env.ANALYTICS, "comment.edited", { post_slug: existing.post_slug });
 	fireWebhook(c.env, c.executionCtx, {
 		event: "comment.edited",
@@ -776,7 +776,7 @@ comments.delete("/:id", async (c) => {
 	}
 
 	await softDeleteComment(c.env.DB, id);
-	await bustTreeCache(c.env, existing.post_slug);
+	await bustTreeCache(c.env, c.req.url, existing.post_slug);
 	writeEvent(c.env.ANALYTICS, "comment.deleted", { post_slug: existing.post_slug });
 	fireWebhook(c.env, c.executionCtx, {
 		event: "comment.deleted",

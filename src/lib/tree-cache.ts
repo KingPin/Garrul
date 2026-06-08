@@ -26,28 +26,36 @@ export const TREE_CACHE_TTL = 60; // seconds
 
 export type CommentSort = "new" | "top";
 
-/** Cache-key Request for a first-page response. */
+/**
+ * Cache-key Request for a first-page response. `reqUrl` is the handling
+ * request's URL (`c.req.url`); only its origin is used, so the key lands on the
+ * Worker's own in-zone host (see response-cache.ts/cacheKey).
+ */
 export const treeCacheKey = (
+	reqUrl: string,
 	slug: string,
 	sort: CommentSort,
 	pageSize: number,
-): Request => cacheKey("tree-first", { slug, sort, n: pageSize });
+): Request => cacheKey(reqUrl, "tree-first", { slug, sort, n: pageSize });
 
 /**
  * Drop a slug's cached first pages (both sorts, current page size) in the
  * handling colo. Best-effort: never rejects, because every comment mutation
  * awaits it on the user-visible path. Resolving the page size needs a settings
  * read; if that fails we skip the drop and let the TTL expire the entry.
+ * `reqUrl` (the mutation's `c.req.url`) keys the deletes on the same Worker
+ * origin the GET reads used.
  */
 export const bustTreeCache = async (
 	env: Bindings,
+	reqUrl: string,
 	slug: string,
 ): Promise<void> => {
 	const numbers = await loadNumbers(env).catch(() => null);
 	if (!numbers) return;
 	const pageSize = numbers.comments_per_page;
 	await Promise.all([
-		dropCache(treeCacheKey(slug, "new", pageSize)),
-		dropCache(treeCacheKey(slug, "top", pageSize)),
+		dropCache(treeCacheKey(reqUrl, slug, "new", pageSize)),
+		dropCache(treeCacheKey(reqUrl, slug, "top", pageSize)),
 	]);
 };

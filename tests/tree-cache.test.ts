@@ -14,6 +14,10 @@ import type { Bindings } from "../src/index";
 
 afterEach(() => uninstallMockCaches());
 
+// Stand-in for a mutation's c.req.url; only its origin is used for the key, so
+// bustTreeCache and the treeCacheKey assertions line up on the same origin.
+const REQ_URL = "http://localhost/";
+
 // Settings KV double: loadNumbers() reads `settings:numbers` first; returning a
 // warm value keeps the bust path off D1. DB is a stub for the fallback path.
 const env = (pageSize = 25): Bindings =>
@@ -43,28 +47,28 @@ const env = (pageSize = 25): Bindings =>
 describe("bustTreeCache", () => {
 	it("drops both sort variants for the slug at the current page size", async () => {
 		const cache = installMockCaches();
-		cache.store.set(treeCacheKey("hello", "new", 25).url, new Response("{}"));
-		cache.store.set(treeCacheKey("hello", "top", 25).url, new Response("{}"));
+		cache.store.set(treeCacheKey(REQ_URL, "hello", "new", 25).url, new Response("{}"));
+		cache.store.set(treeCacheKey(REQ_URL, "hello", "top", 25).url, new Response("{}"));
 		// A different page size is left for the TTL — the bust only knows the
 		// current size (best-effort).
-		cache.store.set(treeCacheKey("hello", "new", 10).url, new Response("{}"));
+		cache.store.set(treeCacheKey(REQ_URL, "hello", "new", 10).url, new Response("{}"));
 
-		await bustTreeCache(env(25), "hello");
+		await bustTreeCache(env(25), REQ_URL, "hello");
 
-		expect(cache.store.has(treeCacheKey("hello", "new", 25).url)).toBe(false);
-		expect(cache.store.has(treeCacheKey("hello", "top", 25).url)).toBe(false);
-		expect(cache.store.has(treeCacheKey("hello", "new", 10).url)).toBe(true);
+		expect(cache.store.has(treeCacheKey(REQ_URL, "hello", "new", 25).url)).toBe(false);
+		expect(cache.store.has(treeCacheKey(REQ_URL, "hello", "top", 25).url)).toBe(false);
+		expect(cache.store.has(treeCacheKey(REQ_URL, "hello", "new", 10).url)).toBe(true);
 	});
 
 	it("does not touch other slugs' cache entries", async () => {
 		const cache = installMockCaches();
-		cache.store.set(treeCacheKey("hello", "new", 25).url, new Response("{}"));
-		cache.store.set(treeCacheKey("other", "new", 25).url, new Response("{}"));
+		cache.store.set(treeCacheKey(REQ_URL, "hello", "new", 25).url, new Response("{}"));
+		cache.store.set(treeCacheKey(REQ_URL, "other", "new", 25).url, new Response("{}"));
 
-		await bustTreeCache(env(25), "hello");
+		await bustTreeCache(env(25), REQ_URL, "hello");
 
-		expect(cache.store.has(treeCacheKey("other", "new", 25).url)).toBe(true);
-		expect(cache.store.has(treeCacheKey("hello", "new", 25).url)).toBe(false);
+		expect(cache.store.has(treeCacheKey(REQ_URL, "other", "new", 25).url)).toBe(true);
+		expect(cache.store.has(treeCacheKey(REQ_URL, "hello", "new", 25).url)).toBe(false);
 	});
 
 	it("swallows a cache delete failure (best-effort) and still resolves", async () => {
@@ -78,17 +82,17 @@ describe("bustTreeCache", () => {
 				},
 			},
 		};
-		await expect(bustTreeCache(env(25), "hello")).resolves.toBeUndefined();
+		await expect(bustTreeCache(env(25), REQ_URL, "hello")).resolves.toBeUndefined();
 	});
 
 	it("resolves quietly when the edge cache is unavailable", async () => {
 		uninstallMockCaches();
-		await expect(bustTreeCache(env(25), "hello")).resolves.toBeUndefined();
+		await expect(bustTreeCache(env(25), REQ_URL, "hello")).resolves.toBeUndefined();
 	});
 
 	it("skips the drop when the page size can't be resolved", async () => {
 		const cache = installMockCaches();
-		cache.store.set(treeCacheKey("hello", "new", 25).url, new Response("{}"));
+		cache.store.set(treeCacheKey(REQ_URL, "hello", "new", 25).url, new Response("{}"));
 		const badEnv = {
 			TREE_CACHE: {
 				get: async () => {
@@ -108,8 +112,8 @@ describe("bustTreeCache", () => {
 			},
 		} as unknown as Bindings;
 
-		await expect(bustTreeCache(badEnv, "hello")).resolves.toBeUndefined();
+		await expect(bustTreeCache(badEnv, REQ_URL, "hello")).resolves.toBeUndefined();
 		// Page size unknown → nothing dropped.
-		expect(cache.store.has(treeCacheKey("hello", "new", 25).url)).toBe(true);
+		expect(cache.store.has(treeCacheKey(REQ_URL, "hello", "new", 25).url)).toBe(true);
 	});
 });

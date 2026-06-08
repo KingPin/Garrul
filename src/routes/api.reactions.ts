@@ -73,7 +73,7 @@ reactions.post("/", async (c) => {
 	const result = await toggleReaction(c.env.DB, comment_id, userId, kind);
 
 	// Bust the cached first page so reaction counts reflect immediately.
-	await bustTreeCache(c.env, comment.post_slug);
+	await bustTreeCache(c.env, c.req.url, comment.post_slug);
 
 	writeEvent(c.env.ANALYTICS, "reaction.toggled", {
 		post_slug: comment.post_slug,

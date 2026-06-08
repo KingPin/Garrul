@@ -33,6 +33,10 @@ beforeEach(() => {
 });
 afterEach(() => uninstallMockCaches());
 
+// Hono's app.request("/...") serves on http://localhost, so the route builds
+// its cache key on that origin; assertions must use the same origin.
+const REQ_URL = "http://localhost/";
+
 const CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
 // Deterministic, order-preserving 26-char ULID-shaped id: higher n sorts
@@ -299,8 +303,8 @@ describe("GET /comments — cache key varies with page size", () => {
 	it("caches the first page under a size-stamped edge-cache key", async () => {
 		const { env } = mkEnv(makeComments(30), { comments_per_page: "10" });
 		await get(env, "slug=hello");
-		expect(mockCache.store.has(treeCacheKey("hello", "new", 10).url)).toBe(true);
-		expect(mockCache.store.has(treeCacheKey("hello", "new", 25).url)).toBe(false);
+		expect(mockCache.store.has(treeCacheKey(REQ_URL, "hello", "new", 10).url)).toBe(true);
+		expect(mockCache.store.has(treeCacheKey(REQ_URL, "hello", "new", 25).url)).toBe(false);
 	});
 
 	it("a different size resolves to a different cache slot", async () => {
@@ -312,8 +316,8 @@ describe("GET /comments — cache key varies with page size", () => {
 		const { env: env25 } = mkEnv(makeComments(30));
 		await get(env25, "slug=hello");
 
-		expect(mockCache.store.has(treeCacheKey("hello", "new", 10).url)).toBe(true);
-		expect(mockCache.store.has(treeCacheKey("hello", "new", 25).url)).toBe(true);
+		expect(mockCache.store.has(treeCacheKey(REQ_URL, "hello", "new", 10).url)).toBe(true);
+		expect(mockCache.store.has(treeCacheKey(REQ_URL, "hello", "new", 25).url)).toBe(true);
 	});
 });
 
@@ -327,7 +331,7 @@ describe("GET /comments — edge-cache hit/bypass", () => {
 		const first = await app.request("/?slug=hello", {}, env as unknown as Record<string, unknown>);
 		expect(first.status).toBe(200);
 		expect(((await first.json()) as ListResp).threads).toHaveLength(5);
-		expect(mockCache.store.has(treeCacheKey("hello", "new", 25).url)).toBe(true);
+		expect(mockCache.store.has(treeCacheKey(REQ_URL, "hello", "new", 25).url)).toBe(true);
 
 		// Empty the DB; a true cache hit still returns the original 5 threads.
 		rows.length = 0;
