@@ -56,16 +56,27 @@ export const tryWaitUntil = (c: {
 };
 
 /**
- * Build a stable cache-key Request from a synthetic, normalized URL. Params are
- * sorted so call-order doesn't matter, and only the params we pass select an
- * entry — junk query params on the real request (utm_*, cache-busting noise)
- * can't fragment or poison the cache.
+ * Build a stable cache-key Request from a normalized URL.
+ *
+ * The key is built on the Worker's OWN origin (taken from `reqUrl`, i.e.
+ * `c.req.url`) — Cloudflare only honors a custom cache key for a hostname in
+ * your own zone, so a synthetic foreign host (e.g. `*.internal`) would make
+ * `cache.put` a silent no-op in production. A `/__cache/<kind>` path namespaces
+ * our entries away from real routes; we discard the request's real path/query
+ * and set only the params we pass — sorted so call-order doesn't matter, and so
+ * junk query params (utm_*, cache-busting noise) can't fragment or poison the
+ * cache. All read and bust call sites run on the same Worker host, so they
+ * resolve to the same origin and the keys line up.
  */
 export const cacheKey = (
+	reqUrl: string,
 	kind: string,
 	params: Record<string, string | number>,
 ): Request => {
-	const u = new URL(`https://cache.garrul.internal/${kind}`);
+	const u = new URL(reqUrl);
+	u.pathname = `/__cache/${kind}`;
+	u.search = "";
+	u.hash = "";
 	for (const k of Object.keys(params).sort()) {
 		u.searchParams.set(k, String(params[k]));
 	}

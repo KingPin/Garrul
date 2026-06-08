@@ -1272,7 +1272,7 @@ admin.post("/api/saved-replies/:id/post", async (c) => {
 		},
 	});
 	// Bust the post's tree caches so the new reply is visible immediately.
-	await bustTreeCache(c.env, target.post_slug);
+	await bustTreeCache(c.env, c.req.url, target.post_slug);
 	fireWebhook(c.env, c.executionCtx, {
 		event: "comment.posted",
 		comment_id: inserted.id,
@@ -1322,7 +1322,7 @@ admin.post("/api/comments/:id", async (c) => {
 		meta: { prev_status: existing.status, new_status: newStatus },
 	});
 	// Bust the cached first page so the moderation result is visible.
-	await bustTreeCache(c.env, existing.post_slug);
+	await bustTreeCache(c.env, c.req.url, existing.post_slug);
 	const webhookEvent: WebhookEvent | null =
 		newStatus === "approved"
 			? "comment.approved"
@@ -1407,7 +1407,7 @@ admin.post("/api/comments/bulk", async (c) => {
 			target_id: id,
 			meta: { batch_size: touched.length, new_status: newStatus },
 		});
-		await bustTreeCache(c.env, existing.post_slug);
+		await bustTreeCache(c.env, c.req.url, existing.post_slug);
 		if (webhookEvent) {
 			fireWebhook(c.env, c.executionCtx, {
 				event: webhookEvent,

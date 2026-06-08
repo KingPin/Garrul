@@ -86,7 +86,9 @@ counts.get("/", async (c) => {
 		...(wantReactions ? ["reactions"] : []),
 	];
 	const keySuffix = effective.length ? `:${effective.join(",")}` : "";
-	const cacheReq = cacheKey("counts", { k: `${slugs.join(",")}${keySuffix}` });
+	const cacheReq = cacheKey(c.req.url, "counts", {
+		k: `${slugs.join(",")}${keySuffix}`,
+	});
 
 	const hit = await matchCache(cacheReq);
 	if (hit) return hit;
