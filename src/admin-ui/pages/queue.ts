@@ -80,6 +80,37 @@ const scoreCell = (c: AdminComment): string => {
 <div class="muted" style="font-size:0.75rem">${up}↑ ${down}↓</div>`;
 };
 
+// Only http(s) page URLs get turned into a link. A stored post.url could in
+// principle carry a javascript:/data: scheme; refusing to emit those as an
+// href keeps the admin DOM safe (mirrors the markdown renderer's URL allowlist).
+const isHttpUrl = (u: string | null | undefined): u is string =>
+	typeof u === "string" && /^https?:\/\//i.test(u);
+
+// META cell: when, where, and which comment. The host/slug link back to the
+// page the comment lives on (new tab) when we have a usable URL; otherwise we
+// fall back to plain text. The ULID is click-to-copy rather than visual filler.
+const metaCell = (c: AdminComment): string => {
+	const exact = new Date(c.created_at)
+		.toISOString()
+		.slice(0, 16)
+		.replace("T", " ");
+	const where = `
+    <div><code>${escapeHtml(c.host)}</code></div>
+    <div><code>${escapeHtml(c.post_slug)}</code></div>`;
+	const whereLinked = isHttpUrl(c.post_url)
+		? `<a href="${escapeHtml(c.post_url)}" target="_blank" rel="noopener noreferrer nofollow" title="Open page in new tab">${where}<span class="meta-ext muted">view&#8599;</span></a>`
+		: where;
+	const title = c.post_title
+		? `<div class="meta-title">${escapeHtml(c.post_title)}</div>`
+		: "";
+	return `
+    <div class="muted" title="${escapeHtml(exact)} UTC">${relTime(c.created_at)}</div>
+    ${title}
+    ${whereLinked}
+    <span class="cid muted" role="button" title="Copy comment ID"
+          @click="navigator.clipboard.writeText(${jsLiteral(c.id)}); $dispatch('toast',{text:'ID copied'})">${escapeHtml(c.id)}</span>`;
+};
+
 // Embed values as JSON-stringified, HTML-escaped literals so the resulting
 // Alpine expression is well-formed regardless of the underlying string
 // content (defense in depth: ULIDs are safe today, but the typing is just
@@ -169,12 +200,7 @@ export const renderQueue = (
   <td><span class="pill ${c.status}">${c.status}</span></td>
   <td>${authorCell(c)}</td>
   <td class="score-cell" title="up / down">${scoreCell(c)}</td>
-  <td>
-    <div class="muted">${new Date(c.created_at).toISOString().slice(0, 16).replace("T", " ")}</div>
-    <div><code>${escapeHtml(c.host)}</code></div>
-    <div><code>${escapeHtml(c.post_slug)}</code></div>
-    <div class="muted" style="font-size:0.75rem">${escapeHtml(c.id)}</div>
-  </td>
+  <td class="meta-cell">${metaCell(c)}</td>
   <td class="row-body">
     <div class="md">${resanitizeBodyHtml(c.body_html)}</div>
     ${auditStrip(latestAudit.get(c.id))}
