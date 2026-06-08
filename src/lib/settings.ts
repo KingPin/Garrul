@@ -92,7 +92,13 @@ export const numberBounds = (
 
 const CACHE_KEY = "settings:flags";
 const CACHE_KEY_NUMBERS = "settings:numbers";
-const CACHE_TTL_SEC = 60;
+// These resolve on the hot path (every comments GET reads numbers; config/counts
+// read flags). They're a fixed pair of KV keys, so a write happens at most once
+// per TTL window per edge colo — but on the free tier those add up. A longer TTL
+// cuts that steady-state KV write rate; it's safe because the admin save path
+// busts the key (bustFlagsCache/bustNumbersCache), so a real change still takes
+// effect promptly rather than waiting out the TTL.
+const CACHE_TTL_SEC = 300;
 
 // Defaults-on/off boolish parse: present + falsy → false; anything else
 // non-empty → true. Mirrors api.votes.ts / api.config.ts semantics so the
