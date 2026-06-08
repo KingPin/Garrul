@@ -156,8 +156,16 @@ th { color: var(--muted); font-weight: 600; font-size: 0.72rem; text-transform: 
      z-index: 1; }
 tbody tr:nth-child(even) { background: var(--surface-2); }
 tbody tr:hover { background: var(--accent-weak); }
-.row-body { color: var(--text); max-width: 480px; overflow-wrap: anywhere; }
+.row-body { color: var(--text); width: 45%; min-width: 340px; overflow-wrap: anywhere; }
 .row-body .md { font-size: 0.9rem; }
+.meta-cell { max-width: 200px; }
+.meta-cell code { overflow-wrap: anywhere; }
+.meta-cell a { color: inherit; text-decoration: none; }
+.meta-cell a:hover code { text-decoration: underline; }
+.meta-title { font-weight: 600; font-size: 0.82rem; overflow-wrap: anywhere; }
+.meta-ext { font-size: 0.7rem; }
+.cid { display: inline-block; font-size: 0.72rem; cursor: pointer; overflow-wrap: anywhere; }
+.cid:hover { color: var(--text); text-decoration: underline; }
 .pill { display: inline-block; padding: 0.12rem 0.5rem; border-radius: 999px;
         font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em;
         border: 1px solid transparent; background: var(--surface-2); color: var(--muted); }
@@ -184,7 +192,8 @@ button.btn-danger, .btn-danger, button.bad, .btn.bad { color: var(--bad); }
 button.btn-danger:hover, .btn-danger:hover, button.bad:hover, .btn.bad:hover {
   border-color: var(--bad); background: var(--bad-weak); }
 button:disabled, .btn:disabled { opacity: 0.5; cursor: not-allowed; }
-.actions { display: flex; gap: 0.4rem; }
+.actions { display: flex; gap: 0.4rem; flex-wrap: wrap; max-width: 168px; }
+.actions button { padding: 0.28rem 0.55rem; font-size: 0.8rem; }
 .author-cell { display: flex; gap: 0.5rem; align-items: center; color: inherit;
                text-decoration: none; max-width: 180px; }
 .author-cell:hover .author-name { text-decoration: underline; }
@@ -359,7 +368,7 @@ kbd { background: var(--surface-2); border: 1px solid var(--border);
   .card { padding: 0.75rem 0.85rem; border-radius: 6px; }
   .card table { display: block; overflow-x: auto; }
   .author-cell { max-width: 140px; }
-  .row-body { max-width: 280px; }
+  .row-body { width: auto; min-width: 240px; max-width: 280px; }
   .bulk-bar { flex-wrap: wrap; }
   .filter-bar.queue-filter { gap: 0.35rem; }
   .filter-bar.queue-filter input[type=text] { min-width: 120px; }
