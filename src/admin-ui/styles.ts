@@ -121,7 +121,7 @@ a:hover { text-decoration: underline; }
 .topbar h1 { font-size: 1.05rem; margin: 0; font-weight: 600; }
 .hamburger { display: none; }
 .scrim { display: none; }
-main { width: 100%; max-width: 1100px; margin: 1.5rem auto; padding: 0 1.25rem; }
+main { width: 100%; margin: 1.5rem auto; padding: 0 1.25rem; }
 .card { background: var(--surface); border: 1px solid var(--border);
         border-radius: var(--radius); padding: 1rem 1.25rem; margin-bottom: 1rem;
         box-shadow: var(--shadow); }
