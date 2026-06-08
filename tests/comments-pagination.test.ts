@@ -9,16 +9,29 @@
  *   2. `sort=new` walks pages via the ULID `before` cursor (id < cursor).
  *   3. `sort=top` now PAGINATES too (composite score:id cursor), so a small
  *      page size no longer hides top-voted threads past the first page.
- *   4. The first-page KV cache key varies with the page size, so a size change
- *      can't serve a stale-sized slice.
+ *   4. The first-page edge-cache key varies with the page size, so a size
+ *      change can't serve a stale-sized slice.
  *
  * No Miniflare: a hand-rolled D1 stub routes by SQL substring (same style as
- * votes.test.ts) plus an in-memory KV double for TREE_CACHE/SESSIONS.
+ * votes.test.ts), an in-memory KV double for TREE_CACHE/SESSIONS (settings +
+ * session reads), and a mock `caches.default` for the first-page edge cache.
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { Hono } from "hono";
 import { comments } from "../src/routes/api.comments";
+import { treeCacheKey } from "../src/lib/tree-cache";
+import {
+	installMockCaches,
+	uninstallMockCaches,
+	type MockCache,
+} from "./helpers/mock-caches";
 import type { Bindings } from "../src/index";
+
+let mockCache: MockCache;
+beforeEach(() => {
+	mockCache = installMockCaches();
+});
+afterEach(() => uninstallMockCaches());
 
 const CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
@@ -283,23 +296,53 @@ describe("GET /comments — sort=top paginates (no hidden threads)", () => {
 });
 
 describe("GET /comments — cache key varies with page size", () => {
-	it("caches the first page under a size-stamped key", async () => {
-		const { env, kv } = mkEnv(makeComments(30), { comments_per_page: "10" });
+	it("caches the first page under a size-stamped edge-cache key", async () => {
+		const { env } = mkEnv(makeComments(30), { comments_per_page: "10" });
 		await get(env, "slug=hello");
-		expect(kv.store.has("tree:hello:first:new:n10")).toBe(true);
-		expect(kv.store.has("tree:hello:first:new:n25")).toBe(false);
+		expect(mockCache.store.has(treeCacheKey("hello", "new", 10).url)).toBe(true);
+		expect(mockCache.store.has(treeCacheKey("hello", "new", 25).url)).toBe(false);
 	});
 
 	it("a different size resolves to a different cache slot", async () => {
-		const { env: env10, kv: kv10 } = mkEnv(makeComments(30), {
+		const { env: env10 } = mkEnv(makeComments(30), {
 			comments_per_page: "10",
 		});
 		await get(env10, "slug=hello");
 
-		const { env: env25, kv: kv25 } = mkEnv(makeComments(30));
+		const { env: env25 } = mkEnv(makeComments(30));
 		await get(env25, "slug=hello");
 
-		expect(kv10.store.has("tree:hello:first:new:n10")).toBe(true);
-		expect(kv25.store.has("tree:hello:first:new:n25")).toBe(true);
+		expect(mockCache.store.has(treeCacheKey("hello", "new", 10).url)).toBe(true);
+		expect(mockCache.store.has(treeCacheKey("hello", "new", 25).url)).toBe(true);
+	});
+});
+
+describe("GET /comments — edge-cache hit/bypass", () => {
+	// app.request with no ExecutionContext makes the write-through inline (see
+	// tryWaitUntil), so the entry is present immediately after the first call.
+	it("serves a warm first page from the edge cache (not the DB)", async () => {
+		const rows = makeComments(5);
+		const { env } = mkEnv(rows);
+		const app = new Hono<{ Bindings: Bindings }>().route("/", comments);
+		const first = await app.request("/?slug=hello", {}, env as unknown as Record<string, unknown>);
+		expect(first.status).toBe(200);
+		expect(((await first.json()) as ListResp).threads).toHaveLength(5);
+		expect(mockCache.store.has(treeCacheKey("hello", "new", 25).url)).toBe(true);
+
+		// Empty the DB; a true cache hit still returns the original 5 threads.
+		rows.length = 0;
+		const second = await app.request("/?slug=hello", {}, env as unknown as Record<string, unknown>);
+		expect(((await second.json()) as ListResp).threads).toHaveLength(5);
+		// The anonymous first page must NOT be browser-cacheable (personalization
+		// safety: it would otherwise be reused for the same user after sign-in).
+		expect(second.headers.get("cache-control")).toBeNull();
+	});
+
+	it("does not cache a cursor (non-first) page", async () => {
+		const { env } = mkEnv(makeComments(30), { comments_per_page: "10" });
+		const first = await get(env, "slug=hello");
+		// Second page request carries a cursor → must bypass the cache entirely.
+		await get(env, `slug=hello&before=${first.next_cursor}`);
+		expect([...mockCache.store.keys()].length).toBe(1); // only the first page
 	});
 });
