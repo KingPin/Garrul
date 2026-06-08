@@ -55,6 +55,8 @@ const makeComment = (over: Partial<AdminComment> = {}): AdminComment => ({
 	author_is_admin: false,
 	author_is_banned: false,
 	host: "blog.example.com",
+	post_url: null,
+	post_title: null,
 	...over,
 });
 
@@ -206,6 +208,43 @@ describe("renderQueue", () => {
 		);
 		expect(html).not.toContain("<script>alert");
 		expect(html).toContain("&lt;script&gt;");
+	});
+
+	it("links the META cell to the original page in a new tab", () => {
+		const html = renderQueue(
+			[makeComment({ post_url: "https://blog.example.com/hello" })],
+			emptyQueueFilters,
+			null,
+		);
+		expect(html).toContain('href="https://blog.example.com/hello"');
+		expect(html).toContain('target="_blank"');
+		expect(html).toContain('rel="noopener noreferrer nofollow"');
+	});
+
+	it("refuses to emit a non-http(s) post_url as a link", () => {
+		const html = renderQueue(
+			[makeComment({ post_url: "javascript:alert(1)" })],
+			emptyQueueFilters,
+			null,
+		);
+		expect(html).not.toContain("href=\"javascript:");
+		// Still renders the slug/host as plain text.
+		expect(html).toContain("hello-world");
+	});
+
+	it("shows the post title when present", () => {
+		const html = renderQueue(
+			[makeComment({ post_title: "My Great Post" })],
+			emptyQueueFilters,
+			null,
+		);
+		expect(html).toContain("My Great Post");
+	});
+
+	it("renders a click-to-copy comment ID", () => {
+		const html = renderQueue([makeComment()], emptyQueueFilters, null);
+		expect(html).toContain('class="cid muted"');
+		expect(html).toContain("navigator.clipboard.writeText");
 	});
 
 	it("renders the latest-audit footer strip when present", () => {
