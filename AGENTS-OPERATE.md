@@ -156,8 +156,8 @@ slice an enormous in-memory page) can never reach the slice/render paths —
 out-of-range values clamp, non-numeric values fall back to the default.
 
 - `COMMENTS_PER_PAGE` is consumed **server-side**: it drives the top-level
-  slice in `GET /api/v1/comments` and is baked into the first-page KV cache key
-  (`tree:<slug>:first:<sort>:n<size>`), so changing it never serves a
+  slice in `GET /api/v1/comments` and is baked into the first-page edge-cache
+  key (keyed by slug, sort, and size), so changing it never serves a
   stale-sized page. Both `sort=new` and `sort=top` paginate, so shrinking the
   page size never hides top-voted threads past the first page.
 - `REPLIES_PER_THREAD` and `AUTO_COLLAPSE_DEPTH` are consumed **client-side**:
@@ -455,7 +455,10 @@ third-party-cookie blocking in Safari/Brave breaks sign-in.
 ## 11. Backups and data export
 
 D1 is the only durable store. KV holds rate-limit counters, OAuth state
-(short TTL), sessions (30-day TTL), and the tree cache (rebuildable).
+(short TTL), sessions (30-day TTL), and rebuildable caches (resolved
+settings, version check). The comment first-page and counts caches live in
+the edge Cache API (`caches.default`), not KV — so they never count against
+the KV write budget.
 
 **D1 export.** `npm run db:export` wraps `bash scripts/db-export.sh`,
 writing a `.sql` dump locally. Cloudflare also keeps point-in-time

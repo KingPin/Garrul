@@ -218,7 +218,7 @@ host-page wiring:
 - **API shape.** Each comment carries `score_up`, `score_down`, and
   `my_vote` (`-1 | 0 | 1`). `my_vote` is only meaningful for
   authenticated viewers — anonymous list responses always carry `0`
-  (the first page is KV-cached and shared across anonymous viewers).
+  (the first page is edge-cached and shared across anonymous viewers).
   Votes are cast via `POST /api/v1/votes` with `{comment_id, value}`
   where `value` is `-1 | 0 | 1` (`0` clears the vote); the response
   returns the fresh counters plus `my_vote`.
