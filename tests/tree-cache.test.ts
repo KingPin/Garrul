@@ -1,82 +1,115 @@
 /**
- * bustTreeCache() invalidation + resilience.
+ * bustTreeCache() — edge-cache invalidation + resilience.
  *
- * The helper prefix-lists every first-page cache variant for a slug and
- * deletes them. It is best-effort: a transient KV failure (list or an
- * individual delete) must never propagate, because every comment mutation
- * (post / edit / delete / reaction) awaits it on the user-visible path.
+ * The helper resolves the current page size and drops the slug's first-page
+ * entries (both sorts) from the current colo's edge cache. It is best-effort:
+ * neither a settings-read failure nor a cache-delete failure may propagate,
+ * because every comment mutation (post / edit / delete / reaction) awaits it on
+ * the user-visible path.
  */
-import { describe, it, expect } from "vitest";
-import { bustTreeCache } from "../src/lib/tree-cache";
+import { describe, it, expect, afterEach } from "vitest";
+import { bustTreeCache, treeCacheKey } from "../src/lib/tree-cache";
+import { installMockCaches, uninstallMockCaches } from "./helpers/mock-caches";
+import type { Bindings } from "../src/index";
 
-type KvOpts = { failDeleteFor?: Set<string>; failList?: boolean };
+afterEach(() => uninstallMockCaches());
 
-const makeKv = (keys: string[], opts: KvOpts = {}) => {
-	const store = new Set(keys);
-	const deleted: string[] = [];
-	return {
-		store,
-		deleted,
-		async list({ prefix }: { prefix: string }) {
-			if (opts.failList) throw new Error("KV list down");
-			return {
-				keys: [...store]
-					.filter((k) => k.startsWith(prefix))
-					.map((name) => ({ name })),
-			};
+// Settings KV double: loadNumbers() reads `settings:numbers` first; returning a
+// warm value keeps the bust path off D1. DB is a stub for the fallback path.
+const env = (pageSize = 25): Bindings =>
+	({
+		TREE_CACHE: {
+			get: async (k: string) =>
+				k === "settings:numbers"
+					? {
+							comments_per_page: pageSize,
+							replies_per_thread: 3,
+							auto_collapse_depth: 3,
+						}
+					: null,
+			put: async () => {},
+			delete: async () => {},
 		},
-		async delete(name: string) {
-			if (opts.failDeleteFor?.has(name)) throw new Error("KV delete down");
-			deleted.push(name);
-			store.delete(name);
+		DB: {
+			prepare: () => ({
+				bind() {
+					return this;
+				},
+				all: async () => ({ results: [] }),
+			}),
 		},
-	};
-};
-
-const env = (kv: ReturnType<typeof makeKv>) =>
-	({ TREE_CACHE: kv } as unknown as Parameters<typeof bustTreeCache>[0]);
+	}) as unknown as Bindings;
 
 describe("bustTreeCache", () => {
-	it("deletes every first-page variant for the slug (all sorts + sizes)", async () => {
-		const kv = makeKv([
-			"tree:hello:first:new:n25",
-			"tree:hello:first:top:n25",
-			"tree:hello:first:new:n10",
-			"tree:hello:first", // legacy pre-split key
-		]);
-		await bustTreeCache(env(kv), "hello");
-		expect(kv.deleted.sort()).toEqual([
-			"tree:hello:first",
-			"tree:hello:first:new:n10",
-			"tree:hello:first:new:n25",
-			"tree:hello:first:top:n25",
-		]);
+	it("drops both sort variants for the slug at the current page size", async () => {
+		const cache = installMockCaches();
+		cache.store.set(treeCacheKey("hello", "new", 25).url, new Response("{}"));
+		cache.store.set(treeCacheKey("hello", "top", 25).url, new Response("{}"));
+		// A different page size is left for the TTL — the bust only knows the
+		// current size (best-effort).
+		cache.store.set(treeCacheKey("hello", "new", 10).url, new Response("{}"));
+
+		await bustTreeCache(env(25), "hello");
+
+		expect(cache.store.has(treeCacheKey("hello", "new", 25).url)).toBe(false);
+		expect(cache.store.has(treeCacheKey("hello", "top", 25).url)).toBe(false);
+		expect(cache.store.has(treeCacheKey("hello", "new", 10).url)).toBe(true);
 	});
 
 	it("does not touch other slugs' cache entries", async () => {
-		const kv = makeKv([
-			"tree:hello:first:new:n25",
-			"tree:other:first:new:n25",
-		]);
-		await bustTreeCache(env(kv), "hello");
-		expect(kv.store.has("tree:other:first:new:n25")).toBe(true);
-		expect(kv.store.has("tree:hello:first:new:n25")).toBe(false);
+		const cache = installMockCaches();
+		cache.store.set(treeCacheKey("hello", "new", 25).url, new Response("{}"));
+		cache.store.set(treeCacheKey("other", "new", 25).url, new Response("{}"));
+
+		await bustTreeCache(env(25), "hello");
+
+		expect(cache.store.has(treeCacheKey("other", "new", 25).url)).toBe(true);
+		expect(cache.store.has(treeCacheKey("hello", "new", 25).url)).toBe(false);
 	});
 
-	it("swallows an individual delete failure (best-effort) and still resolves", async () => {
-		const kv = makeKv(
-			["tree:hello:first:new:n25", "tree:hello:first:top:n25"],
-			{ failDeleteFor: new Set(["tree:hello:first:new:n25"]) },
-		);
-		// Must not reject even though one delete throws.
-		await expect(bustTreeCache(env(kv), "hello")).resolves.toBeUndefined();
-		// The non-failing key was still deleted.
-		expect(kv.deleted).toContain("tree:hello:first:top:n25");
+	it("swallows a cache delete failure (best-effort) and still resolves", async () => {
+		installMockCaches();
+		(globalThis as { caches?: unknown }).caches = {
+			default: {
+				match: async () => undefined,
+				put: async () => {},
+				delete: async () => {
+					throw new Error("colo down");
+				},
+			},
+		};
+		await expect(bustTreeCache(env(25), "hello")).resolves.toBeUndefined();
 	});
 
-	it("resolves quietly when the list call itself fails", async () => {
-		const kv = makeKv(["tree:hello:first:new:n25"], { failList: true });
-		await expect(bustTreeCache(env(kv), "hello")).resolves.toBeUndefined();
-		expect(kv.deleted).toHaveLength(0);
+	it("resolves quietly when the edge cache is unavailable", async () => {
+		uninstallMockCaches();
+		await expect(bustTreeCache(env(25), "hello")).resolves.toBeUndefined();
+	});
+
+	it("skips the drop when the page size can't be resolved", async () => {
+		const cache = installMockCaches();
+		cache.store.set(treeCacheKey("hello", "new", 25).url, new Response("{}"));
+		const badEnv = {
+			TREE_CACHE: {
+				get: async () => {
+					throw new Error("kv down");
+				},
+				put: async () => {},
+			},
+			DB: {
+				prepare: () => ({
+					bind() {
+						return this;
+					},
+					all: async () => {
+						throw new Error("d1 down");
+					},
+				}),
+			},
+		} as unknown as Bindings;
+
+		await expect(bustTreeCache(badEnv, "hello")).resolves.toBeUndefined();
+		// Page size unknown → nothing dropped.
+		expect(cache.store.has(treeCacheKey("hello", "new", 25).url)).toBe(true);
 	});
 });
