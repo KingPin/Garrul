@@ -833,6 +833,11 @@ export type AdminComment = Comment & {
 	author_is_admin: boolean;
 	author_is_banned: boolean;
 	host: string;
+	// Optional so the other toAdminComment producers (comment-detail SELECTs)
+	// that don't fetch these columns stay valid — only the queue query selects
+	// them, to link a row back to the page it was posted on.
+	post_url?: string | null;
+	post_title?: string | null;
 };
 
 type AdminCommentRow = Omit<
@@ -913,7 +918,9 @@ export const adminListComments = async (
 		       u.provider   AS author_provider,
 		       u.is_admin   AS author_is_admin,
 		       u.is_banned  AS author_is_banned,
-		       ${hostExpr("p.url")} AS host
+		       ${hostExpr("p.url")} AS host,
+		       p.url        AS post_url,
+		       p.title      AS post_title
 		  FROM comments c
 		  LEFT JOIN users u ON u.id = c.user_id
 		  LEFT JOIN posts p ON p.slug = c.post_slug
