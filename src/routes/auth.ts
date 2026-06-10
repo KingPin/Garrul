@@ -1,7 +1,7 @@
 /**
  * /api/v1/auth/:provider/start    302 → provider authorize URL
  * /api/v1/auth/:provider/callback exchange code, upsert user, issue session
- * POST /api/v1/auth/signout       clear session cookie
+ * POST /api/v1/auth/signout       revoke KV session + clear cookie
  * GET  /api/v1/auth/me            current session user (or null)
  *
  * The callback returns a tiny self-closing HTML page that postMessages
@@ -30,8 +30,8 @@ import {
 import { upsertOauthUser } from "../db/queries";
 import {
 	buildShortCookie,
-	clearSession,
 	clearShortCookie,
+	destroySession,
 	issueSession,
 	parseCookie,
 	readSession,
@@ -304,7 +304,7 @@ auth.get("/:provider/callback", async (c) => {
 });
 
 auth.post("/signout", async (c) => {
-	clearSession(c);
+	await destroySession(c);
 	return c.json({ ok: true });
 });
 

@@ -9,7 +9,7 @@
  */
 import { describe, it, expect, beforeEach } from "vitest";
 import {
-	clearSession,
+	destroySession,
 	issueSession,
 	readSession,
 } from "../src/lib/session";
@@ -105,11 +105,30 @@ describe("session cookie roundtrip", () => {
 		expect(await readSession(ctx)).toBeNull();
 	});
 
-	it("clearSession emits an expiring Set-Cookie", async () => {
+	it("destroySession emits an expiring Set-Cookie", async () => {
 		const { ctx, setCookies } = makeCtx({});
-		clearSession(ctx);
+		await destroySession(ctx);
 		expect(setCookies).toHaveLength(1);
 		expect(setCookies[0]).toMatch(/Max-Age=0/);
+	});
+
+	it("destroySession deletes the KV record so the sid cannot be replayed", async () => {
+		const { ctx: issueCtx, kv, setCookies } = makeCtx({});
+		await issueSession(issueCtx, userId);
+		const sidValue = extractCookieValue(setCookies[0]!);
+		expect(kv.store.has(`sess:${sidValue}`)).toBe(true);
+
+		const { ctx: signoutCtx } = makeCtxWithSameKv(kv, {
+			cookieHeader: `garrul_sess=${sidValue}`,
+		});
+		await destroySession(signoutCtx);
+		expect(kv.store.has(`sess:${sidValue}`)).toBe(false);
+
+		// A retained copy of the cookie is now inert server-side.
+		const { ctx: replayCtx } = makeCtxWithSameKv(kv, {
+			cookieHeader: `garrul_sess=${sidValue}`,
+		});
+		expect(await readSession(replayCtx)).toBeNull();
 	});
 
 	it("expired session record is purged on read", async () => {

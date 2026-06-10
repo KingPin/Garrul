@@ -12,7 +12,9 @@
  *
  * The cookie value IS the session id. The KV value is the user_id +
  * expiry. To revoke a session, delete the KV entry; the cookie becomes
- * inert immediately.
+ * inert immediately. Signout goes through destroySession, which does
+ * exactly that before expiring the cookie — clearing the cookie alone
+ * would leave the server-side record replayable for its full TTL.
  */
 import type { MiddlewareHandler } from "hono";
 
@@ -129,7 +131,9 @@ export const issueSession = async (
 	return sid;
 };
 
-export const clearSession = (c: SessionCtx): void => {
+export const destroySession = async (c: SessionCtx): Promise<void> => {
+	const sid = parseCookie(c.req.header("cookie"), COOKIE_NAME);
+	if (sid) await c.env.SESSIONS.delete(`sess:${sid}`);
 	c.header("Set-Cookie", buildSetCookie("", 0, c.env), { append: true });
 };
 
