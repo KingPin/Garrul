@@ -7,8 +7,8 @@
  *    Safari ITP / Chrome 3PC-deprecation don't evict it)
  * - Dev fallback (ENV=dev): SameSite=Lax + no Secure, so plain HTTP
  *   wrangler dev works without HTTPS
- * - 30-day TTL in KV; refreshed on every use so an active user keeps
- *   their session forever
+ * - 30-day TTL in KV; slid forward (at most once a day) while the user is
+ *   active so an active user keeps their session forever
  *
  * The cookie value IS the session id. The KV value is the user_id +
  * expiry. To revoke a session, delete the KV entry; the cookie becomes
@@ -29,6 +29,17 @@ type SessionCtx = {
 
 const COOKIE_NAME = "garrul_sess";
 const SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
+// Slide the TTL at most once a day rather than on every read: a KV write per
+// authenticated request would burn the (account-wide) write quota, and the
+// rarer the refresh the smaller the window in which a concurrent refresh could
+// resurrect a session that signout just deleted.
+const SESSION_REFRESH_SECONDS = 24 * 60 * 60;
+// Session ids are exactly 64 lowercase hex chars (32 random bytes). Reject
+// anything else before it reaches a KV op — an oversized cookie would blow the
+// 512-byte KV key limit and throw, turning every request (and signout) into a
+// 500 the user can't recover from.
+const SESSION_ID_RE = /^[0-9a-f]{64}$/;
+const sessionKey = (sid: string): string => `sess:${sid}`;
 
 type SessionRecord = {
 	user_id: string;
@@ -55,13 +66,18 @@ export const parseCookie = (
 		const eq = part.indexOf("=");
 		if (eq < 0) continue;
 		if (part.slice(0, eq).trim() === name) {
+			const raw = part.slice(eq + 1).trim();
+			// An empty value can't be a real session; keep scanning so a later
+			// same-name cookie (e.g. one tossed in at a broader scope) can't
+			// shadow the valid one and make us skip revocation.
+			if (!raw) continue;
 			// Malformed percent-encoding (e.g. `%E0%A4%A`) makes
-			// decodeURIComponent throw; treat it as "no cookie" rather than
-			// letting a garbage Cookie header 500 every request.
+			// decodeURIComponent throw; treat it as a non-match and keep
+			// scanning rather than letting a garbage cookie 500 the request.
 			try {
-				return decodeURIComponent(part.slice(eq + 1).trim());
+				return decodeURIComponent(raw);
 			} catch {
-				return null;
+				continue;
 			}
 		}
 	}
@@ -129,7 +145,7 @@ export const issueSession = async (
 		user_id: userId,
 		expires_at: Date.now() + SESSION_TTL_SECONDS * 1000,
 	};
-	await c.env.SESSIONS.put(`sess:${sid}`, JSON.stringify(record), {
+	await c.env.SESSIONS.put(sessionKey(sid), JSON.stringify(record), {
 		expirationTtl: SESSION_TTL_SECONDS,
 	});
 	c.header("Set-Cookie", buildSetCookie(sid, SESSION_TTL_SECONDS, c.env), {
@@ -138,9 +154,21 @@ export const issueSession = async (
 	return sid;
 };
 
-export const destroySession = async (c: SessionCtx): Promise<void> => {
+/**
+ * Delete the KV record for the session named by the request cookie, if any,
+ * without touching the cookie itself. Used both by signout (which then expires
+ * the cookie) and by re-login (which is about to overwrite it) so a fresh
+ * session never orphans a still-replayable record.
+ */
+export const revokeSession = async (c: SessionCtx): Promise<void> => {
 	const sid = parseCookie(c.req.header("cookie"), COOKIE_NAME);
-	if (sid) await c.env.SESSIONS.delete(`sess:${sid}`);
+	if (sid && SESSION_ID_RE.test(sid)) {
+		await c.env.SESSIONS.delete(sessionKey(sid));
+	}
+};
+
+export const destroySession = async (c: SessionCtx): Promise<void> => {
+	await revokeSession(c);
 	c.header("Set-Cookie", buildSetCookie("", 0, c.env), { append: true });
 };
 
@@ -148,25 +176,30 @@ export const readSession = async (
 	c: SessionCtx,
 ): Promise<{ sid: string; user_id: string } | null> => {
 	const sid = parseCookie(c.req.header("cookie"), COOKIE_NAME);
-	if (!sid) return null;
-	const raw = await c.env.SESSIONS.get(`sess:${sid}`);
+	if (!sid || !SESSION_ID_RE.test(sid)) return null;
+	const raw = await c.env.SESSIONS.get(sessionKey(sid));
 	if (!raw) return null;
 	let record: SessionRecord;
 	try {
 		record = JSON.parse(raw) as SessionRecord;
 	} catch {
-		await c.env.SESSIONS.delete(`sess:${sid}`);
+		await c.env.SESSIONS.delete(sessionKey(sid));
 		return null;
 	}
-	if (record.expires_at < Date.now()) {
-		await c.env.SESSIONS.delete(`sess:${sid}`);
+	const now = Date.now();
+	if (record.expires_at < now) {
+		await c.env.SESSIONS.delete(sessionKey(sid));
 		return null;
 	}
-	// Sliding TTL: extend on every use.
-	record.expires_at = Date.now() + SESSION_TTL_SECONDS * 1000;
-	await c.env.SESSIONS.put(`sess:${sid}`, JSON.stringify(record), {
-		expirationTtl: SESSION_TTL_SECONDS,
-	});
+	// Sliding TTL, but only re-write once the record has aged past the refresh
+	// interval — avoids a KV write on every authenticated request.
+	const ageSeconds = SESSION_TTL_SECONDS - (record.expires_at - now) / 1000;
+	if (ageSeconds >= SESSION_REFRESH_SECONDS) {
+		record.expires_at = now + SESSION_TTL_SECONDS * 1000;
+		await c.env.SESSIONS.put(sessionKey(sid), JSON.stringify(record), {
+			expirationTtl: SESSION_TTL_SECONDS,
+		});
+	}
 	return { sid, user_id: record.user_id };
 };
 

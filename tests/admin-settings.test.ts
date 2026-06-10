@@ -24,7 +24,9 @@ import { Hono } from "hono";
 import { admin } from "../src/routes/admin";
 import type { Bindings } from "../src/index";
 
-const SID = "testsessionid";
+// Real session ids are 64 lowercase hex chars (see newSessionId); readSession
+// rejects anything else before the KV lookup, so the fixture must match.
+const SID = "a".repeat(64);
 const ADMIN_ID = "01HADMIN0000000000000000AB";
 
 // D1 double: serves the admin user for the auth gate and captures every

@@ -35,6 +35,7 @@ import {
 	issueSession,
 	parseCookie,
 	readSession,
+	revokeSession,
 } from "../lib/session";
 import { writeEvent } from "../lib/analytics";
 import { log } from "../lib/log";
@@ -291,6 +292,10 @@ auth.get("/:provider/callback", async (c) => {
 		return c.html(finishHtml(payload.return_origin, false, "banned"));
 	}
 
+	// Revoke any session the browser already holds before minting a new one,
+	// so re-login (a common "I might be compromised" remediation) doesn't leave
+	// the previous sid live and replayable in KV for its full TTL.
+	await revokeSession(c);
 	await issueSession(c, user.id);
 	// Same user_id is also reachable via the handoff token below. The popup
 	// Set-Cookie above is what works on same-eTLD+1 embeds; the handoff is

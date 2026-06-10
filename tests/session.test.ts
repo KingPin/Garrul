@@ -12,6 +12,7 @@ import {
 	destroySession,
 	issueSession,
 	readSession,
+	revokeSession,
 } from "../src/lib/session";
 
 class StubKV {
@@ -99,15 +100,35 @@ describe("session cookie roundtrip", () => {
 	});
 
 	it("malformed percent-encoding in the cookie is treated as no session", async () => {
-		const { ctx } = makeCtx({
+		const { ctx, setCookies } = makeCtx({
 			cookieHeader: "garrul_sess=%E0%A4%A",
 		});
 		expect(await readSession(ctx)).toBeNull();
 		// destroySession must not throw either — it still expires the cookie.
-		const { ctx: destroyCtx, setCookies } = makeCtx({
-			cookieHeader: "garrul_sess=%E0%A4%A",
+		await destroySession(ctx);
+		expect(setCookies[0]).toMatch(/Max-Age=0/);
+	});
+
+	it("a malformed cookie cannot shadow a valid same-name cookie", async () => {
+		const { ctx: issueCtx, kv, setCookies } = makeCtx({});
+		await issueSession(issueCtx, userId);
+		const sidValue = extractCookieValue(setCookies[0]!);
+
+		// A garbage first occurrence must not stop us reaching the real sid.
+		const { ctx } = makeCtxWithSameKv(kv, {
+			cookieHeader: `garrul_sess=%E0%A4%A; garrul_sess=${sidValue}`,
 		});
-		await destroySession(destroyCtx);
+		await destroySession(ctx);
+		expect(kv.store.has(`sess:${sidValue}`)).toBe(false);
+	});
+
+	it("an oversized cookie value does not throw on signout", async () => {
+		// >512-byte KV keys throw; a too-long sid must be rejected before the
+		// delete so a corrupted cookie can't make signout un-completable.
+		const { ctx, setCookies } = makeCtx({
+			cookieHeader: `garrul_sess=${"a".repeat(600)}`,
+		});
+		await destroySession(ctx);
 		expect(setCookies[0]).toMatch(/Max-Age=0/);
 	});
 
@@ -142,6 +163,63 @@ describe("session cookie roundtrip", () => {
 			cookieHeader: `garrul_sess=${sidValue}`,
 		});
 		expect(await readSession(replayCtx)).toBeNull();
+	});
+
+	it("revokeSession deletes the KV record without touching the cookie", async () => {
+		const { ctx: issueCtx, kv, setCookies } = makeCtx({});
+		await issueSession(issueCtx, userId);
+		const sidValue = extractCookieValue(setCookies[0]!);
+
+		const { ctx, setCookies: revokeCookies } = makeCtxWithSameKv(kv, {
+			cookieHeader: `garrul_sess=${sidValue}`,
+		});
+		await revokeSession(ctx);
+		expect(kv.store.has(`sess:${sidValue}`)).toBe(false);
+		// Unlike destroySession, revoke leaves the cookie alone — re-login
+		// overwrites it with a fresh Set-Cookie immediately after.
+		expect(revokeCookies).toHaveLength(0);
+	});
+
+	it("does not re-write the KV record on an immediate re-read", async () => {
+		const { ctx: issueCtx, kv, setCookies } = makeCtx({});
+		await issueSession(issueCtx, userId);
+		const sidValue = extractCookieValue(setCookies[0]!);
+		const before = kv.store.get(`sess:${sidValue}`)!.value;
+
+		const { ctx } = makeCtxWithSameKv(kv, {
+			cookieHeader: `garrul_sess=${sidValue}`,
+		});
+		expect((await readSession(ctx))?.user_id).toBe(userId);
+		// Fresh record is well within the refresh interval → no wasted KV write.
+		expect(kv.store.get(`sess:${sidValue}`)!.value).toBe(before);
+	});
+
+	it("slides the TTL once the record has aged past the refresh interval", async () => {
+		const { ctx: issueCtx, kv, setCookies } = makeCtx({});
+		await issueSession(issueCtx, userId);
+		const sidValue = extractCookieValue(setCookies[0]!);
+		const key = `sess:${sidValue}`;
+		const row = kv.store.get(key)!;
+		// Age the record two days (expires_at two days closer than a fresh one).
+		kv.store.set(key, {
+			value: JSON.stringify({
+				user_id: userId,
+				expires_at: Date.now() + (30 - 2) * 24 * 60 * 60 * 1000,
+			}),
+			expiresAt: row.expiresAt,
+		});
+
+		const { ctx } = makeCtxWithSameKv(kv, {
+			cookieHeader: `garrul_sess=${sidValue}`,
+		});
+		expect((await readSession(ctx))?.user_id).toBe(userId);
+		const refreshed = JSON.parse(kv.store.get(key)!.value) as {
+			expires_at: number;
+		};
+		// Aged record → refreshed back toward a full 30-day expiry.
+		expect(refreshed.expires_at).toBeGreaterThan(
+			Date.now() + (30 - 1) * 24 * 60 * 60 * 1000,
+		);
 	});
 
 	it("expired session record is purged on read", async () => {
