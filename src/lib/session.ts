@@ -55,7 +55,14 @@ export const parseCookie = (
 		const eq = part.indexOf("=");
 		if (eq < 0) continue;
 		if (part.slice(0, eq).trim() === name) {
-			return decodeURIComponent(part.slice(eq + 1).trim());
+			// Malformed percent-encoding (e.g. `%E0%A4%A`) makes
+			// decodeURIComponent throw; treat it as "no cookie" rather than
+			// letting a garbage Cookie header 500 every request.
+			try {
+				return decodeURIComponent(part.slice(eq + 1).trim());
+			} catch {
+				return null;
+			}
 		}
 	}
 	return null;

@@ -98,6 +98,19 @@ describe("session cookie roundtrip", () => {
 		expect(await readSession(ctx)).toBeNull();
 	});
 
+	it("malformed percent-encoding in the cookie is treated as no session", async () => {
+		const { ctx } = makeCtx({
+			cookieHeader: "garrul_sess=%E0%A4%A",
+		});
+		expect(await readSession(ctx)).toBeNull();
+		// destroySession must not throw either — it still expires the cookie.
+		const { ctx: destroyCtx, setCookies } = makeCtx({
+			cookieHeader: "garrul_sess=%E0%A4%A",
+		});
+		await destroySession(destroyCtx);
+		expect(setCookies[0]).toMatch(/Max-Age=0/);
+	});
+
 	it("readSession returns null for an unknown cookie value", async () => {
 		const { ctx } = makeCtx({
 			cookieHeader: "garrul_sess=deadbeef".padEnd(72, "0"),
