@@ -172,9 +172,12 @@ so plain HTTP works.
 
 ### Sign-out doesn't actually sign me out
 
-`POST /api/v1/auth/signout` clears the cookie. If the session row in
-KV still exists (you cleared the cookie out-of-band, by editing
-DevTools), the KV row will TTL out in 30 days.
+`POST /api/v1/auth/signout` revokes the session server-side — it deletes
+the `sess:<id>` row from KV and then expires the cookie — so a retained
+copy of the cookie is inert immediately. If you instead clear the cookie
+out-of-band (e.g. via DevTools) without hitting `/signout`, the KV row
+lingers until its TTL expires (≤30 days); call `/signout` to revoke it
+now.
 
 ## Email digests
 

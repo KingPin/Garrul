@@ -420,8 +420,8 @@ to work in Chrome's 3PC phase-out and Safari ITP — don't strip it.
 
 **Endpoints integrators may call client-side**: `GET /api/v1/auth/me`
 returns the current session user (or `{user:null}`); `POST
-/api/v1/auth/signout` clears the cookie. Both go through the same
-session middleware as the comment routes.
+/api/v1/auth/signout` revokes the KV session and clears the cookie. Both
+go through the same session middleware as the comment routes.
 
 ## 8. Anonymous comments
 
