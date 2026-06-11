@@ -91,13 +91,34 @@ export const corsAndCsrf = (): MiddlewareHandler => {
 			}
 		}
 
-		// Echo CORS headers on actual responses so cookies flow.
-		if (origin && (matches(origin, allowed) || isDev)) {
+		// Echo CORS headers on actual responses so cookies flow. c.header()
+		// before next() only reaches responses created via the context
+		// (c.json/c.body) — including error responses built by onError — so it
+		// stays. Handlers that return a raw Response (the edge-cache paths in
+		// lib/response-cache.ts) drop these prepared headers entirely, hence
+		// the post-next backfill below.
+		const corsOk = origin && (matches(origin, allowed) || isDev);
+		if (corsOk) {
 			c.header("Access-Control-Allow-Origin", origin);
 			c.header("Access-Control-Allow-Credentials", "true");
 			c.header("Vary", "Origin");
 		}
 
 		await next();
+
+		// Backfill onto raw Responses. Cache API / fetch responses have
+		// immutable headers in workerd; reassigning through c.res makes Hono
+		// re-wrap into a mutable Response.
+		if (corsOk && !c.res.headers.has("Access-Control-Allow-Origin")) {
+			c.res = new Response(c.res.body, c.res);
+			c.res.headers.set("Access-Control-Allow-Origin", origin);
+			c.res.headers.set("Access-Control-Allow-Credentials", "true");
+			const vary = c.res.headers.get("Vary");
+			const hasOriginVary = vary
+				?.split(",")
+				.some((v) => v.trim().toLowerCase() === "origin");
+			if (!vary) c.res.headers.set("Vary", "Origin");
+			else if (!hasOriginVary) c.res.headers.set("Vary", `${vary}, Origin`);
+		}
 	};
 };

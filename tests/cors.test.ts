@@ -6,6 +6,7 @@
  * c.body, and c.json.
  */
 import { describe, it, expect } from "vitest";
+import { Hono } from "hono";
 import type { MiddlewareHandler } from "hono";
 import { corsAndCsrf } from "../src/lib/cors";
 
@@ -30,8 +31,17 @@ const runMiddleware = async (
 		| { kind: "preflight"; status: number }
 		| null = null;
 
+	// The middleware also backfills headers onto c.res after next(); the stub
+	// models it as a plain reassignable Response like Hono's context.
+	let res = new Response(null);
 	const ctx = {
 		env: opts.env ?? { ALLOWED_ORIGINS: "https://blog.example.com" },
+		get res() {
+			return res;
+		},
+		set res(r: Response) {
+			res = r;
+		},
 		req: {
 			header: (name: string) =>
 				name.toLowerCase() === "origin" ? opts.origin : undefined,
@@ -304,6 +314,67 @@ describe("corsAndCsrf — Origin allowlist on /api/*", () => {
 			if (r.kind !== "preflight") return;
 			expect(r.status).toBe(204);
 			expect(r.headers["Access-Control-Allow-Origin"]).toBeUndefined();
+		});
+	});
+
+	// The stub-context tests above record c.header() calls — but Hono only
+	// applies those "prepared headers" to responses created via the context
+	// (c.json/c.body). A handler that returns a raw `Response` (the edge-cache
+	// paths in lib/response-cache.ts) drops them entirely, which is exactly the
+	// bug that shipped: OPTIONS carried Access-Control-Allow-Origin but GET
+	// /api/v1/counts did not, so browsers blocked the cross-origin read. These
+	// tests go through real Hono to pin the on-the-wire behavior.
+	describe("real Hono — CORS headers reach the wire", () => {
+		const env = { ALLOWED_ORIGINS: "https://blog.example.com" };
+		const mkApp = () => {
+			const app = new Hono();
+			app.use("*", corsAndCsrf());
+			// Raw Response, like matchCache()/cacheJson() return.
+			app.get("/api/v1/raw", () =>
+				new Response(JSON.stringify({ ok: true }), {
+					headers: { "content-type": "application/json" },
+				}),
+			);
+			// Context-created response (the path that always worked).
+			app.get("/api/v1/ctx", (c) => c.json({ ok: true }));
+			return app;
+		};
+
+		it("handler returning a raw Response still gets CORS headers", async () => {
+			const res = await mkApp().request(
+				"/api/v1/raw",
+				{ headers: { origin: "https://blog.example.com" } },
+				env,
+			);
+			expect(res.status).toBe(200);
+			expect(res.headers.get("Access-Control-Allow-Origin")).toBe(
+				"https://blog.example.com",
+			);
+			expect(res.headers.get("Access-Control-Allow-Credentials")).toBe("true");
+			expect(res.headers.get("Vary")).toBe("Origin");
+		});
+
+		it("handler using c.json() still gets CORS headers (regression guard)", async () => {
+			const res = await mkApp().request(
+				"/api/v1/ctx",
+				{ headers: { origin: "https://blog.example.com" } },
+				env,
+			);
+			expect(res.status).toBe(200);
+			expect(res.headers.get("Access-Control-Allow-Origin")).toBe(
+				"https://blog.example.com",
+			);
+			expect(res.headers.get("Vary")).toBe("Origin");
+		});
+
+		it("disallowed origin gets no CORS headers on a raw Response", async () => {
+			const res = await mkApp().request(
+				"/api/v1/raw",
+				{ headers: { origin: "https://evil.example.com" } },
+				env,
+			);
+			expect(res.status).toBe(403);
+			expect(res.headers.get("Access-Control-Allow-Origin")).toBeNull();
 		});
 	});
 
