@@ -196,6 +196,13 @@ const STYLE_CSS = `
 	padding: 0;
 }
 .gr-compose textarea[hidden] { display: none; }
+.gr-compose-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: flex-end;
+	justify-content: space-between;
+	gap: 0.25rem 0.5rem;
+}
 .gr-tabs { display: flex; gap: 0.25rem; }
 .gr-tab {
 	font: inherit;
@@ -636,7 +643,12 @@ const buildWritePreview = (
 		void showPreview();
 	});
 
-	wrap.append(tabs, toolbar, textarea, hint, pane);
+	// Tabs and toolbar share one header row (GitHub-style): tabs left,
+	// formatting buttons right. The toolbar hides itself in Preview mode,
+	// and the row wraps to two lines on narrow embeds.
+	const head = el("div", "gr-compose-head");
+	head.append(tabs, toolbar);
+	wrap.append(head, textarea, hint, pane);
 	return wrap;
 };
 
