@@ -111,11 +111,23 @@ const metaCell = (c: AdminComment): string => {
           @click="navigator.clipboard.writeText(${jsLiteral(c.id)}); $dispatch('toast',{text:'ID copied'})">${escapeHtml(c.id)}</span>`;
 };
 
-// Embed values as JSON-stringified, HTML-escaped literals so the resulting
-// Alpine expression is well-formed regardless of the underlying string
-// content (defense in depth: ULIDs are safe today, but the typing is just
-// `string`).
-const jsLiteral = (s: string): string => escapeHtml(JSON.stringify(s));
+// Embed values as code-safe, HTML-escaped JS string literals so the resulting
+// Alpine expression is well-formed and injection-proof regardless of the
+// underlying string content (defense in depth: ULIDs are safe today, but the
+// typing is just `string`).
+//
+// JSON.stringify alone is not enough: it leaves `<`, `>`, `/` and the line
+// separators U+2028/U+2029 raw, which are unsafe once the literal is embedded
+// as executable JS (markup-context breakout / older-JS line terminators). We
+// re-encode those as `\uXXXX` escapes — valid inside a JS string and inert —
+// then escapeHtml for the surrounding double-quoted attribute.
+const jsLiteral = (s: string): string =>
+	escapeHtml(
+		JSON.stringify(s).replace(
+			/[<>\/\u2028\u2029]/g,
+			(c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`,
+		),
+	);
 
 const rowAct = (
 	id: string,
