@@ -48,6 +48,7 @@ type TreeNode = {
 	status: "approved" | "pending" | "spam" | "deleted";
 	edited_at: number | null;
 	deleted_at: number | null;
+	deleted_by: "author" | "moderator" | null;
 	created_at: number;
 	author: TreeAuthor;
 	depth: number;
@@ -1414,7 +1415,11 @@ const buildComment = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 
 	const body = el("div", "gr-body");
 	if (n.status === "deleted") {
-		const p = el("p", "gr-deleted", "[deleted]");
+		const label =
+			n.deleted_by === "moderator"
+				? "[removed by a moderator]"
+				: "[deleted]";
+		const p = el("p", "gr-deleted", label);
 		body.appendChild(p);
 	} else {
 		if (n.flatten_from) {

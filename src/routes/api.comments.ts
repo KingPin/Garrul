@@ -139,6 +139,7 @@ const serializeComment = (c: Comment, author: User) => {
 		status: c.status,
 		edited_at: c.edited_at,
 		deleted_at: c.deleted_at,
+		deleted_by: visible ? c.deleted_by : null,
 		created_at: c.created_at,
 		author: {
 			id: author.id,

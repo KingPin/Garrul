@@ -44,6 +44,9 @@ export type TreeNode = {
 	status: Comment["status"];
 	edited_at: number | null;
 	deleted_at: number | null;
+	/** Who removed a deleted comment ('author' | 'moderator'), for the
+	 *  placeholder wording. NULL when not deleted. */
+	deleted_by: Comment["deleted_by"];
 	created_at: number;
 	author: TreeAuthor;
 	depth: number;
@@ -146,6 +149,7 @@ const toNode = (
 	status: row.status,
 	edited_at: row.edited_at,
 	deleted_at: row.deleted_at,
+	deleted_by: row.status === "deleted" ? row.deleted_by : null,
 	created_at: row.created_at,
 	author: buildAuthor(usersById, row.user_id),
 	depth,
