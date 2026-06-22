@@ -100,6 +100,27 @@ The default `generic` adapter sends the v1 payload above. `slack` and
 the endpoint when the target URL is a Slack or Discord incoming
 webhook. Adapter changes do not require receiver changes.
 
+The `discord` adapter sends a single rich **embed** (`{"embeds":[…]}`):
+the commenter's name as the embed author, the post title as a link to the
+page, the comment snippet as the (markdown-rendering) description, an
+event-colored accent (new = blurple, approved = green, spam/deleted =
+red, edited = grey), and a **Links** field with *🔍 Open in admin* and
+*🌐 View page*. The `slack` adapter sends the same information as text,
+with the title and the two links rendered using Slack's `<url|label>`
+syntax.
+
+Both link to `…/admin/comments/<id>` (the moderation detail page) and to
+the post's public URL. These links require **`PUBLIC_BASE_URL`** to be
+set — if it is unset, the notification still sends but the admin link is
+omitted. The page link additionally requires the post to have a stored
+`url` (published by the embed widget's `data-url` on first comment), and
+that URL is scheme-validated (`http`/`https` only) before it is shown.
+
+Safety notes specific to the rich adapters: comment bodies can't ping a
+channel (`@everyone`/role mentions are neutralized), and the Discord embed
+description escapes `[`/`]` so a comment body like `[click](https://evil)`
+renders as literal text rather than a clickable masked link.
+
 ## Legacy `WEBHOOK_URL`
 
 Operators upgrading from the original single-`WEBHOOK_URL` setup used one

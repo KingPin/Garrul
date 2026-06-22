@@ -4,28 +4,43 @@
  *
  * Architecture note: the generic adapter is a pure JSON.stringify of
  * the v1 payload. Slack/Discord need richer content (author name,
- * comment snippet) than the v1 contract carries, so each adapter does
- * its own DB lookup at render time. Once rendered, the resulting body
- * is stored verbatim on the webhook_deliveries row — retries resend
- * the same body, just with a fresh HMAC timestamp. We do NOT re-render
- * on retry: by the time the 6-hour retry fires, the comment may have
- * been edited or deleted, and we want the Slack/Discord channel to
+ * comment snippet, navigation links) than the v1 contract carries, so
+ * each adapter does its own DB lookup at render time. Once rendered, the
+ * resulting body is stored verbatim on the webhook_deliveries row —
+ * retries resend the same body, just with a fresh HMAC timestamp. We do
+ * NOT re-render on retry: by the time the retry fires, the comment may
+ * have been edited or deleted, and we want the Slack/Discord channel to
  * reflect what *was true at the event time*, not the now-stale state.
+ * The links we embed (admin URL, page URL) are derived from the base URL
+ * + comment id + post URL — all stable — so verbatim retry stays correct.
  *
  * Security posture:
  *   - Snippets are truncated to platform limits BEFORE escaping, so a
  *     long body can't bust the platform's hard 2000/4000-char cap.
  *   - Mentions are neutralized so a comment body of "@everyone come
  *     read this" cannot ping a whole Slack workspace or Discord guild.
- *   - We send only `text` (Slack) / `content` (Discord) — no embeds,
- *     no blocks. Keeps the attack surface small; embeds have their
- *     own injection traps (markdown in titles, URL fields, etc.) we
- *     don't need yet.
+ *   - Discord now renders an *embed* (nicer UI + clickable links). Embeds
+ *     have injection traps the old plain-text path didn't: the embed
+ *     `description` renders markdown, so a comment body of
+ *     "[Win a prize](https://evil)" could become a clickable masked link.
+ *     We defuse this by escaping `[`/`]` in the description (kills masked
+ *     links and images) while leaving basic bold/italic to render. The
+ *     embed `title` / `author.name` positions do NOT render markdown, and
+ *     embeds never fire mentions, but we keep mention-neutralization as
+ *     defense in depth. Every URL we place in a clickable position is
+ *     either server-generated (admin link) or scheme-validated (page /
+ *     avatar), never raw user input.
  */
 import { getComment, getPost, getUser } from "../db/queries";
 import type { WebhookEvent, WebhookPayload } from "./webhook";
 
 type WebhookAdapterDb = Pick<D1Database, "prepare">;
+
+/** Options threaded from the dispatcher into the rich adapters. */
+export type AdapterOpts = {
+	/** Instance base URL (PUBLIC_BASE_URL) for building admin links. */
+	baseUrl?: string | undefined;
+};
 
 const EVENT_VERB: Record<WebhookEvent, string> = {
 	"comment.posted": "New comment",
@@ -35,24 +50,59 @@ const EVENT_VERB: Record<WebhookEvent, string> = {
 	"comment.spam": "Comment marked spam",
 };
 
+// Discord embed accent color per event (decimal RGB).
+const EVENT_COLOR: Record<WebhookEvent, number> = {
+	"comment.posted": 0x5865f2, // blurple
+	"comment.edited": 0x99aab5, // grey
+	"comment.approved": 0x57f287, // green
+	"comment.spam": 0xed4245, // red
+	"comment.deleted": 0x992d22, // dark red
+};
+
 // Cap snippet length pre-escape so the worst-case escaped output still
 // fits inside the platform body limit. 1500 raw chars + escape overhead
-// stays under Discord's 2000 and Slack's 3000.
+// stays under Discord's 4096 embed-description and Slack's 3000.
 const SNIPPET_CAP = 1500;
+// Discord embed title / author.name hard cap is 256.
+const EMBED_NAME_CAP = 256;
 
 type Ctx = {
 	author: string;
 	post_title: string;
 	post_slug: string;
 	snippet: string;
+	/** Admin deep link, or null when PUBLIC_BASE_URL is unset/invalid. */
+	admin_url: string | null;
+	/** Public page URL, or null when the post has no valid url. */
+	page_url: string | null;
+	/** Commenter avatar (provider), or null. https only. */
+	avatar_url: string | null;
 };
 
 const truncate = (s: string, max: number): string =>
 	s.length <= max ? s : `${s.slice(0, max)}…`;
 
+// Parse + scheme-check a stored/derived URL before we place it in a
+// clickable position. Mirrors the guard in src/routes/permalink.ts: the
+// post url came from the embed widget's caller-supplied data-url, so we
+// reject anything that isn't plain http(s) to avoid surfacing
+// javascript:/data:/scheme-relative targets in a chat client.
+const safeHttpUrl = (raw: string | null | undefined): string | null => {
+	if (!raw) return null;
+	let parsed: URL;
+	try {
+		parsed = new URL(raw);
+	} catch {
+		return null;
+	}
+	if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return null;
+	return raw;
+};
+
 const loadContext = async (
 	db: WebhookAdapterDb,
 	payload: WebhookPayload,
+	opts: AdapterOpts,
 ): Promise<Ctx> => {
 	// All three lookups can fail (row deleted, DB hiccup) without
 	// crashing the dispatch — the adapter degrades to ID-only.
@@ -66,7 +116,22 @@ const loadContext = async (
 	const post_title = post?.title ?? post_slug;
 	const raw = comment?.body_md ?? "(no body available)";
 	const snippet = truncate(raw.replace(/\s+/g, " ").trim(), SNIPPET_CAP);
-	return { author, post_slug, post_title, snippet };
+
+	// Admin link only when we have a valid base URL. We link straight to
+	// the post page (not /c/:id) because /c/:id 404s for pending/spam/
+	// deleted comments — and a brand-new comment is exactly the pending
+	// case a moderator gets pinged about.
+	const base = safeHttpUrl(opts.baseUrl);
+	const admin_url = base
+		? `${base.replace(/\/$/, "")}/admin/comments/${encodeURIComponent(payload.comment_id)}`
+		: null;
+	const page_url = safeHttpUrl(post?.url);
+	// Discord/Slack require https for displayed avatars.
+	const avatar = user?.avatar_url ?? null;
+	const avatar_url =
+		avatar && safeHttpUrl(avatar)?.startsWith("https:") ? avatar : null;
+
+	return { author, post_slug, post_title, snippet, admin_url, page_url, avatar_url };
 };
 
 // Slack mentions: @everyone, @here, @channel, <!everyone>, <!here>,
@@ -93,34 +158,89 @@ const escapeSlackText = (s: string): string =>
 		.replace(/</g, "&lt;")
 		.replace(/>/g, "&gt;");
 
+// A Slack link label lives inside <url|label>; the `|` would otherwise
+// terminate the label. escapeSlackText already neutralizes <>& — swap the
+// only remaining structural char for a visually identical box-drawing
+// glyph so the label can't break out of the link.
+const slackLinkLabel = (s: string): string =>
+	escapeSlackText(s).replace(/\|/g, "│");
+
+// A url is safe to drop into <url|label> only if it has no chars that
+// would terminate the link span.
+const slackSafeUrl = (url: string): boolean => !/[<>|]/.test(url);
+
 // Discord mentions: @everyone, @here, <@id>, <@!id>, <@&roleId>.
 // Inserting a zero-width space breaks the trigger while keeping the
-// text legible.
+// text legible. (Embeds don't fire mentions, but this is cheap defense
+// in depth and keeps the rendered text tidy.)
 const escapeDiscordMentions = (s: string): string =>
 	s
 		.replace(/@(everyone|here)/gi, "@​$1")
 		.replace(/<@([!&]?\d+)>/g, "<@​$1>");
 
+// The embed `description` renders markdown. Neutralize masked-link and
+// image syntax by backslash-escaping the square brackets so a comment
+// body of "[click me](https://evil)" can't become a clickable link.
+// Basic emphasis is left to render for a nicer look.
+const sanitizeDiscordDescription = (s: string): string =>
+	escapeDiscordMentions(s).replace(/[[\]]/g, "\\$&");
+
 export const renderSlackBody = async (
 	db: WebhookAdapterDb,
 	payload: WebhookPayload,
+	opts: AdapterOpts = {},
 ): Promise<string> => {
-	const ctx = await loadContext(db, payload);
-	const text =
+	const ctx = await loadContext(db, payload, opts);
+
+	// Link the post title to the page when we can.
+	const titleField =
+		ctx.page_url && slackSafeUrl(ctx.page_url)
+			? `<${ctx.page_url}|${slackLinkLabel(ctx.post_title)}>`
+			: `\`${escapeSlackText(ctx.post_title)}\``;
+
+	const links: string[] = [];
+	if (ctx.admin_url && slackSafeUrl(ctx.admin_url)) {
+		links.push(`<${ctx.admin_url}|🔍 Open in admin>`);
+	}
+	if (ctx.page_url && slackSafeUrl(ctx.page_url)) {
+		links.push(`<${ctx.page_url}|🌐 View page>`);
+	}
+
+	let text =
 		`*${EVENT_VERB[payload.event]}* by *${escapeSlackText(ctx.author)}* ` +
-		`on \`${escapeSlackText(ctx.post_title)}\`\n` +
+		`on ${titleField}\n` +
 		`> ${escapeSlackText(ctx.snippet)}`;
+	if (links.length > 0) text += `\n${links.join(" · ")}`;
+
 	return JSON.stringify({ text });
 };
 
 export const renderDiscordBody = async (
 	db: WebhookAdapterDb,
 	payload: WebhookPayload,
+	opts: AdapterOpts = {},
 ): Promise<string> => {
-	const ctx = await loadContext(db, payload);
-	const content =
-		`**${EVENT_VERB[payload.event]}** by **${escapeDiscordMentions(ctx.author)}** ` +
-		`on \`${escapeDiscordMentions(ctx.post_title)}\`\n` +
-		`> ${escapeDiscordMentions(ctx.snippet)}`;
-	return JSON.stringify({ content });
+	const ctx = await loadContext(db, payload, opts);
+
+	const links: string[] = [];
+	if (ctx.admin_url) links.push(`[🔍 Open in admin](${ctx.admin_url})`);
+	if (ctx.page_url) links.push(`[🌐 View page](${ctx.page_url})`);
+
+	const embed: Record<string, unknown> = {
+		author: {
+			name: truncate(escapeDiscordMentions(ctx.author), EMBED_NAME_CAP),
+			...(ctx.avatar_url ? { icon_url: ctx.avatar_url } : {}),
+		},
+		title: truncate(ctx.post_title, EMBED_NAME_CAP),
+		...(ctx.page_url ? { url: ctx.page_url } : {}),
+		description: `> ${sanitizeDiscordDescription(ctx.snippet)}`,
+		color: EVENT_COLOR[payload.event],
+		footer: { text: "Garrul" },
+		timestamp: new Date(payload.ts).toISOString(),
+	};
+	if (links.length > 0) {
+		embed.fields = [{ name: "Links", value: links.join(" · ") }];
+	}
+
+	return JSON.stringify({ embeds: [embed] });
 };
