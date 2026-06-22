@@ -53,7 +53,11 @@ import {
 } from "../db/queries";
 import { log } from "./log";
 import { checkOutboundUrl } from "./url-safety";
-import { renderDiscordBody, renderSlackBody } from "./webhook-adapters";
+import {
+	type AdapterOpts,
+	renderDiscordBody,
+	renderSlackBody,
+} from "./webhook-adapters";
 import { signWebhookBody } from "./webhook-sig";
 
 export type WebhookEvent =
@@ -75,6 +79,10 @@ type WebhookEnv = {
 	DB: D1Database;
 	WEBHOOK_URL?: string;
 	ENV?: string;
+	// Used by the slack/discord adapters to build "Open in admin" links.
+	// Optional: a legacy operator with no PUBLIC_BASE_URL still gets
+	// deliveries, just without the admin link.
+	PUBLIC_BASE_URL?: string;
 };
 
 const TIMEOUT_MS = 5000;
@@ -111,9 +119,10 @@ const renderBody = async (
 	db: D1Database,
 	adapter: WebhookAdapter,
 	payload: WebhookPayload,
+	opts: AdapterOpts,
 ): Promise<string> => {
-	if (adapter === "slack") return renderSlackBody(db, payload);
-	if (adapter === "discord") return renderDiscordBody(db, payload);
+	if (adapter === "slack") return renderSlackBody(db, payload, opts);
+	if (adapter === "discord") return renderDiscordBody(db, payload, opts);
 	return renderGenericBody(payload);
 };
 
@@ -196,7 +205,9 @@ const dispatchToEndpoint = async (
 	payload: WebhookPayload,
 ): Promise<void> => {
 	if (!matchesEventFilter(endpoint, payload.event)) return;
-	const body = await renderBody(env.DB, endpoint.adapter, payload);
+	const body = await renderBody(env.DB, endpoint.adapter, payload, {
+		baseUrl: env.PUBLIC_BASE_URL,
+	});
 	const result = await postOnce(endpoint, body, allowHttpFor(endpoint, env));
 	if (result.ok) {
 		if (endpoint.id !== "_env" && endpoint.fail_count > 0) {

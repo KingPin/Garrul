@@ -190,32 +190,161 @@ describe("renderSlackBody", () => {
 		const out = await renderSlackBody(makeDb(rows), payload());
 		expect(() => JSON.parse(out)).not.toThrow();
 	});
+
+	it("links the title and appends nav links when configured", async () => {
+		const rows = {
+			...baseRows,
+			posts: { ...baseRows.posts, url: "https://blog.example.com/p" },
+		};
+		const out = await renderSlackBody(makeDb(rows), payload(), {
+			baseUrl: "https://c.example.com",
+		});
+		const text = JSON.parse(out).text;
+		expect(text).toContain("<https://blog.example.com/p|Hello, world!>");
+		expect(text).toContain(
+			"<https://c.example.com/admin/comments/01HC000000000000000000|🔍 Open in admin>",
+		);
+		expect(text).toContain("<https://blog.example.com/p|🌐 View page>");
+	});
+
+	it("falls back to plain title and no links when unconfigured", async () => {
+		const out = await renderSlackBody(makeDb(baseRows), payload());
+		const text = JSON.parse(out).text;
+		expect(text).toContain("`Hello, world!`");
+		expect(text).not.toContain("Open in admin");
+		expect(text).not.toContain("View page");
+	});
 });
 
 describe("renderDiscordBody", () => {
-	it("returns JSON with a content field", async () => {
+	it("returns JSON with an embeds array", async () => {
 		const out = await renderDiscordBody(makeDb(baseRows), payload());
 		const parsed = JSON.parse(out);
-		expect(typeof parsed.content).toBe("string");
-		expect(parsed.content).toContain("New comment");
-		expect(parsed.content).toContain("Alice");
+		expect(Array.isArray(parsed.embeds)).toBe(true);
+		const embed = parsed.embeds[0];
+		expect(embed.author.name).toBe("Alice");
+		expect(embed.title).toBe("Hello, world!");
+		expect(embed.description).toContain("Hello");
+		expect(typeof embed.color).toBe("number");
+		expect(embed.footer.text).toBe("Garrul");
+		expect(typeof embed.timestamp).toBe("string");
 	});
 
-	it("neutralizes @everyone and @here", async () => {
+	it("uses a distinct accent color per event", async () => {
+		const colors = new Set<number>();
+		for (const event of [
+			"comment.posted",
+			"comment.approved",
+			"comment.spam",
+		] as const) {
+			const out = await renderDiscordBody(makeDb(baseRows), payload({ event }));
+			colors.add(JSON.parse(out).embeds[0].color);
+		}
+		expect(colors.size).toBe(3);
+	});
+
+	it("includes admin + page links when baseUrl and post.url are set", async () => {
+		const rows = {
+			...baseRows,
+			posts: { ...baseRows.posts, url: "https://blog.example.com/p" },
+		};
+		const out = await renderDiscordBody(makeDb(rows), payload(), {
+			baseUrl: "https://comments.example.com",
+		});
+		const embed = JSON.parse(out).embeds[0];
+		expect(embed.url).toBe("https://blog.example.com/p");
+		const links = embed.fields[0].value;
+		expect(links).toContain(
+			"https://comments.example.com/admin/comments/01HC000000000000000000",
+		);
+		expect(links).toContain("https://blog.example.com/p");
+	});
+
+	it("angle-wraps markdown link URLs so parens don't break them", async () => {
+		const rows = {
+			...baseRows,
+			posts: {
+				...baseRows.posts,
+				url: "https://en.example.com/wiki/Foo_(bar)",
+			},
+		};
+		const out = await renderDiscordBody(makeDb(rows), payload(), {
+			baseUrl: "https://c.example.com",
+		});
+		const links = JSON.parse(out).embeds[0].fields[0].value;
+		// Destination wrapped in <…>: "[label](<https://…/Foo_(bar)>)".
+		expect(links).toContain("(<https://en.example.com/wiki/Foo_(bar)>)");
+		expect(links).toContain("(<https://c.example.com/admin/comments/");
+	});
+
+	it("omits links when baseUrl is absent and post.url is null", async () => {
+		const out = await renderDiscordBody(makeDb(baseRows), payload());
+		const embed = JSON.parse(out).embeds[0];
+		expect(embed.url).toBeUndefined();
+		expect(embed.fields).toBeUndefined();
+	});
+
+	it("rejects non-http(s) post urls but keeps the admin link", async () => {
+		const rows = {
+			...baseRows,
+			posts: { ...baseRows.posts, url: "javascript:alert(1)" },
+		};
+		const out = await renderDiscordBody(makeDb(rows), payload(), {
+			baseUrl: "https://c.example.com",
+		});
+		const embed = JSON.parse(out).embeds[0];
+		expect(embed.url).toBeUndefined();
+		const links = embed.fields[0].value;
+		expect(links).not.toContain("javascript:");
+		expect(links).toContain("/admin/comments/");
+	});
+
+	it("defuses masked-link injection in the snippet", async () => {
+		const rows = {
+			...baseRows,
+			comments: {
+				...baseRows.comments,
+				body_md: "[Win a prize](https://evil.example)",
+			},
+		};
+		const out = await renderDiscordBody(makeDb(rows), payload());
+		const desc = JSON.parse(out).embeds[0].description;
+		// Brackets are escaped → Discord renders literal text, not a link.
+		expect(desc).toContain("\\[Win a prize\\]");
+		expect(desc).not.toContain("[Win a prize](");
+	});
+
+	it("doubles backslashes so they can't cancel the bracket escaping", async () => {
+		// A leading "\" before "[" would, without backslash-doubling, turn
+		// into "\\[" — a literal backslash + a *live* "[", re-enabling the
+		// masked link. CodeQL flagged this incomplete-escaping bypass.
+		const rows = {
+			...baseRows,
+			comments: {
+				...baseRows.comments,
+				body_md: "\\[x](https://evil.example)",
+			},
+		};
+		const out = await renderDiscordBody(makeDb(rows), payload());
+		const desc = JSON.parse(out).embeds[0].description;
+		// The user's "\" is doubled and the bracket stays escaped:
+		// "\\\[x\]" — Discord can't reconstruct a live masked link.
+		expect(desc).toContain("\\\\\\[x\\]");
+	});
+
+	it("neutralizes @everyone and @here in the snippet", async () => {
 		for (const trigger of ["@everyone", "@here"]) {
 			const rows = {
 				...baseRows,
 				comments: { ...baseRows.comments, body_md: `Hey ${trigger} woo` },
 			};
 			const out = await renderDiscordBody(makeDb(rows), payload());
-			const content = JSON.parse(out).content;
-			expect(content).not.toMatch(
-				new RegExp(`(?<![​])${trigger}(?!​)`),
-			);
+			const desc = JSON.parse(out).embeds[0].description;
+			expect(desc).not.toMatch(new RegExp(`(?<![​])${trigger}(?!​)`));
 		}
 	});
 
-	it("neutralizes role and user mentions <@…>", async () => {
+	it("neutralizes role and user mentions <@…> in the snippet", async () => {
 		const rows = {
 			...baseRows,
 			comments: {
@@ -224,19 +353,35 @@ describe("renderDiscordBody", () => {
 			},
 		};
 		const out = await renderDiscordBody(makeDb(rows), payload());
-		const content = JSON.parse(out).content;
-		expect(content).not.toContain("<@123456789012345678>");
-		expect(content).not.toContain("<@&987654321>");
+		const desc = JSON.parse(out).embeds[0].description;
+		expect(desc).not.toContain("<@123456789012345678>");
+		expect(desc).not.toContain("<@&987654321>");
 	});
 
-	it("stays under Discord's 2000-char content cap", async () => {
+	it("only sets an avatar when the user has an https avatar", async () => {
+		const https = {
+			...baseRows,
+			users: { ...baseRows.users, avatar_url: "https://cdn.example/a.png" },
+		};
+		const out = await renderDiscordBody(makeDb(https), payload());
+		expect(JSON.parse(out).embeds[0].author.icon_url).toBe(
+			"https://cdn.example/a.png",
+		);
+		const insecure = {
+			...baseRows,
+			users: { ...baseRows.users, avatar_url: "http://cdn.example/a.png" },
+		};
+		const out2 = await renderDiscordBody(makeDb(insecure), payload());
+		expect(JSON.parse(out2).embeds[0].author.icon_url).toBeUndefined();
+	});
+
+	it("keeps the description under Discord's 4096-char cap", async () => {
 		const rows = {
 			...baseRows,
 			comments: { ...baseRows.comments, body_md: "x".repeat(8000) },
 		};
 		const out = await renderDiscordBody(makeDb(rows), payload());
-		const content = JSON.parse(out).content;
-		expect(content.length).toBeLessThan(2000);
+		expect(JSON.parse(out).embeds[0].description.length).toBeLessThan(4096);
 	});
 
 	it("produces valid JSON for newline + quote-laden bodies", async () => {

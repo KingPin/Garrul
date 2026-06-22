@@ -221,3 +221,96 @@ describe("webhook_deliveries body cap (issue #13)", () => {
 		);
 	});
 });
+
+// D1 stub: one enabled *discord* endpoint plus comment/user/post rows so
+// the adapter's loadContext can build links. Proves the PUBLIC_BASE_URL →
+// dispatch → renderBody → adapter threading actually reaches the wire,
+// not just the typechecker.
+const makeDbForDiscord = () => {
+	const endpointRow = {
+		id: "01HE000000000000000000",
+		url: "https://example.com/hook",
+		secret: null,
+		events: null,
+		adapter: "discord",
+		enabled: 1,
+		fail_count: 0,
+		disabled_at: null,
+		created_at: 0,
+		updated_at: 0,
+	};
+	return {
+		prepare(sql: string) {
+			return {
+				bind() {
+					return this;
+				},
+				async first() {
+					if (sql.includes("FROM comments")) {
+						return {
+							id: "01HC000000000000000000",
+							post_slug: "hello-world",
+							body_md: "Nice post!",
+							status: "approved",
+							user_id: "01HU000000000000000000",
+							created_at: 0,
+						};
+					}
+					if (sql.includes("FROM users")) {
+						return { id: "01HU000000000000000000", name: "Alice", avatar_url: null };
+					}
+					if (sql.includes("FROM posts")) {
+						return {
+							slug: "hello-world",
+							title: "Hello, world!",
+							url: "https://blog.example.com/p",
+							created_at: 0,
+						};
+					}
+					return null;
+				},
+				async all() {
+					if (sql.includes("FROM webhook_endpoints")) {
+						return { results: [endpointRow] };
+					}
+					return { results: [] };
+				},
+				async run() {
+					return {};
+				},
+			};
+		},
+	} as unknown as D1Database;
+};
+
+describe("discord adapter dispatch threads PUBLIC_BASE_URL to the wire", () => {
+	let fetchMock: ReturnType<typeof vi.fn>;
+
+	beforeEach(() => {
+		fetchMock = vi.fn(async () => new Response("ok", { status: 200 }));
+		vi.stubGlobal("fetch", fetchMock);
+	});
+
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it("POSTs an embed body carrying the admin + page links", async () => {
+		await dispatchWebhook(
+			{
+				DB: makeDbForDiscord(),
+				ENV: "production",
+				PUBLIC_BASE_URL: "https://comments.example.com",
+			},
+			payload,
+		);
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+		expect(Array.isArray(body.embeds)).toBe(true);
+		const links = body.embeds[0].fields[0].value;
+		expect(links).toContain(
+			"https://comments.example.com/admin/comments/01HC000000000000000000",
+		);
+		expect(links).toContain("https://blog.example.com/p");
+	});
+});
