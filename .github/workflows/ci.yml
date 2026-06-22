@@ -9,6 +9,12 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# CI only reads the repo (checkout + npm + dry-run build). Pin the default
+# GITHUB_TOKEN to read-only so a compromised dependency can't push, tag, or
+# open PRs with it.
+permissions:
+  contents: read
+
 # Cancel any in-flight CI run for the same ref when a new push lands.
 # Saves minutes on rapid pushes and avoids the "second push lands first"
 # race that shows a stale red check on the latest commit.
