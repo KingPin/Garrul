@@ -31,6 +31,7 @@ import {
 	isUserRole,
 	listActiveSubscriptionsForPost,
 	listCommentsForPost,
+	listOwnPendingForPost,
 	listReactionsForPost,
 	listUserReactionsOnPost,
 	softDeleteComment,
@@ -619,6 +620,18 @@ comments.get("/", async (c) => {
 
 	const post = await getPost(c.env.DB, slug);
 	const rows = await listCommentsForPost(c.env.DB, slug);
+	// Signed-in authors also see their own queued comments so they get a
+	// visible confirmation that the post landed in moderation. Scoped to the
+	// session user; never exposed to other viewers. Safe to merge here because
+	// signed-in responses bypass the anonymous edge cache (see `cacheable`).
+	if (session) {
+		const ownPending = await listOwnPendingForPost(
+			c.env.DB,
+			slug,
+			session.user_id,
+		);
+		if (ownPending.length > 0) rows.push(...ownPending);
+	}
 	const authors = await loadAuthors(c.env.DB, rows);
 
 	const reactionRows = await listReactionsForPost(c.env.DB, slug);

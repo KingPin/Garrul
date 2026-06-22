@@ -402,6 +402,32 @@ export const listCommentsForPost = async (
 };
 
 /**
+ * Fetch a single viewer's own `pending` comments for a post. Merged into
+ * the public tree only for the authenticated author so they can see their
+ * comment is queued for moderation — never exposed to other viewers (the
+ * caller scopes this to `session.user_id`). Signed-in list responses bypass
+ * the edge cache, so these rows never leak into the anonymous cached copy.
+ */
+export const listOwnPendingForPost = async (
+	db: D1Database,
+	post_slug: string,
+	user_id: string,
+): Promise<Comment[]> => {
+	const result = await db
+		.prepare(
+			`SELECT id, post_slug, parent_id, user_id, body_md, body_html,
+			        renderer_version, status, edited_at, deleted_at,
+			        ip_hash, user_agent, created_at, score_up, score_down
+			 FROM comments
+			 WHERE post_slug = ? AND user_id = ? AND status = 'pending'
+			 ORDER BY created_at ASC, id ASC`,
+		)
+		.bind(post_slug, user_id)
+		.all<Comment>();
+	return result.results ?? [];
+};
+
+/**
  * Latest N approved comments for a post, joined with author name, for
  * the per-post RSS feed.
  */

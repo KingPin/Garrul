@@ -316,6 +316,13 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
 }
 .gr-time { color: var(--gr-muted); font-size: 0.85em; }
 .gr-edited { color: var(--gr-muted); font-size: 0.85em; font-style: italic; }
+.gr-pending {
+	color: var(--gr-notice);
+	border: 1px solid var(--gr-notice);
+	font-size: 0.75em;
+	padding: 0.05em 0.4em;
+	border-radius: 999px;
+}
 .gr-body { margin: 0.25rem 0 0; }
 .gr-body p { margin: 0.3em 0; }
 .gr-body a { color: var(--gr-link); }
@@ -1369,15 +1376,9 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 				tsHandle?.reset();
 				return;
 			}
-			if (json.comment?.status === "pending") {
-				errBox.textContent = "Comment submitted — awaiting moderation.";
-				errBox.classList.add("is-notice");
-				errBox.hidden = false;
-				ta.value = "";
-				submit.disabled = false;
-				tsHandle?.reset();
-				return;
-			}
+			// Pending replies reload like approved ones: the author's own
+			// queued comment comes back from the list endpoint and renders
+			// inline with a "Pending approval" badge.
 			ctx.reload();
 		} catch (err) {
 			errBox.textContent = String(err);
@@ -1405,6 +1406,11 @@ const buildComment = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	}
 	meta.appendChild(el("span", "gr-time", fmtTime(n.created_at)));
 	if (n.edited_at) meta.appendChild(el("span", "gr-edited", "· edited"));
+	// Author-only signal: the list endpoint returns the viewer's own queued
+	// comments, so this badge is only ever seen by the author themselves.
+	if (n.status === "pending") {
+		meta.appendChild(el("span", "gr-pending", "Pending approval"));
+	}
 
 	const body = el("div", "gr-body");
 	if (n.status === "deleted") {
@@ -1422,7 +1428,9 @@ const buildComment = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 
 	main.append(meta, body);
 
-	if (n.status !== "deleted") {
+	// Votes/reactions only on public (approved) comments — a pending comment
+	// isn't visible to anyone but its author, so engagement is meaningless.
+	if (n.status === "approved") {
 		if (ctx.votingEnabled) main.appendChild(buildVotes(n, ctx));
 		if (ctx.reactionsEnabled) main.appendChild(buildReactions(n, ctx));
 	}
@@ -2133,20 +2141,10 @@ const submit = async (
 			return;
 		}
 
-		if (json.comment?.status === "pending") {
-			if (errEl) {
-				errEl.textContent = "Comment submitted — awaiting moderation.";
-				errEl.classList.add("is-notice");
-				errEl.hidden = false;
-			}
-			const bodyInput = form.querySelector(
-				".gr-body-input",
-			) as HTMLTextAreaElement | null;
-			if (bodyInput) bodyInput.value = "";
-			if (submitBtn) submitBtn.disabled = false;
-			turnstileHandles.get(form)?.reset();
-			return;
-		}
+		// Pending comments fall through to the same reload path as approved
+		// ones: the list endpoint returns the author's own queued comment, so
+		// `load()` re-renders it inline with a "Pending approval" badge — a
+		// visible, persistent confirmation rather than a transient notice.
 
 		// Fire-and-forget subscription — failure here doesn't roll back
 		// the comment. The widget already has both inputs handy.

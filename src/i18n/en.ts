@@ -35,6 +35,7 @@ export const en = {
 	"ui.subscribe": "Notify me of replies",
 	"ui.posted_just_now": "just now",
 	"ui.deleted": "[deleted]",
+	"ui.pending": "Pending approval",
 	"ui.edited_suffix": "(edited)",
 	"ui.verified": "verified",
 	"ui.subscribe.pending": "Check your inbox to confirm your subscription.",
