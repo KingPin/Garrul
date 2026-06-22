@@ -297,6 +297,24 @@ describe("renderDiscordBody", () => {
 		expect(desc).not.toContain("[Win a prize](");
 	});
 
+	it("doubles backslashes so they can't cancel the bracket escaping", async () => {
+		// A leading "\" before "[" would, without backslash-doubling, turn
+		// into "\\[" — a literal backslash + a *live* "[", re-enabling the
+		// masked link. CodeQL flagged this incomplete-escaping bypass.
+		const rows = {
+			...baseRows,
+			comments: {
+				...baseRows.comments,
+				body_md: "\\[x](https://evil.example)",
+			},
+		};
+		const out = await renderDiscordBody(makeDb(rows), payload());
+		const desc = JSON.parse(out).embeds[0].description;
+		// The user's "\" is doubled and the bracket stays escaped:
+		// "\\\[x\]" — Discord can't reconstruct a live masked link.
+		expect(desc).toContain("\\\\\\[x\\]");
+	});
+
 	it("neutralizes @everyone and @here in the snippet", async () => {
 		for (const trigger of ["@everyone", "@here"]) {
 			const rows = {

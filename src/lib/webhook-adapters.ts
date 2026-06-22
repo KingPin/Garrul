@@ -182,8 +182,15 @@ const escapeDiscordMentions = (s: string): string =>
 // image syntax by backslash-escaping the square brackets so a comment
 // body of "[click me](https://evil)" can't become a clickable link.
 // Basic emphasis is left to render for a nicer look.
+//
+// Backslashes MUST be doubled first: otherwise a body of "\[x](url)"
+// would become "\\[x\](url)" — Discord renders "\\" as a literal
+// backslash, leaving the "[" unescaped and the masked link live again.
+// Escaping "\" → "\\" before the brackets closes that bypass.
 const sanitizeDiscordDescription = (s: string): string =>
-	escapeDiscordMentions(s).replace(/[[\]]/g, "\\$&");
+	escapeDiscordMentions(s)
+		.replace(/\\/g, "\\\\")
+		.replace(/[[\]]/g, "\\$&");
 
 export const renderSlackBody = async (
 	db: WebhookAdapterDb,
