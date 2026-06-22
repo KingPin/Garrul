@@ -109,12 +109,13 @@ red, edited = grey), and a **Links** field with *🔍 Open in admin* and
 with the title and the two links rendered using Slack's `<url|label>`
 syntax.
 
-Both link to `…/admin/comments/<id>` (the moderation detail page) and to
-the post's public URL. These links require **`PUBLIC_BASE_URL`** to be
-set — if it is unset, the notification still sends but the admin link is
-omitted. The page link additionally requires the post to have a stored
-`url` (published by the embed widget's `data-url` on first comment), and
-that URL is scheme-validated (`http`/`https` only) before it is shown.
+The two links point to `…/admin/comments/<id>` (the moderation detail
+page) and to the post's public URL. The **admin** link requires
+**`PUBLIC_BASE_URL`** to be set — if it is unset, the notification still
+sends but that link is omitted. The **page** link is independent of
+`PUBLIC_BASE_URL`: it needs only the post's stored `url` (published by the
+embed widget's `data-url` on first comment). Both URLs are scheme-
+validated (`http`/`https` only) before they are shown.
 
 Safety notes specific to the rich adapters: comment bodies can't ping a
 channel (`@everyone`/role mentions are neutralized), and the Discord embed

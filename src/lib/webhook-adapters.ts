@@ -117,14 +117,17 @@ const loadContext = async (
 	const raw = comment?.body_md ?? "(no body available)";
 	const snippet = truncate(raw.replace(/\s+/g, " ").trim(), SNIPPET_CAP);
 
-	// Admin link only when we have a valid base URL. We link straight to
-	// the post page (not /c/:id) because /c/:id 404s for pending/spam/
-	// deleted comments — and a brand-new comment is exactly the pending
-	// case a moderator gets pinged about.
+	// Admin deep link to the moderation detail page — only when we have a
+	// valid base URL. Legacy operators without PUBLIC_BASE_URL simply don't
+	// get this link.
 	const base = safeHttpUrl(opts.baseUrl);
 	const admin_url = base
 		? `${base.replace(/\/$/, "")}/admin/comments/${encodeURIComponent(payload.comment_id)}`
 		: null;
+	// Public page link uses the stored post.url directly rather than the
+	// /c/:id permalink: /c/:id 404s for pending/spam/deleted comments, and a
+	// brand-new (pending) comment is exactly what a moderator gets pinged
+	// about. Independent of PUBLIC_BASE_URL.
 	const page_url = safeHttpUrl(post?.url);
 	// Discord/Slack require https for displayed avatars.
 	const avatar = user?.avatar_url ?? null;
@@ -229,9 +232,13 @@ export const renderDiscordBody = async (
 ): Promise<string> => {
 	const ctx = await loadContext(db, payload, opts);
 
+	// Wrap the destination in <…> so Discord treats it as a literal URL:
+	// a bare URL containing ")" (e.g. a "/wiki/Foo_(bar)" page link) would
+	// otherwise terminate the markdown link early. The URLs are already
+	// scheme-validated; this just hardens the markdown framing.
 	const links: string[] = [];
-	if (ctx.admin_url) links.push(`[🔍 Open in admin](${ctx.admin_url})`);
-	if (ctx.page_url) links.push(`[🌐 View page](${ctx.page_url})`);
+	if (ctx.admin_url) links.push(`[🔍 Open in admin](<${ctx.admin_url}>)`);
+	if (ctx.page_url) links.push(`[🌐 View page](<${ctx.page_url}>)`);
 
 	const embed: Record<string, unknown> = {
 		author: {

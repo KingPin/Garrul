@@ -260,6 +260,23 @@ describe("renderDiscordBody", () => {
 		expect(links).toContain("https://blog.example.com/p");
 	});
 
+	it("angle-wraps markdown link URLs so parens don't break them", async () => {
+		const rows = {
+			...baseRows,
+			posts: {
+				...baseRows.posts,
+				url: "https://en.example.com/wiki/Foo_(bar)",
+			},
+		};
+		const out = await renderDiscordBody(makeDb(rows), payload(), {
+			baseUrl: "https://c.example.com",
+		});
+		const links = JSON.parse(out).embeds[0].fields[0].value;
+		// Destination wrapped in <…>: "[label](<https://…/Foo_(bar)>)".
+		expect(links).toContain("(<https://en.example.com/wiki/Foo_(bar)>)");
+		expect(links).toContain("(<https://c.example.com/admin/comments/");
+	});
+
 	it("omits links when baseUrl is absent and post.url is null", async () => {
 		const out = await renderDiscordBody(makeDb(baseRows), payload());
 		const embed = JSON.parse(out).embeds[0];
