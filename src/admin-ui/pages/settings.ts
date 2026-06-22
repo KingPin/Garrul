@@ -50,6 +50,11 @@ const FLAG_META: { key: FlagKey; label: string; help: string }[] = [
 		label: "Page vote",
 		help: "A simple helpful/up vote tally on the article itself.",
 	},
+	{
+		key: "show_deleted_placeholders",
+		label: "Show deleted-comment placeholders",
+		help: "Keep removed comments in the thread as a placeholder (\"[deleted]\" / \"[removed by a moderator]\") instead of dropping them. Replies are preserved either way.",
+	},
 ];
 
 // Operator-facing labels + help for each numeric display setting. Bounds are

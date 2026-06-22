@@ -90,6 +90,9 @@ export type Bindings = {
 	REACTIONS_ENABLED?: string;
 	PAGE_REACTIONS_ENABLED?: string;
 	PAGE_VOTES_ENABLED?: string;
+	// Keep deleted comments in the public tree as a placeholder instead of
+	// pruning leaf deletions. Default OFF (see src/lib/settings.ts).
+	SHOW_DELETED_PLACEHOLDERS?: string;
 	// Numeric display settings. Env-var *defaults*; a row in the `settings`
 	// table overrides the matching one at runtime (see src/lib/settings.ts).
 	//   COMMENTS_PER_PAGE   — top-level threads per initial load + Load-more.

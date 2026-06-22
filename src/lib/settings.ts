@@ -30,7 +30,8 @@ export type FlagKey =
 	| "votes_enabled"
 	| "downvotes_enabled"
 	| "page_reactions_enabled"
-	| "page_votes_enabled";
+	| "page_votes_enabled"
+	| "show_deleted_placeholders";
 
 export type ResolvedFlags = Record<FlagKey, boolean>;
 
@@ -51,6 +52,14 @@ const FLAGS: Record<FlagKey, { env: keyof Bindings; default: boolean }> = {
 	downvotes_enabled: { env: "DOWNVOTES_ENABLED", default: true },
 	page_reactions_enabled: { env: "PAGE_REACTIONS_ENABLED", default: false },
 	page_votes_enabled: { env: "PAGE_VOTES_ENABLED", default: false },
+	// When OFF (default) a deleted comment with no surviving replies is pruned
+	// from the public tree — current behavior. When ON, every deleted comment
+	// is kept and rendered as a placeholder ("[deleted]" / "[removed by a
+	// moderator]"), so threads never silently lose entries.
+	show_deleted_placeholders: {
+		env: "SHOW_DELETED_PLACEHOLDERS",
+		default: false,
+	},
 };
 
 export const FLAG_KEYS = Object.keys(FLAGS) as FlagKey[];

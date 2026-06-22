@@ -654,7 +654,14 @@ comments.get("/", async (c) => {
 		? await getUserVotesOnPost(c.env.DB, slug, session.user_id)
 		: new Map<string, -1 | 1>();
 
-	const { threads: allThreads } = buildTree(rows, authors, reactionsById, myVotes);
+	// When the operator opts in, keep every deleted comment as a placeholder
+	// (leaf deletions included) rather than pruning them. A toggle change is
+	// reflected for anonymous viewers within the tree-cache TTL.
+	const keepAllDeleted = (await loadFlags(c.env)).show_deleted_placeholders;
+
+	const { threads: allThreads } = buildTree(rows, authors, reactionsById, myVotes, {
+		keepAllDeleted,
+	});
 
 	if (sort === "top") {
 		// Top-level only — replies stay in created_at ASC so threaded
