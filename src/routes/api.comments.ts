@@ -130,16 +130,16 @@ const validName = (raw: string | undefined): { ok: true; name: string } | { ok: 
 };
 
 const serializeComment = (c: Comment, author: User) => {
-	const visible = c.status === "deleted";
+	const isDeleted = c.status === "deleted";
 	return {
 		id: c.id,
 		post_slug: c.post_slug,
 		parent_id: c.parent_id,
-		body_html: visible ? "" : c.body_html,
+		body_html: isDeleted ? "" : c.body_html,
 		status: c.status,
 		edited_at: c.edited_at,
 		deleted_at: c.deleted_at,
-		deleted_by: visible ? c.deleted_by : null,
+		deleted_by: isDeleted ? c.deleted_by : null,
 		created_at: c.created_at,
 		author: {
 			id: author.id,
