@@ -283,7 +283,7 @@ export const insertComment = async (
 			   id, post_slug, parent_id, user_id, body_md, body_html,
 			   renderer_version, status, edited_at, deleted_at, deleted_by,
 			   ip_hash, user_agent, created_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?)`,
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?)`,
 		)
 		.bind(
 			id,
