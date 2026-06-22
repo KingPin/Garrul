@@ -440,10 +440,12 @@ is on by default. From the end-user perspective:
 4. If the operator has enabled any **optional anti-spam layers**
    (timing honeypot, link-count threshold, first-comment moderation,
    Akismet, or Cloudflare Workers AI), a flagged comment is created
-   with `status='pending'` instead of `approved`. The widget surfaces
-   an "awaiting moderation" notice and the comment is hidden from the
-   public tree until an admin approves it from `/admin/queue`. None of
-   these layers are on by default; see `docs/ANTISPAM.md`.
+   with `status='pending'` instead of `approved`. A signed-in author
+   still sees their own pending comment inline with a **"Pending
+   approval"** badge (the list endpoint returns the viewer's own pending
+   rows, scoped to their session); it stays hidden from everyone else
+   until an admin approves it from `/admin/queue`. None of these layers
+   are on by default; see `docs/ANTISPAM.md`.
 
 Anonymous authors have **no email**, so they're never accidentally
 notified on reply threads. They also have no provider avatar; instead

@@ -101,6 +101,7 @@ describe("loadFlags — defaults", () => {
 			downvotes_enabled: true,
 			page_reactions_enabled: false,
 			page_votes_enabled: false,
+			show_deleted_placeholders: false,
 		});
 	});
 

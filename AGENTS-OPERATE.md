@@ -115,6 +115,7 @@ Three configuration surfaces:
 | `DOWNVOTES_ENABLED` | var | Downvote button. Same defaults-on semantics. Applies to **both** comment votes and page votes (a brigading-mitigation switch); independent of `VOTING_ENABLED`. | `true` | `wrangler.toml` |
 | `PAGE_REACTIONS_ENABLED` | var | Article-level emoji reaction bar (react to the page itself, no comment). Defaults **off** so an upgrade never surfaces new UI unasked. Enables `POST /api/v1/page-engagement/reactions` and the widget bar. | `false` | `wrangler.toml` |
 | `PAGE_VOTES_ENABLED` | var | Article-level "was this helpful?" up/down vote tally. Defaults **off**. Enables `POST /api/v1/page-engagement/votes`; downvotes here still honor `DOWNVOTES_ENABLED`. | `false` | `wrangler.toml` |
+| `SHOW_DELETED_PLACEHOLDERS` | var | Keep deleted comments in the public tree as a placeholder (`[deleted]` / `[removed by a moderator]`) instead of pruning leaf deletions. Defaults **off** (current behavior: a deleted comment with live replies is still kept for thread continuity; a deleted leaf is dropped). Added v1.15.0. | `false` | `wrangler.toml` |
 | `COMMENTS_PER_PAGE` | var | Top-level comments shown per initial load and per "Load older comments" click (server-side slice in `api.comments.ts`). Defaults **25**; clamped to `[1, 200]`. **Behavior change in v1.11.0:** older installs rendered up to 100 at once — set this to `100` to restore that. | `25` | `wrangler.toml` |
 | `REPLIES_PER_THREAD` | var | Replies shown under each comment before a "Show N more replies" button (widget). `0` = show all. Defaults **3**; clamped to `[0, 100]`. | `3` | `wrangler.toml` |
 | `AUTO_COLLAPSE_DEPTH` | var | Replies nested at this depth or deeper start collapsed in the widget. `0` = never auto-collapse. Defaults **3**; clamped to `[0, 4]` (the tree depth cap). | `3` | `wrangler.toml` |
@@ -127,9 +128,9 @@ hand once a deploy has used them.
 
 ### Feature flags: runtime overrides (since v1.10.0)
 
-The six feature flags — `COMMENTS_ENABLED`, `REACTIONS_ENABLED`,
+The seven feature flags — `COMMENTS_ENABLED`, `REACTIONS_ENABLED`,
 `VOTING_ENABLED`, `DOWNVOTES_ENABLED`, `PAGE_REACTIONS_ENABLED`,
-`PAGE_VOTES_ENABLED` — are **hybrid config**. The env vars above are only
+`PAGE_VOTES_ENABLED`, `SHOW_DELETED_PLACEHOLDERS` — are **hybrid config**. The env vars above are only
 the *defaults*. Each flag is resolved with the precedence:
 
 ```

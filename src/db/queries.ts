@@ -59,6 +59,9 @@ export type Comment = {
 	status: CommentStatus;
 	edited_at: number | null;
 	deleted_at: number | null;
+	/** Who removed a deleted comment: 'author' (self/own-thread delete) or
+	 *  'moderator' (moderation queue). NULL when not deleted. */
+	deleted_by: "author" | "moderator" | null;
 	ip_hash: string | null;
 	user_agent: string | null;
 	created_at: number;
@@ -278,9 +281,9 @@ export const insertComment = async (
 		.prepare(
 			`INSERT INTO comments (
 			   id, post_slug, parent_id, user_id, body_md, body_html,
-			   renderer_version, status, edited_at, deleted_at,
+			   renderer_version, status, edited_at, deleted_at, deleted_by,
 			   ip_hash, user_agent, created_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?)`,
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?)`,
 		)
 		.bind(
 			id,
@@ -307,6 +310,7 @@ export const insertComment = async (
 		status,
 		edited_at: null,
 		deleted_at: null,
+		deleted_by: null,
 		ip_hash: input.ip_hash,
 		user_agent: input.user_agent,
 		created_at: now,
@@ -322,7 +326,7 @@ export const getComment = async (
 	return await db
 		.prepare(
 			`SELECT id, post_slug, parent_id, user_id, body_md, body_html,
-			        renderer_version, status, edited_at, deleted_at,
+			        renderer_version, status, edited_at, deleted_at, deleted_by,
 			        ip_hash, user_agent, created_at, score_up, score_down
 			 FROM comments WHERE id = ?`,
 		)
@@ -343,7 +347,7 @@ export const getCommentsByIds = async (
 	const result = await db
 		.prepare(
 			`SELECT id, post_slug, parent_id, user_id, body_md, body_html,
-			        renderer_version, status, edited_at, deleted_at,
+			        renderer_version, status, edited_at, deleted_at, deleted_by,
 			        ip_hash, user_agent, created_at, score_up, score_down
 			   FROM comments WHERE id IN (${placeholders})`,
 		)
@@ -390,13 +394,39 @@ export const listCommentsForPost = async (
 	const result = await db
 		.prepare(
 			`SELECT id, post_slug, parent_id, user_id, body_md, body_html,
-			        renderer_version, status, edited_at, deleted_at,
+			        renderer_version, status, edited_at, deleted_at, deleted_by,
 			        ip_hash, user_agent, created_at, score_up, score_down
 			 FROM comments
 			 WHERE post_slug = ? AND status NOT IN ('spam', 'pending')
 			 ORDER BY created_at ASC, id ASC`,
 		)
 		.bind(post_slug)
+		.all<Comment>();
+	return result.results ?? [];
+};
+
+/**
+ * Fetch a single viewer's own `pending` comments for a post. Merged into
+ * the public tree only for the authenticated author so they can see their
+ * comment is queued for moderation — never exposed to other viewers (the
+ * caller scopes this to `session.user_id`). Signed-in list responses bypass
+ * the edge cache, so these rows never leak into the anonymous cached copy.
+ */
+export const listOwnPendingForPost = async (
+	db: D1Database,
+	post_slug: string,
+	user_id: string,
+): Promise<Comment[]> => {
+	const result = await db
+		.prepare(
+			`SELECT id, post_slug, parent_id, user_id, body_md, body_html,
+			        renderer_version, status, edited_at, deleted_at, deleted_by,
+			        ip_hash, user_agent, created_at, score_up, score_down
+			 FROM comments
+			 WHERE post_slug = ? AND user_id = ? AND status = 'pending'
+			 ORDER BY created_at ASC, id ASC`,
+		)
+		.bind(post_slug, user_id)
 		.all<Comment>();
 	return result.results ?? [];
 };
@@ -413,7 +443,7 @@ export const listLatestApprovedComments = async (
 	const result = await db
 		.prepare(
 			`SELECT c.id, c.post_slug, c.parent_id, c.user_id, c.body_md, c.body_html,
-			        c.renderer_version, c.status, c.edited_at, c.deleted_at,
+			        c.renderer_version, c.status, c.edited_at, c.deleted_at, c.deleted_by,
 			        c.ip_hash, c.user_agent, c.created_at, c.score_up, c.score_down,
 			        u.name AS author_name
 			   FROM comments c
@@ -910,7 +940,7 @@ export const adminListComments = async (
 
 	const sql = `
 		SELECT c.id, c.post_slug, c.parent_id, c.user_id, c.body_md, c.body_html,
-		       c.renderer_version, c.status, c.edited_at, c.deleted_at,
+		       c.renderer_version, c.status, c.edited_at, c.deleted_at, c.deleted_by,
 		       c.ip_hash, c.user_agent, c.created_at, c.score_up, c.score_down,
 		       u.name       AS author_name,
 		       u.email      AS author_email,
@@ -952,15 +982,18 @@ export const updateCommentStatus = async (
 	status: CommentStatus,
 ): Promise<void> => {
 	const now = Date.now();
-	// deleted_at is set when transitioning to 'deleted', cleared otherwise.
+	// deleted_at / deleted_by are set when transitioning to 'deleted',
+	// cleared otherwise. This path is the moderation queue, so attribute the
+	// removal to a moderator.
 	const deletedAt = status === "deleted" ? now : null;
+	const deletedBy = status === "deleted" ? "moderator" : null;
 	await db
 		.prepare(
 			`UPDATE comments
-			    SET status = ?, deleted_at = ?
+			    SET status = ?, deleted_at = ?, deleted_by = ?
 			  WHERE id = ?`,
 		)
-		.bind(status, deletedAt, id)
+		.bind(status, deletedAt, deletedBy, id)
 		.run();
 };
 
@@ -1076,10 +1109,13 @@ export const softDeleteComment = async (
 	id: string,
 ): Promise<void> => {
 	const now = Date.now();
+	// The public delete route: the author removing their own comment (or an
+	// admin acting on the author's behalf via the same endpoint). Attributed
+	// to 'author' to distinguish from a moderation-queue removal.
 	await db
 		.prepare(
 			`UPDATE comments
-			    SET status = 'deleted', deleted_at = ?
+			    SET status = 'deleted', deleted_at = ?, deleted_by = 'author'
 			  WHERE id = ?`,
 		)
 		.bind(now, id)
@@ -1899,7 +1935,7 @@ export const adminGetCommentDetail = async (
 	const commentRow = await db
 		.prepare(
 			`SELECT c.id, c.post_slug, c.parent_id, c.user_id, c.body_md, c.body_html,
-			        c.renderer_version, c.status, c.edited_at, c.deleted_at,
+			        c.renderer_version, c.status, c.edited_at, c.deleted_at, c.deleted_by,
 			        c.ip_hash, c.user_agent, c.created_at,
 			        u.name       AS author_name,
 			        u.email      AS author_email,
@@ -1922,7 +1958,7 @@ export const adminGetCommentDetail = async (
 		? await db
 				.prepare(
 					`SELECT c.id, c.post_slug, c.parent_id, c.user_id, c.body_md, c.body_html,
-					        c.renderer_version, c.status, c.edited_at, c.deleted_at,
+					        c.renderer_version, c.status, c.edited_at, c.deleted_at, c.deleted_by,
 					        c.ip_hash, c.user_agent, c.created_at,
 					        u.name       AS author_name,
 					        u.email      AS author_email,
@@ -1942,7 +1978,7 @@ export const adminGetCommentDetail = async (
 	const repliesResult = await db
 		.prepare(
 			`SELECT c.id, c.post_slug, c.parent_id, c.user_id, c.body_md, c.body_html,
-			        c.renderer_version, c.status, c.edited_at, c.deleted_at,
+			        c.renderer_version, c.status, c.edited_at, c.deleted_at, c.deleted_by,
 			        c.ip_hash, c.user_agent, c.created_at,
 			        u.name       AS author_name,
 			        u.email      AS author_email,
@@ -1966,7 +2002,7 @@ export const adminGetCommentDetail = async (
 		? await db
 				.prepare(
 					`SELECT c.id, c.post_slug, c.parent_id, c.user_id, c.body_md, c.body_html,
-					        c.renderer_version, c.status, c.edited_at, c.deleted_at,
+					        c.renderer_version, c.status, c.edited_at, c.deleted_at, c.deleted_by,
 					        c.ip_hash, c.user_agent, c.created_at,
 					        u.name       AS author_name,
 					        u.email      AS author_email,
@@ -1988,7 +2024,7 @@ export const adminGetCommentDetail = async (
 	const userRecent = await db
 		.prepare(
 			`SELECT c.id, c.post_slug, c.parent_id, c.user_id, c.body_md, c.body_html,
-			        c.renderer_version, c.status, c.edited_at, c.deleted_at,
+			        c.renderer_version, c.status, c.edited_at, c.deleted_at, c.deleted_by,
 			        c.ip_hash, c.user_agent, c.created_at,
 			        u.name       AS author_name,
 			        u.email      AS author_email,

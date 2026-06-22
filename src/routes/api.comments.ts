@@ -31,6 +31,7 @@ import {
 	isUserRole,
 	listActiveSubscriptionsForPost,
 	listCommentsForPost,
+	listOwnPendingForPost,
 	listReactionsForPost,
 	listUserReactionsOnPost,
 	softDeleteComment,
@@ -129,15 +130,16 @@ const validName = (raw: string | undefined): { ok: true; name: string } | { ok: 
 };
 
 const serializeComment = (c: Comment, author: User) => {
-	const visible = c.status === "deleted";
+	const isDeleted = c.status === "deleted";
 	return {
 		id: c.id,
 		post_slug: c.post_slug,
 		parent_id: c.parent_id,
-		body_html: visible ? "" : c.body_html,
+		body_html: isDeleted ? "" : c.body_html,
 		status: c.status,
 		edited_at: c.edited_at,
 		deleted_at: c.deleted_at,
+		deleted_by: isDeleted ? c.deleted_by : null,
 		created_at: c.created_at,
 		author: {
 			id: author.id,
@@ -619,6 +621,18 @@ comments.get("/", async (c) => {
 
 	const post = await getPost(c.env.DB, slug);
 	const rows = await listCommentsForPost(c.env.DB, slug);
+	// Signed-in authors also see their own queued comments so they get a
+	// visible confirmation that the post landed in moderation. Scoped to the
+	// session user; never exposed to other viewers. Safe to merge here because
+	// signed-in responses bypass the anonymous edge cache (see `cacheable`).
+	if (session) {
+		const ownPending = await listOwnPendingForPost(
+			c.env.DB,
+			slug,
+			session.user_id,
+		);
+		if (ownPending.length > 0) rows.push(...ownPending);
+	}
 	const authors = await loadAuthors(c.env.DB, rows);
 
 	const reactionRows = await listReactionsForPost(c.env.DB, slug);
@@ -640,7 +654,14 @@ comments.get("/", async (c) => {
 		? await getUserVotesOnPost(c.env.DB, slug, session.user_id)
 		: new Map<string, -1 | 1>();
 
-	const { threads: allThreads } = buildTree(rows, authors, reactionsById, myVotes);
+	// When the operator opts in, keep every deleted comment as a placeholder
+	// (leaf deletions included) rather than pruning them. A toggle change is
+	// reflected for anonymous viewers within the tree-cache TTL.
+	const keepAllDeleted = (await loadFlags(c.env)).show_deleted_placeholders;
+
+	const { threads: allThreads } = buildTree(rows, authors, reactionsById, myVotes, {
+		keepAllDeleted,
+	});
 
 	if (sort === "top") {
 		// Top-level only — replies stay in created_at ASC so threaded

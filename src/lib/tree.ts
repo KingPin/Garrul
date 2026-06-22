@@ -44,6 +44,9 @@ export type TreeNode = {
 	status: Comment["status"];
 	edited_at: number | null;
 	deleted_at: number | null;
+	/** Who removed a deleted comment ('author' | 'moderator'), for the
+	 *  placeholder wording. NULL when not deleted. */
+	deleted_by: Comment["deleted_by"];
 	created_at: number;
 	author: TreeAuthor;
 	depth: number;
@@ -79,9 +82,15 @@ const indexByParent = (rows: Comment[]): ChildIndex => {
 /**
  * Returns the set of comment IDs that should remain visible — every non-
  * deleted comment, plus every deleted ancestor that has a non-deleted
- * descendant.
+ * descendant. When `keepAllDeleted` is set (the show_deleted_placeholders
+ * flag), every deleted comment is kept too, so leaf deletions surface as a
+ * placeholder rather than being pruned.
  */
-const keepableSet = (rows: Comment[], children: ChildIndex): Set<string> => {
+const keepableSet = (
+	rows: Comment[],
+	children: ChildIndex,
+	keepAllDeleted: boolean,
+): Set<string> => {
 	const byId = new Map<string, Comment>();
 	for (const r of rows) byId.set(r.id, r);
 
@@ -103,7 +112,7 @@ const keepableSet = (rows: Comment[], children: ChildIndex): Set<string> => {
 	for (const r of rows) {
 		if (r.status !== "deleted") {
 			keep.add(r.id);
-		} else if (visit(r.id)) {
+		} else if (keepAllDeleted || visit(r.id)) {
 			keep.add(r.id);
 		}
 	}
@@ -146,6 +155,7 @@ const toNode = (
 	status: row.status,
 	edited_at: row.edited_at,
 	deleted_at: row.deleted_at,
+	deleted_by: row.status === "deleted" ? row.deleted_by : null,
 	created_at: row.created_at,
 	author: buildAuthor(usersById, row.user_id),
 	depth,
@@ -225,11 +235,12 @@ export const buildTree = (
 	usersById: Map<string, TreeAuthor>,
 	reactionsById: Map<string, ReactionCount[]> = new Map(),
 	myVotes: Map<string, -1 | 1> = new Map(),
+	opts: { keepAllDeleted?: boolean } = {},
 ): BuildResult => {
 	const byId = new Map<string, Comment>();
 	for (const r of rows) byId.set(r.id, r);
 	const children = indexByParent(rows);
-	const keep = keepableSet(rows, children);
+	const keep = keepableSet(rows, children, opts.keepAllDeleted ?? false);
 
 	const tops = (children.get(null) ?? []).filter((t) => keep.has(t.id));
 	const threads: TreeNode[] = [];

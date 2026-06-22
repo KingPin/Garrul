@@ -1,5 +1,5 @@
 {
-  "version": "1.14.3",
+  "version": "1.15.0",
   "minPreviousVersion": "1.0.0",
   "renderer": {
     "version": 1,
@@ -162,6 +162,11 @@
       "addedIn": "1.10.0"
     },
     {
+      "name": "SHOW_DELETED_PLACEHOLDERS",
+      "required": false,
+      "addedIn": "1.15.0"
+    },
+    {
       "name": "COMMENTS_PER_PAGE",
       "required": false,
       "addedIn": "1.10.0"
@@ -226,7 +231,8 @@
     "0008_saved_replies.sql",
     "0009_import_tracking.sql",
     "0010_settings.sql",
-    "0011_page_engagement.sql"
+    "0011_page_engagement.sql",
+    "0012_deleted_by.sql"
   ],
   "breakingChanges": []
 }
