@@ -28,6 +28,7 @@ const mk = (
 	created_at: number,
 	user_id = "u1",
 	status: Comment["status"] = "approved",
+	deleted_by: Comment["deleted_by"] = status === "deleted" ? "author" : null,
 ): Comment => ({
 	id,
 	post_slug: "p",
@@ -39,6 +40,7 @@ const mk = (
 	status,
 	edited_at: null,
 	deleted_at: status === "deleted" ? created_at + 1 : null,
+	deleted_by,
 	ip_hash: null,
 	user_agent: null,
 	created_at,
@@ -175,5 +177,53 @@ describe("buildTree — deleted-parent semantics", () => {
 		];
 		const { threads } = buildTree(rows, usersById(author("u1")));
 		expect(threads[0]!.replies).toEqual([]);
+	});
+});
+
+describe("buildTree — keepAllDeleted (show_deleted_placeholders)", () => {
+	it("keeps a deleted leaf reply as a placeholder when set", () => {
+		const rows = [
+			mk("root", null, 100),
+			mk("dead", "root", 200, "u1", "deleted"),
+		];
+		const { threads } = buildTree(
+			rows,
+			usersById(author("u1")),
+			undefined,
+			undefined,
+			{ keepAllDeleted: true },
+		);
+		expect(threads[0]!.replies.map((r) => r.id)).toEqual(["dead"]);
+		expect(threads[0]!.replies[0]!.status).toBe("deleted");
+	});
+
+	it("keeps a deleted top-level thread with no live descendants when set", () => {
+		const rows = [mk("solo", null, 100, "u1", "deleted")];
+		const { threads } = buildTree(
+			rows,
+			usersById(author("u1")),
+			undefined,
+			undefined,
+			{ keepAllDeleted: true },
+		);
+		expect(threads.map((t) => t.id)).toEqual(["solo"]);
+	});
+
+	it("propagates deleted_by onto the node for placeholder wording", () => {
+		const rows = [
+			mk("root", null, 100),
+			mk("byMod", "root", 200, "u1", "deleted", "moderator"),
+			mk("byAuthor", "root", 300, "u1", "deleted", "author"),
+		];
+		const { threads } = buildTree(
+			rows,
+			usersById(author("u1")),
+			undefined,
+			undefined,
+			{ keepAllDeleted: true },
+		);
+		const byId = new Map(threads[0]!.replies.map((r) => [r.id, r]));
+		expect(byId.get("byMod")!.deleted_by).toBe("moderator");
+		expect(byId.get("byAuthor")!.deleted_by).toBe("author");
 	});
 });
