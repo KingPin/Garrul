@@ -256,7 +256,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
 .gr-md-hint[hidden] { display: none; }
 .gr-preview p { margin: 0.3em 0; }
 .gr-preview a { color: var(--gr-link); }
-.gr-form .gr-honeypot { position: absolute; left: -9999px; top: -9999px; }
+.gr-honeypot { position: absolute; left: -9999px; top: -9999px; }
 .gr-form .gr-notify { display: flex; align-items: center; gap: 0.4rem; font-size: 0.9em; cursor: pointer; }
 .gr-form .gr-notify .gr-notify-cb { width: auto; }
 .gr-form .gr-email-input[hidden] { display: none; }
