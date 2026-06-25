@@ -58,9 +58,12 @@ reports.post("/:id/report", async (c) => {
 	}
 
 	// Resolve the target. A missing comment returns the same {ok:true} as a
-	// success so the endpoint can't be used to enumerate comment ids.
+	// success so the endpoint can't be used to enumerate comment ids. An
+	// already-deleted comment is treated the same way: nothing to moderate, so
+	// don't let a crafted POST open a report on a dead comment (the widget
+	// already hides the button for deleted ones — this is the server guard).
 	const target = await getComment(c.env.DB, id);
-	if (!target) return c.json({ ok: true });
+	if (!target || target.status === "deleted") return c.json({ ok: true });
 
 	const session = await readSession(c);
 	const isNew = await insertReport(c.env.DB, {

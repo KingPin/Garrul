@@ -210,6 +210,16 @@ describe("POST /api/v1/comments/:id/report", () => {
 		expect(fireWebhook).not.toHaveBeenCalled();
 	});
 
+	it("returns ok for a deleted comment without opening a report", async () => {
+		const id = await seedComment();
+		sqlite.prepare("UPDATE comments SET status = 'deleted' WHERE id = ?").run(id);
+		const res = await report(mkEnv(openKv()), id);
+		expect(res.status).toBe(200);
+		expect(await res.json()).toEqual({ ok: true });
+		expect(reportRowCount(id)).toBe(0);
+		expect(fireWebhook).not.toHaveBeenCalled();
+	});
+
 	it("caps an over-long reason instead of rejecting", async () => {
 		const id = await seedComment();
 		const res = await report(mkEnv(openKv()), id, { reason: "x".repeat(5000) });

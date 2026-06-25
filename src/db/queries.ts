@@ -186,9 +186,14 @@ export const insertReport = async (
 ): Promise<boolean> => {
 	const res = await db
 		.prepare(
-			`INSERT OR IGNORE INTO reports
+			// Scope the silent ignore to the intended dedup conflict only.
+			// A bare INSERT OR IGNORE would also swallow e.g. a foreign-key
+			// violation as a benign 0-change "duplicate"; ON CONFLICT on the
+			// unique pair lets any other error throw instead.
+			`INSERT INTO reports
 			   (id, comment_id, reporter_user_id, reporter_ip_hash, reason, status, created_at)
-			 VALUES (?, ?, ?, ?, ?, 'open', ?)`,
+			 VALUES (?, ?, ?, ?, ?, 'open', ?)
+			 ON CONFLICT(comment_id, reporter_ip_hash) DO NOTHING`,
 		)
 		.bind(
 			ulid(),
@@ -199,8 +204,8 @@ export const insertReport = async (
 			Date.now(),
 		)
 		.run();
-	// D1 surfaces the affected-row count on meta.changes; INSERT OR IGNORE that
-	// hits the UNIQUE constraint reports 0.
+	// D1 surfaces the affected-row count on meta.changes; the ON CONFLICT
+	// DO NOTHING path (this reporter already flagged this comment) reports 0.
 	return (res.meta?.changes ?? 0) > 0;
 };
 
