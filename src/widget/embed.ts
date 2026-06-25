@@ -1308,8 +1308,13 @@ const buildActions = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): HTMLEleme
 		reportBtn.type = "button";
 		reportBtn.addEventListener("click", async () => {
 			reportBtn.disabled = true;
+			let ok = false;
 			try {
-				await fetch(
+				// The endpoint returns 200 for both new and duplicate reports and
+				// never discloses which (anti-enumeration), so a 2xx is the only
+				// success signal we get — and the only one we need. fetch does NOT
+				// reject on a 4xx/5xx, so we must inspect res.ok explicitly.
+				const res = await fetch(
 					`${ctx.apiBase}/api/v1/comments/${encodeURIComponent(n.id)}/report`,
 					{
 						method: "POST",
@@ -1318,15 +1323,20 @@ const buildActions = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): HTMLEleme
 						body: "{}",
 					},
 				);
+				ok = res.ok;
 			} catch {
-				// Network failure: still show the thanks state. The endpoint is
-				// fire-and-forget from the reader's view (it returns ok even for
-				// duplicates/unknown ids to avoid leaking state), so there's no
-				// useful error to surface — and a retry would just re-dedupe.
+				// Network failure — fall through to the retry path below.
 			}
-			// Replace the button with a non-interactive confirmation regardless
-			// of outcome, so a reader can't report-bomb one comment from the UI.
-			reportBtn.replaceWith(el("span", "gr-reported", "Reported, thanks"));
+			if (ok) {
+				// Replace the button with a non-interactive confirmation so a
+				// reader can't report-bomb one comment from the UI. (Server-side
+				// dedup + rate-limit are the real guard; this is just UX.)
+				reportBtn.replaceWith(el("span", "gr-reported", "Reported, thanks"));
+			} else {
+				// A real refusal (429 rate-limit, 4xx/5xx, or a dropped network
+				// call) — don't claim success; re-enable so the reader can retry.
+				reportBtn.disabled = false;
+			}
 		});
 		row.appendChild(reportBtn);
 	}
