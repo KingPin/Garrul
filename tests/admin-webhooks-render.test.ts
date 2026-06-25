@@ -138,7 +138,7 @@ describe("renderWebhookForm", () => {
 		expect(html).toContain('value="whsec_abcdef0123456789"');
 	});
 
-	it("renders all five known events as checkboxes", () => {
+	it("renders all known events as checkboxes", () => {
 		const html = renderWebhookForm({ endpoint: null, error: null });
 		for (const ev of [
 			"comment.posted",
@@ -146,6 +146,7 @@ describe("renderWebhookForm", () => {
 			"comment.deleted",
 			"comment.approved",
 			"comment.spam",
+			"comment.reported",
 		]) {
 			expect(html).toContain(`name="event_${ev}"`);
 		}
@@ -153,14 +154,14 @@ describe("renderWebhookForm", () => {
 
 	it("checks every event by default in new mode", () => {
 		const html = renderWebhookForm({ endpoint: null, error: null });
-		// Five checkboxes, all checked.
+		// Six checkboxes, all checked.
 		const checkedCount = (html.match(/type="checkbox" name="event_/g) ?? [])
 			.length;
 		const checkedAttrCount = (
 			html.match(/type="checkbox" name="event_[^"]+" checked/g) ?? []
 		).length;
-		expect(checkedCount).toBe(5);
-		expect(checkedAttrCount).toBe(5);
+		expect(checkedCount).toBe(6);
+		expect(checkedAttrCount).toBe(6);
 	});
 
 	it("checks only the selected events in edit mode", () => {

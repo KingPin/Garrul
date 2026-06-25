@@ -10,6 +10,7 @@ const ALL_EVENTS = [
 	"comment.deleted",
 	"comment.approved",
 	"comment.spam",
+	"comment.reported",
 ] as const;
 
 const ADAPTERS: Array<{ value: string; label: string }> = [

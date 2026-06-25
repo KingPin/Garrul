@@ -862,6 +862,7 @@ const VALID_EVENTS = [
 	"comment.deleted",
 	"comment.approved",
 	"comment.spam",
+	"comment.reported",
 ] as const;
 
 const isValidEvent = (v: unknown): v is (typeof VALID_EVENTS)[number] =>
@@ -905,7 +906,7 @@ const parseWebhookBody = (
 		if (filtered.length !== body.events.length) {
 			return { ok: false, error: "events_unknown" };
 		}
-		// All five events selected = "no filter"; store NULL so receivers
+		// Every known event selected = "no filter"; store NULL so receivers
 		// see future events too without a re-save.
 		events = filtered.length === VALID_EVENTS.length ? null : filtered;
 	}
