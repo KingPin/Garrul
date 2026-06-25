@@ -184,6 +184,15 @@ describe("POST /admin/api/users/:id (one-click ban author)", () => {
 		expect(isBanned(TARGET_ID)).toBe(0);
 	});
 
+	it("rejects a cross-origin request (CSRF)", async () => {
+		const res = await ban(
+			{ banned: true, from_comment: "01HCOMMENT00000000000000CM" },
+			{ origin: "https://evil.example" },
+		);
+		expect(res.status).toBe(403);
+		expect(isBanned(TARGET_ID)).toBe(0);
+	});
+
 	it("returns 404 for a non-existent target", async () => {
 		const res = await app().request(
 			"/admin/api/users/01HGHOST0000000000000GHOST",
