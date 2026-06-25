@@ -48,6 +48,7 @@ const EVENT_VERB: Record<WebhookEvent, string> = {
 	"comment.deleted": "Comment deleted",
 	"comment.approved": "Comment approved",
 	"comment.spam": "Comment marked spam",
+	"comment.reported": "Comment reported",
 };
 
 // Discord embed accent color per event (decimal RGB).
@@ -57,6 +58,7 @@ const EVENT_COLOR: Record<WebhookEvent, number> = {
 	"comment.approved": 0x57f287, // green
 	"comment.spam": 0xed4245, // red
 	"comment.deleted": 0x992d22, // dark red
+	"comment.reported": 0xfaa61a, // amber
 };
 
 // Cap snippet length pre-escape so the worst-case escaped output still

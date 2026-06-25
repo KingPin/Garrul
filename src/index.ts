@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { health } from "./routes/health";
 import { comments } from "./routes/api.comments";
+import { reports } from "./routes/api.reports";
 import { config } from "./routes/api.config";
 import { preview } from "./routes/api.preview";
 import { pageEngagement } from "./routes/api.page-engagement";
@@ -190,6 +191,7 @@ app.use("/api/*", sessionMiddleware());
 
 app.route("/api/v1/health", health);
 app.route("/api/v1/comments", comments);
+app.route("/api/v1/comments", reports);
 app.route("/api/v1/reactions", reactions);
 app.route("/api/v1/page-engagement", pageEngagement);
 app.route("/api/v1/votes", votes);

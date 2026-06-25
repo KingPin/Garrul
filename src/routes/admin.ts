@@ -41,6 +41,7 @@ import {
 	adminTopCommenters,
 	adminTopPosts,
 	countAdmins,
+	countOpenReportsByComment,
 	createWebhookEndpoint,
 	deleteSettings,
 	deleteWebhookEndpoint,
@@ -58,6 +59,8 @@ import {
 	listSavedRepliesForUser,
 	listWebhookEndpoints,
 	markSubscriptionUnsubscribed,
+	resolveReportsForComment,
+	setPostClosed,
 	setSetting,
 	setUserBanned,
 	setUserRole,
@@ -65,6 +68,7 @@ import {
 	updateSavedReply,
 	deleteSavedReply,
 	updateWebhookEndpoint,
+	upsertPost,
 	type AdminAction,
 	type AuditTargetKind,
 	type CommentStatus,
@@ -290,6 +294,11 @@ admin.get("/queue", async (c) => {
 	const hostRaw = (c.req.query("host") ?? "").trim();
 	const host = hostRaw.length > 0 && hostRaw.length <= 253 ? hostRaw : "";
 
+	// The "reported" view cuts across statuses (a reported comment may be
+	// approved, pending, etc.), so it ignores the status tab.
+	const reportedRaw = (c.req.query("reported") ?? "").trim();
+	const reported = reportedRaw === "1" || reportedRaw === "true";
+
 	const before = c.req.query("before");
 	let cursorTs: number | null = null;
 	let cursorId: string | null = null;
@@ -306,13 +315,18 @@ admin.get("/queue", async (c) => {
 		}
 	}
 
-	const filter: import("../db/queries").AdminCommentFilter = { status };
+	// When the reported view is active, drop the status constraint so reported
+	// comments of any status show up together.
+	const filter: import("../db/queries").AdminCommentFilter = {
+		status: reported ? "all" : status,
+	};
 	if (q) filter.q = q;
 	if (postSlug) filter.post_slug = postSlug;
 	if (userId) filter.user_id = userId;
 	if (fromMs != null) filter.from = fromMs;
 	if (toExclusive != null) filter.to = toExclusive;
 	if (host) filter.host = host;
+	if (reported) filter.reported = true;
 
 	const rows = await adminListComments(c.env.DB, filter, 51, cursorTs, cursorId);
 	const trimmed = rows.slice(0, 50);
@@ -323,6 +337,13 @@ admin.get("/queue", async (c) => {
 	const latestAudit = await adminLatestAuditByTarget(
 		c.env.DB,
 		"comment",
+		trimmed.map((r) => r.id),
+	);
+
+	// Open-report counts for the visible rows → queue badges. Operator-only;
+	// never surfaced in the public payload (avoids a brigading signal).
+	const reportCounts = await countOpenReportsByComment(
+		c.env.DB,
 		trimmed.map((r) => r.id),
 	);
 
@@ -337,11 +358,29 @@ admin.get("/queue", async (c) => {
 		from: fromRaw ?? "",
 		to: toRaw ?? "",
 		host,
+		reported,
 	};
+	// Surface the per-post close toggle only when the queue is scoped to a
+	// single post. A post row may not exist yet (no comments) — treat absent
+	// as open so the operator can still pre-close it.
+	const postState = postSlug
+		? await getPost(c.env.DB, postSlug).then((p) => ({
+				slug: postSlug,
+				closed: p?.closed ?? false,
+			}))
+		: null;
 	return c.html(
 		renderPage(c,
 			"Queue",
-			renderQueue(trimmed, filters, nextCursor, latestAudit, hosts),
+			renderQueue(
+				trimmed,
+				filters,
+				nextCursor,
+				latestAudit,
+				hosts,
+				postState,
+				reportCounts,
+			),
 			user,
 			updateInfo,
 		),
@@ -358,7 +397,13 @@ admin.get("/comments/:id", async (c) => {
 	}
 	const updateInfo = await peekCachedLatestVersion(c.env);
 	return c.html(
-		renderPage(c, `Comment ${id.slice(0, 8)}`, renderCommentDetail(detail), user, updateInfo),
+		renderPage(
+			c,
+			`Comment ${id.slice(0, 8)}`,
+			renderCommentDetail(detail, user.role === "admin"),
+			user,
+			updateInfo,
+		),
 	);
 });
 
@@ -1343,6 +1388,63 @@ admin.post("/api/comments/:id", async (c) => {
 	return c.json({ ok: true, id, status: newStatus });
 });
 
+// Per-post comment freeze/unfreeze. Flips posts.closed; the lazy thread
+// resolver (src/lib/thread.ts) enforces it on the next POST. Mod-gated; the
+// admin middleware already applies the same-origin CSRF check.
+const POST_SLUG_RE = /^[a-zA-Z0-9_\-./]{1,200}$/;
+
+admin.post("/api/posts/close", async (c) => {
+	const user = await requireMod(c);
+	if (user instanceof Response) return user;
+	const body = await c.req
+		.json<{ slug?: unknown; closed?: unknown }>()
+		.catch(() => null);
+	if (!body || typeof body.slug !== "string" || typeof body.closed !== "boolean") {
+		return c.json({ error: "invalid_body" }, 400);
+	}
+	const slug = body.slug.trim();
+	if (!slug || !POST_SLUG_RE.test(slug)) {
+		return c.json({ error: "invalid_slug" }, 400);
+	}
+	const closed = body.closed;
+	// Ensure a post row exists before flipping — a thread can be pre-closed
+	// before its first comment arrives. upsertPost never touches `closed`, so
+	// it's safe to create-or-noop here.
+	await upsertPost(c.env.DB, slug, null, null);
+	await setPostClosed(c.env.DB, slug, closed);
+	await adminInsertAudit(c.env.DB, {
+		admin_id: user.id,
+		action: closed ? "post.close" : "post.open",
+		target_kind: "post",
+		target_id: slug,
+		meta: { post_slug: slug },
+	});
+	// Bust the cached first page so the closed-state banner reflects immediately
+	// for anonymous viewers (the GET payload carries accepting_comments).
+	await bustTreeCache(c.env, c.req.url, slug);
+	return c.json({ ok: true, slug, closed });
+});
+
+// Dismiss (resolve) all open reader reports on a comment. The comment itself
+// is moderated via the existing approve/spam/delete actions; this only clears
+// the report flags so the comment leaves the "reported" queue. Mod-gated.
+admin.post("/api/comments/:id/reports/resolve", async (c) => {
+	const user = await requireMod(c);
+	if (user instanceof Response) return user;
+	const id = c.req.param("id");
+	const existing = await getComment(c.env.DB, id);
+	if (!existing) return c.json({ error: "not_found" }, 404);
+	const resolved = await resolveReportsForComment(c.env.DB, id);
+	await adminInsertAudit(c.env.DB, {
+		admin_id: user.id,
+		action: "report.resolve",
+		target_kind: "comment",
+		target_id: id,
+		meta: { resolved_count: resolved, post_slug: existing.post_slug },
+	});
+	return c.json({ ok: true, id, resolved });
+});
+
 const BULK_ACTION_LIMIT = 100;
 
 admin.post("/api/comments/bulk", async (c) => {
@@ -1426,7 +1528,7 @@ admin.post("/api/users/:id", async (c) => {
 	if (user instanceof Response) return user;
 	const id = c.req.param("id");
 	const body = await c.req
-		.json<{ banned?: boolean; reason?: string }>()
+		.json<{ banned?: boolean; reason?: string; from_comment?: unknown }>()
 		.catch(() => null);
 	if (!body || typeof body.banned !== "boolean") {
 		return c.json({ error: "invalid_body" }, 400);
@@ -1436,13 +1538,22 @@ admin.post("/api/users/:id", async (c) => {
 	const target = await getUser(c.env.DB, id);
 	if (!target) return c.json({ error: "not_found" }, 404);
 	await setUserBanned(c.env.DB, id, body.banned);
+	// When the ban was triggered from a specific comment (one-click "Ban
+	// author"), record that comment id in the audit trail so the action is
+	// traceable back to its trigger.
+	const fromComment =
+		typeof body.from_comment === "string" && body.from_comment.length > 0
+			? body.from_comment
+			: null;
 	await adminInsertAudit(c.env.DB, {
 		admin_id: user.id,
 		action: body.banned ? "ban" : "unban",
 		target_kind: "user",
 		target_id: id,
 		reason: body.reason ?? null,
-		meta: { target_name: target.name },
+		meta: fromComment
+			? { target_name: target.name, from_comment: fromComment }
+			: { target_name: target.name },
 	});
 	return c.json({ ok: true, id, banned: body.banned });
 });

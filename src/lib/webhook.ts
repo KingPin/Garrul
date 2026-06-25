@@ -65,7 +65,8 @@ export type WebhookEvent =
 	| "comment.edited"
 	| "comment.deleted"
 	| "comment.approved"
-	| "comment.spam";
+	| "comment.spam"
+	| "comment.reported";
 
 export type WebhookPayload = {
 	event: WebhookEvent;
