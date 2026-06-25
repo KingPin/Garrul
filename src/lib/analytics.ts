@@ -19,6 +19,7 @@ export type EventName =
 	| "comment.posted"
 	| "comment.deleted"
 	| "comment.edited"
+	| "comment.reported"
 	| "ratelimit.hit"
 	| "oauth.start"
 	| "oauth.complete"

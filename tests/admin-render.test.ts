@@ -141,6 +141,20 @@ describe("renderQueue", () => {
 		expect(html).toContain("post_slug=blog");
 	});
 
+	it("keeps the reported view on the filter form and clear link", () => {
+		const html = renderQueue(
+			[],
+			{ ...emptyQueueFilters, reported: true, q: "foo" },
+			null,
+		);
+		// The form re-submits the reported dimension, not status, so filtering
+		// within the reported view stays in it.
+		expect(html).toContain('name="reported" value="1"');
+		expect(html).not.toContain('name="status"');
+		// Clear returns to the reported tab rather than dropping to status view.
+		expect(html).toContain('href="/admin/queue?reported=1"');
+	});
+
 	it("encodes the keyset cursor into the Next link", () => {
 		const html = renderQueue(
 			[makeComment()],

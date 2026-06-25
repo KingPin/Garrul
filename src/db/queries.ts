@@ -24,7 +24,23 @@ export type Post = {
 	title: string | null;
 	url: string | null;
 	created_at: number;
+	/** Operator freeze for this one thread: blocks new comments/replies. */
+	closed: boolean;
+	/** Host page's real publish time (epoch ms), from data-published. The
+	 *  anchor for age-based auto-close; NULL falls back to created_at. */
+	published_at: number | null;
 };
+
+type PostRow = Omit<Post, "closed"> & { closed: number };
+
+const toPost = (row: PostRow): Post => ({
+	...row,
+	closed: row.closed === 1,
+});
+
+// Every posts SELECT goes through this list so the new lifecycle columns stay
+// in one place.
+const POST_COLS = "slug, title, url, created_at, closed, published_at";
 
 export type UserRole = "user" | "mod" | "admin";
 
@@ -87,34 +103,162 @@ export const upsertPost = async (
 	slug: string,
 	title: string | null,
 	url: string | null,
+	publishedAt: number | null = null,
 ): Promise<Post> => {
 	const now = Date.now();
+	// title/url: COALESCE(excluded, existing) so the host can refresh them on a
+	// later comment, but an omitted value never clobbers what's stored.
+	// published_at: COALESCE(existing, excluded) — write-once / first-writer-wins.
+	// It anchors age-based auto-close, so once set it must be immutable; otherwise
+	// an untrusted client could overwrite an established thread's close-anchor with
+	// a bogus date to force it closed. closed is operator-controlled, never set here.
 	await db
 		.prepare(
-			`INSERT INTO posts (slug, title, url, created_at)
-			 VALUES (?, ?, ?, ?)
+			`INSERT INTO posts (slug, title, url, created_at, published_at)
+			 VALUES (?, ?, ?, ?, ?)
 			 ON CONFLICT(slug) DO UPDATE SET
-			   title = COALESCE(excluded.title, posts.title),
-			   url   = COALESCE(excluded.url,   posts.url)`,
+			   title        = COALESCE(excluded.title, posts.title),
+			   url          = COALESCE(excluded.url,   posts.url),
+			   published_at = COALESCE(posts.published_at, excluded.published_at)`,
 		)
-		.bind(slug, title, url, now)
+		.bind(slug, title, url, now, publishedAt)
 		.run();
 	const row = await db
-		.prepare(`SELECT slug, title, url, created_at FROM posts WHERE slug = ?`)
+		.prepare(`SELECT ${POST_COLS} FROM posts WHERE slug = ?`)
 		.bind(slug)
-		.first<Post>();
+		.first<PostRow>();
 	if (!row) throw new Error("upsertPost: post not found after insert");
-	return row;
+	return toPost(row);
 };
 
 export const getPost = async (
 	db: D1Database,
 	slug: string,
 ): Promise<Post | null> => {
-	return await db
-		.prepare(`SELECT slug, title, url, created_at FROM posts WHERE slug = ?`)
+	const row = await db
+		.prepare(`SELECT ${POST_COLS} FROM posts WHERE slug = ?`)
 		.bind(slug)
-		.first<Post>();
+		.first<PostRow>();
+	return row ? toPost(row) : null;
+};
+
+/** Operator freeze/unfreeze of a single thread. */
+export const setPostClosed = async (
+	db: D1Database,
+	slug: string,
+	closed: boolean,
+): Promise<void> => {
+	await db
+		.prepare(`UPDATE posts SET closed = ? WHERE slug = ?`)
+		.bind(closed ? 1 : 0, slug)
+		.run();
+};
+
+// ---------------------------------------------------------------------------
+// Reader reports
+// ---------------------------------------------------------------------------
+
+export type Report = {
+	id: string;
+	comment_id: string;
+	reporter_user_id: string | null;
+	reporter_ip_hash: string | null;
+	reason: string | null;
+	status: "open" | "resolved";
+	created_at: number;
+};
+
+/**
+ * Record a reader's report of a comment. Returns true if a new report row was
+ * created, false if this reporter (by ip_hash) had already reported this
+ * comment — the UNIQUE(comment_id, reporter_ip_hash) makes the second attempt a
+ * silent no-op so the caller can return the same {ok:true} either way without
+ * leaking prior-report state.
+ */
+export const insertReport = async (
+	db: D1Database,
+	args: {
+		comment_id: string;
+		reporter_user_id?: string | null;
+		reporter_ip_hash?: string | null;
+		reason?: string | null;
+	},
+): Promise<boolean> => {
+	const res = await db
+		.prepare(
+			// Scope the silent ignore to the intended dedup conflict only.
+			// A bare INSERT OR IGNORE would also swallow e.g. a foreign-key
+			// violation as a benign 0-change "duplicate"; ON CONFLICT on the
+			// unique pair lets any other error throw instead.
+			`INSERT INTO reports
+			   (id, comment_id, reporter_user_id, reporter_ip_hash, reason, status, created_at)
+			 VALUES (?, ?, ?, ?, ?, 'open', ?)
+			 ON CONFLICT(comment_id, reporter_ip_hash) DO NOTHING`,
+		)
+		.bind(
+			ulid(),
+			args.comment_id,
+			args.reporter_user_id ?? null,
+			args.reporter_ip_hash ?? null,
+			args.reason ?? null,
+			Date.now(),
+		)
+		.run();
+	// D1 surfaces the affected-row count on meta.changes; the ON CONFLICT
+	// DO NOTHING path (this reporter already flagged this comment) reports 0.
+	return (res.meta?.changes ?? 0) > 0;
+};
+
+/** Open-report counts for a set of comment IDs (queue badges). Empty → {}. */
+export const countOpenReportsByComment = async (
+	db: D1Database,
+	commentIds: string[],
+): Promise<Record<string, number>> => {
+	if (commentIds.length === 0) return {};
+	const placeholders = commentIds.map(() => "?").join(",");
+	const rows = await db
+		.prepare(
+			`SELECT comment_id, COUNT(*) AS n
+			   FROM reports
+			  WHERE status = 'open' AND comment_id IN (${placeholders})
+			  GROUP BY comment_id`,
+		)
+		.bind(...commentIds)
+		.all<{ comment_id: string; n: number }>();
+	const out: Record<string, number> = {};
+	for (const r of rows.results ?? []) out[r.comment_id] = r.n;
+	return out;
+};
+
+/** Full report list for one comment (comment-detail page). */
+export const listReportsForComment = async (
+	db: D1Database,
+	commentId: string,
+): Promise<Report[]> => {
+	const rows = await db
+		.prepare(
+			`SELECT id, comment_id, reporter_user_id, reporter_ip_hash, reason,
+			        status, created_at
+			   FROM reports WHERE comment_id = ? ORDER BY created_at DESC`,
+		)
+		.bind(commentId)
+		.all<Report>();
+	return rows.results ?? [];
+};
+
+/** Resolve (dismiss) all open reports on a comment. Returns rows affected. */
+export const resolveReportsForComment = async (
+	db: D1Database,
+	commentId: string,
+): Promise<number> => {
+	const res = await db
+		.prepare(
+			`UPDATE reports SET status = 'resolved'
+			  WHERE comment_id = ? AND status = 'open'`,
+		)
+		.bind(commentId)
+		.run();
+	return res.meta?.changes ?? 0;
 };
 
 /**
@@ -892,6 +1036,8 @@ export type AdminCommentFilter = {
 	from?: number;
 	to?: number;
 	host?: string;
+	/** Restrict to comments that have at least one OPEN reader report. */
+	reported?: boolean;
 };
 
 export const adminListComments = async (
@@ -936,6 +1082,11 @@ export const adminListComments = async (
 	if (filter.host) {
 		where.push(`${hostExpr("p.url")} = ?`);
 		binds.push(filter.host);
+	}
+	if (filter.reported) {
+		where.push(
+			"EXISTS (SELECT 1 FROM reports r WHERE r.comment_id = c.id AND r.status = 'open')",
+		);
 	}
 
 	const sql = `
@@ -1459,6 +1610,7 @@ export type AuditTargetKind =
 	| "subscription"
 	| "webhook"
 	| "saved_reply"
+	| "post"
 	| "system";
 
 export const ADMIN_ACTIONS = [
@@ -1490,6 +1642,9 @@ export const ADMIN_ACTIONS = [
 	"saved_reply.post",
 	"import.disqus",
 	"settings.update",
+	"post.close",
+	"post.open",
+	"report.resolve",
 ] as const;
 export type AdminAction = (typeof ADMIN_ACTIONS)[number];
 
@@ -1925,6 +2080,7 @@ export type AdminCommentDetail = {
 	ip_siblings: AdminComment[];
 	user_recent: AdminComment[];
 	verdicts: SpamVerdictRow[];
+	reports: Report[];
 	audit: AuditRowWithAdmin[];
 };
 
@@ -2045,6 +2201,7 @@ export const adminGetCommentDetail = async (
 		.then((r) => (r.results ?? []).map(toAdminComment));
 
 	const verdicts = await adminListSpamVerdicts(db, id);
+	const reports = await listReportsForComment(db, id);
 	const audit = await adminAuditForTarget(db, "comment", id, 50);
 
 	return {
@@ -2054,6 +2211,7 @@ export const adminGetCommentDetail = async (
 		ip_siblings: ipSiblings,
 		user_recent: userRecent,
 		verdicts,
+		reports,
 		audit,
 	};
 };

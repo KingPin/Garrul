@@ -64,6 +64,20 @@ OAUTH_CALLBACK_BASE = "https://comments.example.com"
 # REPLIES_PER_THREAD = "3"
 # Replies at this nesting depth or deeper start collapsed (0 = never):
 # AUTO_COLLAPSE_DEPTH = "3"
+# Thread lifecycle — auto-close threads to new comments (existing comments,
+# reactions and votes stay live). Evaluated lazily at read/write time, no cron.
+# Both default 0 = disabled. Close a thread N days after its article was
+# published (host passes data-published; falls back to first-comment time):
+# AUTO_CLOSE_DAYS = "0"
+# Hard sunset: close ALL threads at this epoch-ms timestamp (admin Settings uses
+# a date picker that writes the epoch):
+# AUTO_CLOSE_AT = "0"
+# Community auto-collapse — reader-side, reversible fold of low-scored comments
+# (requires DOWNVOTES_ENABLED). Minimum total votes before the ratio applies —
+# the brigading floor (default 5):
+# COMMUNITY_MIN_VOTES = "5"
+# Percent of downvotes/total that triggers collapse (0 = off, range 0-100):
+# COMMUNITY_COLLAPSE_RATIO = "0"
 # Optional: Cloudflare account ID — paired with the CF_API_TOKEN secret to
 # enable the /admin/usage analytics page.
 # CF_ACCOUNT_ID = "0123abcd..."

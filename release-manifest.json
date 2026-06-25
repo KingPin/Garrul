@@ -1,5 +1,5 @@
 {
-  "version": "1.16.1",
+  "version": "1.17.0",
   "minPreviousVersion": "1.0.0",
   "renderer": {
     "version": 1,
@@ -180,6 +180,26 @@
       "name": "AUTO_COLLAPSE_DEPTH",
       "required": false,
       "addedIn": "1.10.0"
+    },
+    {
+      "name": "AUTO_CLOSE_DAYS",
+      "required": false,
+      "addedIn": "1.17.0"
+    },
+    {
+      "name": "AUTO_CLOSE_AT",
+      "required": false,
+      "addedIn": "1.17.0"
+    },
+    {
+      "name": "COMMUNITY_MIN_VOTES",
+      "required": false,
+      "addedIn": "1.17.0"
+    },
+    {
+      "name": "COMMUNITY_COLLAPSE_RATIO",
+      "required": false,
+      "addedIn": "1.17.0"
     }
   ],
   "kvNamespaces": [
@@ -232,7 +252,8 @@
     "0009_import_tracking.sql",
     "0010_settings.sql",
     "0011_page_engagement.sql",
-    "0012_deleted_by.sql"
+    "0012_deleted_by.sql",
+    "0013_thread_lifecycle_reports.sql"
   ],
   "breakingChanges": []
 }

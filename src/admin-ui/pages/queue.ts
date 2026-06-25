@@ -6,7 +6,7 @@ import type {
 import { identiconSvg } from "../../lib/identicon";
 import { sanitizeForEmail as resanitizeBodyHtml } from "../../lib/markdown";
 import { renderHostFilter } from "../components/host-filter";
-import { escapeHtml } from "../escape";
+import { escapeHtml, jsLiteral } from "../escape";
 
 const relTime = (ts: number, now: number = Date.now()): string => {
 	const diff = Math.max(0, now - ts);
@@ -25,6 +25,12 @@ const auditStrip = (a: AuditRowWithAdmin | undefined): string => {
 	return `<div class="muted audit-strip">${escapeHtml(a.action)} by ${escapeHtml(who)} · ${relTime(a.created_at)}</div>`;
 };
 
+/** Open-report count badge for a queue row. Empty string when zero. */
+const reportBadge = (n: number): string =>
+	n > 0
+		? ` <span class="pill spam" title="${n} open report${n === 1 ? "" : "s"}">⚑ ${n}</span>`
+		: "";
+
 export type QueueFilters = {
 	status: CommentStatus | "all";
 	q: string;
@@ -33,11 +39,14 @@ export type QueueFilters = {
 	from: string;
 	to: string;
 	host: string;
+	/** The cross-status "reported" view (comments with open reader reports). */
+	reported: boolean;
 };
 
 const queryString = (f: QueueFilters): string => {
 	const params = new URLSearchParams();
-	if (f.status !== "pending") params.set("status", f.status);
+	if (f.reported) params.set("reported", "1");
+	else if (f.status !== "pending") params.set("status", f.status);
 	if (f.q) params.set("q", f.q);
 	if (f.post_slug) params.set("post_slug", f.post_slug);
 	if (f.user_id) params.set("user_id", f.user_id);
@@ -111,24 +120,6 @@ const metaCell = (c: AdminComment): string => {
           @click="navigator.clipboard.writeText(${jsLiteral(c.id)}); $dispatch('toast',{text:'ID copied'})">${escapeHtml(c.id)}</span>`;
 };
 
-// Embed values as code-safe, HTML-escaped JS string literals so the resulting
-// Alpine expression is well-formed and injection-proof regardless of the
-// underlying string content (defense in depth: ULIDs are safe today, but the
-// typing is just `string`).
-//
-// JSON.stringify alone is not enough: it leaves `<`, `>`, `/` and the line
-// separators U+2028/U+2029 raw, which are unsafe once the literal is embedded
-// as executable JS (markup-context breakout / older-JS line terminators). We
-// re-encode those as `\uXXXX` escapes — valid inside a JS string and inert —
-// then escapeHtml for the surrounding double-quoted attribute.
-const jsLiteral = (s: string): string =>
-	escapeHtml(
-		JSON.stringify(s).replace(
-			/[<>\/\u2028\u2029]/g,
-			(c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`,
-		),
-	);
-
 const rowAct = (
 	id: string,
 	action: "approve" | "spam" | "delete",
@@ -164,22 +155,39 @@ const actionButtons = (id: string, status: CommentStatus): string => {
 	return parts.join("");
 };
 
+/**
+ * Per-post comment-lifecycle state, surfaced only when the queue is filtered
+ * down to a single post_slug. Drives the "Close / Open comments" toggle.
+ */
+export type PostLifecycle = { slug: string; closed: boolean };
+
 export const renderQueue = (
 	rows: AdminComment[],
 	filters: QueueFilters,
 	nextCursor: string | null,
 	latestAudit: Map<string, AuditRowWithAdmin> = new Map(),
 	hosts: string[] = [],
+	post: PostLifecycle | null = null,
+	reportCounts: Record<string, number> = {},
 ): string => {
-	const tabs = ["all", "approved", "pending", "spam", "deleted"]
+	const statusTabs = ["all", "approved", "pending", "spam", "deleted"]
 		.map((s) => {
 			// Status tabs preserve every other active filter — clicking
 			// "spam" while a search is active should keep the search.
-			const tabFilters = { ...filters, status: s as QueueFilters["status"] };
+			const tabFilters = {
+				...filters,
+				reported: false,
+				status: s as QueueFilters["status"],
+			};
 			const href = `/admin/queue${queryString(tabFilters)}`;
-			return `<a href="${href}" ${s === filters.status ? 'style="font-weight:600"' : ""}>${s}</a>`;
+			const active = !filters.reported && s === filters.status;
+			return `<a href="${href}" ${active ? 'style="font-weight:600"' : ""}>${s}</a>`;
 		})
 		.join(" · ");
+	// Cross-status "reported" tab — its own filter dimension, not a status.
+	const reportedHref = `/admin/queue${queryString({ ...filters, reported: true })}`;
+	const reportedTab = `<a href="${reportedHref}" ${filters.reported ? 'style="font-weight:600"' : ""}>reported</a>`;
+	const tabs = `${statusTabs} · ${reportedTab}`;
 
 	const hasFilters =
 		filters.q ||
@@ -187,10 +195,21 @@ export const renderQueue = (
 		filters.user_id ||
 		filters.from ||
 		filters.to ||
-		filters.host;
+		filters.host ||
+		filters.reported;
+	// Submitting the filter form (or clearing) must keep the active tab. The
+	// reported view is its own dimension, so carry it through as a hidden field
+	// and point "clear" back at it; otherwise the form would silently drop the
+	// user out of the reported tab and into the status view.
+	const tabHidden = filters.reported
+		? `<input type="hidden" name="reported" value="1">`
+		: `<input type="hidden" name="status" value="${escapeHtml(filters.status)}">`;
+	const clearHref = filters.reported
+		? "/admin/queue?reported=1"
+		: `/admin/queue?status=${escapeHtml(filters.status)}`;
 	const filterBar = `
 <form class="filter-bar queue-filter" method="get" action="/admin/queue">
-  <input type="hidden" name="status" value="${escapeHtml(filters.status)}">
+  ${tabHidden}
   <input type="text" name="q" placeholder="search body" value="${escapeHtml(filters.q)}">
   <input type="text" name="post_slug" placeholder="post slug" value="${escapeHtml(filters.post_slug)}">
   ${renderHostFilter({ hosts, selected: filters.host })}
@@ -198,8 +217,37 @@ export const renderQueue = (
   <input type="date" name="to" value="${escapeHtml(filters.to)}" title="to (UTC, inclusive)">
   ${filters.user_id ? `<input type="hidden" name="user_id" value="${escapeHtml(filters.user_id)}"><span class="muted">user: <code>${escapeHtml(filters.user_id)}</code></span>` : ""}
   <button type="submit">Filter</button>
-  ${hasFilters ? `<a href="/admin/queue?status=${escapeHtml(filters.status)}" class="muted">clear</a>` : ""}
+  ${hasFilters ? `<a href="${clearHref}" class="muted">clear</a>` : ""}
 </form>`;
+
+	// Per-post freeze toggle. Only meaningful when the queue is scoped to one
+	// post (a global flag/auto-close still applies on top of this; this controls
+	// only the manual per-post `closed` column). Mod-gated server-side.
+	const lifecycleBar = post
+		? `
+<div class="filter-bar post-lifecycle" x-data="{ closed: ${post.closed ? "true" : "false"}, busy: false,
+  async toggle() {
+    this.busy = true;
+    try {
+      const r = await fetch('/admin/api/posts/close', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ slug: ${jsLiteral(post.slug)}, closed: !this.closed }),
+      });
+      if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || ('Failed: ' + r.status)); }
+      const j = await r.json();
+      this.closed = !!j.closed;
+      this.$dispatch('toast', { text: this.closed ? 'Comments closed for this thread' : 'Comments reopened for this thread' });
+    } catch (e) {
+      this.$dispatch('toast', { text: e.message || 'Action failed', kind: 'bad' });
+    } finally { this.busy = false; }
+  }
+}">
+  <span class="muted">thread <code>${escapeHtml(post.slug)}</code>:</span>
+  <span class="pill" :class="closed ? 'spam' : 'approved'" x-text="closed ? 'closed' : 'open'"></span>
+  <button :disabled="busy" @click="toggle()" x-text="closed ? 'Open comments' : 'Close comments'"></button>
+</div>`
+		: "";
 
 	const rowsHtml = rows.length
 		? rows
@@ -209,7 +257,7 @@ export const renderQueue = (
     x-show="!gone" x-transition.opacity
     @bulk-done.window="if ($event.detail.ids.includes(${jsLiteral(c.id)})) gone = true">
   <td class="bulk-cell"><input type="checkbox" :value="${jsLiteral(c.id)}" x-model="selected" :disabled="busy"></td>
-  <td><span class="pill ${c.status}">${c.status}</span></td>
+  <td><span class="pill ${c.status}">${c.status}</span>${reportBadge(reportCounts[c.id] ?? 0)}</td>
   <td>${authorCell(c)}</td>
   <td class="score-cell" title="up / down">${scoreCell(c)}</td>
   <td class="meta-cell">${metaCell(c)}</td>
@@ -236,6 +284,7 @@ export const renderQueue = (
 	return `
 <div class="filter-bar"><span class="muted">filter:</span> ${tabs}</div>
 ${filterBar}
+${lifecycleBar}
 <div x-data="{
   open: false,
   commentId: null,

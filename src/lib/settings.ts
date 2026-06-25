@@ -38,7 +38,11 @@ export type ResolvedFlags = Record<FlagKey, boolean>;
 export type NumberKey =
 	| "comments_per_page"
 	| "replies_per_thread"
-	| "auto_collapse_depth";
+	| "auto_collapse_depth"
+	| "auto_close_days"
+	| "auto_close_at"
+	| "community_min_votes"
+	| "community_collapse_ratio";
 
 export type ResolvedNumbers = Record<NumberKey, number>;
 
@@ -86,6 +90,42 @@ const NUMBERS: Record<
 		default: 3,
 		min: 0,
 		max: MAX_DEPTH,
+	},
+	// Thread auto-close: close a thread this many days after its publish anchor
+	// (posts.published_at, else posts.created_at). 0 = disabled. Evaluated lazily
+	// at read/write time (src/lib/thread.ts) — no cron, no status flips.
+	auto_close_days: {
+		env: "AUTO_CLOSE_DAYS",
+		default: 0,
+		min: 0,
+		max: 3650,
+	},
+	// Instance-wide sunset: close ALL threads at/after this epoch-ms instant.
+	// 0 = disabled. The admin UI exposes a date picker that writes the epoch.
+	// Max ~ year 2100 so a fat-fingered value can't overflow the clamp.
+	auto_close_at: {
+		env: "AUTO_CLOSE_AT",
+		default: 0,
+		min: 0,
+		max: 4102444800000,
+	},
+	// Community auto-collapse floor: minimum total votes (up+down) on a comment
+	// before the collapse ratio is allowed to apply. Mandatory brigading guard —
+	// without it a single downvote is 100% and would fold every new comment.
+	community_min_votes: {
+		env: "COMMUNITY_MIN_VOTES",
+		default: 5,
+		min: 0,
+		max: 1000,
+	},
+	// Community auto-collapse ratio: percent of downvotes/total that folds a
+	// comment (client-side, reversible, expandable). 0 = disabled. Gated on
+	// downvotes_enabled. Applied only once community_min_votes is met.
+	community_collapse_ratio: {
+		env: "COMMUNITY_COLLAPSE_RATIO",
+		default: 0,
+		min: 0,
+		max: 100,
 	},
 };
 

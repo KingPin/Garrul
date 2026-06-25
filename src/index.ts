@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { health } from "./routes/health";
 import { comments } from "./routes/api.comments";
+import { reports } from "./routes/api.reports";
 import { config } from "./routes/api.config";
 import { preview } from "./routes/api.preview";
 import { pageEngagement } from "./routes/api.page-engagement";
@@ -101,6 +102,21 @@ export type Bindings = {
 	COMMENTS_PER_PAGE?: string;
 	REPLIES_PER_THREAD?: string;
 	AUTO_COLLAPSE_DEPTH?: string;
+	// Thread auto-close. Env-var *defaults*; a `settings` row overrides at
+	// runtime (see src/lib/settings.ts). Evaluated lazily at read/write time
+	// (no cron). 0 = disabled.
+	//   AUTO_CLOSE_DAYS — close a thread this many days after its publish date
+	//                     (posts.published_at, else created_at).
+	//   AUTO_CLOSE_AT   — close ALL threads at/after this epoch-ms sunset date.
+	AUTO_CLOSE_DAYS?: string;
+	AUTO_CLOSE_AT?: string;
+	// Community auto-collapse (cosmetic, client-side). 0 = disabled.
+	//   COMMUNITY_MIN_VOTES      — min total votes before the ratio applies
+	//                              (brigading floor).
+	//   COMMUNITY_COLLAPSE_RATIO — percent downvotes that folds a comment
+	//                              (expandable). Gated on DOWNVOTES_ENABLED.
+	COMMUNITY_MIN_VOTES?: string;
+	COMMUNITY_COLLAPSE_RATIO?: string;
 };
 
 const app = new Hono<{ Bindings: Bindings }>();
@@ -175,6 +191,7 @@ app.use("/api/*", sessionMiddleware());
 
 app.route("/api/v1/health", health);
 app.route("/api/v1/comments", comments);
+app.route("/api/v1/comments", reports);
 app.route("/api/v1/reactions", reactions);
 app.route("/api/v1/page-engagement", pageEngagement);
 app.route("/api/v1/votes", votes);

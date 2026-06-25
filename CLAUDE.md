@@ -9,7 +9,7 @@ Self-hosted comment system on Cloudflare Workers + D1 + KV + Turnstile. This fil
 - **Database**: Cloudflare D1 (SQLite).
 - **KV**: rate-limits, OAuth state, sessions, tree cache.
 - **Anti-spam**: Cloudflare Turnstile.
-- **Email**: pluggable adapter (Resend default; MailChannels/Postmark adapters available).
+- **Email**: Resend only (`src/lib/email.ts`). The `EMAIL_PROVIDER` env var leaves room for more adapters, but Resend is the sole implementation today (MailChannels dropped its free Workers plan). Additional adapters are future work.
 - **Widget**: vanilla TypeScript, no framework. Built with esbuild. Bundle budget: `embed.js` ≤ 20KB gzipped.
 - **Admin UI**: server-rendered HTML (Hono JSX) + Alpine.js for interactivity.
 - **Tests**: Vitest + Miniflare for in-memory D1/KV.
@@ -21,8 +21,8 @@ src/
   index.ts              # Hono app entry, route mounting
   routes/               # one file per logical surface (api.comments, auth, admin, embed, rss, health)
   db/                   # migrations + typed query wrappers
-  lib/                  # session, markdown, turnstile, ratelimit, oauth, ulid, identicon, ip-hash, webhook, cors, log
-  email/                # adapter interface + per-provider impls
+  lib/                  # session, markdown, turnstile, ratelimit, oauth, ulid, identicon, ip-hash,
+                        #   webhook, webhook-sig, cors, log, settings, thread, email (Resend), disqus-import
   i18n/                 # en.ts string table; t(key) shim
   widget/               # embed.ts (script), iframe.ts, iframe-resizer.ts, styles.css, templates.ts
   admin-ui/             # layout + per-page renderers (server-rendered HTML + Alpine attrs)
@@ -93,7 +93,7 @@ All user-facing strings go through `t(key)` from `src/i18n`. English is the only
 
 ## Out of scope (v2 backlog)
 
-Multi-site/multi-tenant per Worker, real-time updates, image uploads, Disqus/WordPress importers, self-serve account-delete, @mentions, in-comment search, generic OIDC, webhook signing.
+Multi-site/multi-tenant per Worker, real-time updates, image uploads, WordPress importer (Disqus import shipped), self-serve account-delete, @mentions, in-comment search, generic OIDC, per-post custom auto-close schedules (global rule + per-post manual override only), community hide-and-hold (auto-suppress on a downvote threshold — reader reporting + auto-collapse cover the moderation value without auto-suppressing legit content).
 
 ## Domain layout (maintainer's instance)
 

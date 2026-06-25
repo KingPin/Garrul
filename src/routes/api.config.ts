@@ -18,6 +18,9 @@
  *   - numeric display settings (comments_per_page, replies_per_thread,
  *     auto_collapse_depth): page size and reply-collapse tuning, same
  *     DB-override > env > default precedence (see src/lib/settings.ts).
+ *   - community auto-collapse thresholds (community_min_votes,
+ *     community_collapse_ratio): the widget folds heavily-downvoted comments
+ *     client-side using these (see src/widget). 0 ratio = disabled.
  *
  * The widget calls this once on mount. Missing or empty → widget renders
  * without a Turnstile challenge (and anonymous POSTs will be rejected
@@ -73,6 +76,13 @@ config.get("/", async (c) => {
 		comments_per_page: numbers.comments_per_page,
 		replies_per_thread: numbers.replies_per_thread,
 		auto_collapse_depth: numbers.auto_collapse_depth,
+		// Community auto-collapse thresholds. The widget folds a comment when
+		// down/(up+down) ≥ ratio once total votes ≥ floor (and downvotes are
+		// enabled). Collapse is derived client-side because votes deliberately
+		// don't bust the tree cache (see api.votes.ts) — a server flag would be
+		// stale against the cached score the widget already shows. 0 ratio = off.
+		community_min_votes: numbers.community_min_votes,
+		community_collapse_ratio: numbers.community_collapse_ratio,
 	});
 });
 

@@ -171,6 +171,7 @@ Every attribute the widget reads from the `#garrul` host element
 | `data-api`   | no       | Worker origin override. Defaults to the origin of the script tag (`<script src>`). Set this explicitly when loading `embed.js` via a bundler or async import (anywhere `document.currentScript` may be null at execution time). |
 | `data-title` | no       | Post title; sent on first comment create, surfaces in admin and notification emails.        |
 | `data-url`   | no       | Canonical permalink; sent on first comment create, used in RSS and notification emails.     |
+| `data-published` | no   | Article publish time (epoch ms or ISO 8601); sent on first comment create. Anchors age-based auto-close (`AUTO_CLOSE_DAYS`). Omit and Garrul falls back to the first-comment time, which closes the thread a bit later than intended. Only relevant if the operator enabled `AUTO_CLOSE_DAYS`. |
 
 The host element MUST have `id="garrul"`; the widget looks it up by ID
 and mounts a Shadow DOM on it. One widget per page — multi-thread
@@ -564,8 +565,8 @@ both `data-api` and the `<script src>`.
   the Worker origin so the script's `currentScript.src` correctly
   infers the API base when `data-api` is absent.
 - Don't strip `data-*` attributes in build-step HTML minifiers. The
-  widget reads `data-slug`, `data-api`, `data-title`, and `data-url`
-  off the host element at runtime.
+  widget reads `data-slug`, `data-api`, `data-title`, `data-url`, and
+  `data-published` off the host element at runtime.
 - Don't set `data-api` to a value without `https://`. The widget passes
   it through `new URL(...)` and uses the origin verbatim for CORS-cred
   requests; mixed-content or scheme-relative values will fail.

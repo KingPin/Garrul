@@ -3,11 +3,12 @@ import type {
 	AdminCommentDetail,
 	AuditRowWithAdmin,
 	CommentStatus,
+	Report,
 	SpamVerdictRow,
 } from "../../db/queries";
 import { identiconSvg } from "../../lib/identicon";
 import { sanitizeForEmail as resanitizeBodyHtml } from "../../lib/markdown";
-import { escapeHtml } from "../escape";
+import { escapeHtml, jsLiteral } from "../escape";
 
 const formatTs = (ts: number): string =>
 	new Date(ts).toISOString().slice(0, 16).replace("T", " ");
@@ -77,6 +78,60 @@ const verdictsSection = (verdicts: SpamVerdictRow[]): string => {
 </div>`;
 };
 
+/**
+ * Reader reports for the selected comment. Reasons are free-text from
+ * (possibly anonymous) reporters, so they're escaped here. Reporter identity
+ * (ip_hash / user_id) is intentionally NOT shown — operators act on the
+ * content, not the reporter, and exposing the hash adds no moderation value.
+ * "Dismiss reports" resolves every OPEN report on the comment in one click.
+ */
+const reportsSection = (commentId: string, reports: Report[]): string => {
+	if (reports.length === 0) return "";
+	const open = reports.filter((r) => r.status === "open");
+	const rows = reports
+		.map(
+			(r) => `
+<tr>
+  <td><span class="pill ${r.status === "open" ? "pending" : "approved"}">${r.status}</span></td>
+  <td class="muted">${formatTs(r.created_at)}</td>
+  <td class="row-body">${r.reason ? escapeHtml(r.reason) : '<span class="muted">(no reason given)</span>'}</td>
+</tr>`,
+		)
+		.join("");
+	const dismiss =
+		open.length > 0
+			? `
+  <div class="actions" style="margin-top:0.5rem"
+       x-data="{ busy: false,
+         resolve() {
+           this.busy = true;
+           return fetch('/admin/api/comments/${escapeHtml(commentId)}/reports/resolve', {
+             method: 'POST',
+             headers: { 'content-type': 'application/json' },
+             body: '{}',
+           }).then(r => {
+             if (!r.ok) throw new Error('action failed: ' + r.status);
+             this.$dispatch('toast', { text: 'Reports dismissed' });
+             setTimeout(() => location.reload(), 600);
+           }).catch(e => {
+             this.$dispatch('toast', { text: e.message, kind: 'bad' });
+           }).finally(() => { this.busy = false; });
+         }
+       }">
+    <button :disabled="busy" @click="resolve()">Dismiss reports</button>
+  </div>`
+			: "";
+	return `
+<div class="card">
+  <h3>Reader reports (${open.length} open / ${reports.length} total)</h3>
+  <table>
+    <thead><tr><th>Status</th><th>When</th><th>Reason</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>
+  ${dismiss}
+</div>`;
+};
+
 const auditSection = (rows: AuditRowWithAdmin[], title: string): string => {
 	if (rows.length === 0) return "";
 	const trs = rows
@@ -100,6 +155,44 @@ const auditSection = (rows: AuditRowWithAdmin[], title: string): string => {
 </div>`;
 };
 
+/**
+ * One-click "Ban author" — reuses POST /admin/api/users/:id { banned } with the
+ * comment's author and records the originating comment in the audit meta.
+ * Admin-only (the ban route is admin-gated). For anonymous (ghost) authors a
+ * ban blocks the hashed IP, i.e. the whole network egress — behind CGNAT or a
+ * shared IP that can catch bystanders, so the confirm copy spells that out.
+ */
+const banAuthorAction = (c: AdminComment, isAdmin: boolean): string => {
+	if (!isAdmin) return "";
+	if (c.author_is_banned) {
+		return `<div class="muted" style="margin-top:0.5rem">Author is already banned.</div>`;
+	}
+	const isAnon = (c.author_provider ?? "anon") === "anon";
+	const warning = isAnon
+		? "Ban this anonymous author? This blocks their hashed IP (the whole network egress) — behind shared IPs/CGNAT it can also block bystanders. Continue?"
+		: "Ban this author? They will no longer be able to comment. Continue?";
+	return `
+<div class="actions" style="margin-top:0.5rem" x-data="{ busy: false,
+  ban() {
+    if (!confirm(${jsLiteral(warning)})) return;
+    this.busy = true;
+    return fetch('/admin/api/users/${escapeHtml(c.user_id)}', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ banned: true, from_comment: ${jsLiteral(c.id)} }),
+    }).then(r => {
+      if (!r.ok) throw new Error('ban failed: ' + r.status);
+      this.$dispatch('toast', { text: 'Author banned' });
+      setTimeout(() => location.reload(), 600);
+    }).catch(e => {
+      this.$dispatch('toast', { text: e.message, kind: 'bad' });
+    }).finally(() => { this.busy = false; });
+  }
+}">
+  <button class="bad" :disabled="busy" @click="ban()">Ban author</button>
+</div>`;
+};
+
 const actionsFor = (status: CommentStatus): string => {
 	const parts: string[] = [];
 	if (status !== "approved")
@@ -117,8 +210,11 @@ const actionsFor = (status: CommentStatus): string => {
 	return parts.join("");
 };
 
-export const renderCommentDetail = (d: AdminCommentDetail): string => {
-	const { comment, parent, replies, ip_siblings, user_recent, verdicts, audit } = d;
+export const renderCommentDetail = (
+	d: AdminCommentDetail,
+	isAdmin = false,
+): string => {
+	const { comment, parent, replies, ip_siblings, user_recent, verdicts, reports, audit } = d;
 	const parentSection = parent
 		? `<div class="card">${commentCard(parent, "Parent")}</div>`
 		: "";
@@ -168,6 +264,7 @@ export const renderCommentDetail = (d: AdminCommentDetail): string => {
   <h2>Comment</h2>
   ${commentCard(comment, "Selected")}
   <div class="actions" style="margin-top:0.5rem">${actionsFor(comment.status)}</div>
+  ${banAuthorAction(comment, isAdmin)}
 </div>
 
 <div class="card">
@@ -175,6 +272,7 @@ export const renderCommentDetail = (d: AdminCommentDetail): string => {
   <pre style="white-space:pre-wrap;font-size:0.85rem">${escapeHtml(comment.body_md)}</pre>
 </div>
 
+${reportsSection(comment.id, reports)}
 ${verdictsSection(verdicts)}
 ${parentSection}
 ${repliesSection}
