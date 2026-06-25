@@ -197,9 +197,19 @@ export const renderQueue = (
 		filters.to ||
 		filters.host ||
 		filters.reported;
+	// Submitting the filter form (or clearing) must keep the active tab. The
+	// reported view is its own dimension, so carry it through as a hidden field
+	// and point "clear" back at it; otherwise the form would silently drop the
+	// user out of the reported tab and into the status view.
+	const tabHidden = filters.reported
+		? `<input type="hidden" name="reported" value="1">`
+		: `<input type="hidden" name="status" value="${escapeHtml(filters.status)}">`;
+	const clearHref = filters.reported
+		? "/admin/queue?reported=1"
+		: `/admin/queue?status=${escapeHtml(filters.status)}`;
 	const filterBar = `
 <form class="filter-bar queue-filter" method="get" action="/admin/queue">
-  <input type="hidden" name="status" value="${escapeHtml(filters.status)}">
+  ${tabHidden}
   <input type="text" name="q" placeholder="search body" value="${escapeHtml(filters.q)}">
   <input type="text" name="post_slug" placeholder="post slug" value="${escapeHtml(filters.post_slug)}">
   ${renderHostFilter({ hosts, selected: filters.host })}
@@ -207,7 +217,7 @@ export const renderQueue = (
   <input type="date" name="to" value="${escapeHtml(filters.to)}" title="to (UTC, inclusive)">
   ${filters.user_id ? `<input type="hidden" name="user_id" value="${escapeHtml(filters.user_id)}"><span class="muted">user: <code>${escapeHtml(filters.user_id)}</code></span>` : ""}
   <button type="submit">Filter</button>
-  ${hasFilters ? `<a href="/admin/queue?status=${escapeHtml(filters.status)}" class="muted">clear</a>` : ""}
+  ${hasFilters ? `<a href="${clearHref}" class="muted">clear</a>` : ""}
 </form>`;
 
 	// Per-post freeze toggle. Only meaningful when the queue is scoped to one
