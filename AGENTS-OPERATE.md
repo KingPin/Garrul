@@ -169,6 +169,36 @@ out-of-range values clamp, non-numeric values fall back to the default.
 will see **25** initial comments instead of the previous ~100. Set it to `100`
 (env var or Settings page) to restore the old behavior.
 
+### Thread lifecycle & community settings (since v1.17.0)
+
+Four more integers, same hybrid precedence (DB settings row > env var > default)
+and the same server-side clamping. All default to **off**, so an install that
+ignores them behaves exactly as before.
+
+- **Auto-close** — `AUTO_CLOSE_DAYS` (close a thread this many days after its
+  anchor date; `0` = never) and `AUTO_CLOSE_AT` (an epoch-ms sunset that closes
+  **every** thread at/after that instant; `0` = never). Closure is evaluated
+  **lazily** at read/write time — there is no cron and nothing is persisted, so a
+  thread "becomes" closed the moment a request observes the rule. The age anchor
+  is the host page's real publish time when the embed supplies `data-published`
+  (stored as `posts.published_at`); without it Garrul falls back to first-comment
+  time, which is later than real publish, so set `data-published` if you rely on
+  `AUTO_CLOSE_DAYS`. A closed thread hides the composer (the widget shows a
+  reason-specific notice) and the POST endpoint rejects new comments **and
+  replies** with `403 err.thread_closed` — existing comments, reactions, and
+  votes stay live. Per-post manual close (below) overrides nothing here; it's a
+  separate, higher-precedence input to the same resolver.
+- **Community auto-collapse** — `COMMUNITY_COLLAPSE_RATIO` (percent of downvotes,
+  `down/(up+down)`, that folds a comment; `0` = off) gated by
+  `COMMUNITY_MIN_VOTES` (minimum total votes before the ratio applies; default
+  `5`). The floor is the **brigading guard** — without it a single downvote would
+  read as 100% and fold every fresh comment. Collapse is **client-side and
+  cosmetic**: the widget folds the body behind a "show" toggle, the content stays
+  in the payload, and votes stay live so a comment re-expands once its score
+  recovers (on the next render). It's derived in the browser because votes
+  deliberately don't bust the tree cache, so a server flag would be stale against
+  the score the widget already shows. Requires `DOWNVOTES_ENABLED`.
+
 ## 6. `ALLOWED_ORIGINS` deep-dive
 
 The single most common foot-gun. Symptom: the widget mounts but every
@@ -344,6 +374,10 @@ tracked by the `_migrations` table. Current set:
 - `0007_votes.sql` — vote storage + denormalized score counters
 - `0008_saved_replies.sql` — moderator saved replies
 - `0009_import_tracking.sql` — Disqus import idempotency
+- `0010_settings.sql` — DB-backed runtime settings overrides
+- `0011_page_engagement.sql` — page-level reactions + votes
+- `0012_deleted_by.sql` — records who deleted a comment
+- `0013_thread_lifecycle_reports.sql` — per-post close/`published_at` + reader `reports` table
 
 Run with `npm run migrate` (local Miniflare) or
 `npm run migrate -- --remote` (production D1). Idempotent. Never edit a
@@ -373,7 +407,7 @@ Pages (top nav):
 | Path | Purpose |
 | --- | --- |
 | `/admin` | Dashboard: counts, 30-day comments-per-day sparkline, oldest pending, spam-rate, top posts/commenters. |
-| `/admin/queue` | Moderation queue. Status tabs + filter bar (body search, post slug, date range, scoped-by-user). Per-row + bulk actions (Approve/Spam/Delete/Restore). Each row shows author identity (avatar + provider + admin/banned pills) and the latest audit footer. |
+| `/admin/queue` | Moderation queue. Status tabs (incl. a **Reported** tab — comments with open reader reports, with a count badge) + filter bar (body search, post slug, date range, scoped-by-user). Per-row + bulk actions (Approve/Spam/Delete/Restore). When filtered to a single post slug, a **Close / Open comments for this post** toggle appears. Rows also offer one-click **Ban author**. Each row shows author identity (avatar + provider + admin/banned pills) and the latest audit footer. |
 | `/admin/comments/:id` | Single-comment view: parent + replies, raw markdown, spam-verdicts per source, full audit history for that comment, author block with their last 5 comments. |
 | `/admin/users` | User search + ban toggle. |
 | `/admin/users/:id` | User detail: all their comments paginated, reactions received, audit history affecting them, Ban/Unban. |
@@ -391,17 +425,43 @@ responding):
 
 - `POST /admin/api/comments/:id` — `{action: approve|spam|delete|restore, reason?}`
 - `POST /admin/api/comments/bulk` — `{ids: string[], action}` (cap 100)
-- `POST /admin/api/users/:id` — `{banned: boolean, reason?}`
+- `POST /admin/api/comments/:id/reports/resolve` — clears open reader reports on a comment (audited `report.resolve`)
+- `POST /admin/api/posts/close` — `{slug, closed: boolean}` (per-post close/open; audited `post.close` / `post.open`; busts the cached first page)
+- `POST /admin/api/users/:id` — `{banned: boolean, reason?, from_comment?}` (one-click ban-author records the originating comment in audit meta; admin-only)
 - `POST /admin/api/subscriptions/:id` — `{action: unsubscribe|resend, reason?}`
 - `POST /admin/api/ops/rerender` — `{batch?: number, cursor?}` → `{processed, next_cursor}`
 - `POST /admin/api/ops/seed-demo` — disabled when `ENV=production`
+
+**Reader reporting & thread moderation.** Readers can flag a comment
+from the widget (anonymous allowed, no Turnstile — rate-limited by
+network and deduped one-per-network-per-comment, storing only an
+`ip_hash`, never a raw IP). Each new report fires a `comment.reported`
+webhook so operators get a Slack/Discord ping, and the comment surfaces
+in the queue's **Reported** tab with a count badge; the comment detail
+page lists the reasons. Dismiss the flags with **resolve** (the comment
+itself is still actioned with the normal approve/spam/delete buttons).
+Report counts are operator-only — they're never in the public payload,
+so they can't be used as a brigading signal.
+
+Per-post **close** freezes one thread: existing comments, reactions and
+votes stay live, but new comments and replies are rejected server-side
+(`403 err.thread_closed`) regardless of what the widget shows. Closure
+is also driven globally without touching individual posts via
+`AUTO_CLOSE_DAYS` / `AUTO_CLOSE_AT` (see §5) — all evaluated lazily at
+read/write time, no cron, no row migration.
+
+One-click **Ban author** reuses the user-ban mechanism. For an
+anonymous (ghost) author this is a *network-egress* ban keyed on the
+author's `ip_hash`, so behind CGNAT or a shared IP it can catch
+bystanders — the action confirms before banning. The originating
+comment id is recorded in the audit row's `meta.from_comment`.
 
 **Outbound webhooks.** Configured on `/admin/webhooks` (table-backed;
 the legacy `WEBHOOK_URL` env var still works only while no endpoint
 rows exist). Per endpoint: target URL (validated against an SSRF
 blocklist — private IPs, localhost, internal TLDs are rejected),
 optional HMAC secret, event filter (`comment.posted` / `edited` /
-`deleted` / `approved` / `spam`; empty = all), and an adapter that
+`deleted` / `approved` / `spam` / `reported`; empty = all), and an adapter that
 shapes the body (`generic` JSON, `slack`, or `discord` — the chat
 adapters neutralize `@everyone`-style mentions and truncate long
 bodies). Secured endpoints sign every request Stripe-style:

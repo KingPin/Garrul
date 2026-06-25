@@ -68,6 +68,13 @@ We set one cookie, `garrul_sess`, on the comments subdomain
 
 No advertising, analytics, or tracking cookies are set.
 
+## Local browser storage
+
+While you are typing, an unsent comment draft is saved in your own
+browser's `localStorage` so it survives an accidental reload. It never
+leaves your device — it is not sent to us — and it is cleared as soon as
+you submit or cancel the comment.
+
 ## Who sees your data
 
 - **Site moderators** at `[YOUR DOMAIN]` (whose emails are in the
