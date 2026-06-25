@@ -51,6 +51,7 @@ import { verifyTurnstile } from "../lib/turnstile";
 import { writeEvent } from "../lib/analytics";
 import { fireWebhook } from "../lib/webhook";
 import { loadFlags, loadNumbers } from "../lib/settings";
+import { resolveThreadOpen } from "../lib/thread";
 import { bustTreeCache, TREE_CACHE_TTL, treeCacheKey } from "../lib/tree-cache";
 import {
 	cacheJson,
@@ -113,8 +114,29 @@ type CreateBody = {
 	turnstile_token?: string;
 	post_title?: string | null;
 	post_url?: string | null;
+	/** Host page's real publish time (epoch ms or ISO), from data-published. */
+	post_published?: number | string | null;
 	form_ts?: string;
 	[HONEYPOT_FIELD]?: string;
+};
+
+// Upper bound for a host-supplied publish time (~year 2100), matching the
+// auto_close_at clamp. A bogus far-future value would only ever DELAY that one
+// post's age-based close, but reject out-of-range/garbage so it can't poison
+// the anchor. Accepts epoch ms (number or numeric string) or an ISO date.
+const PUBLISHED_AT_MAX = 4102444800000;
+const parsePublishedAt = (raw: number | string | null | undefined): number | null => {
+	if (raw == null) return null;
+	let ms: number;
+	if (typeof raw === "number") {
+		ms = raw;
+	} else {
+		const s = raw.trim();
+		if (!s) return null;
+		ms = /^\d+$/.test(s) ? Number.parseInt(s, 10) : Date.parse(s);
+	}
+	if (!Number.isFinite(ms) || ms <= 0 || ms > PUBLISHED_AT_MAX) return null;
+	return ms;
 };
 
 const editWindowMs = (env: Bindings): number => {
@@ -410,7 +432,23 @@ comments.post("/", async (c) => {
 			// drop
 		}
 	}
-	await upsertPost(c.env.DB, slug, body.post_title ?? null, postUrl);
+	const post = await upsertPost(
+		c.env.DB,
+		slug,
+		body.post_title ?? null,
+		postUrl,
+		parsePublishedAt(body.post_published),
+	);
+
+	// Thread acceptance gate. The global comments_enabled switch was checked at
+	// the top; this also enforces the per-post manual close and the lazy
+	// auto-close rules (sunset date / age). It runs before the parent lookup and
+	// insert, so it covers replies as well as top-level comments. The widget's
+	// closed-state UI is cosmetic — this is the authoritative gate.
+	const numbers = await loadNumbers(c.env);
+	if (!resolveThreadOpen(post, flags, numbers, Date.now()).open) {
+		return c.json({ error: t("err.thread_closed") }, 403);
+	}
 
 	// Parent must exist and live on the same post.
 	let parent_id: string | null = null;
@@ -545,6 +583,10 @@ type ListPayload = {
 	post: Awaited<ReturnType<typeof getPost>>;
 	threads: TreeNode[];
 	next_cursor: string | null;
+	/** Whether the widget should show the composer (vs. a closed notice). */
+	accepting_comments: boolean;
+	/** Why the thread is closed, for the closed-notice copy; null if open. */
+	closed_reason: string | null;
 };
 
 const ULID_RE = /^[0-9A-HJKMNP-TV-Z]{26}$/;
@@ -599,8 +641,10 @@ comments.get("/", async (c) => {
 	const session = await readSession(c);
 
 	// Top-level threads per page, operator-tunable (DB > env > default 25),
-	// clamped to [1,200] in the settings layer.
-	const pageSize = (await loadNumbers(c.env)).comments_per_page;
+	// clamped to [1,200] in the settings layer. The full numbers object is also
+	// reused below to resolve the thread's accepting-comments state.
+	const numbers = await loadNumbers(c.env);
+	const pageSize = numbers.comments_per_page;
 
 	// Fast path: first page is cached at the edge (Cache API, not KV — see
 	// response-cache.ts) for anonymous viewers only, keyed by sort AND page
@@ -657,7 +701,8 @@ comments.get("/", async (c) => {
 	// When the operator opts in, keep every deleted comment as a placeholder
 	// (leaf deletions included) rather than pruning them. A toggle change is
 	// reflected for anonymous viewers within the tree-cache TTL.
-	const keepAllDeleted = (await loadFlags(c.env)).show_deleted_placeholders;
+	const flags = await loadFlags(c.env);
+	const keepAllDeleted = flags.show_deleted_placeholders;
 
 	const { threads: allThreads } = buildTree(rows, authors, reactionsById, myVotes, {
 		keepAllDeleted,
@@ -703,7 +748,24 @@ comments.get("/", async (c) => {
 			: last.id
 		: null;
 
-	const payload: ListPayload = { post, threads: page, next_cursor };
+	// Whether new comments are accepted, so the widget can show the composer or a
+	// closed notice. A post with no row yet (no comments posted) is open unless a
+	// global/sunset rule says otherwise, so synthesize a default-open post for
+	// the resolver in that case. Anonymous viewers may see this lag a sunset/age
+	// flip by up to the tree-cache TTL — acceptable (the POST gate is exact).
+	const threadState = resolveThreadOpen(
+		post ?? { closed: false, published_at: null, created_at: Date.now() },
+		flags,
+		numbers,
+		Date.now(),
+	);
+	const payload: ListPayload = {
+		post,
+		threads: page,
+		next_cursor,
+		accepting_comments: threadState.open,
+		closed_reason: threadState.reason ?? null,
+	};
 
 	if (cacheable) {
 		// Write-through to the edge cache; the put runs after the response when
