@@ -74,6 +74,12 @@ type ListResponse = {
 	post: unknown;
 	threads: TreeNode[];
 	next_cursor: string | null;
+	// Per-post thread-lifecycle state (src/lib/thread.ts). The widget shows the
+	// composer only when accepting_comments is true; closed_reason picks the
+	// notice copy. Both optional so an older server (pre-thread-lifecycle) that
+	// omits them degrades to "open".
+	accepting_comments?: boolean;
+	closed_reason?: "comments_disabled" | "post_closed" | "sunset" | "aged_out" | null;
 };
 
 type Me = {
@@ -338,6 +344,25 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
 	cursor: pointer;
 }
 .gr-actions button:hover { color: var(--gr-link); }
+/* Post-report confirmation that replaces the Report button in place. */
+.gr-reported { color: var(--gr-muted); font-size: 0.85em; }
+/* Low-score collapse toggle (community auto-collapse). Muted, inline, reads as
+   a stub line rather than a primary action. */
+.gr-low-score {
+	font: inherit;
+	font-size: 0.85em;
+	background: transparent;
+	border: 0;
+	padding: 0;
+	margin: 0.25rem 0;
+	cursor: pointer;
+	color: var(--gr-muted);
+	align-self: flex-start;
+}
+.gr-low-score:hover { color: var(--gr-link); }
+/* Folded body is hidden via the [hidden] attribute; the rule below just
+   guarantees it across the Shadow DOM reset. */
+.gr-body[hidden] { display: none; }
 .gr-page-engage {
 	display: flex;
 	flex-wrap: wrap;
@@ -502,6 +527,59 @@ const el = <K extends keyof HTMLElementTagNameMap>(
 const parseTrustedHtml = (html: string): DocumentFragment => {
 	const range = document.createRange();
 	return range.createContextualFragment(html);
+};
+
+// ── Draft autosave ──────────────────────────────────────────────────────────
+// A long comment shouldn't vanish on an accidental reload or a failed submit.
+// Drafts live ONLY in the visitor's own browser (localStorage), keyed by slug
+// (and parent id for replies). No server state, no PII leaves the device; the
+// value is re-inserted via textarea.value (never as HTML), so no XSS surface.
+const DRAFT_PREFIX = "garrul:draft:";
+// Cap the stored size — localStorage is small and shared across the origin, and
+// the server rejects oversized bodies anyway. Generous vs. the comment limit.
+const DRAFT_MAX = 10_000;
+
+const draftKey = (slug: string, parentId: string | null): string =>
+	`${DRAFT_PREFIX}${slug}${parentId ? `:${parentId}` : ""}`;
+
+const clearDraft = (key: string): void => {
+	try {
+		localStorage.removeItem(key);
+	} catch {
+		// Safari private mode / disabled storage: nothing to clear.
+	}
+};
+
+/**
+ * Wire a textarea to localStorage: restore any saved draft on mount, then
+ * persist (debounced) on input. Returns the storage key so the submit/cancel
+ * paths can clear it. All storage access is wrapped — a throwing localStorage
+ * (Safari private mode, quota, disabled) degrades to no autosave, never breaks
+ * the composer.
+ */
+const attachDraft = (ta: HTMLTextAreaElement, key: string): string => {
+	try {
+		const saved = localStorage.getItem(key);
+		// Only restore into an empty field so we never clobber a server-provided
+		// or already-typed value.
+		if (saved && !ta.value) ta.value = saved;
+	} catch {
+		// Storage unavailable — skip restore.
+	}
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	ta.addEventListener("input", () => {
+		if (timer) clearTimeout(timer);
+		timer = setTimeout(() => {
+			try {
+				const v = ta.value;
+				if (v) localStorage.setItem(key, v.slice(0, DRAFT_MAX));
+				else localStorage.removeItem(key);
+			} catch {
+				// Quota/disabled: drop this save silently.
+			}
+		}, 400);
+	});
+	return key;
 };
 
 type MdFormat = {
@@ -708,6 +786,16 @@ type WidgetCtx = {
 	editWindowMs: number;
 	turnstileSiteKey: string | null;
 	commentsEnabled: boolean;
+	// Per-post acceptance (folds in the global flag, per-post close, and
+	// auto-close). Drives Reply visibility and the composer/closed-notice
+	// swap. closedReason picks the notice copy.
+	acceptingComments: boolean;
+	closedReason:
+		| "comments_disabled"
+		| "post_closed"
+		| "sunset"
+		| "aged_out"
+		| null;
 	reactionsEnabled: boolean;
 	votingEnabled: boolean;
 	downvotesEnabled: boolean;
@@ -718,6 +806,11 @@ type WidgetCtx = {
 	// a comment at depth >= this starts with its replies collapsed (0 = never).
 	repliesPerThread: number;
 	autoCollapseDepth: number;
+	// Community auto-collapse thresholds (src/routes/api.config.ts). A comment
+	// folds client-side when down/(up+down) ≥ ratio% once total votes ≥ floor
+	// (and downvotes are on). ratio 0 = disabled.
+	communityMinVotes: number;
+	communityCollapseRatio: number;
 	reload: () => void;
 };
 
@@ -1158,7 +1251,7 @@ const buildPageEngagement = (ctx: WidgetCtx): HTMLElement => {
 const buildActions = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): HTMLElement => {
 	const row = el("div", "gr-actions");
 
-	if (ctx.commentsEnabled && n.depth < 4 && n.status !== "deleted") {
+	if (ctx.acceptingComments && n.depth < 4 && n.status !== "deleted") {
 		const replyBtn = el("button", undefined, "Reply");
 		replyBtn.type = "button";
 		replyBtn.addEventListener("click", () => {
@@ -1202,6 +1295,40 @@ const buildActions = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): HTMLEleme
 			}
 		});
 		row.appendChild(delBtn);
+	}
+
+	// Report: any reader can flag a visible comment they didn't write. It's
+	// independent of whether the thread accepts new comments (you can still
+	// report on a closed thread) and of sign-in (the endpoint allows anon,
+	// rate-limited + deduped server-side). Hidden on deleted comments and on
+	// the viewer's own (reporting yourself is meaningless).
+	const isOwnComment = ctx.me != null && n.author.id === ctx.me.id;
+	if (n.status !== "deleted" && !isOwnComment) {
+		const reportBtn = el("button", "gr-report", "Report");
+		reportBtn.type = "button";
+		reportBtn.addEventListener("click", async () => {
+			reportBtn.disabled = true;
+			try {
+				await fetch(
+					`${ctx.apiBase}/api/v1/comments/${encodeURIComponent(n.id)}/report`,
+					{
+						method: "POST",
+						credentials: "include",
+						headers: { "content-type": "application/json" },
+						body: "{}",
+					},
+				);
+			} catch {
+				// Network failure: still show the thanks state. The endpoint is
+				// fire-and-forget from the reader's view (it returns ok even for
+				// duplicates/unknown ids to avoid leaking state), so there's no
+				// useful error to surface — and a retry would just re-dedupe.
+			}
+			// Replace the button with a non-interactive confirmation regardless
+			// of outcome, so a reader can't report-bomb one comment from the UI.
+			reportBtn.replaceWith(el("span", "gr-reported", "Reported, thanks"));
+		});
+		row.appendChild(reportBtn);
 	}
 
 	return row;
@@ -1261,6 +1388,7 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	const ta = el("textarea");
 	ta.placeholder = `Reply to @${parent.author.name}…`;
 	ta.required = true;
+	const dkey = attachDraft(ta, draftKey(ctx.slug, parent.id));
 
 	let nameInput: HTMLInputElement | null = null;
 	if (!ctx.me) {
@@ -1334,6 +1462,7 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	}
 
 	cancel.addEventListener("click", () => {
+		clearDraft(dkey);
 		tsHandle?.destroy();
 		wrap.remove();
 	});
@@ -1377,6 +1506,8 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 				tsHandle?.reset();
 				return;
 			}
+			// Reply landed — drop the saved draft before the list re-renders.
+			clearDraft(dkey);
 			// Pending replies reload like approved ones: the author's own
 			// queued comment comes back from the list endpoint and renders
 			// inline with a "Pending approval" badge.
@@ -1390,6 +1521,22 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	});
 
 	return wrap;
+};
+
+/**
+ * Community auto-collapse (Reddit/HN "below threshold"). Purely cosmetic and
+ * reversible: a heavily-downvoted comment's body is folded behind a toggle, the
+ * content stays in the payload, and votes stay live so it can recover. Derived
+ * client-side because votes deliberately don't bust the tree cache — a server
+ * flag would be stale against the score the widget already shows. The
+ * min-votes floor is the brigading guard (without it, 1 downvote = 100% would
+ * fold every fresh comment).
+ */
+const shouldCollapseLowScore = (n: TreeNode, ctx: WidgetCtx): boolean => {
+	if (!ctx.downvotesEnabled || ctx.communityCollapseRatio <= 0) return false;
+	const total = n.score_up + n.score_down;
+	if (total < ctx.communityMinVotes) return false;
+	return (n.score_down / total) * 100 >= ctx.communityCollapseRatio;
 };
 
 const buildComment = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
@@ -1432,6 +1579,29 @@ const buildComment = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	}
 
 	main.append(meta, body);
+
+	// Community auto-collapse: fold a heavily-downvoted (approved) comment's
+	// body behind a toggle. Reversible and cosmetic — the content is already in
+	// the DOM, just hidden.
+	if (n.status === "approved" && shouldCollapseLowScore(n, ctx)) {
+		body.hidden = true;
+		const toggle = el("button", "gr-low-score") as HTMLButtonElement;
+		toggle.type = "button";
+		let shown = false;
+		const apply = () => {
+			body.hidden = !shown;
+			toggle.textContent = shown
+				? "Hide comment"
+				: "Comment hidden (low score) — show";
+			toggle.setAttribute("aria-expanded", String(shown));
+		};
+		toggle.addEventListener("click", () => {
+			shown = !shown;
+			apply();
+		});
+		apply();
+		body.insertAdjacentElement("beforebegin", toggle);
+	}
 
 	// Votes/reactions only on public (approved) comments — a pending comment
 	// isn't visible to anyone but its author, so engagement is meaningless.
@@ -1858,6 +2028,21 @@ const setSort = (root: ShadowRoot, sort: SortKey): void => {
 	if (st) st.sort = sort;
 };
 
+// Closed-state notice copy, picked from the server's closed_reason enum so the
+// reader sees *why* the thread is frozen rather than a generic line.
+const closedNotice = (reason: ListResponse["closed_reason"]): string => {
+	switch (reason) {
+		case "post_closed":
+			return "Comments are closed on this post.";
+		case "aged_out":
+			return "This thread has been closed to new comments.";
+		case "sunset":
+			return "Commenting has ended.";
+		default:
+			return "Comments are closed.";
+	}
+};
+
 const loadOnce = async (
 	root: ShadowRoot,
 	slug: string,
@@ -1879,6 +2064,8 @@ const loadOnce = async (
 	// config fetch degrades gracefully to the same behavior.
 	let repliesPerThread = 3;
 	let autoCollapseDepth = 3;
+	let communityMinVotes = 5;
+	let communityCollapseRatio = 0;
 	try {
 		const cfgRes = await fetch(`${apiBase}/api/v1/config`, {
 			credentials: "include",
@@ -1897,6 +2084,8 @@ const loadOnce = async (
 				page_votes_enabled?: boolean;
 				replies_per_thread?: number;
 				auto_collapse_depth?: number;
+				community_min_votes?: number;
+				community_collapse_ratio?: number;
 			};
 			siteKey = cfg.turnstile_site_key ?? null;
 			editWindowMinutes = cfg.edit_window_minutes ?? 5;
@@ -1914,6 +2103,10 @@ const loadOnce = async (
 				repliesPerThread = cfg.replies_per_thread;
 			if (typeof cfg.auto_collapse_depth === "number")
 				autoCollapseDepth = cfg.auto_collapse_depth;
+			if (typeof cfg.community_min_votes === "number")
+				communityMinVotes = cfg.community_min_votes;
+			if (typeof cfg.community_collapse_ratio === "number")
+				communityCollapseRatio = cfg.community_collapse_ratio;
 		}
 	} catch {
 		// /api/v1/config is optional; the widget still renders without Turnstile
@@ -1929,6 +2122,15 @@ const loadOnce = async (
 		return;
 	}
 	const data = dataResult as ListResponse;
+
+	// Per-post acceptance: the server resolves the global flag, per-post close,
+	// and auto-close into one boolean + reason. Fall back to the global flag for
+	// an older server that doesn't send these fields.
+	const acceptingComments =
+		typeof data.accepting_comments === "boolean"
+			? data.accepting_comments
+			: commentsEnabled;
+	const closedReason = data.closed_reason ?? null;
 
 	root.replaceChildren();
 	const style = el("style");
@@ -1947,6 +2149,8 @@ const loadOnce = async (
 		editWindowMs: editWindowMinutes * 60_000,
 		turnstileSiteKey: siteKey,
 		commentsEnabled,
+		acceptingComments,
+		closedReason,
 		reactionsEnabled,
 		votingEnabled,
 		downvotesEnabled,
@@ -1954,6 +2158,8 @@ const loadOnce = async (
 		pageVotesEnabled,
 		repliesPerThread,
 		autoCollapseDepth,
+		communityMinVotes,
+		communityCollapseRatio,
 		reload,
 	};
 	// Article-level engagement bar sits at the very top, above the composer.
@@ -1965,28 +2171,34 @@ const loadOnce = async (
 	// down) but only mounted when comments are enabled. When disabled, existing
 	// comments stay visible (read-only) and we show a "closed" notice instead.
 	const form = buildForm(apiBase, siteKey, me != null);
+	// Restore/persist the top-level composer draft (cleared on successful post
+	// in submit()). Reply-form drafts are wired separately in buildReplyForm.
+	const composer = form.querySelector(
+		".gr-body-input",
+	) as HTMLTextAreaElement | null;
+	if (composer) attachDraft(composer, draftKey(slug, null));
 	const list = el("div", "gr-list");
 	if (data.threads.length === 0) {
 		// Don't invite a comment the reader can't leave: when comments are
-		// closed the "Comments are closed." notice below is the whole story.
+		// closed the closed-state notice below is the whole story.
 		list.appendChild(
 			el(
 				"p",
 				"gr-empty",
-				commentsEnabled ? "Be the first to comment." : "No comments yet.",
+				acceptingComments ? "Be the first to comment." : "No comments yet.",
 			),
 		);
 	} else {
 		appendThreads(list, data.threads, ctx);
 	}
-	if (commentsEnabled) {
+	if (acceptingComments) {
 		if (authBlock) wrap.appendChild(authBlock);
 		// Mint the timing token now so the honeypot-timing heuristic has
 		// real elapsed seconds to measure when the user eventually submits.
 		prefetchFormToken(apiBase);
 		wrap.append(form);
 	} else {
-		wrap.appendChild(el("p", "gr-empty", "Comments are closed."));
+		wrap.appendChild(el("p", "gr-empty", closedNotice(closedReason)));
 	}
 
 	// Sort selector only when voting is on (no scores to rank without it).
@@ -2063,7 +2275,7 @@ const loadOnce = async (
 		}
 	}
 
-	if (siteKey && commentsEnabled) {
+	if (siteKey && acceptingComments) {
 		const tsBox = form.querySelector(".gr-turnstile") as HTMLElement | null;
 		if (tsBox) {
 			const handle = mountTurnstileFrame(tsBox, apiBase, () => {
@@ -2145,6 +2357,10 @@ const submit = async (
 			turnstileHandles.get(form)?.reset();
 			return;
 		}
+
+		// Comment landed — drop the saved composer draft so the reload starts
+		// from a clean field.
+		clearDraft(draftKey(slug, null));
 
 		// Pending comments fall through to the same reload path as approved
 		// ones: the list endpoint returns the author's own queued comment, so
