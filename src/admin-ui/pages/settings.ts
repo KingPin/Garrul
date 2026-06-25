@@ -14,6 +14,7 @@ import { escapeHtml } from "../escape";
 const TABS = [
 	{ id: "features", label: "Features" },
 	{ id: "display", label: "Display" },
+	{ id: "moderation", label: "Moderation" },
 	{ id: "config", label: "Configuration" },
 ];
 
@@ -78,6 +79,27 @@ const NUMBER_META: { key: NumberKey; label: string; help: string }[] = [
 	},
 ];
 
+// Moderation-tab steppers. auto_close_at is NOT here — it's an epoch instant
+// rendered with a date picker (raw epoch ms is unusable in a stepper); see the
+// auto-close card below.
+const MOD_NUMBER_META: { key: NumberKey; label: string; help: string }[] = [
+	{
+		key: "auto_close_days",
+		label: "Auto-close after (days)",
+		help: "Close a thread to new comments this many days after the article's publish date (or, if the host page doesn't send one, the first comment's date). 0 = never auto-close by age. Existing comments stay visible.",
+	},
+	{
+		key: "community_min_votes",
+		label: "Auto-collapse: minimum votes",
+		help: "A comment needs at least this many total votes before the downvote ratio can collapse it. Guards new comments from being folded by a single downvote. Ignored when the ratio below is 0.",
+	},
+	{
+		key: "community_collapse_ratio",
+		label: "Auto-collapse: downvote %",
+		help: "Fold a comment (readers can still expand it) once this percent of its votes are downvotes and it has met the minimum above. 0 = never auto-collapse. Needs downvotes enabled.",
+	},
+];
+
 export const renderSettings = (
 	env: Bindings,
 	flags: ResolvedFlags,
@@ -129,7 +151,7 @@ export const renderSettings = (
 
 	// Numeric display settings. Each stepper reflects the resolved effective
 	// value; min/max mirror the server-side clamp (numberBounds).
-	const numberInputs = NUMBER_META.map((f) => {
+	const stepper = (f: { key: NumberKey; label: string; help: string }) => {
 		const b = numberBounds(f.key);
 		return renderStepper({
 			name: f.key,
@@ -139,14 +161,16 @@ export const renderSettings = (
 			label: f.label,
 			help: f.help,
 		});
-	}).join("");
+	};
+	const numberInputs = NUMBER_META.map(stepper).join("");
+	const modNumberInputs = MOD_NUMBER_META.map(stepper).join("");
 
 	const initial = JSON.stringify(
 		Object.fromEntries(FLAG_META.map((f) => [f.key, flags[f.key]])),
 	);
-	const numInitial = JSON.stringify(
-		Object.fromEntries(NUMBER_META.map((f) => [f.key, numbers[f.key]])),
-	);
+	// Seed the whole resolved numbers object so keys surfaced as non-stepper
+	// controls (auto_close_at, via the date picker) round-trip on save too.
+	const numInitial = JSON.stringify(numbers);
 
 	return `
 <div x-data="{
@@ -154,6 +178,18 @@ export const renderSettings = (
   busy: false,
   flags: ${escapeHtml(initial)},
   nums: ${escapeHtml(numInitial)},
+  // Friendly proxy over the epoch-ms auto_close_at: the date picker reads/writes
+  // a YYYY-MM-DD string; the canonical value stays the number in nums. Empty
+  // string clears it to 0 (disabled). End-of-day UTC so the chosen date is fully
+  // included before the sunset trips.
+  get autoCloseDate() {
+    return this.nums.auto_close_at
+      ? new Date(this.nums.auto_close_at).toISOString().slice(0, 10)
+      : '';
+  },
+  set autoCloseDate(v) {
+    this.nums.auto_close_at = v ? Date.parse(v + 'T23:59:59Z') : 0;
+  },
   async save() {
     this.busy = true;
     try {
@@ -212,6 +248,34 @@ export const renderSettings = (
       replies collapse. Smaller values keep a busy thread from pushing the rest
       of the page down.</p>
       ${numberInputs}
+    </div>
+
+    <div class="card" x-show="tab === 'moderation'" x-cloak>
+      <h2>Moderation</h2>
+      <p class="muted">Thread auto-close and community auto-collapse. All off by
+      default. Closing a thread only blocks <em>new</em> comments — existing ones
+      stay visible and votes/reactions stay live. Auto-collapse just folds
+      heavily-downvoted comments; readers can still expand them.</p>
+      ${modNumberInputs}
+      <div class="field-row">
+        <span class="field-control">
+          <input type="date" x-model="autoCloseDate">
+          <button type="button" class="secondary" @click="autoCloseDate = ''"
+                  x-show="nums.auto_close_at">Clear</button>
+        </span>
+        <span class="field-text">
+          <strong>Close all threads on</strong>
+          <span class="muted">Instance-wide sunset: once this date passes, no
+          thread accepts new comments. Leave empty to disable. Takes effect
+          within a few minutes of the date passing.</span>
+        </span>
+      </div>
+      <!-- Canonical epoch-ms value for auto_close_at; the date picker above is a
+           proxy over it. Kept as the named number input so it saves like every
+           other numeric setting. -->
+      <input type="hidden" name="auto_close_at" x-model.number="nums.auto_close_at"
+             min="${numberBounds("auto_close_at").min}"
+             max="${numberBounds("auto_close_at").max}">
     </div>
 
     <p class="settings-actions" x-show="tab !== 'config'">

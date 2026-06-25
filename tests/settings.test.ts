@@ -284,6 +284,10 @@ describe("loadNumbers — defaults", () => {
 			comments_per_page: 25,
 			replies_per_thread: 3,
 			auto_collapse_depth: 3,
+			auto_close_days: 0,
+			auto_close_at: 0,
+			community_min_votes: 5,
+			community_collapse_ratio: 0,
 		});
 	});
 
