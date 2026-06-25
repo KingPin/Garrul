@@ -106,8 +106,12 @@ export const upsertPost = async (
 	publishedAt: number | null = null,
 ): Promise<Post> => {
 	const now = Date.now();
-	// COALESCE so a later comment that omits these can't clobber an existing
-	// title/url/published_at; closed is operator-controlled and never set here.
+	// title/url: COALESCE(excluded, existing) so the host can refresh them on a
+	// later comment, but an omitted value never clobbers what's stored.
+	// published_at: COALESCE(existing, excluded) — write-once / first-writer-wins.
+	// It anchors age-based auto-close, so once set it must be immutable; otherwise
+	// an untrusted client could overwrite an established thread's close-anchor with
+	// a bogus date to force it closed. closed is operator-controlled, never set here.
 	await db
 		.prepare(
 			`INSERT INTO posts (slug, title, url, created_at, published_at)
@@ -115,7 +119,7 @@ export const upsertPost = async (
 			 ON CONFLICT(slug) DO UPDATE SET
 			   title        = COALESCE(excluded.title, posts.title),
 			   url          = COALESCE(excluded.url,   posts.url),
-			   published_at = COALESCE(excluded.published_at, posts.published_at)`,
+			   published_at = COALESCE(posts.published_at, excluded.published_at)`,
 		)
 		.bind(slug, title, url, now, publishedAt)
 		.run();

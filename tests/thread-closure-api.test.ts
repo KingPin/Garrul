@@ -180,6 +180,38 @@ describe("thread closure — POST gate", () => {
 		});
 		expect(res.status).toBe(403);
 	});
+
+	it("does not let a later request overwrite an established published_at anchor", async () => {
+		const real = 1_700_000_000_000; // host's real publish time, set on first comment
+		const bogus = 1_000_000_000_000; // ~year 2001, a poison attempt
+		const publishedAt = (slug: string) =>
+			(sqlite.prepare("SELECT published_at FROM posts WHERE slug = ?").get(slug) as {
+				published_at: number | null;
+			}).published_at;
+
+		await post({ slug: "anchored", body: "first", post_published: real });
+		expect(publishedAt("anchored")).toBe(real);
+
+		// A second comment carrying a bogus older anchor must not clobber it.
+		const res = await post({ slug: "anchored", body: "second", post_published: bogus });
+		expect(res.status).toBe(201);
+		expect(publishedAt("anchored")).toBe(real);
+	});
+
+	it("does not persist published_at when the gate rejects the request", async () => {
+		await post({ slug: "frozen3", body: "first comment" });
+		closePost("frozen3");
+		const res = await post({
+			slug: "frozen3",
+			body: "blocked",
+			post_published: 1_000_000_000_000,
+		});
+		expect(res.status).toBe(403);
+		const row = sqlite
+			.prepare("SELECT published_at FROM posts WHERE slug = ?")
+			.get("frozen3") as { published_at: number | null };
+		expect(row.published_at).toBeNull();
+	});
 });
 
 describe("thread closure — GET payload", () => {

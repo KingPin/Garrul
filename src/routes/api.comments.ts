@@ -432,23 +432,39 @@ comments.post("/", async (c) => {
 			// drop
 		}
 	}
-	const post = await upsertPost(
+	// Thread acceptance gate. The global comments_enabled switch was checked at
+	// the top; this also enforces the per-post manual close and the lazy
+	// auto-close rules (sunset date / age). It runs before the parent lookup and
+	// insert, so it covers replies as well as top-level comments. The widget's
+	// closed-state UI is cosmetic — this is the authoritative gate.
+	//
+	// Crucially it runs against the EXISTING stored post BEFORE upsertPost, so a
+	// crafted request that fails the gate can't mutate the post row as a side
+	// effect (e.g. persist a bogus published_at to poison the close-anchor and
+	// then 403). A post with no row yet is open unless a global/sunset rule says
+	// otherwise, so synthesize a default-open post for the resolver in that case.
+	const existing = await getPost(c.env.DB, slug);
+	const numbers = await loadNumbers(c.env);
+	const threadState = resolveThreadOpen(
+		existing ?? { closed: false, published_at: null, created_at: Date.now() },
+		flags,
+		numbers,
+		Date.now(),
+	);
+	if (!threadState.open) {
+		return c.json({ error: t("err.thread_closed") }, 403);
+	}
+
+	// Make sure the post row exists so the FK on comments resolves. published_at
+	// is write-once in upsertPost (first-writer-wins), so this can establish a
+	// fresh thread's anchor but can never overwrite an established one.
+	await upsertPost(
 		c.env.DB,
 		slug,
 		body.post_title ?? null,
 		postUrl,
 		parsePublishedAt(body.post_published),
 	);
-
-	// Thread acceptance gate. The global comments_enabled switch was checked at
-	// the top; this also enforces the per-post manual close and the lazy
-	// auto-close rules (sunset date / age). It runs before the parent lookup and
-	// insert, so it covers replies as well as top-level comments. The widget's
-	// closed-state UI is cosmetic — this is the authoritative gate.
-	const numbers = await loadNumbers(c.env);
-	if (!resolveThreadOpen(post, flags, numbers, Date.now()).open) {
-		return c.json({ error: t("err.thread_closed") }, 403);
-	}
 
 	// Parent must exist and live on the same post.
 	let parent_id: string | null = null;
