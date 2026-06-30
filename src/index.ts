@@ -66,6 +66,11 @@ export type Bindings = {
 	//                             any request whose header doesn't match.
 	TELEGRAM_BOT_TOKEN?: string;
 	TELEGRAM_WEBHOOK_SECRET?: string;
+	//   TELEGRAM_BOT_USERNAME   — the bot's @username (without @). Optional;
+	//                             when set, the admin Telegram page renders a
+	//                             one-tap t.me/<bot>?start=<code> deep link
+	//                             instead of manual /start instructions.
+	TELEGRAM_BOT_USERNAME?: string;
 	// Anti-spam (all optional; each feature opts in when its env var is set).
 	SPAM_PROVIDER?: string;
 	AKISMET_API_KEY?: string;

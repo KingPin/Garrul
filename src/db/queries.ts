@@ -1645,6 +1645,8 @@ export const ADMIN_ACTIONS = [
 	"post.close",
 	"post.open",
 	"report.resolve",
+	"telegram.link_code",
+	"telegram.unlink",
 ] as const;
 export type AdminAction = (typeof ADMIN_ACTIONS)[number];
 

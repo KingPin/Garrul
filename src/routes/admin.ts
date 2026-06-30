@@ -44,8 +44,10 @@ import {
 	countOpenReportsByComment,
 	createWebhookEndpoint,
 	deleteSettings,
+	deleteTelegramLinkByUser,
 	deleteWebhookEndpoint,
 	getComment,
+	getTelegramLinkByUser,
 	getPost,
 	getUser,
 	getUsersByIds,
@@ -61,6 +63,7 @@ import {
 	markSubscriptionUnsubscribed,
 	setPostClosed,
 	setSetting,
+	setTelegramDigest,
 	setUserRole,
 	updateSavedReply,
 	deleteSavedReply,
@@ -104,6 +107,8 @@ import {
 import { renderUserDetail } from "../admin-ui/pages/user-detail";
 import { renderUsers } from "../admin-ui/pages/users";
 import { renderOperator } from "../admin-ui/pages/operator";
+import { renderTelegram } from "../admin-ui/pages/telegram";
+import { issueTelegramLinkToken } from "./telegram";
 import { renderSettings } from "../admin-ui/pages/settings";
 import {
 	bustFlagsCache,
@@ -654,6 +659,82 @@ admin.get("/operator", async (c) => {
 			updateInfo,
 		),
 	);
+});
+
+// --- Telegram operator linking ------------------------------------------
+//
+// The bot itself is configured with Worker secrets (TELEGRAM_BOT_TOKEN /
+// _WEBHOOK_SECRET); this page links the viewing admin's personal Telegram
+// account for interactive buttons + slash commands + the optional digest.
+// Admin-only: linking grants the account moderation reach, so it shouldn't be
+// self-served by a plain mod. Every Telegram action still re-checks the
+// linked user's role at action time.
+
+admin.get("/telegram", async (c) => {
+	const user = await requireAdmin(c);
+	if (user instanceof Response) return user;
+	const [updateInfo, link] = await Promise.all([
+		peekCachedLatestVersion(c.env),
+		getTelegramLinkByUser(c.env.DB, user.id),
+	]);
+	return c.html(
+		renderPage(
+			c,
+			"Telegram",
+			renderTelegram({
+				configured: !!c.env.TELEGRAM_BOT_TOKEN,
+				webhookSecretSet: !!c.env.TELEGRAM_WEBHOOK_SECRET,
+				botUsername: c.env.TELEGRAM_BOT_USERNAME ?? null,
+				link: link ? { linked_at: link.linked_at, digest: link.digest } : null,
+			}),
+			user,
+			updateInfo,
+		),
+	);
+});
+
+// Issue a one-time link code. The admin redeems it by sending /start <code>
+// to the bot, which writes the telegram_links row (src/routes/telegram.ts).
+admin.post("/api/telegram/link", async (c) => {
+	const user = await requireAdmin(c);
+	if (user instanceof Response) return user;
+	const code = await issueTelegramLinkToken(c.env.OAUTH_STATE, user.id);
+	// The code is a bearer credential for the link; it's short-lived (10 min)
+	// and one-time, but keep it out of the audit trail and logs all the same.
+	await adminInsertAudit(c.env.DB, {
+		admin_id: user.id,
+		action: "telegram.link_code",
+		target_kind: "user",
+		target_id: user.id,
+	});
+	return c.json({ ok: true, code });
+});
+
+admin.delete("/api/telegram/link", async (c) => {
+	const user = await requireAdmin(c);
+	if (user instanceof Response) return user;
+	const removed = await deleteTelegramLinkByUser(c.env.DB, user.id);
+	if (removed) {
+		await adminInsertAudit(c.env.DB, {
+			admin_id: user.id,
+			action: "telegram.unlink",
+			target_kind: "user",
+			target_id: user.id,
+		});
+	}
+	return c.json({ ok: true, removed });
+});
+
+admin.post("/api/telegram/digest", async (c) => {
+	const user = await requireAdmin(c);
+	if (user instanceof Response) return user;
+	const body = await c.req.json<{ digest?: unknown }>().catch(() => null);
+	if (!body || typeof body.digest !== "boolean") {
+		return c.json({ error: "invalid_body" }, 400);
+	}
+	const updated = await setTelegramDigest(c.env.DB, user.id, body.digest);
+	if (!updated) return c.json({ error: "not_linked" }, 404);
+	return c.json({ ok: true, digest: body.digest });
 });
 
 admin.get("/settings", async (c) => {

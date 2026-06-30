@@ -161,6 +161,7 @@ describe("admin layout role-aware nav", () => {
 		"/admin/audit",
 		"/admin/subscriptions",
 		"/admin/operator",
+		"/admin/telegram",
 		"/admin/settings",
 	];
 
