@@ -869,6 +869,12 @@ const isValidEvent = (v: unknown): v is (typeof VALID_EVENTS)[number] =>
 	typeof v === "string" &&
 	(VALID_EVENTS as readonly string[]).includes(v);
 
+// Telegram chat id: a signed integer (negative for groups/supergroups, e.g.
+// -1001234567890) or a public channel username (@name, 5–32 chars). This is
+// what the telegram adapter stores in the `url` column instead of a URL.
+const isValidTelegramChatId = (v: string): boolean =>
+	/^-?\d{1,20}$/.test(v) || /^@[A-Za-z][A-Za-z0-9_]{4,31}$/.test(v);
+
 const parseWebhookBody = (
 	body: WebhookBody,
 	env: Bindings,
@@ -876,10 +882,26 @@ const parseWebhookBody = (
 	if (typeof body.url !== "string" || body.url.length === 0) {
 		return { ok: false, error: "url_required" };
 	}
-	// allowHttp only in dev — production endpoints must be https to make
-	// the signing+secret guarantees meaningful end-to-end.
-	const safe = checkOutboundUrl(body.url, { allowHttp: env.ENV === "dev" });
-	if (!safe.ok) return { ok: false, error: `url:${safe.reason}` };
+
+	const adapter = body.adapter ?? "generic";
+	if (!isWebhookAdapter(adapter)) {
+		return { ok: false, error: "adapter_invalid" };
+	}
+
+	// The telegram adapter repurposes the `url` field as a destination chat id
+	// (the real target is the fixed Bot API host, composed from
+	// TELEGRAM_BOT_TOKEN at dispatch). Validate its shape instead of running
+	// the URL/SSRF guard, which is built for arbitrary operator URLs.
+	if (adapter === "telegram") {
+		if (!isValidTelegramChatId(body.url)) {
+			return { ok: false, error: "chat_id_invalid" };
+		}
+	} else {
+		// allowHttp only in dev — production endpoints must be https to make
+		// the signing+secret guarantees meaningful end-to-end.
+		const safe = checkOutboundUrl(body.url, { allowHttp: env.ENV === "dev" });
+		if (!safe.ok) return { ok: false, error: `url:${safe.reason}` };
+	}
 
 	let secret: string | null = null;
 	if (body.secret !== undefined && body.secret !== null && body.secret !== "") {
@@ -909,11 +931,6 @@ const parseWebhookBody = (
 		// Every known event selected = "no filter"; store NULL so receivers
 		// see future events too without a re-save.
 		events = filtered.length === VALID_EVENTS.length ? null : filtered;
-	}
-
-	const adapter = body.adapter ?? "generic";
-	if (!isWebhookAdapter(adapter)) {
-		return { ok: false, error: "adapter_invalid" };
 	}
 
 	const enabled = body.enabled !== false; // default true
