@@ -646,6 +646,22 @@ export const getAllSettings = async (
 };
 
 /**
+ * Read a single settings row. Returns null when absent (inherit env/default).
+ * Used for ad-hoc operator markers (e.g. the Telegram digest's last-sent
+ * timestamp) that aren't part of the flag/number resolution layer.
+ */
+export const getSetting = async (
+	db: D1Database,
+	key: string,
+): Promise<string | null> => {
+	const row = await db
+		.prepare("SELECT value FROM settings WHERE key = ?")
+		.bind(key)
+		.first<{ value: string }>();
+	return row?.value ?? null;
+};
+
+/**
  * Upsert a single operator setting. Callers validate the key against the
  * known flag allowlist before writing; this wrapper does not.
  */
@@ -2069,6 +2085,35 @@ export const adminSpamRate = async (
 		.bind(from)
 		.first<{ total: number; spam: number | null }>();
 	return { total: row?.total ?? 0, spam: row?.spam ?? 0 };
+};
+
+export type OpenReportSummary = {
+	open: number;
+	top: { slug: string; count: number } | null;
+};
+
+/** Total open reports + the single most-flagged post (for the digest). */
+export const adminOpenReportSummary = async (
+	db: D1Database,
+): Promise<OpenReportSummary> => {
+	const total = await db
+		.prepare(`SELECT COUNT(*) AS n FROM reports WHERE status = 'open'`)
+		.first<{ n: number }>();
+	const top = await db
+		.prepare(
+			`SELECT c.post_slug AS slug, COUNT(*) AS n
+			   FROM reports r
+			   JOIN comments c ON c.id = r.comment_id
+			  WHERE r.status = 'open'
+			  GROUP BY c.post_slug
+			  ORDER BY n DESC, slug ASC
+			  LIMIT 1`,
+		)
+		.first<{ slug: string; n: number }>();
+	return {
+		open: total?.n ?? 0,
+		top: top ? { slug: top.slug, count: top.n } : null,
+	};
 };
 
 // ---------------------------------------------------------------------------

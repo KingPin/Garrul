@@ -18,6 +18,7 @@ import { counts } from "./routes/api.counts";
 import { permalink } from "./routes/permalink";
 import { subscriptions } from "./routes/api.subscriptions";
 import { runDigest } from "./lib/digest";
+import { runTelegramDigest } from "./lib/telegram-digest";
 import { runWebhookRetries } from "./lib/webhook";
 import { log, requestLogger } from "./lib/log";
 import { corsAndCsrf } from "./lib/cors";
@@ -254,10 +255,11 @@ export default {
 		env: Bindings,
 		ctx: ExecutionContext,
 	): Promise<void> => {
-		// Two independent passes per cron tick. Each gets its OWN waitUntil
-		// so a slow digest can't starve the webhook retry queue (and vice
-		// versa), and its OWN catch so a throw in one pass never skips the
-		// other or surfaces as an unhandled rejection (issue #16).
+		// Independent passes per cron tick. Each gets its OWN waitUntil so a
+		// slow pass can't starve the others, and its OWN catch so a throw in
+		// one never skips the rest or surfaces as an unhandled rejection
+		// (issue #16). The Telegram digest self-gates to once/day internally;
+		// running it every tick just lets it decide when it's due.
 		ctx.waitUntil(
 			runDigest(env).catch((err) => {
 				log.error("scheduled.digest", { error: String(err) });
@@ -266,6 +268,11 @@ export default {
 		ctx.waitUntil(
 			runWebhookRetries(env).catch((err) => {
 				log.error("scheduled.webhook_retries", { error: String(err) });
+			}),
+		);
+		ctx.waitUntil(
+			runTelegramDigest(env).catch((err) => {
+				log.error("scheduled.telegram_digest", { error: String(err) });
 			}),
 		);
 	},
