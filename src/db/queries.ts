@@ -2393,10 +2393,10 @@ export const adminRotateSubscriptionConfirmToken = async (
 // Webhook endpoints + deliveries (migration 0006).
 // -----------------------------------------------------------------------------
 
-export type WebhookAdapter = "generic" | "slack" | "discord";
+export type WebhookAdapter = "generic" | "slack" | "discord" | "telegram";
 
 export const isWebhookAdapter = (v: unknown): v is WebhookAdapter =>
-	v === "generic" || v === "slack" || v === "discord";
+	v === "generic" || v === "slack" || v === "discord" || v === "telegram";
 
 export type WebhookEndpoint = {
 	id: string;

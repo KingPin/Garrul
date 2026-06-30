@@ -57,6 +57,7 @@ import {
 	type AdapterOpts,
 	renderDiscordBody,
 	renderSlackBody,
+	renderTelegramBody,
 } from "./webhook-adapters";
 import { signWebhookBody } from "./webhook-sig";
 
@@ -84,7 +85,17 @@ type WebhookEnv = {
 	// Optional: a legacy operator with no PUBLIC_BASE_URL still gets
 	// deliveries, just without the admin link.
 	PUBLIC_BASE_URL?: string;
+	// Telegram Bot API token. Required only when an endpoint uses the
+	// `telegram` adapter; the chat id lives in the endpoint's `url` column.
+	// Kept here (env secret) rather than in D1 so the token is never stored
+	// in plaintext alongside the (non-secret) chat id.
+	TELEGRAM_BOT_TOKEN?: string;
 };
+
+// Fixed, trusted Telegram Bot API host. Telegram endpoints target this URL
+// (composed from the env token) rather than the endpoint's stored `url`,
+// which instead holds the destination chat id.
+const TELEGRAM_API_BASE = "https://api.telegram.org";
 
 const TIMEOUT_MS = 5000;
 
@@ -124,6 +135,7 @@ const renderBody = async (
 ): Promise<string> => {
 	if (adapter === "slack") return renderSlackBody(db, payload, opts);
 	if (adapter === "discord") return renderDiscordBody(db, payload, opts);
+	if (adapter === "telegram") return renderTelegramBody(db, payload, opts);
 	return renderGenericBody(payload);
 };
 
@@ -163,19 +175,47 @@ const buildHeaders = async (
 	return headers;
 };
 
+// Resolve the actual POST target for an endpoint. Telegram endpoints store a
+// chat id (not a URL) in `endpoint.url`; their real target is the fixed Bot
+// API host composed from the env token. Returns null when a telegram endpoint
+// can't be dispatched (no token configured) so the caller fails the delivery
+// with a clear tag instead of fetching a bogus URL.
+const resolveTarget = (
+	env: WebhookEnv,
+	endpoint: WebhookEndpoint,
+): { url: string; checkUrl: boolean } | null => {
+	if (endpoint.adapter === "telegram") {
+		if (!env.TELEGRAM_BOT_TOKEN) return null;
+		return {
+			url: `${TELEGRAM_API_BASE}/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`,
+			// Fixed, trusted host — checkOutboundUrl is for arbitrary
+			// operator-supplied URLs and would also reject the api.telegram.org
+			// host on no real grounds. Skip it for telegram.
+			checkUrl: false,
+		};
+	}
+	return { url: endpoint.url, checkUrl: true };
+};
+
 const postOnce = async (
+	env: WebhookEnv,
 	endpoint: WebhookEndpoint,
 	body: string,
-	allowHttp: boolean,
 ): Promise<{ ok: boolean; status: number; error?: string }> => {
-	const safe = checkOutboundUrl(endpoint.url, { allowHttp });
-	if (!safe.ok) return { ok: false, status: 0, error: `url:${safe.reason}` };
+	const target = resolveTarget(env, endpoint);
+	if (!target) return { ok: false, status: 0, error: "telegram:no_token" };
+	if (target.checkUrl) {
+		const safe = checkOutboundUrl(target.url, {
+			allowHttp: allowHttpFor(endpoint, env),
+		});
+		if (!safe.ok) return { ok: false, status: 0, error: `url:${safe.reason}` };
+	}
 
 	const controller = new AbortController();
 	const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
 	try {
 		const headers = await buildHeaders(endpoint, body);
-		const res = await fetch(endpoint.url, {
+		const res = await fetch(target.url, {
 			method: "POST",
 			headers,
 			body,
@@ -208,8 +248,10 @@ const dispatchToEndpoint = async (
 	if (!matchesEventFilter(endpoint, payload.event)) return;
 	const body = await renderBody(env.DB, endpoint.adapter, payload, {
 		baseUrl: env.PUBLIC_BASE_URL,
+		// Telegram stores its destination chat id in the endpoint url column.
+		chatId: endpoint.adapter === "telegram" ? endpoint.url : undefined,
 	});
-	const result = await postOnce(endpoint, body, allowHttpFor(endpoint, env));
+	const result = await postOnce(env, endpoint, body);
 	if (result.ok) {
 		if (endpoint.id !== "_env" && endpoint.fail_count > 0) {
 			await resetWebhookFailCount(env.DB, endpoint.id);
@@ -319,11 +361,7 @@ const retryDelivery = async (
 		);
 		return;
 	}
-	const result = await postOnce(
-		endpoint,
-		delivery.payload,
-		allowHttpFor(endpoint, env),
-	);
+	const result = await postOnce(env, endpoint, delivery.payload);
 	if (result.ok) {
 		await markWebhookDelivered(env.DB, delivery.id);
 		if (endpoint.fail_count > 0) {

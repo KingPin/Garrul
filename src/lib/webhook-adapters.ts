@@ -40,6 +40,12 @@ type WebhookAdapterDb = Pick<D1Database, "prepare">;
 export type AdapterOpts = {
 	/** Instance base URL (PUBLIC_BASE_URL) for building admin links. */
 	baseUrl?: string | undefined;
+	/**
+	 * Telegram destination chat id (numeric or `@channel`). The Telegram
+	 * adapter embeds it in the rendered `sendMessage` body so the verbatim
+	 * retry path re-sends to the same chat. Ignored by other adapters.
+	 */
+	chatId?: string | undefined;
 };
 
 const EVENT_VERB: Record<WebhookEvent, string> = {
@@ -259,4 +265,60 @@ export const renderDiscordBody = async (
 	}
 
 	return JSON.stringify({ embeds: [embed] });
+};
+
+// ----------------------------- Telegram ------------------------------------
+//
+// Telegram messages use parse_mode=HTML, whose entity parser only honors a
+// small tag allowlist (<b> <i> <a> <code> <blockquote> …). Any other "<"/">"
+// in text is a parse error, so we HTML-escape all user-derived text. We only
+// place server-generated or scheme-validated URLs in href positions. Telegram
+// @mentions only notify members of the same chat (no @everyone broadcast like
+// Slack/Discord), so escaping the angle brackets is the material defense.
+const escapeTelegramHtml = (s: string): string =>
+	s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+// Telegram's hard per-message cap is 4096 chars. The snippet is already capped
+// at SNIPPET_CAP (1500) pre-escape, so the assembled text sits well under the
+// limit — this is a final backstop against future template growth.
+const TELEGRAM_TEXT_CAP = 4096;
+
+const telegramLink = (url: string, label: string): string =>
+	`<a href="${escapeTelegramHtml(url)}">${escapeTelegramHtml(label)}</a>`;
+
+export const renderTelegramBody = async (
+	db: WebhookAdapterDb,
+	payload: WebhookPayload,
+	opts: AdapterOpts = {},
+): Promise<string> => {
+	const ctx = await loadContext(db, payload, opts);
+
+	// page_url is already scheme-validated (safeHttpUrl) by loadContext, and the
+	// href is HTML-attribute-escaped, so it's safe to link directly.
+	const titleField = ctx.page_url
+		? telegramLink(ctx.page_url, ctx.post_title)
+		: `<code>${escapeTelegramHtml(ctx.post_title)}</code>`;
+
+	const links: string[] = [];
+	if (ctx.admin_url) links.push(telegramLink(ctx.admin_url, "🔍 Open in admin"));
+	if (ctx.page_url) links.push(telegramLink(ctx.page_url, "🌐 View page"));
+
+	let text =
+		`<b>${escapeTelegramHtml(EVENT_VERB[payload.event])}</b> by ` +
+		`<b>${escapeTelegramHtml(ctx.author)}</b> on ${titleField}\n` +
+		`<blockquote>${escapeTelegramHtml(ctx.snippet)}</blockquote>`;
+	if (links.length > 0) text += `\n${links.join(" · ")}`;
+	text = truncate(text, TELEGRAM_TEXT_CAP);
+
+	const body: Record<string, unknown> = {
+		text,
+		parse_mode: "HTML",
+		disable_web_page_preview: true,
+	};
+	// chat_id is required by the Bot API. The dispatcher always supplies it for
+	// telegram endpoints; guard so a misconfig surfaces as a Telegram 400 we
+	// log rather than an undefined field.
+	if (opts.chatId) body.chat_id = opts.chatId;
+
+	return JSON.stringify(body);
 };

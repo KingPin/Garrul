@@ -54,6 +54,17 @@ export type Bindings = {
 	PUBLIC_BASE_URL: string;
 	CANONICAL_URL?: string;
 	WEBHOOK_URL: string;
+	// Telegram integration (optional; feature is off when unset).
+	//   TELEGRAM_BOT_TOKEN      — BotFather token; used to send messages and
+	//                             (Phase 2) receive updates. A webhook endpoint
+	//                             with adapter=telegram stores the chat id in
+	//                             its url column and sends via this token.
+	//   TELEGRAM_WEBHOOK_SECRET — shared secret echoed by Telegram in the
+	//                             X-Telegram-Bot-Api-Secret-Token header on
+	//                             inbound updates; the /telegram route rejects
+	//                             any request whose header doesn't match.
+	TELEGRAM_BOT_TOKEN?: string;
+	TELEGRAM_WEBHOOK_SECRET?: string;
 	// Anti-spam (all optional; each feature opts in when its env var is set).
 	SPAM_PROVIDER?: string;
 	AKISMET_API_KEY?: string;
