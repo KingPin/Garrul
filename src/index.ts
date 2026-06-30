@@ -12,6 +12,7 @@ import { embed } from "./routes/embed";
 import { agents } from "./routes/agents";
 import { iframe } from "./routes/embed-iframe";
 import { admin } from "./routes/admin";
+import { telegram } from "./routes/telegram";
 import { feed } from "./routes/feed";
 import { counts } from "./routes/api.counts";
 import { permalink } from "./routes/permalink";
@@ -217,6 +218,9 @@ app.route("/", embed);
 app.route("/", agents);
 app.route("/embed", iframe);
 app.route("/admin", admin);
+// Top-level (outside /api/*) so it bypasses corsAndCsrf + sessionMiddleware;
+// the route authenticates via the Telegram secret-token header instead.
+app.route("/telegram", telegram);
 
 app.get("/", (c) =>
 	c.text(

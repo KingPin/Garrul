@@ -47,6 +47,24 @@ export const en = {
 	"email.confirm.subject": "Confirm your subscription to comments on {title}",
 	"email.confirm.preheader":
 		"Click the link inside to start receiving reply notifications.",
+
+	// Telegram operator bot (admin-facing; shown in the bot chat, not in logs)
+	"telegram.not_linked":
+		"This Telegram account isn't linked. Open the admin panel → Telegram to link it.",
+	"telegram.not_authorized": "Your account doesn't have moderation access.",
+	"telegram.unknown_action": "Unknown or expired action.",
+	"telegram.comment_not_found": "That comment no longer exists.",
+	"telegram.action_applied": "✓ {action} applied",
+	"telegram.reports_resolved": "✓ Resolved {count} report(s)",
+	"telegram.author_banned": "✓ Banned the comment author",
+	"telegram.link_ok":
+		"✅ Linked to {name}. You'll get operator notifications and can moderate from here.",
+	"telegram.link_invalid":
+		"That link code is invalid or expired. Generate a fresh one in the admin panel.",
+	"telegram.link_user_missing": "Linking failed: that operator account no longer exists.",
+	"telegram.ratelimited": "Slow down a moment and try again.",
+	"telegram.start_help":
+		"Send /start &lt;code&gt; with a code from the admin Telegram page to link your operator account.",
 } as const;
 
 export type StringKey = keyof typeof en;
