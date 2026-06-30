@@ -83,11 +83,16 @@ const renderDigest = async (env: DigestEnv, now: number): Promise<string> => {
 	);
 
 	if (oldest) {
-		lines.push(`• Oldest pending: <b>${relativeAge(oldest.created_at, now)}</b> old`);
+		lines.push(
+			`• Oldest pending: <b>${relativeAge(oldest.created_at, now)}</b> old`,
+		);
 	}
 
 	if (base) {
-		lines.push("", `<a href="${escapeTg(`${base}/admin/queue`)}">Open moderation queue</a>`);
+		lines.push(
+			"",
+			`<a href="${escapeTg(`${base}/admin/queue`)}">Open moderation queue</a>`,
+		);
 	}
 
 	return lines.join("\n");

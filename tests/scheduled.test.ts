@@ -26,9 +26,9 @@ vi.mock("../src/lib/telegram-digest", async (importOriginal) => ({
 
 import worker from "../src/index";
 import { runDigest } from "../src/lib/digest";
-import { runWebhookRetries } from "../src/lib/webhook";
-import { runTelegramDigest } from "../src/lib/telegram-digest";
 import { log } from "../src/lib/log";
+import { runTelegramDigest } from "../src/lib/telegram-digest";
+import { runWebhookRetries } from "../src/lib/webhook";
 
 // Collects waitUntil promises so the test can settle them and prove
 // none reject.
@@ -85,7 +85,9 @@ describe("scheduled handler pass isolation", () => {
 		expect(runTelegramDigest).toHaveBeenCalledTimes(1);
 		expect(errSpy).toHaveBeenCalledWith(
 			"scheduled.digest",
-			expect.objectContaining({ error: expect.stringContaining("digest boom") }),
+			expect.objectContaining({
+				error: expect.stringContaining("digest boom"),
+			}),
 		);
 	});
 
