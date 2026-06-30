@@ -32,6 +32,7 @@
  *     avatar), never raw user input.
  */
 import { getComment, getPost, getUser } from "../db/queries";
+import { moderationKeyboard } from "./telegram";
 import type { WebhookEvent, WebhookPayload } from "./webhook";
 
 type WebhookAdapterDb = Pick<D1Database, "prepare">;
@@ -314,6 +315,11 @@ export const renderTelegramBody = async (
 		text,
 		parse_mode: "HTML",
 		disable_web_page_preview: true,
+		// Inline moderation buttons. A tap posts a callback_query to the inbound
+		// /telegram route, which re-checks the linked operator's role before
+		// acting. The keyboard is event-tailored (e.g. "Not spam" on a spam
+		// alert, "Resolve reports" on a report).
+		reply_markup: moderationKeyboard(payload.event, payload.comment_id),
 	};
 	// chat_id is required by the Bot API. The dispatcher always supplies it for
 	// telegram endpoints; guard so a misconfig surfaces as a Telegram 400 we
