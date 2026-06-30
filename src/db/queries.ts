@@ -2977,3 +2977,133 @@ export const deleteSavedReply = async (
 		.run();
 	return (result.meta?.changes ?? 0) > 0;
 };
+
+// --- Telegram links (operator bot identity) -----------------------------
+//
+// Maps a Telegram account to a Garrul user. See 0014_telegram.sql for the
+// schema rationale. The link is identity only — callers re-check the linked
+// user's current role before every action, so a stored link is never
+// standing authorization.
+
+export type TelegramLink = {
+	tg_user_id: string;
+	tg_chat_id: string;
+	user_id: string;
+	digest: boolean;
+	linked_at: number;
+};
+
+type TelegramLinkRow = {
+	tg_user_id: string;
+	tg_chat_id: string;
+	user_id: string;
+	digest: number;
+	linked_at: number;
+};
+
+const toTelegramLink = (row: TelegramLinkRow): TelegramLink => ({
+	tg_user_id: row.tg_user_id,
+	tg_chat_id: row.tg_chat_id,
+	user_id: row.user_id,
+	digest: row.digest === 1,
+	linked_at: row.linked_at,
+});
+
+export const getTelegramLinkByTgUser = async (
+	db: D1Database,
+	tg_user_id: string,
+): Promise<TelegramLink | null> => {
+	const row = await db
+		.prepare(
+			`SELECT tg_user_id, tg_chat_id, user_id, digest, linked_at
+			   FROM telegram_links WHERE tg_user_id = ?`,
+		)
+		.bind(tg_user_id)
+		.first<TelegramLinkRow>();
+	return row ? toTelegramLink(row) : null;
+};
+
+export const getTelegramLinkByUser = async (
+	db: D1Database,
+	user_id: string,
+): Promise<TelegramLink | null> => {
+	const row = await db
+		.prepare(
+			`SELECT tg_user_id, tg_chat_id, user_id, digest, linked_at
+			   FROM telegram_links WHERE user_id = ?`,
+		)
+		.bind(user_id)
+		.first<TelegramLinkRow>();
+	return row ? toTelegramLink(row) : null;
+};
+
+/**
+ * Link a Telegram account to a Garrul user. Replaces any prior link on either
+ * side: a Garrul user re-linking from a different Telegram account, or a
+ * Telegram account that was previously linked elsewhere. Run as a batch so the
+ * delete + insert apply atomically (D1 wraps a batch in a transaction).
+ * Preserves the existing digest opt-in when the same user re-links.
+ */
+export const upsertTelegramLink = async (
+	db: D1Database,
+	input: { tg_user_id: string; tg_chat_id: string; user_id: string },
+): Promise<void> => {
+	const prior = await getTelegramLinkByUser(db, input.user_id);
+	const digest = prior?.digest ? 1 : 0;
+	await db.batch([
+		db
+			.prepare(
+				`DELETE FROM telegram_links WHERE tg_user_id = ? OR user_id = ?`,
+			)
+			.bind(input.tg_user_id, input.user_id),
+		db
+			.prepare(
+				`INSERT INTO telegram_links
+				   (tg_user_id, tg_chat_id, user_id, digest, linked_at)
+				 VALUES (?, ?, ?, ?, ?)`,
+			)
+			.bind(
+				input.tg_user_id,
+				input.tg_chat_id,
+				input.user_id,
+				digest,
+				Date.now(),
+			),
+	]);
+};
+
+export const deleteTelegramLinkByUser = async (
+	db: D1Database,
+	user_id: string,
+): Promise<boolean> => {
+	const result = await db
+		.prepare(`DELETE FROM telegram_links WHERE user_id = ?`)
+		.bind(user_id)
+		.run();
+	return (result.meta?.changes ?? 0) > 0;
+};
+
+export const setTelegramDigest = async (
+	db: D1Database,
+	user_id: string,
+	digest: boolean,
+): Promise<boolean> => {
+	const result = await db
+		.prepare(`UPDATE telegram_links SET digest = ? WHERE user_id = ?`)
+		.bind(digest ? 1 : 0, user_id)
+		.run();
+	return (result.meta?.changes ?? 0) > 0;
+};
+
+/** Links that opted into the daily operator digest (Phase 4). */
+export const listTelegramDigestLinks = async (
+	db: D1Database,
+): Promise<TelegramLink[]> => {
+	const rs = await db
+		.prepare(
+			`SELECT tg_user_id, tg_chat_id, user_id, digest, linked_at
+			   FROM telegram_links WHERE digest = 1`,
+		)
+		.all<TelegramLinkRow>();
+	return (rs.results ?? []).map(toTelegramLink);
+};
