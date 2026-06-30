@@ -87,6 +87,21 @@
       "addedIn": "1.0.0"
     },
     {
+      "name": "TELEGRAM_BOT_TOKEN",
+      "required": false,
+      "addedIn": "1.17.0"
+    },
+    {
+      "name": "TELEGRAM_WEBHOOK_SECRET",
+      "required": false,
+      "addedIn": "1.17.0"
+    },
+    {
+      "name": "TELEGRAM_BOT_USERNAME",
+      "required": false,
+      "addedIn": "1.17.0"
+    },
+    {
       "name": "SPAM_PROVIDER",
       "required": false,
       "addedIn": "1.1.1"
@@ -253,7 +268,8 @@
     "0010_settings.sql",
     "0011_page_engagement.sql",
     "0012_deleted_by.sql",
-    "0013_thread_lifecycle_reports.sql"
+    "0013_thread_lifecycle_reports.sql",
+    "0014_telegram.sql"
   ],
   "breakingChanges": []
 }
