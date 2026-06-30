@@ -121,6 +121,9 @@ Three configuration surfaces:
 | `AUTO_COLLAPSE_DEPTH` | var | Replies nested at this depth or deeper start collapsed in the widget. `0` = never auto-collapse. Defaults **3**; clamped to `[0, 4]` (the tree depth cap). | `3` | `wrangler.toml` |
 | `CF_ACCOUNT_ID` | var | Optional. Cloudflare account ID; paired with `CF_API_TOKEN` to enable the `/admin/usage` analytics page. | `0123abcd...` | `wrangler.toml` (or `wrangler secret put` — the in-app setup guide uses the secret form; both work) |
 | `CF_API_TOKEN` | secret | Optional. Cloudflare API token (Analytics read scope) for `/admin/usage`. The page renders setup instructions when either value is unset. | `...` | `wrangler secret put` / `.dev.vars` |
+| `TELEGRAM_BOT_TOKEN` | secret | Optional. BotFather token enabling the Telegram operator bot. With only this set, outbound notifications work (add a `telegram` webhook endpoint with a chat id). Unset = feature off. See `docs/telegram.md`. | `123456789:AAH...` | `wrangler secret put` / `.dev.vars` |
+| `TELEGRAM_WEBHOOK_SECRET` | secret | Optional. Shared secret echoed in the `X-Telegram-Bot-Api-Secret-Token` header; required for inbound buttons/slash commands. Pass it to Telegram's `setWebhook` as `secret_token`. Unset = inbound rejected (fail closed). | `openssl rand -hex 32` output | `wrangler secret put` / `.dev.vars` |
+| `TELEGRAM_BOT_USERNAME` | var | Optional. Bot `@username` (without `@`). When set, `/admin/telegram` renders a one-tap `t.me/<bot>?start=<code>` deep link instead of manual `/start` steps. | `YourGarrulBot` | `wrangler.toml` |
 
 Bindings (D1, KV, Analytics) live in `wrangler.toml` outside `[vars]`
 and are populated by `./scripts/setup.sh`. Don't edit binding IDs by
@@ -378,6 +381,7 @@ tracked by the `_migrations` table. Current set:
 - `0011_page_engagement.sql` — page-level reactions + votes
 - `0012_deleted_by.sql` — records who deleted a comment
 - `0013_thread_lifecycle_reports.sql` — per-post close/`published_at` + reader `reports` table
+- `0014_telegram.sql` — `telegram_links` (operator account ↔ Telegram identity, + digest opt-in)
 
 Run with `npm run migrate` (local Miniflare) or
 `npm run migrate -- --remote` (production D1). Idempotent. Never edit a
@@ -415,7 +419,8 @@ Pages (top nav):
 | `/admin/subscriptions` | Email subscription list. Filter by email/post/confirmed/unsubscribed. Actions: manual unsubscribe, resend confirmation. |
 | `/admin/operator` | Batch operations: rerender stale comments (POSTs `/admin/api/ops/rerender` in 50-row chunks until done), seed-demo (idempotent; gated to `ENV != "production"`), and the Disqus import upload (see below). |
 | `/admin/settings` | Read-only view of anti-spam + email config; edits still go through `wrangler secret put`. |
-| `/admin/webhooks` | Outbound webhook endpoints: add/pause/delete, per-endpoint secret + event filter, adapter (`generic` / `slack` / `discord`), failure counts and retry status. |
+| `/admin/webhooks` | Outbound webhook endpoints: add/pause/delete, per-endpoint secret + event filter, adapter (`generic` / `slack` / `discord` / `telegram`), failure counts and retry status. |
+| `/admin/telegram` | **Admin-only.** Telegram operator bot: shows whether the bot token/webhook secret are set, links your personal Telegram account (one-time code or deep link), toggles the daily digest, and unlinks. See `docs/telegram.md`. |
 | `/admin/saved-replies` | Moderator saved replies: create/edit canned responses, private or shared scope, postable onto a comment from the queue. |
 | `/admin/usage` | Cloudflare analytics (requests, comments by domain). Requires `CF_API_TOKEN` + `CF_ACCOUNT_ID`; renders setup instructions when unset. |
 
