@@ -20,6 +20,10 @@
  */
 import { Hono } from "hono";
 import {
+	adminOldestPending,
+	adminSpamRate,
+	adminStats,
+	countOpenReportsByComment,
 	getComment,
 	getTelegramLinkByTgUser,
 	getUser,
@@ -196,7 +200,7 @@ const handleCallback = async (
 			token,
 			cq.message.chat.id,
 			cq.message.message_id,
-			`${cq.message.text ? `${cq.message.text}\n\n` : ""}<b>${outcome.toast}</b> — ${escapeName(user.name)}`,
+			`${cq.message.text ? `${cq.message.text}\n\n` : ""}<b>${outcome.toast}</b> — ${escapeTg(user.name)}`,
 		);
 	}
 };
@@ -251,6 +255,17 @@ const runAction = async (
 
 // ----------------------------- Message handler -----------------------------
 
+// Parse "/cmd arg" — tolerating the "/cmd@BotName" form Telegram uses in
+// groups. Returns null for non-command text.
+const parseCommand = (text: string): { name: string; arg: string } | null => {
+	if (!text.startsWith("/")) return null;
+	const sp = text.indexOf(" ");
+	const head = sp === -1 ? text.slice(1) : text.slice(1, sp);
+	const arg = sp === -1 ? "" : text.slice(sp + 1).trim();
+	const name = (head.split("@")[0] ?? "").toLowerCase();
+	return { name, arg };
+};
+
 const handleMessage = async (
 	env: Bindings,
 	token: string,
@@ -258,16 +273,160 @@ const handleMessage = async (
 ): Promise<void> => {
 	const text = (msg.text ?? "").trim();
 	const chatId = msg.chat.id;
+	const cmd = parseCommand(text);
 
-	if (text.startsWith("/start")) {
+	// Linking is the one command that works before a link exists.
+	if (cmd?.name === "start") {
 		await handleStart(env, token, msg, text);
 		return;
 	}
+	if (!cmd) {
+		await sendMessage(token, chatId, t("telegram.start_help"));
+		return;
+	}
 
-	// Phase 3 wires slash-command queries here. Until then, point operators at
-	// the linking flow for anything else.
-	await sendMessage(token, chatId, t("telegram.start_help"));
+	// Every query command requires a linked operator with at least mod role,
+	// re-checked here (the link is identity only).
+	const link = msg.from
+		? await getTelegramLinkByTgUser(env.DB, String(msg.from.id))
+		: null;
+	if (!link) {
+		await sendMessage(token, chatId, t("telegram.not_linked"));
+		return;
+	}
+	const user = await getUser(env.DB, link.user_id);
+	if (!user || !hasRole(user, "mod")) {
+		await sendMessage(token, chatId, t("telegram.not_authorized"));
+		return;
+	}
+
+	switch (cmd.name) {
+		case "queue":
+			await sendMessage(token, chatId, await renderQueueText(env));
+			break;
+		case "stats":
+			await sendMessage(token, chatId, await renderStatsText(env));
+			break;
+		case "comment":
+			await sendMessage(token, chatId, await renderCommentText(env, cmd.arg));
+			break;
+		case "user":
+			await sendMessage(token, chatId, await renderUserText(env, cmd.arg));
+			break;
+		default:
+			await sendMessage(token, chatId, commandHelpText());
+	}
 };
+
+// ----------------------------- Command renderers ---------------------------
+//
+// Read-only operator readouts. Dynamic values are HTML-escaped (parse_mode is
+// HTML); like the slack/discord adapters, the fixed framing is composed inline
+// rather than via t() — only the gate messages use the string table.
+
+const commandHelpText = (): string =>
+	[
+		"<b>Garrul operator bot</b>",
+		"/queue — pending + reported counts",
+		"/stats — totals and 7-day spam rate",
+		"/comment &lt;id&gt; — a comment's status + author",
+		"/user &lt;id&gt; — a user's role + status",
+	].join("\n");
+
+const relativeAge = (since: number, now: number): string => {
+	const ms = Math.max(0, now - since);
+	const mins = Math.floor(ms / 60000);
+	if (mins < 60) return `${mins}m`;
+	const hrs = Math.floor(mins / 60);
+	if (hrs < 24) return `${hrs}h`;
+	return `${Math.floor(hrs / 24)}d`;
+};
+
+const adminCommentUrl = (env: Bindings, id: string): string | null =>
+	env.PUBLIC_BASE_URL
+		? `${env.PUBLIC_BASE_URL.replace(/\/$/, "")}/admin/comments/${encodeURIComponent(id)}`
+		: null;
+
+const renderQueueText = async (env: Bindings): Promise<string> => {
+	const [stats, oldest] = await Promise.all([
+		adminStats(env.DB),
+		adminOldestPending(env.DB),
+	]);
+	const lines = [
+		"<b>Moderation queue</b>",
+		`⏳ Pending: <b>${stats.pending_comments}</b>`,
+		`🚫 Spam: <b>${stats.spam_comments}</b>`,
+	];
+	if (oldest) {
+		const age = relativeAge(oldest.created_at, Date.now());
+		const url = adminCommentUrl(env, oldest.id);
+		lines.push(
+			`Oldest pending: ${age} ago${url ? ` — ${tgLink(url, "open")}` : ""}`,
+		);
+	}
+	return lines.join("\n");
+};
+
+const renderStatsText = async (env: Bindings): Promise<string> => {
+	const [stats, spam] = await Promise.all([
+		adminStats(env.DB),
+		adminSpamRate(env.DB, 7),
+	]);
+	const pct =
+		spam.total > 0 ? Math.round((spam.spam / spam.total) * 100) : 0;
+	return [
+		"<b>Stats</b>",
+		`💬 Comments: <b>${stats.total_comments}</b> (${stats.pending_comments} pending)`,
+		`👥 Users: <b>${stats.total_users}</b> (${stats.banned_users} banned)`,
+		`🚫 Spam rate (7d): <b>${pct}%</b> (${spam.spam}/${spam.total})`,
+	].join("\n");
+};
+
+const renderCommentText = async (
+	env: Bindings,
+	arg: string,
+): Promise<string> => {
+	const id = arg.trim();
+	if (!id) return "Usage: /comment &lt;id&gt;";
+	const comment = await getComment(env.DB, id);
+	if (!comment) return t("telegram.comment_not_found");
+	const [author, reportCounts] = await Promise.all([
+		getUser(env.DB, comment.user_id),
+		countOpenReportsByComment(env.DB, [id]),
+	]);
+	const openReports = reportCounts[id] ?? 0;
+	const snippet =
+		comment.body_md.length > 200
+			? `${comment.body_md.slice(0, 200)}…`
+			: comment.body_md;
+	const url = adminCommentUrl(env, id);
+	const lines = [
+		`<b>Comment</b> <code>${escapeTg(id)}</code>`,
+		`Status: <b>${escapeTg(comment.status)}</b>${openReports > 0 ? ` · ${openReports} open report(s)` : ""}`,
+		`Author: ${escapeTg(author?.name ?? "unknown")}`,
+		`On: <code>${escapeTg(comment.post_slug)}</code> · ${relativeAge(comment.created_at, Date.now())} ago`,
+		`<blockquote>${escapeTg(snippet)}</blockquote>`,
+	];
+	if (url) lines.push(tgLink(url, "🔍 Open in admin"));
+	return lines.join("\n");
+};
+
+const renderUserText = async (env: Bindings, arg: string): Promise<string> => {
+	const id = arg.trim();
+	if (!id) return "Usage: /user &lt;id&gt;";
+	const user = await getUser(env.DB, id);
+	if (!user) return "No such user.";
+	return [
+		`<b>User</b> <code>${escapeTg(id)}</code>`,
+		`Name: ${escapeTg(user.name)}`,
+		`Role: <b>${escapeTg(user.role)}</b>${user.is_banned ? " · ⛔ banned" : ""}`,
+		`Provider: ${escapeTg(user.provider)}`,
+		`Joined: ${relativeAge(user.created_at, Date.now())} ago`,
+	].join("\n");
+};
+
+const tgLink = (url: string, label: string): string =>
+	`<a href="${escapeTg(url)}">${escapeTg(label)}</a>`;
 
 const handleStart = async (
 	env: Bindings,
@@ -303,9 +462,9 @@ const handleStart = async (
 		tg_chat_id: String(chatId),
 		user_id: user.id,
 	});
-	await sendMessage(token, chatId, t("telegram.link_ok", { name: escapeName(user.name) }));
+	await sendMessage(token, chatId, t("telegram.link_ok", { name: escapeTg(user.name) }));
 };
 
 // Telegram parse_mode=HTML: escape user-derived text placed in messages.
-const escapeName = (s: string): string =>
+const escapeTg = (s: string): string =>
 	s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
