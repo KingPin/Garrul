@@ -59,12 +59,9 @@ import {
 	listSavedRepliesForUser,
 	listWebhookEndpoints,
 	markSubscriptionUnsubscribed,
-	resolveReportsForComment,
 	setPostClosed,
 	setSetting,
-	setUserBanned,
 	setUserRole,
-	updateCommentStatus,
 	updateSavedReply,
 	deleteSavedReply,
 	updateWebhookEndpoint,
@@ -80,6 +77,12 @@ import {
 	type WebhookEndpoint,
 } from "../db/queries";
 import { fireWebhook, type WebhookEvent } from "../lib/webhook";
+import {
+	banUser,
+	type CommentAction,
+	moderateComment,
+	resolveReports,
+} from "../lib/moderation";
 import { checkOutboundUrl } from "../lib/url-safety";
 import {
 	peekCachedLatestVersion,
@@ -1346,8 +1349,6 @@ admin.post("/api/saved-replies/:id/post", async (c) => {
 	return c.json({ ok: true, id: inserted.id });
 });
 
-type CommentAction = "approve" | "spam" | "delete" | "restore";
-
 admin.post("/api/comments/:id", async (c) => {
 	const user = await requireMod(c);
 	if (user instanceof Response) return user;
@@ -1356,54 +1357,25 @@ admin.post("/api/comments/:id", async (c) => {
 		.json<{ action?: string; reason?: string }>()
 		.catch(() => null);
 	const action = body?.action as CommentAction | undefined;
-	let newStatus: CommentStatus;
-	switch (action) {
-		case "approve":
-			newStatus = "approved";
-			break;
-		case "spam":
-			newStatus = "spam";
-			break;
-		case "delete":
-			newStatus = "deleted";
-			break;
-		case "restore":
-			newStatus = "approved";
-			break;
-		default:
-			return c.json({ error: "invalid_action" }, 400);
+	if (
+		action !== "approve" &&
+		action !== "spam" &&
+		action !== "delete" &&
+		action !== "restore"
+	) {
+		return c.json({ error: "invalid_action" }, 400);
 	}
-	const existing = await getComment(c.env.DB, id);
-	if (!existing) return c.json({ error: "not_found" }, 404);
-	await updateCommentStatus(c.env.DB, id, newStatus);
-	await adminInsertAudit(c.env.DB, {
-		admin_id: user.id,
+	const result = await moderateComment({
+		env: c.env,
+		executionCtx: c.executionCtx,
+		reqUrl: c.req.url,
+		adminId: user.id,
+		commentId: id,
 		action,
-		target_kind: "comment",
-		target_id: id,
 		reason: body?.reason ?? null,
-		meta: { prev_status: existing.status, new_status: newStatus },
 	});
-	// Bust the cached first page so the moderation result is visible.
-	await bustTreeCache(c.env, c.req.url, existing.post_slug);
-	const webhookEvent: WebhookEvent | null =
-		newStatus === "approved"
-			? "comment.approved"
-			: newStatus === "spam"
-				? "comment.spam"
-				: newStatus === "deleted"
-					? "comment.deleted"
-					: null;
-	if (webhookEvent) {
-		fireWebhook(c.env, c.executionCtx, {
-			event: webhookEvent,
-			comment_id: id,
-			post_slug: existing.post_slug,
-			user_id: existing.user_id,
-			ts: Date.now(),
-		});
-	}
-	return c.json({ ok: true, id, status: newStatus });
+	if (!result.ok) return c.json({ error: result.error }, 404);
+	return c.json({ ok: true, id: result.id, status: result.status });
 });
 
 // Per-post comment freeze/unfreeze. Flips posts.closed; the lazy thread
@@ -1450,17 +1422,9 @@ admin.post("/api/comments/:id/reports/resolve", async (c) => {
 	const user = await requireMod(c);
 	if (user instanceof Response) return user;
 	const id = c.req.param("id");
-	const existing = await getComment(c.env.DB, id);
-	if (!existing) return c.json({ error: "not_found" }, 404);
-	const resolved = await resolveReportsForComment(c.env.DB, id);
-	await adminInsertAudit(c.env.DB, {
-		admin_id: user.id,
-		action: "report.resolve",
-		target_kind: "comment",
-		target_id: id,
-		meta: { resolved_count: resolved, post_slug: existing.post_slug },
-	});
-	return c.json({ ok: true, id, resolved });
+	const result = await resolveReports({ env: c.env, adminId: user.id, commentId: id });
+	if (!result.ok) return c.json({ error: result.error }, 404);
+	return c.json({ ok: true, id: result.id, resolved: result.resolved });
 });
 
 const BULK_ACTION_LIMIT = 100;
@@ -1551,29 +1515,17 @@ admin.post("/api/users/:id", async (c) => {
 	if (!body || typeof body.banned !== "boolean") {
 		return c.json({ error: "invalid_body" }, 400);
 	}
-	// Without this, setUserBanned silently no-ops on a bogus id and the
-	// endpoint returns ok — masking a typo or stale UI from the admin.
-	const target = await getUser(c.env.DB, id);
-	if (!target) return c.json({ error: "not_found" }, 404);
-	await setUserBanned(c.env.DB, id, body.banned);
-	// When the ban was triggered from a specific comment (one-click "Ban
-	// author"), record that comment id in the audit trail so the action is
-	// traceable back to its trigger.
-	const fromComment =
-		typeof body.from_comment === "string" && body.from_comment.length > 0
-			? body.from_comment
-			: null;
-	await adminInsertAudit(c.env.DB, {
-		admin_id: user.id,
-		action: body.banned ? "ban" : "unban",
-		target_kind: "user",
-		target_id: id,
+	const result = await banUser({
+		env: c.env,
+		adminId: user.id,
+		userId: id,
+		banned: body.banned,
+		fromComment:
+			typeof body.from_comment === "string" ? body.from_comment : null,
 		reason: body.reason ?? null,
-		meta: fromComment
-			? { target_name: target.name, from_comment: fromComment }
-			: { target_name: target.name },
 	});
-	return c.json({ ok: true, id, banned: body.banned });
+	if (!result.ok) return c.json({ error: result.error }, 404);
+	return c.json({ ok: true, id: result.id, banned: result.banned });
 });
 
 export const roleAuditAction = (
