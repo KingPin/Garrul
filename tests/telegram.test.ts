@@ -142,6 +142,35 @@ describe("renderTelegramBody", () => {
 		expect(body.text).not.toContain("<script>");
 	});
 
+	it("escapes double quotes in user-derived text (safe for href attributes)", async () => {
+		const rows = {
+			...stubRows,
+			users: { ...stubRows.users, name: 'Al"ice' },
+		};
+		const body = JSON.parse(
+			await renderTelegramBody(makeStubDb(rows), payload()),
+		);
+		expect(body.text).toContain("Al&quot;ice");
+		expect(body.text).not.toContain('Al"ice');
+	});
+
+	it("clips an oversized snippet to the cap without splitting an HTML entity", async () => {
+		// 2000 ampersands → capped to SNIPPET_CAP then escaped to ~5× as many
+		// chars, which blows past Telegram's 4096 limit and forces a clip.
+		const rows = {
+			...stubRows,
+			comments: { ...stubRows.comments, body_md: "&".repeat(2000) },
+		};
+		const body = JSON.parse(
+			await renderTelegramBody(makeStubDb(rows), payload()),
+		);
+		expect(body.text.length).toBeLessThanOrEqual(4096);
+		const snippet = /<blockquote>(.*)<\/blockquote>/s.exec(body.text)?.[1] ?? "";
+		expect(snippet.length).toBeGreaterThan(0);
+		// No dangling partial entity (e.g. a trailing "&am" from a cut "&amp;").
+		expect(/&[#a-zA-Z0-9]+$/.test(snippet)).toBe(false);
+	});
+
 	it("tailors the keyboard to the event (spam → Not spam, reported → Resolve)", async () => {
 		const labelsFor = async (event: WebhookPayload["event"]) => {
 			const body = JSON.parse(

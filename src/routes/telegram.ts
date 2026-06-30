@@ -200,7 +200,11 @@ const handleCallback = async (
 			token,
 			cq.message.chat.id,
 			cq.message.message_id,
-			`${cq.message.text ? `${cq.message.text}\n\n` : ""}<b>${outcome.toast}</b> — ${escapeTg(user.name)}`,
+			// cq.message.text is Telegram's plain-text rendering of our original
+			// message (entities stripped), so any literal & < > in it must be
+			// re-escaped before it goes back out under parse_mode=HTML — otherwise
+			// the edit fails and the stale keyboard stays tappable.
+			`${cq.message.text ? `${escapeTg(cq.message.text)}\n\n` : ""}<b>${outcome.toast}</b> — ${escapeTg(user.name)}`,
 		);
 	}
 };
@@ -466,5 +470,13 @@ const handleStart = async (
 };
 
 // Telegram parse_mode=HTML: escape user-derived text placed in messages.
+// Quotes are escaped too because this also feeds href="..." attributes via
+// tgLink — an unescaped quote there breaks the attribute and Telegram rejects
+// the whole message.
 const escapeTg = (s: string): string =>
-	s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+	s
+		.replace(/&/g, "&amp;")
+		.replace(/</g, "&lt;")
+		.replace(/>/g, "&gt;")
+		.replace(/"/g, "&quot;")
+		.replace(/'/g, "&#39;");

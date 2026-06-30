@@ -276,12 +276,29 @@ export const renderDiscordBody = async (
 // place server-generated or scheme-validated URLs in href positions. Telegram
 // @mentions only notify members of the same chat (no @everyone broadcast like
 // Slack/Discord), so escaping the angle brackets is the material defense.
+// Quotes are escaped too because the same helper feeds href="..." attributes
+// (see telegramLink) — an unescaped quote there breaks the attribute.
 const escapeTelegramHtml = (s: string): string =>
-	s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+	s
+		.replace(/&/g, "&amp;")
+		.replace(/</g, "&lt;")
+		.replace(/>/g, "&gt;")
+		.replace(/"/g, "&quot;")
+		.replace(/'/g, "&#39;");
 
-// Telegram's hard per-message cap is 4096 chars. The snippet is already capped
-// at SNIPPET_CAP (1500) pre-escape, so the assembled text sits well under the
-// limit — this is a final backstop against future template growth.
+// Clip an already-HTML-escaped string to at most `max` chars without leaving a
+// dangling partial entity. A naive slice can cut "&amp;" into "&am", which
+// Telegram's HTML parser then rejects — so after slicing we drop any trailing
+// "&…"-fragment that isn't terminated by ";". Complete entities (which end in
+// ";") are preserved.
+const clipEscaped = (s: string, max: number): string =>
+	s.length <= max ? s : s.slice(0, max).replace(/&[#a-zA-Z0-9]*$/, "");
+
+// Telegram's hard per-message cap is 4096 chars. The snippet is capped at
+// SNIPPET_CAP (1500) pre-escape, but HTML-escaping can inflate it several-fold
+// (every "<" → "&lt;" etc.), so the assembled message can still exceed the cap.
+// renderTelegramBody budgets the snippet against this limit rather than blindly
+// truncating the final string (a blind cut can split an entity or a tag).
 const TELEGRAM_TEXT_CAP = 4096;
 
 const telegramLink = (url: string, label: string): string =>
@@ -294,22 +311,47 @@ export const renderTelegramBody = async (
 ): Promise<string> => {
 	const ctx = await loadContext(db, payload, opts);
 
+	// Bound author/title the same way the Discord embed does, so the snippet is
+	// the only field that can approach the per-message cap.
+	const author = truncate(ctx.author, EMBED_NAME_CAP);
+	const postTitle = truncate(ctx.post_title, EMBED_NAME_CAP);
+
 	// page_url is already scheme-validated (safeHttpUrl) by loadContext, and the
 	// href is HTML-attribute-escaped, so it's safe to link directly.
 	const titleField = ctx.page_url
-		? telegramLink(ctx.page_url, ctx.post_title)
-		: `<code>${escapeTelegramHtml(ctx.post_title)}</code>`;
+		? telegramLink(ctx.page_url, postTitle)
+		: `<code>${escapeTelegramHtml(postTitle)}</code>`;
 
 	const links: string[] = [];
 	if (ctx.admin_url) links.push(telegramLink(ctx.admin_url, "🔍 Open in admin"));
 	if (ctx.page_url) links.push(telegramLink(ctx.page_url, "🌐 View page"));
 
-	let text =
+	const header =
 		`<b>${escapeTelegramHtml(EVENT_VERB[payload.event])}</b> by ` +
-		`<b>${escapeTelegramHtml(ctx.author)}</b> on ${titleField}\n` +
-		`<blockquote>${escapeTelegramHtml(ctx.snippet)}</blockquote>`;
-	if (links.length > 0) text += `\n${links.join(" · ")}`;
-	text = truncate(text, TELEGRAM_TEXT_CAP);
+		`<b>${escapeTelegramHtml(author)}</b> on ${titleField}\n`;
+	const linkLine = links.length > 0 ? `\n${links.join(" · ")}` : "";
+
+	// Budget the escaped snippet against the cap rather than blind-truncating the
+	// final string. Keep the link line if everything fits; otherwise drop it to
+	// give the snippet the room. clipEscaped guarantees the cut never lands
+	// inside an HTML entity, which would make Telegram reject the whole message.
+	const wrapper = "<blockquote></blockquote>".length;
+	const escapedSnippet = escapeTelegramHtml(ctx.snippet);
+	const roomWithLinks =
+		TELEGRAM_TEXT_CAP - header.length - wrapper - linkLine.length;
+	let snippet: string;
+	let tail: string;
+	if (escapedSnippet.length <= roomWithLinks) {
+		snippet = escapedSnippet;
+		tail = linkLine;
+	} else {
+		snippet = clipEscaped(
+			escapedSnippet,
+			Math.max(0, TELEGRAM_TEXT_CAP - header.length - wrapper),
+		);
+		tail = "";
+	}
+	const text = `${header}<blockquote>${snippet}</blockquote>${tail}`;
 
 	const body: Record<string, unknown> = {
 		text,

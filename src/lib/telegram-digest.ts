@@ -42,8 +42,16 @@ const LAST_SENT_KEY = "tg_digest_last_sent_at";
 // minutes late one day doesn't push the next one a full extra cron tick out.
 const INTERVAL_MS = 23 * 3600 * 1000;
 
+// Escapes for parse_mode=HTML. Quotes are escaped too because the same helper
+// feeds href="..." attributes (the queue link) — a stray quote there would
+// break the attribute and make Telegram reject the message.
 const escapeTg = (s: string): string =>
-	s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+	s
+		.replace(/&/g, "&amp;")
+		.replace(/</g, "&lt;")
+		.replace(/>/g, "&gt;")
+		.replace(/"/g, "&quot;")
+		.replace(/'/g, "&#39;");
 
 const relativeAge = (since: number, now: number): string => {
 	const ms = Math.max(0, now - since);
