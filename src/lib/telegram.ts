@@ -16,6 +16,7 @@
  * token at call time.
  */
 import { log } from "./log";
+import type { CommentStatus } from "../db/queries";
 import type { WebhookEvent } from "./webhook";
 
 const TELEGRAM_API_BASE = "https://api.telegram.org";
@@ -138,25 +139,36 @@ export const decodeCallback = (
 //
 // The moderation button set shown under a notification. Shared with the
 // outbound renderer so a tap on a notification posts a callback_query the
-// inbound route understands. Buttons are tailored to the event: a spam alert
-// offers "Not spam" (restore) instead of "Approve"; a report offers "Resolve
-// reports". Every event offers Delete + Ban author.
+// inbound route understands. The first row reflects the comment's *current*
+// status, not the event: an already-approved comment (e.g. a trusted author's
+// auto-approved post) offers "Spam" but not a no-op "Approve"; a spam-flagged
+// one offers "Not spam" (restore); a pending one offers the full Approve/Spam
+// triage. A report additionally offers "Resolve reports". Every event offers
+// Delete + Ban author.
 
 export type InlineButton = { text: string; callback_data: string };
 
 export const moderationKeyboard = (
 	event: WebhookEvent,
 	commentId: string,
+	status?: CommentStatus | null,
 ): { inline_keyboard: InlineButton[][] } => {
 	const btn = (text: string, action: TgAction): InlineButton => ({
 		text,
 		callback_data: encodeCallback(action, commentId),
 	});
 
-	const firstRow: InlineButton[] =
-		event === "comment.spam"
-			? [btn("✅ Not spam", "restore")]
-			: [btn("✅ Approve", "approve"), btn("🚫 Spam", "spam")];
+	// Fall back to the full triage when status is unknown (comment row was
+	// unavailable at render time) — better to offer an idempotent Approve than
+	// to hide a needed action.
+	let firstRow: InlineButton[];
+	if (status === "spam") {
+		firstRow = [btn("✅ Not spam", "restore")];
+	} else if (status === "approved") {
+		firstRow = [btn("🚫 Spam", "spam")];
+	} else {
+		firstRow = [btn("✅ Approve", "approve"), btn("🚫 Spam", "spam")];
+	}
 
 	const secondRow: InlineButton[] = [
 		btn("🗑 Delete", "delete"),

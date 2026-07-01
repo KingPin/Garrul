@@ -31,6 +31,7 @@
  *     either server-generated (admin link) or scheme-validated (page /
  *     avatar), never raw user input.
  */
+import type { CommentStatus } from "../db/queries";
 import { getComment, getPost, getUser } from "../db/queries";
 import { moderationKeyboard } from "./telegram";
 import type { WebhookEvent, WebhookPayload } from "./webhook";
@@ -86,6 +87,8 @@ type Ctx = {
 	page_url: string | null;
 	/** Commenter avatar (provider), or null. https only. */
 	avatar_url: string | null;
+	/** Comment's current status, or null when the row was unavailable. */
+	status: CommentStatus | null;
 };
 
 const truncate = (s: string, max: number): string =>
@@ -143,7 +146,16 @@ const loadContext = async (
 	const avatar_url =
 		avatar && safeHttpUrl(avatar)?.startsWith("https:") ? avatar : null;
 
-	return { author, post_slug, post_title, snippet, admin_url, page_url, avatar_url };
+	return {
+		author,
+		post_slug,
+		post_title,
+		snippet,
+		admin_url,
+		page_url,
+		avatar_url,
+		status: comment?.status ?? null,
+	};
 };
 
 // Slack mentions: @everyone, @here, @channel, <!everyone>, <!here>,
@@ -361,7 +373,11 @@ export const renderTelegramBody = async (
 		// /telegram route, which re-checks the linked operator's role before
 		// acting. The keyboard is event-tailored (e.g. "Not spam" on a spam
 		// alert, "Resolve reports" on a report).
-		reply_markup: moderationKeyboard(payload.event, payload.comment_id),
+		reply_markup: moderationKeyboard(
+			payload.event,
+			payload.comment_id,
+			ctx.status,
+		),
 	};
 	// chat_id is required by the Bot API. The dispatcher always supplies it for
 	// telegram endpoints; guard so a misconfig surfaces as a Telegram 400 we

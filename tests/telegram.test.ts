@@ -121,12 +121,14 @@ describe("renderTelegramBody", () => {
 		expect(typeof body.text).toBe("string");
 		expect(body.text).toContain("Alice");
 		expect(Array.isArray(body.reply_markup.inline_keyboard)).toBe(true);
-		// Default keyboard offers Approve + Spam, Delete + Ban.
+		// Delete + Ban are always offered.
 		const labels = body.reply_markup.inline_keyboard
 			.flat()
 			.map((b: { text: string }) => b.text);
-		expect(labels.some((l: string) => l.includes("Approve"))).toBe(true);
 		expect(labels.some((l: string) => l.includes("Ban"))).toBe(true);
+		// stubRows' comment is already approved, so no redundant Approve button.
+		expect(labels.some((l: string) => l.includes("Approve"))).toBe(false);
+		expect(labels.some((l: string) => l.includes("Spam"))).toBe(true);
 	});
 
 	it("HTML-escapes &, <, > in the snippet (no raw markup reaches Telegram)", async () => {
@@ -171,21 +173,43 @@ describe("renderTelegramBody", () => {
 		expect(/&[#a-zA-Z0-9]+$/.test(snippet)).toBe(false);
 	});
 
-	it("tailors the keyboard to the event (spam → Not spam, reported → Resolve)", async () => {
-		const labelsFor = async (event: WebhookPayload["event"]) => {
+	it("tailors the keyboard to the comment's status, not the event", async () => {
+		const labelsFor = async (
+			status: string,
+			event: WebhookPayload["event"] = "comment.posted",
+		) => {
+			const rows = {
+				...stubRows,
+				comments: { ...stubRows.comments, status },
+			};
 			const body = JSON.parse(
-				await renderTelegramBody(makeStubDb(stubRows), payload({ event })),
+				await renderTelegramBody(makeStubDb(rows), payload({ event })),
 			);
 			return body.reply_markup.inline_keyboard
 				.flat()
 				.map((b: { text: string }) => b.text) as string[];
 		};
-		const spam = await labelsFor("comment.spam");
+
+		// Already-approved (e.g. a trusted author's auto-approved post): offer
+		// Spam, but not a no-op Approve.
+		const approved = await labelsFor("approved");
+		expect(approved.some((l) => l.includes("Approve"))).toBe(false);
+		expect(approved.some((l) => l.includes("Spam"))).toBe(true);
+
+		// Pending: the full Approve/Spam triage.
+		const pending = await labelsFor("pending");
+		expect(pending.some((l) => l.includes("Approve"))).toBe(true);
+		expect(pending.some((l) => l.includes("Spam"))).toBe(true);
+
+		// Spam-flagged: offer restore ("Not spam"), not Approve.
+		const spam = await labelsFor("spam", "comment.spam");
 		expect(spam.some((l) => l.includes("Not spam"))).toBe(true);
 		expect(spam.some((l) => l.includes("Approve"))).toBe(false);
 
-		const reported = await labelsFor("comment.reported");
+		// A report adds Resolve on top of the status-driven first row.
+		const reported = await labelsFor("pending", "comment.reported");
 		expect(reported.some((l) => l.includes("Resolve"))).toBe(true);
+		expect(reported.some((l) => l.includes("Approve"))).toBe(true);
 	});
 
 	it("omits chat_id when not supplied (dispatcher always adds it)", async () => {
