@@ -1353,13 +1353,31 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 	const wrap = el("form", "gr-reply-form");
 	wrap.setAttribute("data-mode", "edit");
 	const ta = el("textarea");
-	ta.value = ""; // Plain-text rewrite would require body_md from the server;
-	// here we just let the user retype. To round-trip the source markdown,
-	// the API should also return body_md for the author within the edit
-	// window. (Tracked as a follow-up; the server-side update endpoint
-	// already accepts raw markdown.)
-	ta.placeholder = "Edit your comment…";
+	// Prefill with the original markdown source. The tree payload only carries
+	// body_html, so we fetch body_md on demand from the author-only source
+	// endpoint (same author + edit-window gate as the PATCH). Disable the field
+	// while it loads so the author can't start typing over content that's about
+	// to be replaced, then re-enable and focus once it arrives.
+	ta.value = "";
+	ta.placeholder = "Loading…";
 	ta.required = true;
+	ta.disabled = true;
+	fetch(
+		`${ctx.apiBase}/api/v1/comments/${encodeURIComponent(n.id)}/source`,
+		{ credentials: "include" },
+	)
+		.then((res) => (res.ok ? res.json() : null))
+		.then((data: { body_md?: string } | null) => {
+			if (data && typeof data.body_md === "string") ta.value = data.body_md;
+		})
+		.catch(() => {})
+		.finally(() => {
+			// The author may have hit Cancel before the fetch resolved.
+			if (!ta.isConnected) return;
+			ta.disabled = false;
+			ta.placeholder = "Edit your comment…";
+			ta.focus();
+		});
 	const actions = el("div", "gr-reply-actions");
 	const save = el("button", undefined, "Save");
 	save.type = "submit";

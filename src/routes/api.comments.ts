@@ -797,6 +797,31 @@ comments.get("/", async (c) => {
 	return c.json(payload);
 });
 
+/**
+ * Return the raw markdown source of a comment so the widget's edit form can
+ * prefill with what the author originally typed. The tree endpoint only ships
+ * `body_html`; round-tripping an edit needs `body_md`. Gated identically to the
+ * PATCH below (author-only, within the edit window) since it's the same
+ * authorization surface — only the author, only while still editable.
+ */
+comments.get("/:id/source", async (c) => {
+	const id = c.req.param("id");
+	const existing = await getComment(c.env.DB, id);
+	if (!existing) return c.json({ error: t("err.not_found") }, 404);
+
+	const session = await readSession(c);
+	const sessionUserId = session?.user_id;
+	if (!sessionUserId || sessionUserId !== existing.user_id) {
+		return c.json({ error: t("err.edit.not_author") }, 403);
+	}
+
+	if (Date.now() - existing.created_at > editWindowMs(c.env)) {
+		return c.json({ error: t("err.edit.window_expired") }, 403);
+	}
+
+	return c.json({ body_md: existing.body_md });
+});
+
 comments.patch("/:id", async (c) => {
 	const id = c.req.param("id");
 	const existing = await getComment(c.env.DB, id);
