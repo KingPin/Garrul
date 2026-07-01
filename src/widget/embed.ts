@@ -1353,15 +1353,25 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 	const wrap = el("form", "gr-reply-form");
 	wrap.setAttribute("data-mode", "edit");
 	const ta = el("textarea");
-	// Prefill with the original markdown source. The tree payload only carries
-	// body_html, so we fetch body_md on demand from the author-only source
-	// endpoint (same author + edit-window gate as the PATCH). Disable the field
-	// while it loads so the author can't start typing over content that's about
-	// to be replaced, then re-enable and focus once it arrives.
 	ta.value = "";
 	ta.placeholder = "Loading…";
 	ta.required = true;
+	const actions = el("div", "gr-reply-actions");
+	const save = el("button", undefined, "Save");
+	save.type = "submit";
+	const cancel = el("button", undefined, "Cancel");
+	cancel.type = "button";
+	cancel.addEventListener("click", () => wrap.remove());
+	actions.append(save, cancel);
+
+	// Prefill with the original markdown source. The tree payload only carries
+	// body_html, so we fetch body_md on demand from the author-only source
+	// endpoint (same author + edit-window gate as the PATCH). Disable both the
+	// field and Save while it loads so the author can't type over content that's
+	// about to be replaced, nor submit an empty body before the prefill lands;
+	// re-enable and focus once it arrives.
 	ta.disabled = true;
+	save.disabled = true;
 	fetch(
 		`${ctx.apiBase}/api/v1/comments/${encodeURIComponent(n.id)}/source`,
 		{ credentials: "include" },
@@ -1375,16 +1385,10 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 			// The author may have hit Cancel before the fetch resolved.
 			if (!ta.isConnected) return;
 			ta.disabled = false;
+			save.disabled = false;
 			ta.placeholder = "Edit your comment…";
 			ta.focus();
 		});
-	const actions = el("div", "gr-reply-actions");
-	const save = el("button", undefined, "Save");
-	save.type = "submit";
-	const cancel = el("button", undefined, "Cancel");
-	cancel.type = "button";
-	cancel.addEventListener("click", () => wrap.remove());
-	actions.append(save, cancel);
 	wrap.append(buildWritePreview(ta, ctx.apiBase, true), actions);
 	wrap.addEventListener("submit", async (e) => {
 		e.preventDefault();
