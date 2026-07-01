@@ -15,6 +15,7 @@
  * stored in D1 and never logged. Every call composes the API URL from the
  * token at call time.
  */
+import { log } from "./log";
 import type { WebhookEvent } from "./webhook";
 
 const TELEGRAM_API_BASE = "https://api.telegram.org";
@@ -194,8 +195,13 @@ const callTelegram = async (
 			ok?: boolean;
 			result?: unknown;
 		};
-		return { ok: res.ok && json.ok !== false, status: res.status, result: json.result };
+		const ok = res.ok && json.ok !== false;
+		// Status-only: no token, chat_id, or message text — the Bot API can echo
+		// the request URL (which embeds the token) in errors, so we never log err.
+		if (!ok) log.warn("telegram.api_error", { method, status: res.status });
+		return { ok, status: res.status, result: json.result };
 	} catch {
+		log.warn("telegram.api_error", { method, status: 0 });
 		return { ok: false, status: 0 };
 	} finally {
 		clearTimeout(timer);
