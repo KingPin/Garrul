@@ -21,6 +21,7 @@
 import { Hono } from "hono";
 import {
 	adminOldestPending,
+	adminOpenReportSummary,
 	adminSpamRate,
 	adminStats,
 	countOpenReportsByComment,
@@ -352,15 +353,22 @@ const adminCommentUrl = (env: Bindings, id: string): string | null =>
 		: null;
 
 const renderQueueText = async (env: Bindings): Promise<string> => {
-	const [stats, oldest] = await Promise.all([
+	const [stats, oldest, reports] = await Promise.all([
 		adminStats(env.DB),
 		adminOldestPending(env.DB),
+		adminOpenReportSummary(env.DB),
 	]);
 	const lines = [
 		"<b>Moderation queue</b>",
 		`⏳ Pending: <b>${stats.pending_comments}</b>`,
+		`🚩 Reported: <b>${reports.open}</b>`,
 		`🚫 Spam: <b>${stats.spam_comments}</b>`,
 	];
+	if (reports.top) {
+		lines.push(
+			`Most flagged: <code>${escapeTg(reports.top.slug)}</code> (${reports.top.count})`,
+		);
+	}
 	if (oldest) {
 		const age = relativeAge(oldest.created_at, Date.now());
 		const url = adminCommentUrl(env, oldest.id);
