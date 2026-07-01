@@ -110,6 +110,16 @@ const requiredRole = (action: TgAction): "mod" | "admin" =>
 
 // ------------------------------- Route -------------------------------------
 
+// Inbound callers are authenticated operators (secret token → linked account →
+// per-action role check), so the comment-posting default (1/10s, 5/10min) is
+// far too strict — a moderator tapping through a queue or running a couple of
+// slash commands would be throttled mid-session. Keep a generous burst that
+// still caps a runaway loop or a redelivery storm.
+const TELEGRAM_RATE_LIMIT = {
+	short: { max: 10, windowSec: 10 },
+	long: { max: 120, windowSec: 600 },
+};
+
 telegram.post("/webhook", async (c) => {
 	// 1. Authenticate the caller. This is the ONLY gate on an originless route.
 	if (
@@ -137,12 +147,20 @@ telegram.post("/webhook", async (c) => {
 	const fromId =
 		update.callback_query?.from?.id ?? update.message?.from?.id ?? null;
 	if (fromId != null) {
-		const rl = await checkRateLimit(c.env, `tg:${fromId}`);
+		const rl = await checkRateLimit(c.env, `tg:${fromId}`, TELEGRAM_RATE_LIMIT);
 		if (!rl.ok) {
+			// Tell the operator instead of dropping silently. Callbacks answer as
+			// a toast; messages get a reply so a throttled command isn't a no-op.
 			if (update.callback_query) {
 				await answerCallbackQuery(
 					token,
 					update.callback_query.id,
+					t("telegram.ratelimited"),
+				);
+			} else if (update.message) {
+				await sendMessage(
+					token,
+					update.message.chat.id,
 					t("telegram.ratelimited"),
 				);
 			}
