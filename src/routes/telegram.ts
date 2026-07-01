@@ -282,7 +282,7 @@ const handleMessage = async (
 
 	// Linking is the one command that works before a link exists.
 	if (cmd?.name === "start") {
-		await handleStart(env, token, msg, text);
+		await handleStart(env, token, msg, cmd.arg);
 		return;
 	}
 	if (!cmd) {
@@ -444,10 +444,9 @@ const handleStart = async (
 	env: Bindings,
 	token: string,
 	msg: TgMessage,
-	text: string,
+	code: string,
 ): Promise<void> => {
 	const chatId = msg.chat.id;
-	const code = text.slice("/start".length).trim();
 	if (!code) {
 		await sendMessage(token, chatId, t("telegram.start_help"));
 		return;
