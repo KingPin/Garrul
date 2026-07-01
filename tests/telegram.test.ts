@@ -29,6 +29,7 @@ vi.mock("../src/lib/webhook", async (importOriginal) => ({
 }));
 
 import { encodeCallback } from "../src/lib/telegram";
+import { fireWebhook } from "../src/lib/webhook";
 import type { WebhookPayload } from "../src/lib/webhook";
 import { renderTelegramBody } from "../src/lib/webhook-adapters";
 
@@ -478,6 +479,28 @@ describe("POST /telegram/webhook — callback moderation + role gate", () => {
 		expect(auditCount("approve")).toBe(1);
 		// Acknowledged the tap.
 		expect(tgCalls.some((c) => c.method === "answerCallbackQuery")).toBe(true);
+	});
+
+	it("fires the downstream webhook with a real executionCtx (not undefined)", async () => {
+		// Regression: the callback path once passed executionCtx: undefined, so
+		// fireWebhook short-circuited and moderation from Telegram never notified
+		// other endpoints (no comment.spam delivery, no restore notification).
+		vi.mocked(fireWebhook).mockClear();
+		seedUser("01HMOD0000000000000000000A", "mod");
+		await linkOperator("42", "01HMOD0000000000000000000A");
+		const id = await seedComment("pending");
+
+		await post(
+			mkEnv(),
+			callbackUpdate("42", encodeCallback("spam", id)),
+			SECRET,
+		);
+
+		expect(vi.mocked(fireWebhook)).toHaveBeenCalledTimes(1);
+		const [, ctx, payload] = vi.mocked(fireWebhook).mock.calls[0];
+		expect(typeof ctx?.waitUntil).toBe("function");
+		expect(payload.event).toBe("comment.spam");
+		expect(payload.comment_id).toBe(id);
 	});
 
 	it("refuses to ban when the linked user is only a mod (no audit, no ban)", async () => {

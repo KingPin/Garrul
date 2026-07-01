@@ -172,7 +172,12 @@ telegram.post("/webhook", async (c) => {
 	// update isn't redelivered in a loop.
 	try {
 		if (update.callback_query) {
-			await handleCallback(c.env, token, update.callback_query);
+			await handleCallback(
+				c.env,
+				token,
+				update.callback_query,
+				c.executionCtx,
+			);
 		} else if (update.message) {
 			await handleMessage(c.env, token, update.message);
 		}
@@ -188,6 +193,7 @@ const handleCallback = async (
 	env: Bindings,
 	token: string,
 	cq: TgCallbackQuery,
+	executionCtx: { waitUntil(p: Promise<unknown>): void },
 ): Promise<void> => {
 	const decoded = decodeCallback(cq.data);
 	if (!decoded) {
@@ -209,7 +215,13 @@ const handleCallback = async (
 		return;
 	}
 
-	const outcome = await runAction(env, user, decoded.action, decoded.commentId);
+	const outcome = await runAction(
+		env,
+		user,
+		decoded.action,
+		decoded.commentId,
+		executionCtx,
+	);
 	await answerCallbackQuery(token, cq.id, outcome.toast);
 
 	// Reflect the result in the message and strip the keyboard so the buttons
@@ -236,6 +248,7 @@ const runAction = async (
 	user: User,
 	action: TgAction,
 	commentId: string,
+	executionCtx: { waitUntil(p: Promise<unknown>): void },
 ): Promise<{ toast: string }> => {
 	const reqUrl = env.PUBLIC_BASE_URL ?? "https://localhost";
 
@@ -266,7 +279,7 @@ const runAction = async (
 	// approve | spam | delete | restore → a CommentAction.
 	const res = await moderateComment({
 		env,
-		executionCtx: undefined,
+		executionCtx,
 		reqUrl,
 		adminId: user.id,
 		commentId,
