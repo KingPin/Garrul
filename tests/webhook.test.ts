@@ -314,3 +314,93 @@ describe("discord adapter dispatch threads PUBLIC_BASE_URL to the wire", () => {
 		expect(links).toContain("https://blog.example.com/p");
 	});
 });
+
+// A telegram endpoint's real target is https://api.telegram.org/bot<TOKEN>/…,
+// so the bot token is in the request URL. Some runtimes echo the URL back in a
+// fetch error string — this pins that such a string is scrubbed before it can
+// reach the failure log (CLAUDE.md: never log the token).
+const makeDbForTelegram = () => {
+	const endpointRow = {
+		id: "01HE000000000000000000",
+		url: "-1001234567890", // chat id, not a URL
+		secret: null,
+		events: null,
+		adapter: "telegram",
+		enabled: 1,
+		fail_count: 0,
+		disabled_at: null,
+		created_at: 0,
+		updated_at: 0,
+	};
+	return {
+		prepare(sql: string) {
+			return {
+				bind() {
+					return this;
+				},
+				async first() {
+					if (sql.includes("FROM comments")) {
+						return {
+							id: "01HC000000000000000000",
+							post_slug: "hello-world",
+							body_md: "Nice post!",
+							status: "approved",
+							user_id: "01HU000000000000000000",
+							created_at: 0,
+						};
+					}
+					if (sql.includes("FROM users")) {
+						return { id: "01HU000000000000000000", name: "Alice", avatar_url: null };
+					}
+					if (sql.includes("FROM posts")) {
+						return { slug: "hello-world", title: "Hi", url: null, created_at: 0 };
+					}
+					return null;
+				},
+				async all() {
+					if (sql.includes("FROM webhook_endpoints")) {
+						return { results: [endpointRow] };
+					}
+					return { results: [] };
+				},
+				async run() {
+					return {};
+				},
+			};
+		},
+	} as unknown as D1Database;
+};
+
+describe("telegram dispatch never logs the bot token", () => {
+	const TOKEN = "123456789:AA-secret-bot-token-do-not-log";
+	let warnSpy: ReturnType<typeof vi.spyOn>;
+
+	beforeEach(() => {
+		// fetch throws an error whose message embeds the full request URL — the
+		// worst-case runtime behavior we defend against.
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (url: string) => {
+				throw new Error(`request to ${url} failed`);
+			}),
+		);
+		warnSpy = vi.spyOn(log, "warn").mockImplementation(() => {});
+	});
+
+	afterEach(() => {
+		vi.unstubAllGlobals();
+		warnSpy.mockRestore();
+	});
+
+	it("scrubs the token from the failure log's error field", async () => {
+		await dispatchWebhook(
+			{ DB: makeDbForTelegram(), ENV: "production", TELEGRAM_BOT_TOKEN: TOKEN },
+			payload,
+		);
+		const failCall = warnSpy.mock.calls.find((c) => c[0] === "webhook.failed");
+		expect(failCall).toBeDefined();
+		const logged = JSON.stringify(failCall?.[1]);
+		expect(logged).not.toContain(TOKEN);
+		expect(failCall?.[1]).toMatchObject({ error: expect.stringContaining("***") });
+	});
+});

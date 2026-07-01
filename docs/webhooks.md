@@ -109,6 +109,12 @@ red, edited = grey), and a **Links** field with *🔍 Open in admin* and
 with the title and the two links rendered using Slack's `<url|label>`
 syntax.
 
+The `telegram` adapter sends the same information to a Telegram chat, plus
+inline **Approve / Spam / Delete / Ban / Resolve** buttons that moderate the
+comment in place. It's configured differently from the others — the endpoint's
+URL field holds a **chat id**, not a URL, and the bot token comes from a Worker
+secret. See [telegram.md](./telegram.md) for the full setup.
+
 The two links point to `…/admin/comments/<id>` (the moderation detail
 page) and to the post's public URL. The **admin** link requires
 **`PUBLIC_BASE_URL`** to be set — if it is unset, the notification still

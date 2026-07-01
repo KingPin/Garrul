@@ -31,6 +31,8 @@ const ICON_PATHS: Record<string, string> = {
 	moon: '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9z"/>',
 	menu: '<line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>',
 	copy: '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
+	telegram:
+		'<path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4Z"/>',
 	chevron: '<polyline points="6 9 12 15 18 9"/>',
 };
 

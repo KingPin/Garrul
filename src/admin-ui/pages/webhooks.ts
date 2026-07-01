@@ -17,6 +17,7 @@ const ADAPTERS: Array<{ value: string; label: string }> = [
 	{ value: "generic", label: "Generic JSON (v1 contract)" },
 	{ value: "slack", label: "Slack incoming webhook" },
 	{ value: "discord", label: "Discord webhook" },
+	{ value: "telegram", label: "Telegram bot (chat id in URL field)" },
 ];
 
 const endpointRow = (e: WebhookEndpoint): string => {
@@ -182,6 +183,12 @@ export const renderWebhookForm = (data: WebhookFormData): string => {
           placeholder="https://example.com/webhooks/garrul"
           style="width:100%;max-width:560px">
       </label>
+      <span class="muted" style="display:block;font-size:0.8rem">
+        For the <strong>Telegram</strong> adapter, put the destination
+        <code>chat id</code> here (e.g. <code>-1001234567890</code> or
+        <code>@yourchannel</code>) — not a URL. The bot token comes from the
+        <code>TELEGRAM_BOT_TOKEN</code> secret.
+      </span>
     </p>
     <p>
       <label>HMAC secret (recommended)<br>

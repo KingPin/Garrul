@@ -44,8 +44,10 @@ import {
 	countOpenReportsByComment,
 	createWebhookEndpoint,
 	deleteSettings,
+	deleteTelegramLinkByUser,
 	deleteWebhookEndpoint,
 	getComment,
+	getTelegramLinkByUser,
 	getPost,
 	getUser,
 	getUsersByIds,
@@ -59,12 +61,10 @@ import {
 	listSavedRepliesForUser,
 	listWebhookEndpoints,
 	markSubscriptionUnsubscribed,
-	resolveReportsForComment,
 	setPostClosed,
 	setSetting,
-	setUserBanned,
+	setTelegramDigest,
 	setUserRole,
-	updateCommentStatus,
 	updateSavedReply,
 	deleteSavedReply,
 	updateWebhookEndpoint,
@@ -80,6 +80,12 @@ import {
 	type WebhookEndpoint,
 } from "../db/queries";
 import { fireWebhook, type WebhookEvent } from "../lib/webhook";
+import {
+	banUser,
+	type CommentAction,
+	moderateComment,
+	resolveReports,
+} from "../lib/moderation";
 import { checkOutboundUrl } from "../lib/url-safety";
 import {
 	peekCachedLatestVersion,
@@ -101,6 +107,8 @@ import {
 import { renderUserDetail } from "../admin-ui/pages/user-detail";
 import { renderUsers } from "../admin-ui/pages/users";
 import { renderOperator } from "../admin-ui/pages/operator";
+import { renderTelegram } from "../admin-ui/pages/telegram";
+import { issueTelegramLinkToken } from "./telegram";
 import { renderSettings } from "../admin-ui/pages/settings";
 import {
 	bustFlagsCache,
@@ -653,6 +661,82 @@ admin.get("/operator", async (c) => {
 	);
 });
 
+// --- Telegram operator linking ------------------------------------------
+//
+// The bot itself is configured with Worker secrets (TELEGRAM_BOT_TOKEN /
+// _WEBHOOK_SECRET); this page links the viewing admin's personal Telegram
+// account for interactive buttons + slash commands + the optional digest.
+// Admin-only: linking grants the account moderation reach, so it shouldn't be
+// self-served by a plain mod. Every Telegram action still re-checks the
+// linked user's role at action time.
+
+admin.get("/telegram", async (c) => {
+	const user = await requireAdmin(c);
+	if (user instanceof Response) return user;
+	const [updateInfo, link] = await Promise.all([
+		peekCachedLatestVersion(c.env),
+		getTelegramLinkByUser(c.env.DB, user.id),
+	]);
+	return c.html(
+		renderPage(
+			c,
+			"Telegram",
+			renderTelegram({
+				configured: !!c.env.TELEGRAM_BOT_TOKEN,
+				webhookSecretSet: !!c.env.TELEGRAM_WEBHOOK_SECRET,
+				botUsername: c.env.TELEGRAM_BOT_USERNAME ?? null,
+				link: link ? { linked_at: link.linked_at, digest: link.digest } : null,
+			}),
+			user,
+			updateInfo,
+		),
+	);
+});
+
+// Issue a one-time link code. The admin redeems it by sending /start <code>
+// to the bot, which writes the telegram_links row (src/routes/telegram.ts).
+admin.post("/api/telegram/link", async (c) => {
+	const user = await requireAdmin(c);
+	if (user instanceof Response) return user;
+	const code = await issueTelegramLinkToken(c.env.OAUTH_STATE, user.id);
+	// The code is a bearer credential for the link; it's short-lived (10 min)
+	// and one-time, but keep it out of the audit trail and logs all the same.
+	await adminInsertAudit(c.env.DB, {
+		admin_id: user.id,
+		action: "telegram.link_code",
+		target_kind: "user",
+		target_id: user.id,
+	});
+	return c.json({ ok: true, code });
+});
+
+admin.delete("/api/telegram/link", async (c) => {
+	const user = await requireAdmin(c);
+	if (user instanceof Response) return user;
+	const removed = await deleteTelegramLinkByUser(c.env.DB, user.id);
+	if (removed) {
+		await adminInsertAudit(c.env.DB, {
+			admin_id: user.id,
+			action: "telegram.unlink",
+			target_kind: "user",
+			target_id: user.id,
+		});
+	}
+	return c.json({ ok: true, removed });
+});
+
+admin.post("/api/telegram/digest", async (c) => {
+	const user = await requireAdmin(c);
+	if (user instanceof Response) return user;
+	const body = await c.req.json<{ digest?: unknown }>().catch(() => null);
+	if (!body || typeof body.digest !== "boolean") {
+		return c.json({ error: "invalid_body" }, 400);
+	}
+	const updated = await setTelegramDigest(c.env.DB, user.id, body.digest);
+	if (!updated) return c.json({ error: "not_linked" }, 404);
+	return c.json({ ok: true, digest: body.digest });
+});
+
 admin.get("/settings", async (c) => {
 	const user = await requireAdmin(c);
 	if (user instanceof Response) return user;
@@ -869,6 +953,12 @@ const isValidEvent = (v: unknown): v is (typeof VALID_EVENTS)[number] =>
 	typeof v === "string" &&
 	(VALID_EVENTS as readonly string[]).includes(v);
 
+// Telegram chat id: a signed integer (negative for groups/supergroups, e.g.
+// -1001234567890) or a public channel username (@name, 5–32 chars). This is
+// what the telegram adapter stores in the `url` column instead of a URL.
+const isValidTelegramChatId = (v: string): boolean =>
+	/^-?\d{1,20}$/.test(v) || /^@[A-Za-z][A-Za-z0-9_]{4,31}$/.test(v);
+
 const parseWebhookBody = (
 	body: WebhookBody,
 	env: Bindings,
@@ -876,10 +966,26 @@ const parseWebhookBody = (
 	if (typeof body.url !== "string" || body.url.length === 0) {
 		return { ok: false, error: "url_required" };
 	}
-	// allowHttp only in dev — production endpoints must be https to make
-	// the signing+secret guarantees meaningful end-to-end.
-	const safe = checkOutboundUrl(body.url, { allowHttp: env.ENV === "dev" });
-	if (!safe.ok) return { ok: false, error: `url:${safe.reason}` };
+
+	const adapter = body.adapter ?? "generic";
+	if (!isWebhookAdapter(adapter)) {
+		return { ok: false, error: "adapter_invalid" };
+	}
+
+	// The telegram adapter repurposes the `url` field as a destination chat id
+	// (the real target is the fixed Bot API host, composed from
+	// TELEGRAM_BOT_TOKEN at dispatch). Validate its shape instead of running
+	// the URL/SSRF guard, which is built for arbitrary operator URLs.
+	if (adapter === "telegram") {
+		if (!isValidTelegramChatId(body.url)) {
+			return { ok: false, error: "chat_id_invalid" };
+		}
+	} else {
+		// allowHttp only in dev — production endpoints must be https to make
+		// the signing+secret guarantees meaningful end-to-end.
+		const safe = checkOutboundUrl(body.url, { allowHttp: env.ENV === "dev" });
+		if (!safe.ok) return { ok: false, error: `url:${safe.reason}` };
+	}
 
 	let secret: string | null = null;
 	if (body.secret !== undefined && body.secret !== null && body.secret !== "") {
@@ -909,11 +1015,6 @@ const parseWebhookBody = (
 		// Every known event selected = "no filter"; store NULL so receivers
 		// see future events too without a re-save.
 		events = filtered.length === VALID_EVENTS.length ? null : filtered;
-	}
-
-	const adapter = body.adapter ?? "generic";
-	if (!isWebhookAdapter(adapter)) {
-		return { ok: false, error: "adapter_invalid" };
 	}
 
 	const enabled = body.enabled !== false; // default true
@@ -1329,8 +1430,6 @@ admin.post("/api/saved-replies/:id/post", async (c) => {
 	return c.json({ ok: true, id: inserted.id });
 });
 
-type CommentAction = "approve" | "spam" | "delete" | "restore";
-
 admin.post("/api/comments/:id", async (c) => {
 	const user = await requireMod(c);
 	if (user instanceof Response) return user;
@@ -1339,54 +1438,25 @@ admin.post("/api/comments/:id", async (c) => {
 		.json<{ action?: string; reason?: string }>()
 		.catch(() => null);
 	const action = body?.action as CommentAction | undefined;
-	let newStatus: CommentStatus;
-	switch (action) {
-		case "approve":
-			newStatus = "approved";
-			break;
-		case "spam":
-			newStatus = "spam";
-			break;
-		case "delete":
-			newStatus = "deleted";
-			break;
-		case "restore":
-			newStatus = "approved";
-			break;
-		default:
-			return c.json({ error: "invalid_action" }, 400);
+	if (
+		action !== "approve" &&
+		action !== "spam" &&
+		action !== "delete" &&
+		action !== "restore"
+	) {
+		return c.json({ error: "invalid_action" }, 400);
 	}
-	const existing = await getComment(c.env.DB, id);
-	if (!existing) return c.json({ error: "not_found" }, 404);
-	await updateCommentStatus(c.env.DB, id, newStatus);
-	await adminInsertAudit(c.env.DB, {
-		admin_id: user.id,
+	const result = await moderateComment({
+		env: c.env,
+		executionCtx: c.executionCtx,
+		reqUrl: c.req.url,
+		adminId: user.id,
+		commentId: id,
 		action,
-		target_kind: "comment",
-		target_id: id,
 		reason: body?.reason ?? null,
-		meta: { prev_status: existing.status, new_status: newStatus },
 	});
-	// Bust the cached first page so the moderation result is visible.
-	await bustTreeCache(c.env, c.req.url, existing.post_slug);
-	const webhookEvent: WebhookEvent | null =
-		newStatus === "approved"
-			? "comment.approved"
-			: newStatus === "spam"
-				? "comment.spam"
-				: newStatus === "deleted"
-					? "comment.deleted"
-					: null;
-	if (webhookEvent) {
-		fireWebhook(c.env, c.executionCtx, {
-			event: webhookEvent,
-			comment_id: id,
-			post_slug: existing.post_slug,
-			user_id: existing.user_id,
-			ts: Date.now(),
-		});
-	}
-	return c.json({ ok: true, id, status: newStatus });
+	if (!result.ok) return c.json({ error: result.error }, 404);
+	return c.json({ ok: true, id: result.id, status: result.status });
 });
 
 // Per-post comment freeze/unfreeze. Flips posts.closed; the lazy thread
@@ -1433,17 +1503,9 @@ admin.post("/api/comments/:id/reports/resolve", async (c) => {
 	const user = await requireMod(c);
 	if (user instanceof Response) return user;
 	const id = c.req.param("id");
-	const existing = await getComment(c.env.DB, id);
-	if (!existing) return c.json({ error: "not_found" }, 404);
-	const resolved = await resolveReportsForComment(c.env.DB, id);
-	await adminInsertAudit(c.env.DB, {
-		admin_id: user.id,
-		action: "report.resolve",
-		target_kind: "comment",
-		target_id: id,
-		meta: { resolved_count: resolved, post_slug: existing.post_slug },
-	});
-	return c.json({ ok: true, id, resolved });
+	const result = await resolveReports({ env: c.env, adminId: user.id, commentId: id });
+	if (!result.ok) return c.json({ error: result.error }, 404);
+	return c.json({ ok: true, id: result.id, resolved: result.resolved });
 });
 
 const BULK_ACTION_LIMIT = 100;
@@ -1534,29 +1596,17 @@ admin.post("/api/users/:id", async (c) => {
 	if (!body || typeof body.banned !== "boolean") {
 		return c.json({ error: "invalid_body" }, 400);
 	}
-	// Without this, setUserBanned silently no-ops on a bogus id and the
-	// endpoint returns ok — masking a typo or stale UI from the admin.
-	const target = await getUser(c.env.DB, id);
-	if (!target) return c.json({ error: "not_found" }, 404);
-	await setUserBanned(c.env.DB, id, body.banned);
-	// When the ban was triggered from a specific comment (one-click "Ban
-	// author"), record that comment id in the audit trail so the action is
-	// traceable back to its trigger.
-	const fromComment =
-		typeof body.from_comment === "string" && body.from_comment.length > 0
-			? body.from_comment
-			: null;
-	await adminInsertAudit(c.env.DB, {
-		admin_id: user.id,
-		action: body.banned ? "ban" : "unban",
-		target_kind: "user",
-		target_id: id,
+	const result = await banUser({
+		env: c.env,
+		adminId: user.id,
+		userId: id,
+		banned: body.banned,
+		fromComment:
+			typeof body.from_comment === "string" ? body.from_comment : null,
 		reason: body.reason ?? null,
-		meta: fromComment
-			? { target_name: target.name, from_comment: fromComment }
-			: { target_name: target.name },
 	});
-	return c.json({ ok: true, id, banned: body.banned });
+	if (!result.ok) return c.json({ error: result.error }, 404);
+	return c.json({ ok: true, id: result.id, banned: result.banned });
 });
 
 export const roleAuditAction = (

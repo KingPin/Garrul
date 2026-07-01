@@ -29,6 +29,14 @@ RESEND_API_KEY=""
 # configured on /admin/webhooks — prefer endpoint rows: signed + retried).
 WEBHOOK_URL=""
 
+# Telegram operator bot (optional; feature OFF when TELEGRAM_BOT_TOKEN is blank).
+# See docs/telegram.md. Token + webhook secret are secrets; the @username is a
+# plain var (set in wrangler.toml [vars] for prod). For local inbound testing
+# you'd point Telegram's setWebhook at a tunnel and match the secret here.
+TELEGRAM_BOT_TOKEN=""
+TELEGRAM_WEBHOOK_SECRET=""
+TELEGRAM_BOT_USERNAME=""
+
 # Optional: Cloudflare API token (Analytics read) for the /admin/usage
 # page. Pair with CF_ACCOUNT_ID in wrangler.toml [vars].
 CF_API_TOKEN=""

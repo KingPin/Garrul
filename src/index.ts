@@ -12,11 +12,13 @@ import { embed } from "./routes/embed";
 import { agents } from "./routes/agents";
 import { iframe } from "./routes/embed-iframe";
 import { admin } from "./routes/admin";
+import { telegram } from "./routes/telegram";
 import { feed } from "./routes/feed";
 import { counts } from "./routes/api.counts";
 import { permalink } from "./routes/permalink";
 import { subscriptions } from "./routes/api.subscriptions";
 import { runDigest } from "./lib/digest";
+import { runTelegramDigest } from "./lib/telegram-digest";
 import { runWebhookRetries } from "./lib/webhook";
 import { log, requestLogger } from "./lib/log";
 import { corsAndCsrf } from "./lib/cors";
@@ -54,6 +56,22 @@ export type Bindings = {
 	PUBLIC_BASE_URL: string;
 	CANONICAL_URL?: string;
 	WEBHOOK_URL: string;
+	// Telegram integration (optional; feature is off when unset).
+	//   TELEGRAM_BOT_TOKEN      — BotFather token; used to send messages and
+	//                             (Phase 2) receive updates. A webhook endpoint
+	//                             with adapter=telegram stores the chat id in
+	//                             its url column and sends via this token.
+	//   TELEGRAM_WEBHOOK_SECRET — shared secret echoed by Telegram in the
+	//                             X-Telegram-Bot-Api-Secret-Token header on
+	//                             inbound updates; the /telegram route rejects
+	//                             any request whose header doesn't match.
+	TELEGRAM_BOT_TOKEN?: string;
+	TELEGRAM_WEBHOOK_SECRET?: string;
+	//   TELEGRAM_BOT_USERNAME   — the bot's @username (without @). Optional;
+	//                             when set, the admin Telegram page renders a
+	//                             one-tap t.me/<bot>?start=<code> deep link
+	//                             instead of manual /start instructions.
+	TELEGRAM_BOT_USERNAME?: string;
 	// Anti-spam (all optional; each feature opts in when its env var is set).
 	SPAM_PROVIDER?: string;
 	AKISMET_API_KEY?: string;
@@ -206,6 +224,9 @@ app.route("/", embed);
 app.route("/", agents);
 app.route("/embed", iframe);
 app.route("/admin", admin);
+// Top-level (outside /api/*) so it bypasses corsAndCsrf + sessionMiddleware;
+// the route authenticates via the Telegram secret-token header instead.
+app.route("/telegram", telegram);
 
 app.get("/", (c) =>
 	c.text(
@@ -234,10 +255,11 @@ export default {
 		env: Bindings,
 		ctx: ExecutionContext,
 	): Promise<void> => {
-		// Two independent passes per cron tick. Each gets its OWN waitUntil
-		// so a slow digest can't starve the webhook retry queue (and vice
-		// versa), and its OWN catch so a throw in one pass never skips the
-		// other or surfaces as an unhandled rejection (issue #16).
+		// Independent passes per cron tick. Each gets its OWN waitUntil so a
+		// slow pass can't starve the others, and its OWN catch so a throw in
+		// one never skips the rest or surfaces as an unhandled rejection
+		// (issue #16). The Telegram digest self-gates to once/day internally;
+		// running it every tick just lets it decide when it's due.
 		ctx.waitUntil(
 			runDigest(env).catch((err) => {
 				log.error("scheduled.digest", { error: String(err) });
@@ -246,6 +268,11 @@ export default {
 		ctx.waitUntil(
 			runWebhookRetries(env).catch((err) => {
 				log.error("scheduled.webhook_retries", { error: String(err) });
+			}),
+		);
+		ctx.waitUntil(
+			runTelegramDigest(env).catch((err) => {
+				log.error("scheduled.telegram_digest", { error: String(err) });
 			}),
 		);
 	},

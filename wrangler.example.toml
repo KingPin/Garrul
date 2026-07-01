@@ -82,6 +82,13 @@ OAUTH_CALLBACK_BASE = "https://comments.example.com"
 # enable the /admin/usage analytics page.
 # CF_ACCOUNT_ID = "0123abcd..."
 
+# Telegram operator bot (optional; the feature is OFF when TELEGRAM_BOT_TOKEN
+# is unset). See docs/telegram.md for BotFather setup + the setWebhook call.
+# The bot token and webhook secret are SECRETS (wrangler secret put, below);
+# only the @username is a plain var. When set, the /admin/telegram page renders
+# a one-tap t.me/<bot>?start=<code> deep link instead of manual /start steps.
+# TELEGRAM_BOT_USERNAME = "YourGarrulBot"
+
 # Anti-spam (all optional; OFF by default). See docs/ANTISPAM.md.
 # Pluggable content classifier — "akismet" or "workers-ai". Leave unset for none.
 # SPAM_PROVIDER = "akismet"
@@ -124,6 +131,8 @@ crons = ["*/15 * * * *"]
 #   wrangler secret put SPAM_FORM_TS_SECRET   # HMAC key for signed form-timestamp tokens (set when SPAM_HONEYPOT_MIN_MS is used)
 #   wrangler secret put AKISMET_API_KEY       # required when SPAM_PROVIDER = "akismet"
 #   wrangler secret put AKISMET_SITE_URL      # public site URL for Akismet (e.g. https://yourblog.example.com)
+#   wrangler secret put TELEGRAM_BOT_TOKEN    # optional, BotFather token — enables the Telegram operator bot
+#   wrangler secret put TELEGRAM_WEBHOOK_SECRET # optional, shared secret echoed in X-Telegram-Bot-Api-Secret-Token (required for inbound buttons/commands)
 
 [[d1_databases]]
 binding = "DB"

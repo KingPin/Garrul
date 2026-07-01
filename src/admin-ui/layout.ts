@@ -142,6 +142,7 @@ export const layout = (
 					? [{ href: "/admin/usage", label: "Usage", icon: "usage" }]
 					: []),
 				{ href: "/admin/operator", label: "Operator", icon: "operator" },
+				{ href: "/admin/telegram", label: "Telegram", icon: "telegram" },
 				{ href: "/admin/settings", label: "Settings", icon: "settings" },
 			]
 		: [];
