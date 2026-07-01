@@ -85,8 +85,12 @@ stored. Pick the events you want (`comment.reported`, `comment.posted`,
 `comment.spam`, …) — the same per-event filtering, HMAC-less Telegram send,
 retry queue, and auto-pause as every other adapter apply.
 
-Each notification carries inline buttons tailored to the event (e.g.
-"Not spam" on a spam event, "Resolve reports" on a reported one).
+Each notification carries inline buttons tailored to the comment's **current
+status**, not the event: a pending comment offers the full "Approve / Spam"
+triage, an already-approved one offers just "Spam", and a spam-flagged one
+offers "Not spam" (restore). A reported event additionally offers "Resolve
+reports". Acting from Telegram fires the matching event, so flagging spam
+sends back a fresh "Not spam" message, and vice-versa.
 
 ## 5. Link your operator account
 

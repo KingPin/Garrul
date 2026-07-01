@@ -15,7 +15,9 @@ billing, your data stays in your account.
   variables, and an iframe alternative
 - **Email digests**, RSS feeds, comment counts, permalinks
 - **Admin UI** for moderation queue + user management
-- **Webhook out** on every comment event
+- **Webhook out** on every comment event — generic, Slack, Discord, or Telegram
+- **Telegram operator bot** — moderate from your phone with inline buttons,
+  query the queue with `/queue` & `/stats`, optional daily digest
 
 ## Install
 
