@@ -223,11 +223,20 @@ const postOnce = async (
 		});
 		return { ok: res.ok, status: res.status };
 	} catch (err) {
-		return { ok: false, status: 0, error: String(err) };
+		// The telegram target URL embeds the bot token; some runtimes include the
+		// request URL in fetch error strings. Scrub the token so it can never
+		// reach the logs (see the errorTag log in dispatchToEndpoint).
+		return { ok: false, status: 0, error: scrubToken(String(err), env) };
 	} finally {
 		clearTimeout(timer);
 	}
 };
+
+// Redact the bot token from any string before it can be logged. The token is
+// only ever placed in the telegram target URL, but fetch error messages can
+// echo that URL back, so we strip the exact secret defensively.
+const scrubToken = (s: string, env: WebhookEnv): string =>
+	env.TELEGRAM_BOT_TOKEN ? s.split(env.TELEGRAM_BOT_TOKEN).join("***") : s;
 
 const isDevEnv = (env: WebhookEnv): boolean => env.ENV === "dev";
 
