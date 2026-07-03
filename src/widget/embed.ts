@@ -30,6 +30,8 @@
  * (docs/THEMING.md).
  */
 
+import { loadErrorMessage } from "./load-error";
+
 type TreeAuthor = {
 	id: string;
 	name: string;
@@ -1971,12 +1973,12 @@ const init = () => {
 	void load(root, slug, apiBase, host);
 };
 
-const renderError = (root: ShadowRoot, message: string) => {
+const renderError = (root: ShadowRoot, err: unknown) => {
 	root.replaceChildren();
 	const style = el("style");
 	style.textContent = STYLE_CSS;
 	const wrap = el("div", "gr-root");
-	wrap.appendChild(el("div", "gr-error", `Could not load comments: ${message}`));
+	wrap.appendChild(el("div", "gr-error", loadErrorMessage(err)));
 	root.append(style, wrap);
 };
 
@@ -2150,7 +2152,7 @@ const loadOnce = async (
 		fetchPage(apiBase, slug, null, sort).catch((err: unknown) => err),
 	]);
 	if (dataResult instanceof Error) {
-		renderError(root, String(dataResult));
+		renderError(root, dataResult);
 		return;
 	}
 	const data = dataResult as ListResponse;
