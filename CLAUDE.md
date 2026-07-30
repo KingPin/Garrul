@@ -7,7 +7,8 @@ Self-hosted comment system on Cloudflare Workers + D1 + KV + Turnstile. This fil
 - **Runtime**: Cloudflare Workers (not Pages Functions).
 - **Framework**: Hono (TypeScript).
 - **Database**: Cloudflare D1 (SQLite).
-- **KV**: rate-limits, OAuth state, sessions, tree cache.
+- **KV**: rate-limits, OAuth state, sessions, resolved settings, version checks, CF usage snapshots.
+- **Edge cache**: the comment-tree response cache uses the Cache API (`caches.default`), *not* KV — see `src/lib/response-cache.ts`. The KV namespace is still bound as `TREE_CACHE` for historical reasons.
 - **Anti-spam**: Cloudflare Turnstile.
 - **Email**: Resend only (`src/lib/email.ts`). The `EMAIL_PROVIDER` env var leaves room for more adapters, but Resend is the sole implementation today (MailChannels dropped its free Workers plan). Additional adapters are future work.
 - **Widget**: vanilla TypeScript, no framework. Built with esbuild. Bundle budget: `embed.js` ≤ 20KB gzipped.
@@ -24,17 +25,23 @@ src/
   lib/                  # session, markdown, turnstile, ratelimit, oauth, ulid, identicon, ip-hash,
                         #   webhook, webhook-sig, cors, log, settings, thread, email (Resend), disqus-import
   i18n/                 # en.ts string table; t(key) shim
-  widget/               # embed.ts (script), iframe.ts, iframe-resizer.ts, styles.css, templates.ts
+  widget/               # embed.ts (source), embed.bundled.ts (generated), load-error.ts
+                        #   the iframe variant is a route, not a widget file: routes/embed-iframe.ts
   admin-ui/             # layout + per-page renderers (server-rendered HTML + Alpine attrs)
                         #   layout.ts, styles.ts, escape.ts
                         #   pages/   — dashboard, queue, comment-detail, users, user-detail,
-                        #              audit, subscriptions, operator, settings
-                        #   components/ — spam-summary, shared bits
-test/                   # Vitest suites
-examples/               # host-site integration snippets (astro, wordpress, hugo, jekyll, plain-html)
-scripts/                # setup.sh, rerender.ts, seed-demo.ts, db-export.sh
-docs/                   # THEMING.md, privacy-policy.template.md, tos.template.md
-.github/workflows/      # ci.yml, release.yml
+                        #              audit, subscriptions, operator, settings, webhooks,
+                        #              telegram, saved-replies, usage, about
+                        #   components/ — spam-summary, host-filter
+tests/                  # Vitest suites (+ tests/helpers/ for shared stubs)
+examples/               # host-site integration snippets (astro, wordpress, hugo, jekyll,
+                        #   plain-html, iframe, lazy-load)
+scripts/                # setup.sh, rerender.ts, seed-demo.ts, db-export.sh, build-embed.ts,
+                        #   build-agents-md.ts, build-version.ts, check-bundle-size.ts,
+                        #   import-disqus.ts, upgrade.ts, upgrade/
+docs/                   # THEMING.md, ANTISPAM.md, troubleshooting.md, webhooks.md, telegram.md,
+                        #   api-keys-design.md, privacy-policy.template.md, tos.template.md
+.github/workflows/      # ci.yml, release.yml, agents-docs-sync.yml
 ```
 
 - `AGENTS.md`, `AGENTS-OPERATE.md` — AI assistant integration / operations guides. `AGENTS.md` is also served by the Worker at `/AGENTS.md` with light host templating.

@@ -3,8 +3,9 @@
  * Fails if dist/embed.js is larger than the configured gzipped ceiling.
  *
  * We want the embed.js bundle to stay small enough that a host page is
- * never punished for adding comments. 20KB gzipped is the published cap;
- * the bundle is currently ~3KB gzipped, so we have plenty of headroom.
+ * never punished for adding comments. 20KB gzipped is the published cap.
+ * Run `npm run size` for the current figure rather than trusting a
+ * number in a comment — this one drifted for several releases.
  *
  * Run after `npm run build:embed`. CI invokes it via `npm run size`.
  */
