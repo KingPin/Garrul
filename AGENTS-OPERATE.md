@@ -360,8 +360,9 @@ Application → OAuth2 → add the callback under Redirects. Scopes:
 
 **Dev vs. prod redirects.** Either register a separate app per
 environment, or add `http://localhost:8787/api/v1/auth/<provider>/callback`
-as an additional redirect. Both GitHub and Google permit HTTP localhost.
-Provider policies on plain-HTTP redirects differ and change over time —
+as an additional redirect. GitHub and Google both permit HTTP localhost;
+the other three vary. Provider policies on plain-HTTP redirects differ
+and change over time —
 if a provider rejects the localhost URI, register a separate dev app or
 front local dev with an HTTPS tunnel.
 
