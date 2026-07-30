@@ -204,9 +204,13 @@ with a `#garrul-comment-<id>` anchor.
 ### First comment load feels slow
 
 The first request after a deploy is a cold start (~50ms more than
-steady state). After that, the tree-cache KV serves anonymous
+steady state). After that, the edge tree cache (Cloudflare Cache API,
+`caches.default` — see `src/lib/tree-cache.ts`) serves anonymous
 viewers in ~5ms. Signed-in viewers always bypass cache (their "did
 I react?" set is per-user).
+
+The cache TTL is 60s and it can't be busted globally, so a moderation
+action can take up to a minute to disappear for anonymous viewers.
 
 ### `embed.js` is slow to load
 

@@ -5,7 +5,8 @@
  *   GET  /admin                  → dashboard with stats + nav
  *   GET  /admin/queue?status=…   → comment moderation list
  *   GET  /admin/users?q=…        → user list with ban toggle
- *   GET  /admin/settings         → read-only env summary
+ *   GET  /admin/settings         → settings form + read-only env summary
+ *   POST /admin/settings         → persist flags/numbers to the settings table
  *   POST /admin/api/comments/:id { action: approve|spam|delete|restore }
  *   POST /admin/api/users/:id    { banned: true|false }
  *

@@ -62,7 +62,7 @@ your site:
    you want to test against the deployed Worker.
 2. **Turnstile site key** — set `TURNSTILE_SITE_KEY` so the widget can
    render the challenge. The matching secret goes in via
-   `wrangler secret put TURNSTILE_SECRET_KEY`.
+   `wrangler secret put TURNSTILE_SECRET`.
 3. **Cookies are cross-site** — sessions use
    `SameSite=None; Secure; Partitioned`. Both your host site and the
    Worker must be served over HTTPS in production.
