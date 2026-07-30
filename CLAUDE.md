@@ -110,4 +110,10 @@ Multi-site/multi-tenant per Worker, real-time updates, image uploads, WordPress 
 
 ## CI
 
-GitHub Actions workflows ship in `.github/workflows/` but every job is gated with `if: ${{ github.event.repository.private == false }}` while the repo is private. They auto-enable when the repo is flipped public at v1.0.
+GitHub Actions workflows ship in `.github/workflows/` and run unconditionally — the repo is public.
+
+- `ci.yml` — `lint`, `typecheck`, `test`, `manifest:check`, `build`, `size`. Runs on push/PR to `main` plus `workflow_dispatch`.
+- `release.yml` — fires on `v*` tags. Remember the auto-generated release body is a stub; rewrite it (see Releases above).
+- `agents-docs-sync.yml` — fails a PR that touches watched source paths without updating `AGENTS.md` / `AGENTS-OPERATE.md`. Add the `agents-docs-ok` label to bypass for refactors and dep bumps.
+
+Earlier versions gated every job on `github.event.repository.private == false` so private-repo pushes wouldn't burn billing. Those guards were removed once the repo went public. `ci.yml` and `release.yml` had grown a `|| github.event_name == 'workflow_dispatch'` escape hatch; `agents-docs-sync.yml` never did, so it sat unrunnable.
