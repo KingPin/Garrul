@@ -1,5 +1,5 @@
 /**
- * OAuth2 authorization-code flow for GitHub + Google.
+ * OAuth2 authorization-code flow for GitHub, Google, Facebook, X, Discord.
  *
  * Flow:
  *   1. Widget opens a popup at /api/v1/auth/:provider/start?return=<origin>.

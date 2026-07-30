@@ -107,6 +107,12 @@ Three configuration surfaces:
 | `GH_CLIENT_SECRET` | secret | GitHub OAuth client secret. | `ghp_...` | `wrangler secret put` / `.dev.vars` |
 | `GOOGLE_CLIENT_ID` | secret | Google OAuth client ID. Required for Google sign-in. | `1234.apps.googleusercontent.com` | `wrangler secret put` / `.dev.vars` |
 | `GOOGLE_CLIENT_SECRET` | secret | Google OAuth client secret. | `GOCSPX-...` | `wrangler secret put` / `.dev.vars` |
+| `FACEBOOK_CLIENT_ID` | secret | Optional. Facebook OAuth client ID from developers.facebook.com. Required for Facebook sign-in. Added v1.13.0. | `1234567890123456` | `wrangler secret put` / `.dev.vars` |
+| `FACEBOOK_CLIENT_SECRET` | secret | Optional. Facebook OAuth client secret. | `...` | `wrangler secret put` / `.dev.vars` |
+| `TWITTER_CLIENT_ID` | secret | Optional. X (Twitter) OAuth 2.0 client ID from developer.x.com. Required for X sign-in; the provider slug stays `twitter`. Added v1.13.0. | `...` | `wrangler secret put` / `.dev.vars` |
+| `TWITTER_CLIENT_SECRET` | secret | Optional. X (Twitter) OAuth 2.0 client secret. Note X returns no email — those users get a null email and no digest notifications. | `...` | `wrangler secret put` / `.dev.vars` |
+| `DISCORD_CLIENT_ID` | secret | Optional. Discord OAuth client ID from discord.com/developers → OAuth2. Required for Discord sign-in. Added v1.13.0. | `...` | `wrangler secret put` / `.dev.vars` |
+| `DISCORD_CLIENT_SECRET` | secret | Optional. Discord OAuth client secret. | `...` | `wrangler secret put` / `.dev.vars` |
 | `RESEND_API_KEY` | secret | Resend API key. Required when `EMAIL_PROVIDER=resend`. | `re_...` | `wrangler secret put` / `.dev.vars` |
 | `WEBHOOK_URL` | secret | Legacy single-URL webhook (fire-and-forget, no retries). Only honored when no endpoints are configured on `/admin/webhooks` — prefer endpoint rows (signed, retried, per-event filters). | `https://example.com/hook` | `wrangler secret put` / `.dev.vars` |
 | `COMMENTS_ENABLED` | var | Master switch for new comment creation. Defaults **on**; set `0`/`false`/`no`/`off` to close commenting instance-wide (existing comments stay visible read-only, the widget shows a "Comments are closed." notice, and `POST /api/v1/comments` returns 403). | `true` | `wrangler.toml` |
@@ -302,9 +308,11 @@ configs.
 
 ## 8. OAuth providers
 
-Two providers in v1: GitHub and Google. Generic OIDC is v2 backlog. The
-operator picks which to enable by setting the matching client ID +
-secret. If both are unset, the widget shows only the anonymous form.
+Five providers ship: GitHub, Google, Facebook, X, and Discord (the
+last three added in v1.13.0). Generic OIDC is v2 backlog. The operator
+picks which to enable by setting the matching client ID + secret — a
+provider with no credentials is simply omitted from the sign-in options.
+If all are unset, the widget shows only the anonymous form.
 
 Callback URL pattern (driven by `OAUTH_CALLBACK_BASE`):
 
@@ -316,6 +324,12 @@ For `OAUTH_CALLBACK_BASE = https://comments.example.com`:
 
 - GitHub: `https://comments.example.com/api/v1/auth/github/callback`
 - Google: `https://comments.example.com/api/v1/auth/google/callback`
+- Facebook: `https://comments.example.com/api/v1/auth/facebook/callback`
+- X: `https://comments.example.com/api/v1/auth/twitter/callback`
+- Discord: `https://comments.example.com/api/v1/auth/discord/callback`
+
+Note the X provider slug is `twitter`, not `x` — it's the value stored
+in `users.provider`, so renaming it would orphan existing rows.
 
 **GitHub.** <https://github.com/settings/developers> → New OAuth App.
 GitHub allows exactly one callback URL per app — register two apps for
@@ -327,9 +341,29 @@ authorized redirect URIs are allowed. Until the app is verified, only
 consent-screen test users can sign in; verification takes 7-10 business
 days.
 
+**Facebook.** <https://developers.facebook.com/apps> → Create App →
+add the Facebook Login product. Register the callback under Facebook
+Login → Settings → Valid OAuth Redirect URIs. Scopes: `email
+public_profile`. Apps stay in development mode (only app roles can sign
+in) until you submit for App Review.
+
+**X (Twitter).** <https://developer.x.com/en/portal/dashboard> → your
+project → User authentication settings. Enable **OAuth 2.0**, app type
+"Web App", and register the callback. Scopes: `tweet.read users.read`.
+X's v2 API exposes no email under those scopes, so X users always get a
+null email — which means no digest notifications for them (see the note
+at `src/lib/oauth.ts:146`).
+
+**Discord.** <https://discord.com/developers/applications> → New
+Application → OAuth2 → add the callback under Redirects. Scopes:
+`identify email`.
+
 **Dev vs. prod redirects.** Either register a separate app per
 environment, or add `http://localhost:8787/api/v1/auth/<provider>/callback`
 as an additional redirect. Both GitHub and Google permit HTTP localhost.
+Provider policies on plain-HTTP redirects differ and change over time —
+if a provider rejects the localhost URI, register a separate dev app or
+front local dev with an HTTPS tunnel.
 
 ## 9. Email
 

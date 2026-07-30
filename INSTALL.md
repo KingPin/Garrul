@@ -20,8 +20,8 @@ spent waiting for DNS and clicking through OAuth consent screens.
   [Custom domain](#5-configure-wranglertoml) below).
 - **Node.js ≥ 22** and `npm`. The repo's `.nvmrc` pins the version.
 - A few external credentials, gathered as you go:
-  - GitHub OAuth app (optional, for GitHub sign-in)
-  - Google OAuth app (optional, for Google sign-in)
+  - OAuth apps for whichever sign-in providers you want (all
+    optional): GitHub, Google, Facebook, X, Discord
   - Cloudflare Turnstile site + secret keys (required for anonymous
     commenting)
   - Resend API key (optional, for email digests)
@@ -218,6 +218,9 @@ never check secrets into the repo).
 | `TURNSTILE_SITE_KEY` / `_SECRET` | for anon commenting | From the Turnstile dashboard. |
 | `GH_CLIENT_ID` / `_SECRET`     | for GitHub sign-in   | From your GitHub OAuth app. |
 | `GOOGLE_CLIENT_ID` / `_SECRET` | for Google sign-in   | From your Google OAuth client. |
+| `FACEBOOK_CLIENT_ID` / `_SECRET` | for Facebook sign-in | From your Facebook app (developers.facebook.com). |
+| `TWITTER_CLIENT_ID` / `_SECRET` | for X sign-in        | X OAuth 2.0 credentials; provider slug is `twitter`. X returns no email. |
+| `DISCORD_CLIENT_ID` / `_SECRET` | for Discord sign-in  | From discord.com/developers → OAuth2. |
 | `EMAIL_PROVIDER`               | for digests          | Set to `resend`. |
 | `RESEND_API_KEY`               | for digests          | Sender domain must be verified in Resend. |
 | `EMAIL_FROM`                   | for digests          | e.g. `Garrul <comments@example.com>`. |
