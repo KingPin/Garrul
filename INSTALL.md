@@ -18,7 +18,7 @@ spent waiting for DNS and clicking through OAuth consent screens.
   zone to be on Cloudflare; if your DNS is elsewhere, move it first
   or skip the custom domain (not recommended — see
   [Custom domain](#5-configure-wranglertoml) below).
-- **Node.js ≥ 22** and `npm`. The repo's `.nvmrc` pins the version.
+- **Node.js ≥ 24** and `npm`. The repo's `.nvmrc` pins the version.
 - A few external credentials, gathered as you go:
   - OAuth apps for whichever sign-in providers you want (all
     optional): GitHub, Google, Facebook, X, Discord
