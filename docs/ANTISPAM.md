@@ -15,6 +15,8 @@ These don't need configuration; they ship with every Garrul instance:
 
 All three heuristics + the classifier adapter flip a flagged comment to `status='pending'` so it lands in the admin queue at `/admin/queue?status=pending`. **Nothing is ever silently dropped.** You decide whether to approve.
 
+**The three heuristics are runtime-tunable.** Each one has an env var below that sets the deploy-time default, but you can retune all three from **Admin → Settings → Moderation** without a redeploy — which is how you want to work while watching the queue. An admin save writes a `settings` row that overrides the env var (precedence is DB > env > built-in default); "Reset to defaults" clears the overrides and hands control back to `wrangler.toml`. The classifier in §4 stays deploy-time: it needs credentials, and a dropdown offering a provider the deploy can't reach is worse than an env var.
+
 ### 1. Honeypot timing (`SPAM_HONEYPOT_MIN_MS`)
 
 Bots typically POST immediately. Humans take seconds. The widget asks the server for a signed timestamp when the form loads; the server checks that enough wall-clock time passed before accepting.
@@ -23,13 +25,15 @@ Bots typically POST immediately. Humans take seconds. The widget asks the server
 SPAM_HONEYPOT_MIN_MS = "1500"   # flag if submit happens within 1.5s of form load
 ```
 
+`0` (or unset) turns the check off. Tunable at runtime as **Minimum fill time (ms)**.
+
 Also requires the HMAC secret:
 
 ```
 wrangler secret put SPAM_FORM_TS_SECRET
 ```
 
-Generate a strong random value (`openssl rand -hex 32`) and paste when prompted.
+Generate a strong random value (`openssl rand -hex 32`) and paste when prompted. Without it the timestamp is unsigned and therefore forgeable, so the check is skipped entirely — the Settings page says so inline if you enable the dial without the secret in place.
 
 ### 2. Link-count threshold (`SPAM_LINK_THRESHOLD`)
 
@@ -38,6 +42,8 @@ Counts `https?://` and `mailto:` occurrences in the comment body. Above the thre
 ```toml
 SPAM_LINK_THRESHOLD = "3"   # flag any comment with more than 3 links
 ```
+
+`-1` (or unset) turns the check off; `0` flags any comment containing a link at all. Tunable at runtime as **Link threshold**.
 
 Strong signal against link-farm spam. Some legit comments (e.g. linking 4-5 papers in a technical thread) will get flagged — that's why this routes to the queue, not to the bin.
 
@@ -48,6 +54,8 @@ Every new commenter's first-ever comment goes to `pending` until you approve onc
 ```toml
 SPAM_FIRST_COMMENT_MODERATE = "true"
 ```
+
+Tunable at runtime as **Hold every author's first comment**.
 
 Highest precision of the three heuristics. Cost: you have to log in and approve. Use on low-traffic blogs; skip on busy ones.
 

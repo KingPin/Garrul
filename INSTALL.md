@@ -264,7 +264,7 @@ goes — is section 5 of `AGENTS-OPERATE.md`, generated from
 | `RESEND_API_KEY`               | for digests          | Sender domain must be verified in Resend. |
 | `EMAIL_FROM`                   | for digests          | e.g. `Garrul <comments@example.com>`. |
 | `WEBHOOK_URL`                  | optional             | Fire-and-forget POST on comment events. |
-| `EDIT_WINDOW_MINUTES`          | optional             | Default 15. |
+| `EDIT_WINDOW_MINUTES`          | optional             | Default 15; `0` disables editing. Overridable at runtime from Admin → Settings. |
 | `JWT_SECRET`                   | reserved             | Declared in bindings; not used yet (sessions are KV-backed). Safe to set a random value or skip. |
 
 See `wrangler.example.toml` for the `[vars]` template with inline
