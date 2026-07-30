@@ -23,6 +23,9 @@ Events:
 - `comment.deleted` — admin/mod deleted (soft-delete)
 - `comment.approved` — admin/mod approved a pending/spam comment
 - `comment.spam` — admin/mod marked spam
+- `comment.reported` — a reader reported a comment (fires on the report,
+  independent of any moderator action; drives the Reported tab in the
+  admin queue)
 
 Headers:
 

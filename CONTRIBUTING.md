@@ -74,9 +74,14 @@ satisfy a coverage gate.
 ## Out of scope
 
 The v2 backlog in [`CLAUDE.md`](CLAUDE.md) lists features we've
-explicitly deferred (multi-site, real-time, image upload, importers,
-@mentions, in-comment search, generic OIDC, webhook signing). PRs for
-these will be closed unless there's been prior discussion.
+explicitly deferred (multi-site, real-time, image upload, WordPress
+importer, self-serve account-delete, @mentions, in-comment search,
+generic OIDC). PRs for these will be closed unless there's been prior
+discussion.
+
+Note that Disqus import and webhook signing were once on this list and
+have since shipped — treat `CLAUDE.md` as the authority if the two
+files ever disagree.
 
 ## License
 

@@ -112,7 +112,7 @@ crons = ["*/15 * * * *"]
 
 # Secrets (set via `wrangler secret put`, NOT in this file):
 #   wrangler secret put JWT_SECRET            # cookie signing for anon edit tokens
-#   wrangler secret put IP_HASH_SECRET        # BLAKE3 IP hashing pepper
+#   wrangler secret put IP_HASH_SECRET        # HMAC-SHA-256 IP hashing pepper
 #   wrangler secret put TURNSTILE_SITE_KEY
 #   wrangler secret put TURNSTILE_SECRET
 #   wrangler secret put GH_CLIENT_ID

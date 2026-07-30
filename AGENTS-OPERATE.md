@@ -452,7 +452,7 @@ Pages (top nav):
 | `/admin/audit` | Audit log with filter form (admin, action, target kind/id, date range). |
 | `/admin/subscriptions` | Email subscription list. Filter by email/post/confirmed/unsubscribed. Actions: manual unsubscribe, resend confirmation. |
 | `/admin/operator` | Batch operations: rerender stale comments (POSTs `/admin/api/ops/rerender` in 50-row chunks until done), seed-demo (idempotent; gated to `ENV != "production"`), and the Disqus import upload (see below). |
-| `/admin/settings` | Read-only view of anti-spam + email config; edits still go through `wrangler secret put`. |
+| `/admin/settings` | Editable form for feature flags + display/pagination numbers, saved to the `settings` D1 table (no redeploy — see section 5). Also renders a read-only `(set)`/`(unset)` summary of secret-backed config (Turnstile, email, OAuth), which still changes via `wrangler secret put`. |
 | `/admin/webhooks` | Outbound webhook endpoints: add/pause/delete, per-endpoint secret + event filter, adapter (`generic` / `slack` / `discord` / `telegram`), failure counts and retry status. |
 | `/admin/telegram` | **Admin-only.** Telegram operator bot: shows whether the bot token/webhook secret are set, links your personal Telegram account (one-time code or deep link), toggles the daily digest, and unlinks. See `docs/telegram.md`. |
 | `/admin/saved-replies` | Moderator saved replies: create/edit canned responses, private or shared scope, postable onto a comment from the queue. |
