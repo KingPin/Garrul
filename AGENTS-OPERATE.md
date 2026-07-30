@@ -101,15 +101,27 @@ commented parses to `{}` and is rejected outright, which is why the
 committed template ships fully commented: an unedited copy fails loudly
 instead of wiping four secrets.
 
-`wrangler.example.toml` declares `[secrets] required` listing the four
-always-needed secrets (`JWT_SECRET`, `IP_HASH_SECRET`,
-`TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET`). `wrangler dev` warns
-`Missing required secrets: …` when one isn't in `.dev.vars`/`.env`, and
-a deploy that would leave one unset fails rather than shipping a Worker
-that 500s on first request. The optional per-provider credentials are
-deliberately absent from that list — wrangler flags every
-listed-but-unset name, which would nag a GitHub-only install about
-Discord.
+`wrangler.example.toml` carries a `[secrets] required` block listing the
+four always-needed secrets (`JWT_SECRET`, `IP_HASH_SECRET`,
+`TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET`) — **commented out by default.**
+Uncommented, a deploy that would leave one unset fails rather than
+shipping a Worker that 500s on first request.
+
+Uncomment it only in a config you never run `wrangler dev` against.
+Declaring a `[secrets]` table changes how wrangler reads `.dev.vars` for
+the whole file: only names in `required` (or already in `[vars]`) are
+bound, and every other secret in `.dev.vars` is dropped — silently, with
+no warning and no entry in the startup bindings banner. Verified against
+wrangler 4.115.0 (`getVarsForDev`): with a two-key `.dev.vars` and
+`required = ["REQ_ONE"]`, only `REQ_ONE` binds; remove the table and both
+bind. Live, that would cost local dev the other 19 secrets — every OAuth
+pair, `RESEND_API_KEY`, `AKISMET_*`, `TELEGRAM_*`, `CF_API_TOKEN`,
+`GITHUB_TOKEN` — which is exactly the set `.dev.vars.example` tells you
+to fill in.
+
+Listing all 23 names instead is not a way out: wrangler hard-fails the
+deploy on any unset name in `required`, so a GitHub-only install could no
+longer ship.
 
 **All of these lists are generated.** `scripts/config-registry.ts` is
 the single source of truth for every environment name Garrul reads;

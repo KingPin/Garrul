@@ -90,15 +90,32 @@ describe(".dev.vars.example", () => {
 });
 
 describe("wrangler.example.toml regions", () => {
-	it("declares only the always-required secrets", () => {
+	it("names only the always-required secrets", () => {
 		const block = buildSecretsRequired();
-		expect(block).toContain("[secrets]");
 		const list = /required = \[(.*)\]/.exec(block)?.[1] ?? "";
 		const names = list.split(", ").map((s) => s.replaceAll('"', ""));
 		expect(names).toEqual(REQUIRED_SECRET_NAMES);
-		// Optional per-provider credentials would warn on every install that
-		// deliberately doesn't use them.
+		// Listing the optional per-provider credentials would hard-fail the
+		// deploy of every install that deliberately doesn't set them.
 		expect(names).not.toContain("GH_CLIENT_ID");
+	});
+
+	// The block must ship inert. Declaring a `[secrets]` table makes
+	// `wrangler dev` bind only `required` + [vars] out of .dev.vars and drop
+	// the rest with no warning (getVarsForDev, wrangler 4.115.0), which would
+	// cost local dev all 19 optional secrets. Uncommenting is an opt-in for
+	// deploy-only configs, so nothing generated may leave TOML at column 0.
+	it("emits the table commented out", () => {
+		const active = buildSecretsRequired()
+			.split("\n")
+			.filter((line) => !line.startsWith("#"));
+		expect(active).toEqual([]);
+	});
+
+	it("keeps the committed template in that state", () => {
+		const toml = read("wrangler.example.toml");
+		expect(toml).not.toMatch(/^\[secrets\]$/m);
+		expect(toml).not.toMatch(/^required = \[/m);
 	});
 
 	it("points at both the bulk and one-at-a-time paths", () => {
