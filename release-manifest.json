@@ -331,11 +331,11 @@
   "breakingChanges": [
     {
       "id": "node-24-minimum",
-      "summary": "Node.js 24 is now the minimum. Building or deploying on Node 22 fails at `npm ci`.",
+      "summary": "Node.js 24 is now the minimum (since 1.20.0). Building or deploying on Node 22 fails at `npm ci`. Already on 1.20.0 or later? Nothing to do.",
       "manualSteps": [
         "Upgrade your build/deploy host to Node.js 24 (`nvm install 24 && nvm use 24` — the repo's .nvmrc now reads 24).",
         "Re-run `npm ci` after switching; a stale node_modules built on Node 22 can carry incompatible native binaries.",
-        "No D1 migrations and no new secrets in this release — nothing to roll back beyond redeploying the prior tag."
+        "Rollback is just redeploying the prior tag: the Node floor added no D1 migrations and no required secrets."
       ]
     }
   ]
