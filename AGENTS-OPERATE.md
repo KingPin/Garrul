@@ -141,7 +141,7 @@ between the two is a build error, not a silent misclassification.
 | `ENV` | var | Switches dev affordances (CORS open, cookies `SameSite=Lax`). Production must be `production`. | `production` | `wrangler.toml` |
 | `ALLOWED_ORIGINS` | var | Comma-separated origins allowed to embed + call `/api/*`. Doubles as the CSRF `Origin` allowlist. See section 6. | `https://yourblog.example.com` | `wrangler.toml` |
 | `ADMIN_EMAILS` | var | Comma-separated emails. OAuth signups matching get auto-admin. | `you@example.com` | `wrangler.toml` |
-| `EDIT_WINDOW_MINUTES` | var | Minutes a commenter can edit their own post. | `15` | `wrangler.toml` |
+| `EDIT_WINDOW_MINUTES` | var | Minutes a commenter can edit their own post. Default 15; `0` disables editing. | `15` | `wrangler.toml` default; **Admin → Settings** overrides |
 | `PUBLIC_BASE_URL` | var | Public URL of the Worker; used in permalinks + email bodies. | `https://comments.example.com` | `wrangler.toml` |
 | `CANONICAL_URL` | var | Optional. Override for the public URL used by the `/AGENTS.md` route when the inbound `Host` differs from the canonical address. | `https://comments.example.com` | `wrangler.toml` |
 | `OAUTH_CALLBACK_BASE` | var | Base URL for OAuth callbacks; must match the URI registered with each provider. Usually identical to `PUBLIC_BASE_URL`. | `https://comments.example.com` | `wrangler.toml` |
@@ -171,9 +171,9 @@ between the two is a build error, not a silent misclassification.
 | `AKISMET_API_KEY` | secret | Optional. Akismet API key. Required when `SPAM_PROVIDER=akismet`. | `...` | `wrangler secret put` / `.dev.vars` |
 | `AKISMET_SITE_URL` | secret | Optional. Public site URL sent to Akismet alongside each check. Required when `SPAM_PROVIDER=akismet`. | `https://yourblog.example.com` | `wrangler secret put` / `.dev.vars` |
 | `SPAM_FORM_TS_SECRET` | secret | Optional. HMAC key for signed form-timestamp tokens. Set when `SPAM_HONEYPOT_MIN_MS` is in use, otherwise the timing check cannot be trusted. | ``openssl rand -base64 32` output` | `wrangler secret put` / `.dev.vars` |
-| `SPAM_LINK_THRESHOLD` | var | Optional. Flag a comment to `pending` when it contains more than N URLs. Unset = off. Tripped signals never silently drop a comment — they route it to the admin queue. | `3` | `wrangler.toml` |
-| `SPAM_HONEYPOT_MIN_MS` | var | Optional. Flag a comment to `pending` when the form was submitted faster than N milliseconds. Pair with `SPAM_FORM_TS_SECRET`. Unset = off. | `1500` | `wrangler.toml` |
-| `SPAM_FIRST_COMMENT_MODERATE` | var | Optional. Route the first comment from any new author to `pending`. Unset = off. | `true` | `wrangler.toml` |
+| `SPAM_LINK_THRESHOLD` | var | Optional. Flag a comment to `pending` when it contains more than N URLs. Unset (or `-1`) = off; `0` flags any comment containing a link. Tripped signals never silently drop a comment — they route it to the admin queue. | `3` | `wrangler.toml` default; **Admin → Settings** overrides |
+| `SPAM_HONEYPOT_MIN_MS` | var | Optional. Flag a comment to `pending` when the form was submitted faster than N milliseconds. Pair with `SPAM_FORM_TS_SECRET` — without it the timestamp is unsigned and the check is skipped. Unset or `0` = off. | `1500` | `wrangler.toml` default; **Admin → Settings** overrides |
+| `SPAM_FIRST_COMMENT_MODERATE` | var | Optional. Route the first comment from any new author to `pending`. Unset = off. | `true` | `wrangler.toml` default; **Admin → Settings** overrides |
 | `CF_ACCOUNT_ID` | var | Optional. Cloudflare account ID; paired with `CF_API_TOKEN` to enable the `/admin/usage` analytics page. | `0123abcd...` | `wrangler.toml` (or `wrangler secret put` — the in-app setup guide uses the secret form; both work) |
 | `CF_API_TOKEN` | secret | Optional. Cloudflare API token for `/admin/usage`. Least-privilege scopes: Account.Analytics:Read, Account.D1:Read, Account.Workers KV Storage:Read. The page renders setup instructions when either value is unset. | `...` | `wrangler secret put` / `.dev.vars` |
 | `GITHUB_TOKEN` | secret | Optional. Raises the GitHub API rate limit for the `/admin/*` "update available" check. Unauthenticated calls allow 60 req/hr per IP and Cloudflare egress IPs are shared across colos. Read-only `public_repo` scope is sufficient. | `ghp_...` | `wrangler secret put` / `.dev.vars` |
@@ -199,9 +199,10 @@ hand once a deploy has used them.
 
 ### Feature flags: runtime overrides (since v1.10.0)
 
-The seven feature flags — `COMMENTS_ENABLED`, `REACTIONS_ENABLED`,
+The eight feature flags — `COMMENTS_ENABLED`, `REACTIONS_ENABLED`,
 `VOTING_ENABLED`, `DOWNVOTES_ENABLED`, `PAGE_REACTIONS_ENABLED`,
-`PAGE_VOTES_ENABLED`, `SHOW_DELETED_PLACEHOLDERS` — are **hybrid config**. The env vars above are only
+`PAGE_VOTES_ENABLED`, `SHOW_DELETED_PLACEHOLDERS`,
+`SPAM_FIRST_COMMENT_MODERATE` — are **hybrid config**. The env vars above are only
 the *defaults*. Each flag is resolved with the precedence:
 
 ```
@@ -269,6 +270,38 @@ ignores them behaves exactly as before.
   recovers (on the next render). It's derived in the browser because votes
   deliberately don't bust the tree cache, so a server flag would be stale against
   the score the widget already shows. Requires `DOWNVOTES_ENABLED`.
+
+### Edit window & anti-spam dials (since v1.22.0)
+
+The last three integers to join the hybrid chain (DB settings row > env var >
+default, server-side clamped), edited from **Settings → Moderation**.
+
+- `EDIT_WINDOW_MINUTES` — minutes an author may revise their own comment.
+  Clamped to `0`–`1440`; `0` disables editing entirely (the widget hides the
+  Edit affordance and `PATCH`/`GET :id/source` both 403). **Two behavior
+  changes in v1.22.0:** the resolved default is now the documented **15**
+  rather than the 5 minutes the code actually fell back to when the var was
+  unset, and an explicit `0` means "no editing" instead of silently meaning 5.
+  Installs that set the var explicitly are unaffected.
+- `SPAM_LINK_THRESHOLD` — clamped to `-1`–`50`. `-1` (the default, and where an
+  unset or junk value lands) disables the check; `0` flags any comment carrying
+  a link. The sentinel exists because this signal has always had three states —
+  collapsing "off" onto `0` would have redefined what `0` does for anyone
+  already running it.
+- `SPAM_HONEYPOT_MIN_MS` — clamped to `0`–`60000`; `0` (default) = off. Still
+  requires `SPAM_FORM_TS_SECRET`, which stays a secret: without it the form
+  timestamp is unsigned and forgeable, so `evaluateSpam` skips the check and the
+  `/api/v1/comments/form-token` endpoint 404s. The Settings page flags this
+  combination inline rather than letting the dial sit there doing nothing.
+
+`SPAM_PROVIDER`, `AKISMET_API_KEY`, `AKISMET_SITE_URL` and `SPAM_FORM_TS_SECRET`
+stay **deploy-time**: the provider needs capability detection (`akismet` wants an
+API key, `workers-ai` wants the `[ai]` binding) and a dropdown offering a
+provider the deploy cannot serve is worse than an env var. Everything that can
+lock an operator out — all secrets, `ENV`, `ALLOWED_ORIGINS`, `ADMIN_EMAILS`, and
+the OAuth-redirect URLs — is deliberately excluded from runtime editing, because
+DB > env means one bad admin save beats the declared config and the surface you'd
+use to fix it is the one you just broke.
 
 ## 6. `ALLOWED_ORIGINS` deep-dive
 
@@ -354,10 +387,19 @@ available on top of Turnstile. **All off by default.** Flagged comments
 flip to `status='pending'` and land in the admin queue rather than
 being silently dropped.
 
+The three heuristics are runtime settings: the env vars below set the
+deploy-time default, and **Admin → Settings → Moderation** overrides
+them without a redeploy (DB row > env var > built-in default). Retune
+them there while watching what the queue catches. `SPAM_PROVIDER` and
+its credentials stay deploy-time.
+
 - `SPAM_HONEYPOT_MIN_MS` + `SPAM_FORM_TS_SECRET` — flag submissions
   that arrive faster than wall-clock `N` ms after the form rendered.
+  `0`/unset = off. Without the secret the timestamp is unsigned and the
+  check is skipped.
 - `SPAM_LINK_THRESHOLD` — flag comments containing more than `N`
-  http(s)/mailto links.
+  http(s)/mailto links. `-1`/unset = off; `0` flags any comment with a
+  link.
 - `SPAM_FIRST_COMMENT_MODERATE=true` — every commenter's first-ever
   comment goes to pending until you approve once.
 - `SPAM_PROVIDER` — set to `akismet` or `workers-ai` to enable a
@@ -515,7 +557,7 @@ Pages (top nav):
 | `/admin/audit` | Audit log with filter form (admin, action, target kind/id, date range). |
 | `/admin/subscriptions` | Email subscription list. Filter by email/post/confirmed/unsubscribed. Actions: manual unsubscribe, resend confirmation. |
 | `/admin/operator` | Batch operations: rerender stale comments (POSTs `/admin/api/ops/rerender` in 50-row chunks until done), seed-demo (idempotent; gated to `ENV != "production"`), and the Disqus import upload (see below). |
-| `/admin/settings` | Editable form for feature flags + display/pagination numbers, saved to the `settings` D1 table (no redeploy — see section 5). Also renders a read-only `(set)`/`(unset)` summary of secret-backed config (Turnstile, email, OAuth), which still changes via `wrangler secret put`. |
+| `/admin/settings` | Editable form for feature flags, display/pagination numbers, and the moderation dials (edit window, thread auto-close, community auto-collapse, the three anti-spam heuristics), saved to the `settings` D1 table (no redeploy — see section 5). Also renders a read-only `(set)`/`(unset)` summary of deploy-time config (Turnstile, email, OAuth, spam provider), which still changes via `wrangler secret put` / `wrangler.toml`. |
 | `/admin/webhooks` | Outbound webhook endpoints: add/pause/delete, per-endpoint secret + event filter, adapter (`generic` / `slack` / `discord` / `telegram`), failure counts and retry status. |
 | `/admin/telegram` | **Admin-only.** Telegram operator bot: shows whether the bot token/webhook secret are set, links your personal Telegram account (one-time code or deep link), toggles the daily digest, and unlinks. See `docs/telegram.md`. |
 | `/admin/saved-replies` | Moderator saved replies: create/edit canned responses, private or shared scope, postable onto a comment from the queue. |
