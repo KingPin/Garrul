@@ -277,12 +277,13 @@ The last three integers to join the hybrid chain (DB settings row > env var >
 default, server-side clamped), edited from **Settings → Moderation**.
 
 - `EDIT_WINDOW_MINUTES` — minutes an author may revise their own comment.
-  Clamped to `0`–`1440`; `0` disables editing entirely (the widget hides the
-  Edit affordance and `PATCH`/`GET :id/source` both 403). **Two behavior
-  changes in v1.22.0:** the resolved default is now the documented **15**
-  rather than the 5 minutes the code actually fell back to when the var was
-  unset, and an explicit `0` means "no editing" instead of silently meaning 5.
-  Installs that set the var explicitly are unaffected.
+  Clamped to `0`–`10080` (a week); `0` disables editing entirely (the widget
+  hides the Edit affordance and `PATCH`/`GET :id/source` both 403). **Two
+  behavior changes in v1.22.0:** the resolved default is now the documented
+  **15** rather than the 5 minutes the code actually fell back to when the var
+  was unset, and an explicit `0` means "no editing" instead of silently meaning
+  5. Installs that set the var explicitly are unaffected — the ceiling is a week
+  precisely so a pre-existing longer window isn't silently shortened.
 - `SPAM_LINK_THRESHOLD` — clamped to `-1`–`50`. `-1` (the default, and where an
   unset or junk value lands) disables the check; `0` flags any comment carrying
   a link. The sentinel exists because this signal has always had three states —

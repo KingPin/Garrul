@@ -558,9 +558,19 @@ describe("promoted runtime settings — edit_window_minutes", () => {
 		expect((await loadNumbers(env)).edit_window_minutes).toBe(0);
 	});
 
-	it("clamps above the 1440-minute ceiling", async () => {
+	it("clamps above the one-week ceiling", async () => {
 		const { env } = mkEnv({}, { EDIT_WINDOW_MINUTES: "99999" });
+		expect((await loadNumbers(env)).edit_window_minutes).toBe(10_080);
+	});
+
+	// The ceiling exists to bound the stepper, not to retune existing installs:
+	// parseIntSetting clamps env values too, so anything below it must survive
+	// untouched. A day and a week are the two plausible "long window" configs.
+	it("leaves a pre-existing multi-day env window alone", async () => {
+		const { env } = mkEnv({}, { EDIT_WINDOW_MINUTES: "1440" });
 		expect((await loadNumbers(env)).edit_window_minutes).toBe(1440);
+		const week = mkEnv({}, { EDIT_WINDOW_MINUTES: "10080" });
+		expect((await loadNumbers(week.env)).edit_window_minutes).toBe(10_080);
 	});
 });
 

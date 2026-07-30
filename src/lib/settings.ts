@@ -150,11 +150,17 @@ const NUMBERS: Record<
 	// wrangler.toml already sets explicitly. Installs that omitted the var move
 	// 5 → 15; installs that set it are unaffected. An explicit 0 now means "no
 	// editing" instead of silently meaning 5.
+	//
+	// The ceiling is a week rather than a day because the pre-settings code had
+	// no ceiling at all: parseIntSetting clamps env values too, so any max we
+	// pick silently shortens the window for an install that already configured a
+	// longer one. A week covers every realistic "let people fix typos later"
+	// policy while keeping the stepper a sane range.
 	edit_window_minutes: {
 		env: "EDIT_WINDOW_MINUTES",
 		default: 15,
 		min: 0,
-		max: 1440,
+		max: 10_080,
 	},
 	// Flag a comment to `pending` when it carries MORE than this many links.
 	// -1 = check disabled; 0 = flag any comment containing a link.
