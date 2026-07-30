@@ -36,6 +36,8 @@
     "upgrade": "tsx scripts/upgrade.ts",
     "manifest:build": "tsx scripts/upgrade/build-manifest.ts",
     "manifest:check": "tsx scripts/upgrade/build-manifest.ts --check",
+    "config:build": "tsx scripts/build-config.ts && npm run manifest:build",
+    "config:check": "tsx scripts/build-config.ts --check",
     "build:version": "tsx scripts/build-version.ts",
     "tail": "wrangler tail"
   },

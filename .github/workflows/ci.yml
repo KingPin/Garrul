@@ -41,5 +41,9 @@ jobs:
       # generator derives from the source tree. Catches drift between
       # Bindings/secrets/migrations and the declared upgrade contract.
       - run: npm run manifest:check
+      # Gate: the committed config templates (secrets.example.env,
+      # .dev.vars.example, the generated regions of wrangler.example.toml
+      # and AGENTS-OPERATE.md) must match scripts/config-registry.ts.
+      - run: npm run config:check
       - run: npm run build
       - run: npm run size

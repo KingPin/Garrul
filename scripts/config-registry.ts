@@ -58,6 +58,11 @@ export type ConfigEntry = {
 	/** Example value for the §5 table. */
 	example?: string;
 	/**
+	 * Override for the §5 table's "Where to set" cell. Only for entries where
+	 * the plain secret/var answer needs a caveat.
+	 */
+	whereToSet?: string;
+	/**
 	 * Secrets setup.sh generates locally and streams straight into wrangler,
 	 * so the value never touches disk. Excluded from secrets.example.env.
 	 */
@@ -490,6 +495,8 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
 		description:
 			"Optional. Cloudflare account ID; paired with `CF_API_TOKEN` to enable the `/admin/usage` analytics page.",
 		example: "0123abcd...",
+		whereToSet:
+			"`wrangler.toml` (or `wrangler secret put` — the in-app setup guide uses the secret form; both work)",
 		addedIn: "1.8.0",
 	},
 	{
@@ -704,7 +711,7 @@ export const GENERATED_SECRET_NAMES = SECRETS.filter((e) => e.generate).map(
 
 /** Where the §5 table tells operators to set a given entry. */
 export const targetFor = (e: ConfigEntry): string =>
-	e.kind === "secret" ? SECRET_TARGET : VAR_TARGET;
+	e.whereToSet ?? (e.kind === "secret" ? SECRET_TARGET : VAR_TARGET);
 
 /** Registry order, grouped, preserving first-seen group order. */
 export const groupsOf = (entries: ConfigEntry[]): [string, ConfigEntry[]][] => {
