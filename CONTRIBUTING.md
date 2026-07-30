@@ -26,8 +26,9 @@ npm run migrate
 npm run dev
 ```
 
-`npm test` runs the Vitest suite in-process against Miniflare. No
-network access required.
+`npm test` runs the Vitest suite in-process in the plain `node` pool
+against hand-rolled in-memory D1/KV stubs — no Miniflare, no network
+access, no Cloudflare account required.
 
 ## Pull request process
 
