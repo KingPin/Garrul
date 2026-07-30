@@ -241,17 +241,31 @@ admin.get("/", async (c) => {
 	const user = await requireMod(c);
 	if (user instanceof Response) return user;
 	const db = c.env.DB;
-	const [stats, timeline, topPosts, topCommenters, oldestPending, spamRate, byHost, updateInfo] =
-		await Promise.all([
-			adminStats(db),
-			adminTimeline(db, 30),
-			adminTopPosts(db, 30, 5),
-			adminTopCommenters(db, 30, 5),
-			adminOldestPending(db),
-			adminSpamRate(db, 30),
-			adminCommentsByHost(db),
-			peekCachedLatestVersion(c.env),
-		]);
+	const [
+		stats,
+		timeline,
+		topPosts,
+		topCommenters,
+		oldestPending,
+		spamRate,
+		byHost,
+		updateInfo,
+		flags,
+		numbers,
+	] = await Promise.all([
+		adminStats(db),
+		adminTimeline(db, 30),
+		adminTopPosts(db, 30, 5),
+		adminTopCommenters(db, 30, 5),
+		adminOldestPending(db),
+		adminSpamRate(db, 30),
+		adminCommentsByHost(db),
+		peekCachedLatestVersion(c.env),
+		// The anti-spam summary line reports the resolved heuristic dials, so it
+		// has to read them the same way evaluateSpam does.
+		loadFlags(c.env),
+		loadNumbers(c.env),
+	]);
 	const body = renderDashboard(
 		{
 			stats,
@@ -263,6 +277,8 @@ admin.get("/", async (c) => {
 			by_host: byHost,
 		},
 		c.env,
+		flags,
+		numbers,
 	);
 	return c.html(renderPage(c, "Dashboard", body, user, updateInfo));
 });

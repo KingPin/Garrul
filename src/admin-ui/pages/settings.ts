@@ -58,6 +58,18 @@ const FLAG_META: { key: FlagKey; label: string; help: string }[] = [
 	},
 ];
 
+// Moderation-tab flags. Split from FLAG_META so the Features tab stays a list
+// of reader-facing surfaces; both arrays feed the same save payload.
+const MOD_FLAG_META: { key: FlagKey; label: string; help: string }[] = [
+	{
+		key: "spam_first_comment_moderate",
+		label: "Hold every author's first comment",
+		help: "Route the first-ever comment from each author to the moderation queue. Nothing is dropped — you approve or reject it.",
+	},
+];
+
+const ALL_FLAG_META = [...FLAG_META, ...MOD_FLAG_META];
+
 // Operator-facing labels + help for each numeric display setting. Bounds are
 // pulled from the settings registry so the input min/max can't drift from the
 // server-side clamp.
@@ -84,6 +96,11 @@ const NUMBER_META: { key: NumberKey; label: string; help: string }[] = [
 // auto-close card below.
 const MOD_NUMBER_META: { key: NumberKey; label: string; help: string }[] = [
 	{
+		key: "edit_window_minutes",
+		label: "Edit window (minutes)",
+		help: "How long after posting an author may still revise their own comment. 0 = no editing at all.",
+	},
+	{
 		key: "auto_close_days",
 		label: "Auto-close after (days)",
 		help: "Close a thread to new comments this many days after the article's publish date (or, if the host page doesn't send one, the first comment's date). 0 = never auto-close by age. Existing comments stay visible.",
@@ -100,6 +117,22 @@ const MOD_NUMBER_META: { key: NumberKey; label: string; help: string }[] = [
 	},
 ];
 
+// Anti-spam heuristic dials. The classifier provider and its credentials stay
+// deploy-time (see the Configuration tab) — these three are the ones worth
+// retuning while watching the queue fill up.
+const SPAM_NUMBER_META: { key: NumberKey; label: string; help: string }[] = [
+	{
+		key: "spam_link_threshold",
+		label: "Link threshold",
+		help: "Queue a comment carrying more than this many links. -1 = check off; 0 = queue anything with a link at all.",
+	},
+	{
+		key: "spam_honeypot_min_ms",
+		label: "Minimum fill time (ms)",
+		help: "Queue a comment submitted faster than this after the form loaded — bots post instantly, people don't. 0 = check off.",
+	},
+];
+
 export const renderSettings = (
 	env: Bindings,
 	flags: ResolvedFlags,
@@ -109,7 +142,6 @@ export const renderSettings = (
 		["ENV", env.ENV ?? "(unset)"],
 		["ALLOWED_ORIGINS", env.ALLOWED_ORIGINS ?? "(unset)"],
 		["ADMIN_EMAILS", env.ADMIN_EMAILS ?? "(unset)"],
-		["EDIT_WINDOW_MINUTES", env.EDIT_WINDOW_MINUTES ?? "(default: 15)"],
 		["TURNSTILE_SITE_KEY", env.TURNSTILE_SITE_KEY ? "(set)" : "(unset)"],
 		["GH_CLIENT_ID", env.GH_CLIENT_ID ? "(set)" : "(unset)"],
 		["GOOGLE_CLIENT_ID", env.GOOGLE_CLIENT_ID ? "(set)" : "(unset)"],
@@ -124,9 +156,6 @@ export const renderSettings = (
 		["SPAM_PROVIDER", env.SPAM_PROVIDER || "(unset)"],
 		["AKISMET_API_KEY", env.AKISMET_API_KEY ? "(set)" : "(unset)"],
 		["AKISMET_SITE_URL", env.AKISMET_SITE_URL ?? "(unset)"],
-		["SPAM_LINK_THRESHOLD", env.SPAM_LINK_THRESHOLD ?? "(unset)"],
-		["SPAM_HONEYPOT_MIN_MS", env.SPAM_HONEYPOT_MIN_MS ?? "(unset)"],
-		["SPAM_FIRST_COMMENT_MODERATE", env.SPAM_FIRST_COMMENT_MODERATE ?? "(unset)"],
 		["SPAM_FORM_TS_SECRET", env.SPAM_FORM_TS_SECRET ? "(set)" : "(unset)"],
 	];
 	const body = rows
@@ -164,9 +193,25 @@ export const renderSettings = (
 	};
 	const numberInputs = NUMBER_META.map(stepper).join("");
 	const modNumberInputs = MOD_NUMBER_META.map(stepper).join("");
+	const spamNumberInputs = SPAM_NUMBER_META.map(stepper).join("");
+	const modToggles = MOD_FLAG_META.map((f) =>
+		renderSwitch({
+			name: f.key,
+			model: `flags.${f.key}`,
+			label: f.label,
+			help: f.help,
+		}),
+	).join("");
+
+	// The honeypot timing check silently does nothing without the HMAC key that
+	// signs the form timestamp — an unsigned timestamp is trivially forged, so
+	// evaluateSpam skips the check entirely. Say so rather than letting an
+	// operator turn on a dial that can't fire.
+	const honeypotNeedsSecret =
+		numbers.spam_honeypot_min_ms > 0 && !env.SPAM_FORM_TS_SECRET;
 
 	const initial = JSON.stringify(
-		Object.fromEntries(FLAG_META.map((f) => [f.key, flags[f.key]])),
+		Object.fromEntries(ALL_FLAG_META.map((f) => [f.key, flags[f.key]])),
 	);
 	// Seed the whole resolved numbers object so keys surfaced as non-stepper
 	// controls (auto_close_at, via the date picker) round-trip on save too.
@@ -252,10 +297,11 @@ export const renderSettings = (
 
     <div class="card" x-show="tab === 'moderation'" x-cloak>
       <h2>Moderation</h2>
-      <p class="muted">Thread auto-close and community auto-collapse. All off by
-      default. Closing a thread only blocks <em>new</em> comments — existing ones
-      stay visible and votes/reactions stay live. Auto-collapse just folds
-      heavily-downvoted comments; readers can still expand them.</p>
+      <p class="muted">The edit window, thread auto-close and community
+      auto-collapse. Auto-close and auto-collapse are off by default. Closing a
+      thread only blocks <em>new</em> comments — existing ones stay visible and
+      votes/reactions stay live. Auto-collapse just folds heavily-downvoted
+      comments; readers can still expand them.</p>
       ${modNumberInputs}
       <div class="field-row">
         <span class="field-control">
@@ -276,6 +322,25 @@ export const renderSettings = (
       <input type="hidden" name="auto_close_at" x-model.number="nums.auto_close_at"
              min="${numberBounds("auto_close_at").min}"
              max="${numberBounds("auto_close_at").max}">
+    </div>
+
+    <div class="card" x-show="tab === 'moderation'" x-cloak>
+      <h2>Anti-spam heuristics</h2>
+      <p class="muted">Cheap local checks that run before the (optional, paid)
+      classifier. A tripped check never drops a comment — it routes it to the
+      queue, so tune these while watching what lands there. The classifier
+      provider and its API keys stay in <code>wrangler.toml</code>; see the
+      Configuration tab.</p>
+      ${modToggles}
+      ${spamNumberInputs}${
+				honeypotNeedsSecret
+					? `
+      <p class="muted"><strong>Fill-time check is inactive.</strong> It needs
+      <code>SPAM_FORM_TS_SECRET</code> to sign the form timestamp — without it an
+      unsigned time is trivially forged, so the check is skipped. Set the secret
+      with <code>wrangler secret put SPAM_FORM_TS_SECRET</code> and redeploy.</p>`
+					: ""
+			}
     </div>
 
     <p class="settings-actions" x-show="tab !== 'config'">
