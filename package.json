@@ -47,13 +47,13 @@
     "esbuild": "^0.28.1"
   },
   "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "^0.16.19",
-    "@cloudflare/workers-types": "^4.20251101.0",
-    "@types/node": "^25.8.0",
+    "@cloudflare/vitest-pool-workers": "^0.19.0",
+    "@cloudflare/workers-types": "^5.20260730.1",
+    "@types/node": "^26.1.2",
     "esbuild": "^0.28.1",
     "tsx": "^4.23.1",
     "typescript": "^5.6.0",
     "vitest": "^4.1.10",
-    "wrangler": "^4.106.0"
+    "wrangler": "^4.115.0"
   }
 }
