@@ -1,5 +1,5 @@
 {
-  "version": "1.19.1",
+  "version": "1.20.0",
   "minPreviousVersion": "1.0.0",
   "renderer": {
     "version": 1,
@@ -271,5 +271,15 @@
     "0013_thread_lifecycle_reports.sql",
     "0014_telegram.sql"
   ],
-  "breakingChanges": []
+  "breakingChanges": [
+    {
+      "id": "node-24-minimum",
+      "summary": "Node.js 24 is now the minimum. Building or deploying on Node 22 fails at `npm ci`.",
+      "manualSteps": [
+        "Upgrade your build/deploy host to Node.js 24 (`nvm install 24 && nvm use 24` — the repo's .nvmrc now reads 24).",
+        "Re-run `npm ci` after switching; a stale node_modules built on Node 22 can carry incompatible native binaries.",
+        "No D1 migrations and no new secrets in this release — nothing to roll back beyond redeploying the prior tag."
+      ]
+    }
+  ]
 }
