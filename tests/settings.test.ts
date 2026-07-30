@@ -102,6 +102,7 @@ describe("loadFlags — defaults", () => {
 			page_reactions_enabled: false,
 			page_votes_enabled: false,
 			show_deleted_placeholders: false,
+			spam_first_comment_moderate: false,
 		});
 	});
 
@@ -288,6 +289,11 @@ describe("loadNumbers — defaults", () => {
 			auto_close_at: 0,
 			community_min_votes: 5,
 			community_collapse_ratio: 0,
+			// 15 (not the old 5-minute code fallback) is the documented default;
+			// -1 / 0 are the "check disabled" sentinels for the two spam dials.
+			edit_window_minutes: 15,
+			spam_link_threshold: -1,
+			spam_honeypot_min_ms: 0,
 		});
 	});
 
@@ -474,5 +480,156 @@ describe("route gating — comments", () => {
 		expect(((await res.json()) as { error: string }).error).toBe(
 			"comments_disabled",
 		);
+	});
+});
+
+/**
+ * The four settings promoted out of deploy-time env in #45. Two of them carry
+ * a sentinel that has to keep meaning exactly what the old env-var gate meant,
+ * so pin the whole ladder: unset, junk, out-of-range, and DB-beats-env.
+ */
+describe("promoted runtime settings — spam_link_threshold", () => {
+	it("defaults to -1 (check disabled) when unset", async () => {
+		const { env } = mkEnv();
+		expect((await loadNumbers(env)).spam_link_threshold).toBe(-1);
+	});
+
+	it("treats a junk env value as disabled, matching the old isFinite gate", async () => {
+		const { env } = mkEnv({}, { SPAM_LINK_THRESHOLD: "NaN" });
+		expect((await loadNumbers(env)).spam_link_threshold).toBe(-1);
+	});
+
+	it("clamps a negative env value to the -1 sentinel (old gate: n >= 0)", async () => {
+		const { env } = mkEnv({}, { SPAM_LINK_THRESHOLD: "-5" });
+		expect((await loadNumbers(env)).spam_link_threshold).toBe(-1);
+	});
+
+	it("keeps 0 distinct from off — 0 flags any comment carrying a link", async () => {
+		const { env } = mkEnv({}, { SPAM_LINK_THRESHOLD: "0" });
+		expect((await loadNumbers(env)).spam_link_threshold).toBe(0);
+	});
+
+	it("lets a DB row override the env var", async () => {
+		const { env } = mkEnv(
+			{ spam_link_threshold: "7" },
+			{ SPAM_LINK_THRESHOLD: "3" },
+		);
+		expect((await loadNumbers(env)).spam_link_threshold).toBe(7);
+	});
+});
+
+describe("promoted runtime settings — spam_honeypot_min_ms", () => {
+	it("defaults to 0 (disabled) when unset", async () => {
+		const { env } = mkEnv();
+		expect((await loadNumbers(env)).spam_honeypot_min_ms).toBe(0);
+	});
+
+	it("floors a negative env value at 0, matching the old > 0 gate", async () => {
+		const { env } = mkEnv({}, { SPAM_HONEYPOT_MIN_MS: "-1" });
+		expect((await loadNumbers(env)).spam_honeypot_min_ms).toBe(0);
+	});
+
+	it("lets a DB row override the env var", async () => {
+		const { env } = mkEnv(
+			{ spam_honeypot_min_ms: "2500" },
+			{ SPAM_HONEYPOT_MIN_MS: "1500" },
+		);
+		expect((await loadNumbers(env)).spam_honeypot_min_ms).toBe(2500);
+	});
+});
+
+describe("promoted runtime settings — edit_window_minutes", () => {
+	// The pre-settings code fell back to 5 minutes while every doc said 15.
+	it("defaults to the documented 15, not the old 5-minute code fallback", async () => {
+		const { env } = mkEnv();
+		expect((await loadNumbers(env)).edit_window_minutes).toBe(15);
+	});
+
+	it("still honors an existing env var", async () => {
+		const { env } = mkEnv({}, { EDIT_WINDOW_MINUTES: "5" });
+		expect((await loadNumbers(env)).edit_window_minutes).toBe(5);
+	});
+
+	it("lets a DB row of 0 disable editing outright", async () => {
+		const { env } = mkEnv(
+			{ edit_window_minutes: "0" },
+			{ EDIT_WINDOW_MINUTES: "15" },
+		);
+		expect((await loadNumbers(env)).edit_window_minutes).toBe(0);
+	});
+
+	it("clamps above the one-week ceiling", async () => {
+		const { env } = mkEnv({}, { EDIT_WINDOW_MINUTES: "99999" });
+		expect((await loadNumbers(env)).edit_window_minutes).toBe(10_080);
+	});
+
+	// The ceiling exists to bound the stepper, not to retune existing installs:
+	// parseIntSetting clamps env values too, so anything below it must survive
+	// untouched. A day and a week are the two plausible "long window" configs.
+	it("leaves a pre-existing multi-day env window alone", async () => {
+		const { env } = mkEnv({}, { EDIT_WINDOW_MINUTES: "1440" });
+		expect((await loadNumbers(env)).edit_window_minutes).toBe(1440);
+		const week = mkEnv({}, { EDIT_WINDOW_MINUTES: "10080" });
+		expect((await loadNumbers(week.env)).edit_window_minutes).toBe(10_080);
+	});
+});
+
+describe("promoted runtime settings — spam_first_comment_moderate", () => {
+	it("defaults off", async () => {
+		const { env } = mkEnv();
+		expect((await loadFlags(env)).spam_first_comment_moderate).toBe(false);
+	});
+
+	it("reads the legacy env var", async () => {
+		const { env } = mkEnv({}, { SPAM_FIRST_COMMENT_MODERATE: "true" });
+		expect((await loadFlags(env)).spam_first_comment_moderate).toBe(true);
+	});
+
+	it("lets a DB row turn it back off over an enabling env var", async () => {
+		const { env } = mkEnv(
+			{ spam_first_comment_moderate: "false" },
+			{ SPAM_FIRST_COMMENT_MODERATE: "true" },
+		);
+		expect((await loadFlags(env)).spam_first_comment_moderate).toBe(false);
+	});
+});
+
+/**
+ * GET /form-token gates on the resolved honeypot setting, not raw env. If it
+ * kept reading env, an admin enabling fill-time checks from the Settings page
+ * would get a 404 here, every submission would arrive unsigned, and the check
+ * they just switched on would silently never fire.
+ */
+describe("promoted runtime settings — /form-token honors the DB override", () => {
+	const tokenReq = async (env: Bindings) => {
+		const app = new Hono<{ Bindings: Bindings }>().route("/", comments);
+		return app.request(
+			"/form-token",
+			{},
+			env as unknown as Record<string, unknown>,
+		);
+	};
+
+	it("404s while the honeypot check is disabled", async () => {
+		const { env } = mkEnv({}, { SPAM_FORM_TS_SECRET: "k" });
+		expect((await tokenReq(env)).status).toBe(404);
+	});
+
+	it("mints a token when a DB row enables the check with no env var set", async () => {
+		const { env } = mkEnv(
+			{ spam_honeypot_min_ms: "1500" },
+			{ SPAM_FORM_TS_SECRET: "k" },
+		);
+		const res = await tokenReq(env);
+		expect(res.status).toBe(200);
+		expect(((await res.json()) as { token: string }).token).toBeTruthy();
+	});
+
+	it("404s when a DB row disables a check the env var had enabled", async () => {
+		const { env } = mkEnv(
+			{ spam_honeypot_min_ms: "0" },
+			{ SPAM_FORM_TS_SECRET: "k", SPAM_HONEYPOT_MIN_MS: "1500" },
+		);
+		expect((await tokenReq(env)).status).toBe(404);
 	});
 });

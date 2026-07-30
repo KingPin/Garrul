@@ -16,8 +16,10 @@
  *     default precedence (see src/lib/settings.ts); operators toggle them at
  *     runtime from the admin Settings page.
  *   - numeric display settings (comments_per_page, replies_per_thread,
- *     auto_collapse_depth): page size and reply-collapse tuning, same
- *     DB-override > env > default precedence (see src/lib/settings.ts).
+ *     auto_collapse_depth, edit_window_minutes): page size, reply-collapse and
+ *     edit-window tuning, same DB-override > env > default precedence (see
+ *     src/lib/settings.ts). edit_window_minutes of 0 means editing is off; the
+ *     widget hides the Edit affordance and the PATCH route rejects regardless.
  *   - community auto-collapse thresholds (community_min_votes,
  *     community_collapse_ratio): the widget folds heavily-downvoted comments
  *     client-side using these (see src/widget). 0 ratio = disabled.
@@ -37,9 +39,6 @@ const isTruthy = (v: string | undefined): boolean =>
 	v === "1" || v?.toLowerCase() === "true";
 
 config.get("/", async (c) => {
-	const minutes = Number.parseInt(c.env.EDIT_WINDOW_MINUTES, 10);
-	const edit_window_minutes =
-		Number.isFinite(minutes) && minutes > 0 ? minutes : 5;
 	// Provider client-id/secret env-var names are typed as plain strings on
 	// ProviderConfig, so index the bindings through a string-keyed view.
 	const env = c.env as unknown as Record<string, string | undefined>;
@@ -55,7 +54,7 @@ config.get("/", async (c) => {
 	]);
 	return c.json({
 		turnstile_site_key: c.env.TURNSTILE_SITE_KEY || null,
-		edit_window_minutes,
+		edit_window_minutes: numbers.edit_window_minutes,
 		providers,
 		branding_hidden: isTruthy(c.env.BRANDING_HIDDEN),
 		comments_enabled: flags.comments_enabled,

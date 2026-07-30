@@ -534,6 +534,14 @@ describe("renderDashboard", () => {
 		banned_users: 1,
 	};
 	const env = {} as Bindings;
+	// The anti-spam summary line reads the three heuristic dials from resolved
+	// settings, so the dashboard needs them alongside env.
+	const dashFlags = Object.fromEntries(
+		FLAG_KEYS.map((k) => [k, false]),
+	) as ResolvedFlags;
+	const dashNumbers = Object.fromEntries(
+		NUMBER_KEYS.map((k) => [k, 0]),
+	) as ResolvedNumbers;
 
 	it("renders the spam-rate percentage and oldest-pending link", () => {
 		const html = renderDashboard(
@@ -550,6 +558,8 @@ describe("renderDashboard", () => {
 				by_host: [],
 			},
 			env,
+			dashFlags,
+			dashNumbers,
 		);
 		expect(html).toContain("12.0%");
 		expect(html).toContain("/admin/comments/01HOLDEST");
@@ -570,6 +580,8 @@ describe("renderDashboard", () => {
 				by_host: [],
 			},
 			env,
+			dashFlags,
+			dashNumbers,
 		);
 		expect(html).toContain("No activity in this range");
 		expect(html).toContain("No pending comments");
@@ -590,6 +602,8 @@ describe("renderDashboard", () => {
 				],
 			},
 			env,
+			dashFlags,
+			dashNumbers,
 		);
 		expect(html).toContain("Comments by domain");
 		expect(html).toContain("a.example.com");
@@ -616,6 +630,8 @@ describe("renderDashboard", () => {
 				by_host: hosts,
 			},
 			env,
+			dashFlags,
+			dashNumbers,
 		);
 		expect(html).toContain("…and 3 more domains");
 		expect(html).toContain("h0.example.com");
@@ -636,6 +652,8 @@ describe("renderDashboard", () => {
 				],
 			},
 			env,
+			dashFlags,
+			dashNumbers,
 		);
 		expect(html).not.toContain("<svg/onload=alert(1)>");
 		expect(html).toContain("&lt;svg/onload=alert(1)&gt;");
@@ -684,5 +702,30 @@ describe("renderSettings field-name contract", () => {
 		for (const name of inputNames) {
 			expect(known.has(name)).toBe(true);
 		}
+	});
+
+	// The fill-time dial does nothing without SPAM_FORM_TS_SECRET, and save()
+	// doesn't reload the page — so the warning has to be client-reactive or it
+	// stays hidden through the one transition that matters (operator raises the
+	// dial off 0 and is told only "Settings saved").
+	it("drives the fill-time inactive warning from Alpine state", () => {
+		const off = renderSettings({} as Bindings, flags, {
+			...numbers,
+			spam_honeypot_min_ms: 0,
+		});
+		expect(off).toContain("hasFormTsSecret: false");
+		expect(off).toContain(
+			'x-show="nums.spam_honeypot_min_ms > 0 && !hasFormTsSecret"',
+		);
+		expect(off).toContain("Fill-time check is inactive.");
+	});
+
+	it("seeds hasFormTsSecret true once the secret is set", () => {
+		const withSecret = renderSettings(
+			{ SPAM_FORM_TS_SECRET: "s3cret" } as Bindings,
+			flags,
+			numbers,
+		);
+		expect(withSecret).toContain("hasFormTsSecret: true");
 	});
 });

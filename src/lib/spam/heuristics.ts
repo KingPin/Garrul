@@ -116,8 +116,9 @@ export const countLinks = (bodyMd: string): number => {
 
 /**
  * True when this is the author's first-ever comment (no prior rows in D1
- * keyed on user_id). Caller gates on SPAM_FIRST_COMMENT_MODERATE before
- * paying the query.
+ * keyed on user_id). Caller gates on the resolved
+ * `spam_first_comment_moderate` setting (or an enabled classifier, which uses
+ * this as a feature) before paying the query.
  */
 export const isFirstComment = async (
 	db: D1Database,

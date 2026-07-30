@@ -178,6 +178,27 @@ describe("POST /admin/settings — numeric writes", () => {
 		expect(settingWrites(runs)).toContainEqual(["replies_per_thread", "0"]);
 	});
 
+	// spam_link_threshold is the one key whose floor is negative: -1 is the
+	// "check off" sentinel, 0 means "flag any link". A shared clamp that
+	// assumed a 0 floor would quietly turn the off switch into flag-any-link.
+	it("preserves the -1 off sentinel for spam_link_threshold", async () => {
+		const { env, runs } = mkEnv();
+		const res = await postSettings(env, {
+			numbers: { spam_link_threshold: -1 },
+		});
+		expect(res.status).toBe(200);
+		expect(settingWrites(runs)).toContainEqual(["spam_link_threshold", "-1"]);
+	});
+
+	it("clamps below-sentinel link thresholds up to -1", async () => {
+		const { env, runs } = mkEnv();
+		const res = await postSettings(env, {
+			numbers: { spam_link_threshold: -9 },
+		});
+		expect(res.status).toBe(200);
+		expect(settingWrites(runs)).toContainEqual(["spam_link_threshold", "-1"]);
+	});
+
 	it("accepts a numeric string and truncates a decimal", async () => {
 		const { env, runs } = mkEnv();
 		const res = await postSettings(env, {

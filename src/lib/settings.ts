@@ -31,7 +31,8 @@ export type FlagKey =
 	| "downvotes_enabled"
 	| "page_reactions_enabled"
 	| "page_votes_enabled"
-	| "show_deleted_placeholders";
+	| "show_deleted_placeholders"
+	| "spam_first_comment_moderate";
 
 export type ResolvedFlags = Record<FlagKey, boolean>;
 
@@ -42,7 +43,10 @@ export type NumberKey =
 	| "auto_close_days"
 	| "auto_close_at"
 	| "community_min_votes"
-	| "community_collapse_ratio";
+	| "community_collapse_ratio"
+	| "edit_window_minutes"
+	| "spam_link_threshold"
+	| "spam_honeypot_min_ms";
 
 export type ResolvedNumbers = Record<NumberKey, number>;
 
@@ -62,6 +66,15 @@ const FLAGS: Record<FlagKey, { env: keyof Bindings; default: boolean }> = {
 	// moderator]"), so threads never silently lose entries.
 	show_deleted_placeholders: {
 		env: "SHOW_DELETED_PLACEHOLDERS",
+		default: false,
+	},
+	// Route the first-ever comment from any author to `pending`. A moderation
+	// dial an operator wants to flip while watching the queue, so it resolves
+	// here rather than requiring a redeploy. Note the env var was historically
+	// matched with `=== "true"`; parseBool is laxer (any non-falsy string is
+	// true), which only ever turns a previously-ignored value like "yes" on.
+	spam_first_comment_moderate: {
+		env: "SPAM_FIRST_COMMENT_MODERATE",
 		default: false,
 	},
 };
@@ -126,6 +139,52 @@ const NUMBERS: Record<
 		default: 0,
 		min: 0,
 		max: 100,
+	},
+	// Minutes an author may edit their own comment after posting. 0 = editing
+	// disabled outright.
+	//
+	// The pre-settings code fell back to 5 minutes when the env var was unset
+	// or non-positive, while wrangler.example.toml, INSTALL.md and the admin
+	// Configuration table all advertised 15. A single resolver can only have one
+	// default, so it's 15 — the documented number, and the one every shipped
+	// wrangler.toml already sets explicitly. Installs that omitted the var move
+	// 5 → 15; installs that set it are unaffected. An explicit 0 now means "no
+	// editing" instead of silently meaning 5.
+	//
+	// The ceiling is a week rather than a day because the pre-settings code had
+	// no ceiling at all: parseIntSetting clamps env values too, so any max we
+	// pick silently shortens the window for an install that already configured a
+	// longer one. A week covers every realistic "let people fix typos later"
+	// policy while keeping the stepper a sane range.
+	edit_window_minutes: {
+		env: "EDIT_WINDOW_MINUTES",
+		default: 15,
+		min: 0,
+		max: 10_080,
+	},
+	// Flag a comment to `pending` when it carries MORE than this many links.
+	// -1 = check disabled; 0 = flag any comment containing a link.
+	//
+	// The sentinel is load-bearing: this signal has always had three states, and
+	// "off" could not collapse onto 0 without redefining what 0 does for anyone
+	// running SPAM_LINK_THRESHOLD="0" today. An unset or junk env var resolves to
+	// -1, matching the old `Number.isFinite(n) && n >= 0` gate.
+	spam_link_threshold: {
+		env: "SPAM_LINK_THRESHOLD",
+		default: -1,
+		min: -1,
+		max: 50,
+	},
+	// Flag a comment to `pending` when the form was submitted faster than this
+	// many milliseconds. 0 = disabled, which is also where an unset or junk env
+	// var lands — the old gate was `> 0`, so no existing value changes meaning.
+	// Only enforced when SPAM_FORM_TS_SECRET is also set (the timestamp is
+	// HMAC-signed; unsigned timing is trivially forged).
+	spam_honeypot_min_ms: {
+		env: "SPAM_HONEYPOT_MIN_MS",
+		default: 0,
+		min: 0,
+		max: 60_000,
 	},
 };
 

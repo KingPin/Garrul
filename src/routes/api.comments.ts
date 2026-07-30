@@ -7,7 +7,7 @@
  * Routes:
  *   POST   /api/v1/comments              create
  *   GET    /api/v1/comments?slug=<slug>  list (flat; tree assembled M4)
- *   PATCH  /api/v1/comments/:id          edit (within EDIT_WINDOW_MINUTES)
+ *   PATCH  /api/v1/comments/:id          edit (within edit_window_minutes)
  *   DELETE /api/v1/comments/:id          soft-delete
  *
  * Auth:
@@ -50,7 +50,12 @@ import { readSession } from "../lib/session";
 import { verifyTurnstile } from "../lib/turnstile";
 import { writeEvent } from "../lib/analytics";
 import { fireWebhook } from "../lib/webhook";
-import { loadFlags, loadNumbers } from "../lib/settings";
+import {
+	loadFlags,
+	loadNumbers,
+	type ResolvedFlags,
+	type ResolvedNumbers,
+} from "../lib/settings";
 import { resolveThreadOpen } from "../lib/thread";
 import { bustTreeCache, TREE_CACHE_TTL, treeCacheKey } from "../lib/tree-cache";
 import {
@@ -139,10 +144,10 @@ const parsePublishedAt = (raw: number | string | null | undefined): number | nul
 	return ms;
 };
 
-const editWindowMs = (env: Bindings): number => {
-	const minutes = Number.parseInt(env.EDIT_WINDOW_MINUTES, 10);
-	return Number.isFinite(minutes) && minutes > 0 ? minutes * 60_000 : 5 * 60_000;
-};
+// Resolved edit window in ms. 0 minutes = editing disabled, and every caller
+// compares an elapsed time against this, so a 0 window rejects unconditionally.
+const editWindowMs = (numbers: ResolvedNumbers): number =>
+	numbers.edit_window_minutes * 60_000;
 
 const validName = (raw: string | undefined): { ok: true; name: string } | { ok: false; key: "err.name.required" | "err.name.too_long"; max?: number } => {
 	const name = (raw ?? "").trim();
@@ -176,8 +181,8 @@ const serializeComment = (c: Comment, author: User) => {
 
 /**
  * Mint a signed HMAC timestamp so the widget can prove how long the form was
- * displayed before submission. Verified server-side when both
- * `SPAM_HONEYPOT_MIN_MS` and `SPAM_FORM_TS_SECRET` are configured.
+ * displayed before submission. Verified server-side when both the resolved
+ * `spam_honeypot_min_ms` setting is positive and `SPAM_FORM_TS_SECRET` is set.
  *
  * 404s when either is missing — the widget always asks for a token but
  * tolerates a missing one (the existing field-honeypot still applies),
@@ -186,8 +191,12 @@ const serializeComment = (c: Comment, author: User) => {
  */
 comments.get("/form-token", async (c) => {
 	const secret = c.env.SPAM_FORM_TS_SECRET;
-	const minMs = Number.parseInt(c.env.SPAM_HONEYPOT_MIN_MS ?? "", 10);
-	if (!secret || !Number.isFinite(minMs) || minMs <= 0) {
+	// Resolved, not raw env: an admin who turns honeypot timing on from the
+	// Settings page needs this endpoint to start minting tokens immediately,
+	// otherwise every submission arrives unsigned and the check it just enabled
+	// flags nothing.
+	const { spam_honeypot_min_ms: minMs } = await loadNumbers(c.env);
+	if (!secret || minMs <= 0) {
 		return c.json({ error: "not_found" }, 404);
 	}
 	const token = await signFormTimestamp(Date.now(), secret);
@@ -209,9 +218,11 @@ type SpamEvaluation = {
 
 /**
  * Run the configured anti-spam signals against a candidate comment and
- * decide whether it goes in as `approved` or `pending`. Each signal is
- * gated by its own env var. Admins skip the check entirely. Heuristics
- * run first and short-circuit the (potentially paid) classifier call.
+ * decide whether it goes in as `approved` or `pending`. The three heuristic
+ * dials are runtime settings (DB override > env > default) so an operator can
+ * retune them from the Settings page while watching the queue; `SPAM_PROVIDER`
+ * and the credentials stay deploy-time. Admins skip the check entirely.
+ * Heuristics run first and short-circuit the (potentially paid) classifier call.
  *
  * Per-source verdicts are surfaced alongside the routing decision so the
  * caller can persist them to spam_verdicts once the comment id is known
@@ -219,6 +230,8 @@ type SpamEvaluation = {
  */
 const evaluateSpam = async (
 	env: Bindings,
+	flags: ResolvedFlags,
+	numbers: ResolvedNumbers,
 	author: User,
 	bodyMd: string,
 	postUrl: string | null,
@@ -230,8 +243,8 @@ const evaluateSpam = async (
 	const verdicts: PendingVerdict[] = [];
 	const heuristicsRaw: Record<string, unknown> = {};
 
-	const minMs = Number.parseInt(env.SPAM_HONEYPOT_MIN_MS ?? "", 10);
-	if (Number.isFinite(minMs) && minMs > 0 && env.SPAM_FORM_TS_SECRET) {
+	const minMs = numbers.spam_honeypot_min_ms;
+	if (minMs > 0 && env.SPAM_FORM_TS_SECRET) {
 		const v = await verifyFormTimestamp(
 			formTs,
 			env.SPAM_FORM_TS_SECRET,
@@ -242,8 +255,9 @@ const evaluateSpam = async (
 		if (v.flag) reasons.push(v.reason ?? "form_ts");
 	}
 
-	const linkThreshold = Number.parseInt(env.SPAM_LINK_THRESHOLD ?? "", 10);
-	if (Number.isFinite(linkThreshold) && linkThreshold >= 0) {
+	// -1 = disabled; 0 flags any comment carrying a link.
+	const linkThreshold = numbers.spam_link_threshold;
+	if (linkThreshold >= 0) {
 		const n = countLinks(bodyMd);
 		heuristicsRaw.link_count = { count: n, threshold: linkThreshold };
 		if (n > linkThreshold) reasons.push(`link_count:${n}`);
@@ -252,7 +266,7 @@ const evaluateSpam = async (
 	// Compute is_first_comment if either the moderate-on-first heuristic
 	// or the classifier is enabled — classifiers use it as a feature even
 	// when the operator hasn't asked us to auto-moderate on it.
-	const moderateFirst = env.SPAM_FIRST_COMMENT_MODERATE === "true";
+	const moderateFirst = flags.spam_first_comment_moderate;
 	let isFirst = false;
 	if (moderateFirst || env.SPAM_PROVIDER) {
 		isFirst = await isFirstComment(env.DB, author.id);
@@ -480,6 +494,8 @@ comments.post("/", async (c) => {
 	const userAgent = c.req.header("user-agent") ?? null;
 	const verdict = await evaluateSpam(
 		c.env,
+		flags,
+		numbers,
 		author,
 		bodyCheck.body,
 		postUrl,
@@ -815,7 +831,8 @@ comments.get("/:id/source", async (c) => {
 		return c.json({ error: t("err.edit.not_author") }, 403);
 	}
 
-	if (Date.now() - existing.created_at > editWindowMs(c.env)) {
+	const numbers = await loadNumbers(c.env);
+	if (Date.now() - existing.created_at > editWindowMs(numbers)) {
 		return c.json({ error: t("err.edit.window_expired") }, 403);
 	}
 
@@ -833,7 +850,8 @@ comments.patch("/:id", async (c) => {
 		return c.json({ error: t("err.edit.not_author") }, 403);
 	}
 
-	if (Date.now() - existing.created_at > editWindowMs(c.env)) {
+	const numbers = await loadNumbers(c.env);
+	if (Date.now() - existing.created_at > editWindowMs(numbers)) {
 		return c.json({ error: t("err.edit.window_expired") }, 403);
 	}
 

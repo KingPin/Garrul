@@ -75,6 +75,23 @@ export type ConfigEntry = {
 	 */
 	whereToSet?: string;
 	/**
+	 * The var is also a runtime setting: an admin can override it from Admin →
+	 * Settings, which writes a `settings` row that beats this env var (see
+	 * `src/lib/settings.ts` — precedence is DB > env > default). The env var
+	 * remains the declared deploy-time default.
+	 *
+	 * Recorded here so the §5 table says so. Without it that table would drift
+	 * into being the 7th hand-maintained config list, which is exactly what #42
+	 * set out to kill.
+	 *
+	 * Only for `var` entries that genuinely cannot lock an operator out. Never
+	 * mark a secret, `ENV`, `ALLOWED_ORIGINS`, `ADMIN_EMAILS`, or any URL that
+	 * must match a registered OAuth redirect: DB > env means one bad admin save
+	 * beats the operator's declared config, and the surface they'd use to undo it
+	 * is the one they just broke.
+	 */
+	adminEditable?: boolean;
+	/**
 	 * Secrets setup.sh generates locally and streams straight into wrangler,
 	 * so the value never touches disk. Excluded from secrets.example.env.
 	 */
@@ -97,6 +114,8 @@ export type ConfigEntry = {
 
 const SECRET_TARGET = "`wrangler secret put` / `.dev.vars`";
 const VAR_TARGET = "`wrangler.toml`";
+const ADMIN_EDITABLE_TARGET =
+	"`wrangler.toml` default; **Admin → Settings** overrides";
 
 export const CONFIG_REGISTRY: ConfigEntry[] = [
 	// ---------------------------------------------------------------- core
@@ -138,8 +157,10 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
 		kind: "var",
 		required: false,
 		group: "Core",
+		adminEditable: true,
 		hint: "minutes a commenter can edit their own post",
-		description: "Minutes a commenter can edit their own post.",
+		description:
+			"Minutes a commenter can edit their own post. Default 15; `0` disables editing.",
 		example: "15",
 		addedIn: "1.0.0",
 	},
@@ -487,9 +508,10 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
 		kind: "var",
 		required: false,
 		group: "Anti-spam",
+		adminEditable: true,
 		hint: "flag if more than N URLs in a comment body",
 		description:
-			"Optional. Flag a comment to `pending` when it contains more than N URLs. Unset = off. Tripped signals never silently drop a comment — they route it to the admin queue.",
+			"Optional. Flag a comment to `pending` when it contains more than N URLs. Unset (or `-1`) = off; `0` flags any comment containing a link. Tripped signals never silently drop a comment — they route it to the admin queue.",
 		example: "3",
 		addedIn: "1.1.1",
 	},
@@ -498,9 +520,10 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
 		kind: "var",
 		required: false,
 		group: "Anti-spam",
+		adminEditable: true,
 		hint: "flag if the form was submitted faster than N ms",
 		description:
-			"Optional. Flag a comment to `pending` when the form was submitted faster than N milliseconds. Pair with `SPAM_FORM_TS_SECRET`. Unset = off.",
+			"Optional. Flag a comment to `pending` when the form was submitted faster than N milliseconds. Pair with `SPAM_FORM_TS_SECRET` — without it the timestamp is unsigned and the check is skipped. Unset or `0` = off.",
 		example: "1500",
 		addedIn: "1.1.1",
 	},
@@ -509,6 +532,7 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
 		kind: "var",
 		required: false,
 		group: "Anti-spam",
+		adminEditable: true,
 		hint: "first comment from a new author goes to the queue",
 		description:
 			"Optional. Route the first comment from any new author to `pending`. Unset = off.",
@@ -740,9 +764,18 @@ export const GENERATED_SECRET_NAMES = SECRETS.filter((e) => e.generate).map(
 	(e) => e.name,
 );
 
-/** Where the §5 table tells operators to set a given entry. */
+/**
+ * Where the §5 table tells operators to set a given entry. An explicit
+ * `whereToSet` still wins — it exists for entries whose answer needs a caveat
+ * the generic branches can't express.
+ */
 export const targetFor = (e: ConfigEntry): string =>
-	e.whereToSet ?? (e.kind === "secret" ? SECRET_TARGET : VAR_TARGET);
+	e.whereToSet ??
+	(e.kind === "secret"
+		? SECRET_TARGET
+		: e.adminEditable
+			? ADMIN_EDITABLE_TARGET
+			: VAR_TARGET);
 
 /** Registry order, grouped, preserving first-seen group order. */
 export const groupsOf = (entries: ConfigEntry[]): [string, ConfigEntry[]][] => {

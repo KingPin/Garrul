@@ -1,21 +1,30 @@
 import type { Bindings } from "../../index";
+import type { ResolvedFlags, ResolvedNumbers } from "../../lib/settings";
 import { escapeHtml } from "../escape";
 
-export const spamSummary = (env: Bindings): string => {
+export const spamSummary = (
+	env: Bindings,
+	flags: ResolvedFlags,
+	numbers: ResolvedNumbers,
+): string => {
 	// Match the same gating evaluateSpam uses at runtime, otherwise the
-	// dashboard would claim a layer is active when its value is invalid
-	// (e.g. SPAM_LINK_THRESHOLD='NaN', SPAM_HONEYPOT_MIN_MS='0').
+	// dashboard would claim a layer is active when it isn't (honeypot timing
+	// without SPAM_FORM_TS_SECRET, or a disabled link threshold).
+	//
+	// The three heuristic dials come from the resolved settings, not raw env, so
+	// this line reflects an admin's Settings-page override rather than the
+	// deploy-time value it replaced. The provider and its credentials stay env.
 	const provider = env.SPAM_PROVIDER || "off";
 	const heuristics: string[] = [];
-	const minMs = Number.parseInt(env.SPAM_HONEYPOT_MIN_MS ?? "", 10);
-	if (Number.isFinite(minMs) && minMs > 0 && env.SPAM_FORM_TS_SECRET) {
+	const minMs = numbers.spam_honeypot_min_ms;
+	if (minMs > 0 && env.SPAM_FORM_TS_SECRET) {
 		heuristics.push(`honeypot-timing(${minMs}ms)`);
 	}
-	const linkThreshold = Number.parseInt(env.SPAM_LINK_THRESHOLD ?? "", 10);
-	if (Number.isFinite(linkThreshold) && linkThreshold >= 0) {
+	const linkThreshold = numbers.spam_link_threshold;
+	if (linkThreshold >= 0) {
 		heuristics.push(`link-threshold(>${linkThreshold})`);
 	}
-	if (env.SPAM_FIRST_COMMENT_MODERATE === "true") {
+	if (flags.spam_first_comment_moderate) {
 		heuristics.push("first-comment-moderation");
 	}
 	const heuristicsLabel =
