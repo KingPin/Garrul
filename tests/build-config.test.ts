@@ -87,6 +87,32 @@ describe(".dev.vars.example", () => {
 			expect(devVars, e.name).not.toMatch(new RegExp(`^${e.name}=`, "m"));
 		}
 	});
+
+	// `hint` answers "where do I get the real credential", which is the wrong
+	// instruction for an entry whose devPlaceholder is a purpose-built test
+	// value. Turnstile is the case that motivated devHint: the file ships
+	// Cloudflare's "always passes" keys, so pointing local dev at the dashboard
+	// invites someone to paste production keys over them.
+	it("prefers devHint over hint where one is set", () => {
+		const devVars = buildDevVars();
+		for (const e of SECRETS) {
+			if (!e.devHint) continue;
+			for (const line of e.devHint.split("\n")) {
+				expect(devVars, e.name).toContain(`# ${line}`);
+			}
+			expect(devVars, e.name).not.toContain(`# ${e.hint}\n${e.name}=`);
+		}
+	});
+
+	it("keeps the Turnstile testing-key guidance", () => {
+		const devVars = buildDevVars();
+		expect(devVars).toContain(
+			"https://developers.cloudflare.com/turnstile/troubleshooting/testing/",
+		);
+		expect(devVars).not.toMatch(
+			/dash\.cloudflare\.com.*\nTURNSTILE_SITE_KEY=/,
+		);
+	});
 });
 
 describe("wrangler.example.toml regions", () => {

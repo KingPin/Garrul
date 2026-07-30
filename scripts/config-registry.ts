@@ -69,6 +69,16 @@ export type ConfigEntry = {
 	generate?: "random32";
 	/** Value written into .dev.vars.example. Omit for `""`. */
 	devPlaceholder?: string;
+	/**
+	 * Replaces `hint` in .dev.vars.example. For entries where the production
+	 * answer is actively wrong locally — `hint` tells an operator where to get
+	 * the real credential, which is the opposite of what a local dev wants when
+	 * `devPlaceholder` ships a purpose-built test value.
+	 *
+	 * Newlines become separate comment lines, so a doc link can follow the
+	 * sentence it belongs to.
+	 */
+	devHint?: string;
 	/** Release that introduced the setting. Feeds manifest `addedIn`. */
 	addedIn: string;
 };
@@ -203,6 +213,8 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
 			"Cloudflare Turnstile site key. Required for anonymous commenting. Note this value is *public* — it ships in the widget HTML. It is stored as a secret for historical reasons and because doing so is harmless.",
 		example: "0x4AAAAAAA...",
 		devPlaceholder: "1x00000000000000000000AA",
+		devHint:
+			'Cloudflare\'s "always passes" testing site key — not your real one.\nhttps://developers.cloudflare.com/turnstile/troubleshooting/testing/',
 		addedIn: "1.0.0",
 	},
 	{
@@ -214,6 +226,7 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
 		description: "Turnstile secret. Server-side token verification.",
 		example: "0x4AAAAAAA...",
 		devPlaceholder: "1x0000000000000000000000000000000AA",
+		devHint: 'the matching "always passes" testing secret',
 		addedIn: "1.0.0",
 	},
 

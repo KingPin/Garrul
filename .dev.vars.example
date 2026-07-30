@@ -13,9 +13,10 @@ JWT_SECRET="dev-jwt-secret-change-me"
 IP_HASH_SECRET="dev-ip-hash-pepper-change-me"
 
 # --- Turnstile ---
-# from dash.cloudflare.com → Turnstile
+# Cloudflare's "always passes" testing site key — not your real one.
+# https://developers.cloudflare.com/turnstile/troubleshooting/testing/
 TURNSTILE_SITE_KEY="1x00000000000000000000AA"
-# from dash.cloudflare.com → Turnstile
+# the matching "always passes" testing secret
 TURNSTILE_SECRET="1x0000000000000000000000000000000AA"
 
 # --- GitHub OAuth ---

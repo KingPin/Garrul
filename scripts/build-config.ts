@@ -151,7 +151,12 @@ const buildDevVars = (): string => {
 	for (const [group, entries] of groupsOf(SECRETS)) {
 		out.push("", `# --- ${group} ---`);
 		for (const e of entries) {
-			out.push(`# ${e.hint}`);
+			// `devHint` wins where the production answer is wrong locally —
+			// "from dash.cloudflare.com" would send a contributor after real
+			// Turnstile keys when the placeholder below is a test key on purpose.
+			for (const line of (e.devHint ?? e.hint).split("\n")) {
+				out.push(`# ${line}`);
+			}
 			out.push(`${e.name}="${e.devPlaceholder ?? ""}"`);
 		}
 	}
