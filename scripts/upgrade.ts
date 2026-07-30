@@ -38,6 +38,8 @@ import {
 } from "./upgrade/manifest";
 import {
 	diffSecrets,
+	diffVars,
+	newVarsSince,
 	diffKv,
 	diffD1,
 	diffMigrations,
@@ -191,6 +193,8 @@ const computePlan = (
 
 	return {
 		secrets: diffSecrets(presentSecrets, target.secrets),
+		vars: diffVars(toml.varNames, target.vars),
+		newVars: newVarsSince(toml.varNames, current.vars, target.vars),
 		kv: diffKv(toml.kvBindings, target.kvNamespaces),
 		d1: diffD1(toml.d1Bindings, target.d1Databases),
 		migrations: diffMigrations(applied, target.migrations),
@@ -210,6 +214,21 @@ const printPlan = (current: Manifest, target: Manifest, plan: Plan): void => {
 			const desc = s.description ? ` — ${s.description}` : "";
 			console.log(`  • ${s.name}${desc}`);
 		}
+	}
+	if (plan.vars.missing.length > 0) {
+		console.log("Missing required wrangler.toml [vars] (set these by hand):");
+		for (const v of plan.vars.missing) {
+			const desc = v.description ? ` — ${v.description}` : "";
+			console.log(`  • ${v.name}${desc}`);
+		}
+	}
+	if (plan.newVars.length > 0) {
+		console.log("New optional settings in this release (wrangler.toml [vars]):");
+		for (const v of plan.newVars) {
+			const desc = v.description ? ` — ${v.description}` : "";
+			console.log(`  • ${v.name}${desc}`);
+		}
+		console.log("  (all have defaults; set only the ones you want to change)");
 	}
 	if (plan.kv.missing.length > 0) {
 		console.log("Missing KV namespaces (will be created):");
@@ -245,7 +264,7 @@ const printPlan = (current: Manifest, target: Manifest, plan: Plan): void => {
 			for (const s of bc.manualSteps) console.log(`      ${s}`);
 		}
 	}
-	if (!hasMutations(plan) && !plan.renderer.bumped) {
+	if (!hasMutations(plan) && !plan.renderer.bumped && plan.newVars.length === 0) {
 		console.log("(no infra changes; code-only release)");
 	}
 	console.log("");

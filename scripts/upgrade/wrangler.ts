@@ -56,6 +56,8 @@ export type WranglerToml = {
 	kvBindings: string[];
 	d1Bindings: string[];
 	analyticsBindings: string[];
+	/** Keys set under `[vars]`. Used to report newly available settings. */
+	varNames: string[];
 	raw: string;
 };
 
@@ -82,10 +84,33 @@ export const parseWranglerToml = (repoRoot: string): WranglerToml => {
 		}
 		return out;
 	};
+	// Keys of the `[vars]` table: every assignment between the `[vars]` header
+	// and the next `[section]` line (or end of file). Walked line by line
+	// rather than matched with a lookahead — JS has no end-of-string anchor
+	// that pairs with `^\[` under /m, and `\Z` is not one: it parses as a
+	// literal "Z" and would truncate the block at the first capital Z.
+	// Commented-out keys don't count as set.
+	const grabVarNames = (): string[] => {
+		const out: string[] = [];
+		let inVars = false;
+		for (const line of raw.split("\n")) {
+			const trimmed = line.trim();
+			if (trimmed.startsWith("[")) {
+				inVars = /^\[vars\]/.test(trimmed);
+				continue;
+			}
+			if (!inVars) continue;
+			const m = /^([A-Za-z_][A-Za-z0-9_]*)\s*=/.exec(trimmed);
+			if (m) out.push(m[1] as string);
+		}
+		return out;
+	};
+
 	return {
 		kvBindings: grabBindings("kv_namespaces"),
 		d1Bindings: grabBindings("d1_databases"),
 		analyticsBindings: grabBindings("analytics_engine_datasets"),
+		varNames: grabVarNames(),
 		raw,
 	};
 };

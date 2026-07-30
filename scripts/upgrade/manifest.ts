@@ -22,6 +22,23 @@ export type SecretEntry = {
 	addedIn?: SemVer;
 };
 
+/**
+ * A plain `wrangler.toml` `[vars]` entry — public, unencrypted config.
+ *
+ * Split out of `secrets[]` in 1.21.0. Before that, `build-manifest.ts`
+ * classified every `string` field in `Bindings` as a secret unless it
+ * appeared in a short hardcoded allowlist, so ~20 feature flags were
+ * recorded as secrets. Manifests from tags <= 1.20.0 have no `vars` key
+ * at all; `validateManifest` defaults it to `[]` so upgrades from those
+ * releases still parse.
+ */
+export type VarEntry = {
+	name: string;
+	required: boolean;
+	description?: string;
+	addedIn?: SemVer;
+};
+
 export type KvEntry = {
 	binding: string;
 	required: boolean;
@@ -61,6 +78,7 @@ export type Manifest = {
 	minPreviousVersion: SemVer;
 	renderer: RendererEntry;
 	secrets: SecretEntry[];
+	vars: VarEntry[];
 	kvNamespaces: KvEntry[];
 	d1Databases: D1Entry[];
 	analyticsDatasets: AnalyticsEntry[];
@@ -208,6 +226,19 @@ const validateSecret = (raw: unknown, i: number): SecretEntry => {
 	return entry;
 };
 
+const validateVar = (raw: unknown, i: number): VarEntry => {
+	if (!isObject(raw)) throw new ManifestError(`vars[${i}] must be object`);
+	const entry: VarEntry = {
+		name: requireString(raw, "name", `vars[${i}]`),
+		required: requireBool(raw, "required", `vars[${i}]`),
+	};
+	const desc = optionalString(raw, "description", `vars[${i}]`);
+	if (desc !== undefined) entry.description = desc;
+	const addedIn = optionalSemver(raw, "addedIn", `vars[${i}]`);
+	if (addedIn !== undefined) entry.addedIn = addedIn;
+	return entry;
+};
+
 const validateKv = (raw: unknown, i: number): KvEntry => {
 	if (!isObject(raw))
 		throw new ManifestError(`kvNamespaces[${i}] must be object`);
@@ -293,6 +324,13 @@ export const validateManifest = (raw: unknown): Manifest => {
 			eagerRerender: requireBool(renderer, "eagerRerender", "renderer"),
 		},
 		secrets: requireArray(raw, "secrets", "").map(validateSecret),
+		// Tolerated as absent: manifests from tags <= 1.20.0 predate the
+		// secrets/vars split, so `upgrade` must still parse them to tell an
+		// operator on 1.19.x what changed.
+		vars:
+			raw["vars"] === undefined
+				? []
+				: requireArray(raw, "vars", "").map(validateVar),
 		kvNamespaces: requireArray(raw, "kvNamespaces", "").map(validateKv),
 		d1Databases: requireArray(raw, "d1Databases", "").map(validateD1),
 		analyticsDatasets: requireArray(raw, "analyticsDatasets", "").map(

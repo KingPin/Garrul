@@ -17,6 +17,10 @@ const fakeTargetManifest: Manifest = {
 		{ name: "JWT_SECRET", required: true },
 		{ name: "NEW_SECRET", required: true },
 	],
+	vars: [
+		{ name: "ENV", required: false },
+		{ name: "NEW_FLAG", required: false },
+	],
 	kvNamespaces: [
 		{ binding: "RATE_LIMITS", required: true },
 		{ binding: "NEW_KV", required: true },
@@ -35,6 +39,7 @@ const makeWranglerMock = (): typeof wranglerModule => ({
 		kvBindings: ["RATE_LIMITS"],
 		d1Bindings: ["DB"],
 		analyticsBindings: [],
+		varNames: ["ENV"],
 		raw: "",
 	})),
 	queryAppliedMigrations: vi.fn(() => [
@@ -78,8 +83,14 @@ const fetchTargetManifest = vi.fn(
 // Without injection, loadLocal reads the real release-manifest.json from
 // disk; when that version equals the test's target version, the upgrade
 // script early-returns ("nothing to do") and never calls fetchTargetManifest.
+// `vars` is narrowed to ENV so NEW_FLAG reads as introduced by the target —
+// that's the case the "new optional settings" report exists for.
 const loadLocal = vi.fn(
-	(): Manifest => ({ ...structuredClone(fakeTargetManifest), version: "1.0.0" }),
+	(): Manifest => ({
+		...structuredClone(fakeTargetManifest),
+		version: "1.0.0",
+		vars: [{ name: "ENV", required: false }],
+	}),
 );
 
 describe("upgrade dry-run", () => {
@@ -185,6 +196,26 @@ describe("upgrade dry-run", () => {
 		expect(output.indexOf("Release notes")).toBeLessThan(
 			output.indexOf("Plan: 1.0.0"),
 		);
+	});
+
+	it("reports vars the target release added that are not set", async () => {
+		await main(["--dry-run"], {
+			wrangler: wranglerMock,
+			git: gitMock,
+			fetchLatest,
+			fetchReleaseForTag,
+			fetchTargetManifest,
+			loadLocal,
+		});
+
+		const output = logSpy.mock.calls.map((c) => c.join(" ")).join("\n");
+		expect(output).toMatch(/New optional settings in this release/);
+		expect(output).toMatch(/• NEW_FLAG/);
+		// ENV is declared by both releases and already set in wrangler.toml —
+		// announcing it would make the section noise on every upgrade.
+		expect(output).not.toMatch(/• ENV\b/);
+		// All vars are optional, so nothing is reported as a hard requirement.
+		expect(output).not.toMatch(/Missing required wrangler\.toml/);
 	});
 
 	it("tolerates a missing GitHub release (404)", async () => {

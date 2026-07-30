@@ -7,6 +7,7 @@
 import type {
 	Manifest,
 	SecretEntry,
+	VarEntry,
 	KvEntry,
 	D1Entry,
 } from "./manifest";
@@ -26,6 +27,43 @@ export const diffSecrets = (
 		missing: manifest.filter((s) => s.required && !presentSet.has(s.name)),
 		extra: present.filter((name) => !declaredSet.has(name)),
 	};
+};
+
+/**
+ * `present` is the set of keys under `[vars]` in the operator's
+ * wrangler.toml.
+ *
+ * Every var is optional by design — Garrul ships a default for each — so
+ * `missing` is normally empty and this diff is informational: it tells an
+ * operator which settings the target release added that they haven't set.
+ * `extra` catches vars left in wrangler.toml after a release removed them.
+ */
+export const diffVars = (
+	present: string[],
+	manifest: VarEntry[],
+): Diff<VarEntry> => {
+	const presentSet = new Set(present);
+	const declaredSet = new Set(manifest.map((v) => v.name));
+	return {
+		missing: manifest.filter((v) => v.required && !presentSet.has(v.name)),
+		extra: present.filter((name) => !declaredSet.has(name)),
+	};
+};
+
+/**
+ * Vars the target release declares that the operator has not set and that
+ * did not exist in the release they're upgrading from — "new settings you
+ * may want to look at". Vars they've deliberately left at their default
+ * across several releases stay quiet.
+ */
+export const newVarsSince = (
+	present: string[],
+	current: VarEntry[],
+	target: VarEntry[],
+): VarEntry[] => {
+	const presentSet = new Set(present);
+	const knownSet = new Set(current.map((v) => v.name));
+	return target.filter((v) => !knownSet.has(v.name) && !presentSet.has(v.name));
 };
 
 export const diffKv = (
@@ -98,6 +136,9 @@ export const diffRenderer = (
 
 export type Plan = {
 	secrets: Diff<SecretEntry>;
+	vars: Diff<VarEntry>;
+	/** Informational only — never blocks or triggers an apply step. */
+	newVars: VarEntry[];
 	kv: Diff<KvEntry>;
 	d1: Diff<D1Entry>;
 	migrations: MigrationDiff;
@@ -116,6 +157,15 @@ export const blocksAutoApply = (plan: Plan): string[] => {
 	if (plan.migrations.diverged.length > 0) {
 		reasons.push(
 			`live database has migrations the target doesn't declare: ${plan.migrations.diverged.join(", ")}`,
+		);
+	}
+	// Secrets can be set non-interactively; `[vars]` cannot — they live in
+	// wrangler.toml, which is the operator's file and never rewritten here.
+	if (plan.vars.missing.length > 0) {
+		reasons.push(
+			`wrangler.toml [vars] is missing required entries — add them by hand: ${plan.vars.missing
+				.map((v) => v.name)
+				.join(", ")}`,
 		);
 	}
 	return reasons;

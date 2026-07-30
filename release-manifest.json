@@ -87,11 +87,6 @@
       "addedIn": "1.0.0"
     },
     {
-      "name": "GITHUB_TOKEN",
-      "required": false,
-      "addedIn": "1.21.0"
-    },
-    {
       "name": "TELEGRAM_BOT_TOKEN",
       "required": false,
       "addedIn": "1.17.0"
@@ -102,22 +97,89 @@
       "addedIn": "1.17.0"
     },
     {
-      "name": "TELEGRAM_BOT_USERNAME",
-      "required": false,
-      "addedIn": "1.17.0"
-    },
-    {
-      "name": "SPAM_PROVIDER",
-      "required": false,
-      "addedIn": "1.1.1"
-    },
-    {
       "name": "AKISMET_API_KEY",
       "required": false,
       "addedIn": "1.1.1"
     },
     {
       "name": "AKISMET_SITE_URL",
+      "required": false,
+      "addedIn": "1.1.1"
+    },
+    {
+      "name": "SPAM_FORM_TS_SECRET",
+      "required": false,
+      "addedIn": "1.1.1"
+    },
+    {
+      "name": "CF_API_TOKEN",
+      "required": false,
+      "addedIn": "1.8.0"
+    },
+    {
+      "name": "GITHUB_TOKEN",
+      "required": false,
+      "addedIn": "1.21.0"
+    }
+  ],
+  "vars": [
+    {
+      "name": "ENV",
+      "required": false,
+      "addedIn": "1.0.0"
+    },
+    {
+      "name": "ALLOWED_ORIGINS",
+      "required": false,
+      "addedIn": "1.0.0"
+    },
+    {
+      "name": "ADMIN_EMAILS",
+      "required": false,
+      "addedIn": "1.0.0"
+    },
+    {
+      "name": "EDIT_WINDOW_MINUTES",
+      "required": false,
+      "addedIn": "1.0.0"
+    },
+    {
+      "name": "PUBLIC_BASE_URL",
+      "required": false,
+      "addedIn": "1.0.0"
+    },
+    {
+      "name": "CANONICAL_URL",
+      "required": false,
+      "addedIn": "1.0.0"
+    },
+    {
+      "name": "OAUTH_CALLBACK_BASE",
+      "required": false,
+      "addedIn": "1.0.0"
+    },
+    {
+      "name": "BRANDING_HIDDEN",
+      "required": false,
+      "addedIn": "1.0.0"
+    },
+    {
+      "name": "EMAIL_PROVIDER",
+      "required": false,
+      "addedIn": "1.0.0"
+    },
+    {
+      "name": "EMAIL_FROM",
+      "required": false,
+      "addedIn": "1.0.0"
+    },
+    {
+      "name": "TELEGRAM_BOT_USERNAME",
+      "required": false,
+      "addedIn": "1.17.0"
+    },
+    {
+      "name": "SPAM_PROVIDER",
       "required": false,
       "addedIn": "1.1.1"
     },
@@ -137,27 +199,7 @@
       "addedIn": "1.1.1"
     },
     {
-      "name": "SPAM_FORM_TS_SECRET",
-      "required": false,
-      "addedIn": "1.1.1"
-    },
-    {
-      "name": "CF_API_TOKEN",
-      "required": false,
-      "addedIn": "1.8.0"
-    },
-    {
       "name": "CF_ACCOUNT_ID",
-      "required": false,
-      "addedIn": "1.8.0"
-    },
-    {
-      "name": "VOTING_ENABLED",
-      "required": false,
-      "addedIn": "1.8.0"
-    },
-    {
-      "name": "DOWNVOTES_ENABLED",
       "required": false,
       "addedIn": "1.8.0"
     },
@@ -170,6 +212,16 @@
       "name": "REACTIONS_ENABLED",
       "required": false,
       "addedIn": "1.10.0"
+    },
+    {
+      "name": "VOTING_ENABLED",
+      "required": false,
+      "addedIn": "1.8.0"
+    },
+    {
+      "name": "DOWNVOTES_ENABLED",
+      "required": false,
+      "addedIn": "1.8.0"
     },
     {
       "name": "PAGE_REACTIONS_ENABLED",

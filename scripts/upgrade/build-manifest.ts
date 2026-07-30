@@ -6,16 +6,18 @@
  *   npm run manifest:check   # exits 1 if the committed manifest differs
  *
  * Derives:
- *   - secrets / KV / D1 / Analytics entries from the Bindings type in
- *     src/index.ts (parsed textually — Bindings is a type, no runtime form)
+ *   - secrets / vars from scripts/config-registry.ts, cross-checked against
+ *     the Bindings type in src/index.ts (see assertRegistryMatchesBindings)
+ *   - KV / D1 / Analytics entries from that same Bindings type (parsed
+ *     textually — Bindings is a type, so it has no runtime form)
  *   - migrations list from src/db/migrations/*.sql
  *   - renderer.version from CURRENT_RENDERER_VERSION in src/lib/markdown.ts
  *   - version from package.json
  *
  * Free-text fields (description, breakingChanges, renderer.eagerRerender,
  * minPreviousVersion) are preserved from the existing manifest on each
- * regeneration. New bindings/secrets default to required=true so a release
- * with a new requirement fails CI loudly until the maintainer reviews.
+ * regeneration. New bindings default to required=true so a release with a
+ * new requirement fails CI loudly until the maintainer reviews.
  */
 import { readFileSync, readdirSync, writeFileSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -26,10 +28,12 @@ import {
 	validateManifest,
 	type Manifest,
 	type SecretEntry,
+	type VarEntry,
 	type KvEntry,
 	type D1Entry,
 	type AnalyticsEntry,
 } from "./manifest";
+import { CONFIG_REGISTRY, SECRETS, VARS } from "../config-registry";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, "..", "..");
@@ -38,25 +42,11 @@ type DerivedBindings = {
 	d1: { binding: string; databaseName: string }[];
 	kv: string[];
 	analytics: { binding: string; dataset: string }[];
-	secrets: string[];
+	/** Every `string`-typed field, secret or var — classified by the registry. */
+	strings: string[];
 };
 
 const ANALYTICS_DATASET = "garrul_events";
-
-// Public, non-secret strings declared in wrangler.toml [vars]. Anything string-
-// typed in Bindings NOT in this set is treated as a secret.
-const WRANGLER_VARS = new Set([
-	"ENV",
-	"ALLOWED_ORIGINS",
-	"ADMIN_EMAILS",
-	"EDIT_WINDOW_MINUTES",
-	"EMAIL_PROVIDER",
-	"EMAIL_FROM",
-	"PUBLIC_BASE_URL",
-	"CANONICAL_URL",
-	"BRANDING_HIDDEN",
-	"OAUTH_CALLBACK_BASE",
-]);
 
 const parseBindings = (): DerivedBindings => {
 	const src = readFileSync(join(REPO_ROOT, "src", "index.ts"), "utf8");
@@ -75,7 +65,7 @@ const parseBindings = (): DerivedBindings => {
 		.map((l) => l.trim())
 		.filter((l) => l.length > 0 && !l.startsWith("//"));
 
-	const out: DerivedBindings = { d1: [], kv: [], analytics: [], secrets: [] };
+	const out: DerivedBindings = { d1: [], kv: [], analytics: [], strings: [] };
 
 	for (const line of lines) {
 		const match = /^([A-Z_][A-Z0-9_]*)\??:\s*([^;]+);?$/.exec(line);
@@ -93,11 +83,53 @@ const parseBindings = (): DerivedBindings => {
 		} else if (type === "AnalyticsEngineDataset") {
 			out.analytics.push({ binding: name, dataset: ANALYTICS_DATASET });
 		} else if (type === "string") {
-			if (!WRANGLER_VARS.has(name)) out.secrets.push(name);
+			out.strings.push(name);
 		}
 	}
 
 	return out;
+};
+
+/**
+ * Fail the build when `Bindings` and the registry disagree.
+ *
+ * This replaces the old inverted `WRANGLER_VARS` allowlist, which treated
+ * any unlisted `string` field as a secret. That default was silent and
+ * wrong: the allowlist never grew as feature flags were added, so 20 plain
+ * vars ended up in the manifest's `secrets[]`.
+ *
+ * Cross-checking instead of re-deriving keeps `Bindings` hand-written —
+ * it carries the doc comments explaining each setting, which a generated
+ * type would lose — while making an unregistered binding a loud CI error
+ * rather than a misclassification.
+ */
+export const assertRegistryMatchesBindings = (bindingNames: string[]): void => {
+	const inRegistry = new Set(CONFIG_REGISTRY.map((e) => e.name));
+	const inBindings = new Set(bindingNames);
+
+	const unregistered = bindingNames.filter((n) => !inRegistry.has(n));
+	const orphaned = CONFIG_REGISTRY.map((e) => e.name).filter(
+		(n) => !inBindings.has(n),
+	);
+
+	const problems: string[] = [];
+	if (unregistered.length > 0) {
+		problems.push(
+			`declared in src/index.ts Bindings but missing from scripts/config-registry.ts: ${unregistered.join(", ")}`,
+		);
+	}
+	if (orphaned.length > 0) {
+		problems.push(
+			`listed in scripts/config-registry.ts but missing from src/index.ts Bindings: ${orphaned.join(", ")}`,
+		);
+	}
+	if (problems.length > 0) {
+		throw new Error(
+			`config registry is out of sync with the Bindings type:\n  - ${problems.join(
+				"\n  - ",
+			)}\nAdd the entry to both, then re-run \`npm run manifest:build\`.`,
+		);
+	}
 };
 
 const readRendererVersion = (): number => {
@@ -135,19 +167,30 @@ const findEntry = <T extends { binding?: string; name?: string }>(
 	value: string,
 ): T | undefined => arr?.find((e) => e[key] === value);
 
-const buildSecrets = (
-	existing: Manifest | null,
-	names: string[],
-	version: string,
-): SecretEntry[] =>
-	names.map((name) => {
-		const prev = findEntry(existing?.secrets, "name", name);
-		const entry: SecretEntry = {
-			name,
-			required: prev?.required ?? true,
-		};
+/**
+ * `required` and `addedIn` come from the registry, not from the previous
+ * manifest. Before the registry existed these were hand-edited into
+ * release-manifest.json after each regeneration — new secrets defaulted to
+ * `required: true` and had to be flipped by hand. Now the registry entry
+ * carries the intent and regeneration is idempotent. `description` is still
+ * preserved from the committed manifest: nothing sets it today, but the
+ * field is part of the published schema.
+ */
+const buildSecrets = (existing: Manifest | null): SecretEntry[] =>
+	SECRETS.map((e) => {
+		const prev = findEntry(existing?.secrets, "name", e.name);
+		const entry: SecretEntry = { name: e.name, required: e.required };
 		if (prev?.description !== undefined) entry.description = prev.description;
-		entry.addedIn = prev?.addedIn ?? version;
+		entry.addedIn = e.addedIn;
+		return entry;
+	});
+
+const buildVars = (existing: Manifest | null): VarEntry[] =>
+	VARS.map((e) => {
+		const prev = findEntry(existing?.vars, "name", e.name);
+		const entry: VarEntry = { name: e.name, required: e.required };
+		if (prev?.description !== undefined) entry.description = prev.description;
+		entry.addedIn = e.addedIn;
 		return entry;
 	});
 
@@ -211,6 +254,7 @@ export const buildManifest = (): Manifest => {
 	})();
 
 	const bindings = parseBindings();
+	assertRegistryMatchesBindings(bindings.strings);
 	const version = readVersion();
 
 	const candidate: Manifest = {
@@ -220,7 +264,8 @@ export const buildManifest = (): Manifest => {
 			version: readRendererVersion(),
 			eagerRerender: existing?.renderer.eagerRerender ?? false,
 		},
-		secrets: buildSecrets(existing, bindings.secrets, version),
+		secrets: buildSecrets(existing),
+		vars: buildVars(existing),
 		kvNamespaces: buildKv(existing, bindings.kv, version),
 		d1Databases: buildD1(existing, bindings.d1, version),
 		analyticsDatasets: buildAnalytics(existing, bindings.analytics, version),

@@ -4,6 +4,8 @@
 import { describe, it, expect } from "vitest";
 import {
 	diffSecrets,
+	diffVars,
+	newVarsSince,
 	diffKv,
 	diffD1,
 	diffMigrations,
@@ -15,6 +17,7 @@ import {
 import type {
 	Manifest,
 	SecretEntry,
+	VarEntry,
 	KvEntry,
 	D1Entry,
 } from "../scripts/upgrade/manifest";
@@ -23,6 +26,7 @@ const secret = (name: string, required = true): SecretEntry => ({
 	name,
 	required,
 });
+const v = (name: string, required = false): VarEntry => ({ name, required });
 const kv = (binding: string, required = true): KvEntry => ({
 	binding,
 	required,
@@ -122,9 +126,63 @@ describe("diffRenderer", () => {
 	});
 });
 
+describe("diffVars", () => {
+	it("reports nothing when every declared var is optional", () => {
+		const r = diffVars(["ENV"], [v("ENV"), v("VOTING_ENABLED")]);
+		expect(r.missing).toHaveLength(0);
+		expect(r.extra).toHaveLength(0);
+	});
+
+	it("flags a required var the operator has not set", () => {
+		const r = diffVars(["ENV"], [v("ENV"), v("ALLOWED_ORIGINS", true)]);
+		expect(r.missing.map((e) => e.name)).toEqual(["ALLOWED_ORIGINS"]);
+	});
+
+	it("reports vars in wrangler.toml the target no longer declares", () => {
+		const r = diffVars(["ENV", "REMOVED_FLAG"], [v("ENV")]);
+		expect(r.extra).toEqual(["REMOVED_FLAG"]);
+	});
+});
+
+describe("newVarsSince", () => {
+	it("surfaces only vars the target added and the operator has not set", () => {
+		const current = [v("ENV"), v("VOTING_ENABLED")];
+		const target = [...current, v("AUTO_CLOSE_DAYS"), v("COMMUNITY_MIN_VOTES")];
+		const r = newVarsSince(["ENV"], current, target);
+		expect(r.map((e) => e.name)).toEqual([
+			"AUTO_CLOSE_DAYS",
+			"COMMUNITY_MIN_VOTES",
+		]);
+	});
+
+	it("stays quiet about old vars left at their default", () => {
+		// VOTING_ENABLED existed in the current release and is unset. That is a
+		// deliberate default, not news — it must not be re-announced every upgrade.
+		const current = [v("ENV"), v("VOTING_ENABLED")];
+		const r = newVarsSince(["ENV"], current, current);
+		expect(r).toHaveLength(0);
+	});
+
+	it("does not re-announce a var the operator already set", () => {
+		const target = [v("ENV"), v("AUTO_CLOSE_DAYS")];
+		const r = newVarsSince(["ENV", "AUTO_CLOSE_DAYS"], [v("ENV")], target);
+		expect(r).toHaveLength(0);
+	});
+
+	it("treats a pre-1.21.0 manifest's empty vars[] as 'knows nothing'", () => {
+		// Manifests from tags <= 1.20.0 have no vars key; validateManifest
+		// defaults it to []. Everything the target declares is then new.
+		const target = [v("ENV"), v("VOTING_ENABLED")];
+		const r = newVarsSince([], [], target);
+		expect(r.map((e) => e.name)).toEqual(["ENV", "VOTING_ENABLED"]);
+	});
+});
+
 describe("hasMutations + blocksAutoApply", () => {
 	const empty = (): Plan => ({
 		secrets: { missing: [], extra: [] },
+		vars: { missing: [], extra: [] },
+		newVars: [],
 		kv: { missing: [], extra: [] },
 		d1: { missing: [], extra: [] },
 		migrations: { pending: [], diverged: [] },
@@ -146,6 +204,21 @@ describe("hasMutations + blocksAutoApply", () => {
 		const p = empty();
 		p.migrations.diverged.push("rogue.sql");
 		expect(blocksAutoApply(p)).toHaveLength(1);
+	});
+
+	it("blocksAutoApply flags a missing required var", () => {
+		// The script sets secrets but never rewrites wrangler.toml [vars], so a
+		// required var it cannot supply has to stop an unattended apply.
+		const p = empty();
+		p.vars.missing.push(v("ALLOWED_ORIGINS", true));
+		expect(blocksAutoApply(p)).toHaveLength(1);
+	});
+
+	it("newVars alone never blocks or counts as a mutation", () => {
+		const p = empty();
+		p.newVars.push(v("AUTO_CLOSE_DAYS"));
+		expect(hasMutations(p)).toBe(false);
+		expect(blocksAutoApply(p)).toHaveLength(0);
 	});
 
 	it("blocksAutoApply empty otherwise", () => {
