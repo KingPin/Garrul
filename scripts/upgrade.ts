@@ -40,6 +40,7 @@ import {
 	diffSecrets,
 	diffVars,
 	newVarsSince,
+	newSecretsSince,
 	diffKv,
 	diffD1,
 	diffMigrations,
@@ -195,6 +196,11 @@ const computePlan = (
 		secrets: diffSecrets(presentSecrets, target.secrets),
 		vars: diffVars(toml.varNames, target.vars),
 		newVars: newVarsSince(toml.varNames, current.version, target.vars),
+		newSecrets: newSecretsSince(
+			presentSecrets,
+			current.version,
+			target.secrets,
+		),
 		kv: diffKv(toml.kvBindings, target.kvNamespaces),
 		d1: diffD1(toml.d1Bindings, target.d1Databases),
 		migrations: diffMigrations(applied, target.migrations),
@@ -214,6 +220,19 @@ const printPlan = (current: Manifest, target: Manifest, plan: Plan): void => {
 			const desc = s.description ? ` — ${s.description}` : "";
 			console.log(`  • ${s.name}${desc}`);
 		}
+	}
+	if (plan.newSecrets.length > 0) {
+		// Optional by definition, so this is the only place they surface —
+		// `diffSecrets` filters `missing` on `required` and never sees them.
+		console.log(`New optional secrets since ${current.version}:`);
+		for (const s of plan.newSecrets) {
+			const desc = s.description ? ` — ${s.description}` : "";
+			const added = s.addedIn ? ` [${s.addedIn}]` : "";
+			console.log(`  • ${s.name}${added}${desc}`);
+		}
+		console.log(
+			"  (opt-in; set the ones you want with `wrangler secret put <NAME>`)",
+		);
 	}
 	if (plan.vars.missing.length > 0) {
 		console.log("Missing required wrangler.toml [vars] (set these by hand):");
@@ -268,12 +287,14 @@ const printPlan = (current: Manifest, target: Manifest, plan: Plan): void => {
 			for (const s of bc.manualSteps) console.log(`      ${s}`);
 		}
 	}
-	// `vars` are counted here but not in hasMutations(): they are reported,
-	// never applied, so they must not make the plan look like a no-op.
+	// `vars` and `newSecrets` are counted here but not in hasMutations(): they
+	// are reported, never applied, so they must not make the plan look like a
+	// no-op.
 	if (
 		!hasMutations(plan) &&
 		!plan.renderer.bumped &&
 		plan.newVars.length === 0 &&
+		plan.newSecrets.length === 0 &&
 		plan.vars.missing.length === 0
 	) {
 		console.log("(no infra changes; code-only release)");

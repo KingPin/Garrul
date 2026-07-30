@@ -16,6 +16,10 @@ const fakeTargetManifest: Manifest = {
 	secrets: [
 		{ name: "JWT_SECRET", required: true },
 		{ name: "NEW_SECRET", required: true },
+		// Optional, added by the target. diffSecrets filters `missing` on
+		// `required`, so this one only ever reaches the plan via newSecretsSince.
+		{ name: "NEW_TOKEN", required: false, addedIn: "1.2.0" },
+		{ name: "OLD_TOKEN", required: false, addedIn: "1.0.0" },
 	],
 	vars: [
 		{ name: "ENV", required: false, addedIn: "1.0.0" },
@@ -216,6 +220,34 @@ describe("upgrade dry-run", () => {
 		expect(output).not.toMatch(/• ENV\b/);
 		// All vars are optional, so nothing is reported as a hard requirement.
 		expect(output).not.toMatch(/Missing required wrangler\.toml/);
+	});
+
+	it("reports optional secrets the target release added", async () => {
+		await main(["--dry-run"], {
+			wrangler: wranglerMock,
+			git: gitMock,
+			fetchLatest,
+			fetchReleaseForTag,
+			fetchTargetManifest,
+			loadLocal,
+		});
+
+		const output = logSpy.mock.calls.map((c) => c.join(" ")).join("\n");
+		expect(output).toMatch(/New optional secrets since 1\.0\.0/);
+		expect(output).toMatch(/• NEW_TOKEN \[1\.2\.0\]/);
+		// Predates the installed release and is deliberately unset — repeating it
+		// on every upgrade would train operators to skip the section.
+		expect(output).not.toMatch(/• OLD_TOKEN\b/);
+		// Optional, so it must never be filed under the required-secrets heading.
+		// Scoped to that section's bullets — a whole-output match would also see
+		// the new-optional-secrets section further down and always pass.
+		const lines = output.split("\n");
+		const start = lines.indexOf("Missing required secrets:");
+		expect(start).toBeGreaterThan(-1);
+		const after = lines.slice(start + 1);
+		const end = after.findIndex((l) => !l.startsWith("  • "));
+		const requiredBullets = end === -1 ? after : after.slice(0, end);
+		expect(requiredBullets).toEqual(["  • NEW_SECRET"]);
 	});
 
 	it("tolerates a missing GitHub release (404)", async () => {

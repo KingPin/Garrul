@@ -6,6 +6,7 @@ import {
 	diffSecrets,
 	diffVars,
 	newVarsSince,
+	newSecretsSince,
 	diffKv,
 	diffD1,
 	diffMigrations,
@@ -202,11 +203,63 @@ describe("newVarsSince", () => {
 	});
 });
 
+describe("newSecretsSince", () => {
+	const s = (name: string, addedIn: string, required = false): SecretEntry => ({
+		name,
+		required,
+		addedIn,
+	});
+
+	it("surfaces the optional secret a release adds", () => {
+		// The GITHUB_TOKEN case: 1.21.0 shipped it to lift GitHub's
+		// unauthenticated 60 req/hr cap on version checks. diffSecrets filters
+		// `missing` on required, so without this the upgrade plan says nothing
+		// about the one setting the release actually adds.
+		const target = [
+			s("JWT_SECRET", "1.0.0", true),
+			s("GITHUB_TOKEN", "1.21.0"),
+		];
+		const r = newSecretsSince(["JWT_SECRET"], "1.20.0", target);
+		expect(r.map((e) => e.name)).toEqual(["GITHUB_TOKEN"]);
+	});
+
+	it("leaves required secrets to diffSecrets", () => {
+		// A missing required secret is already reported there, and far more
+		// loudly. Duplicating it here would read as two separate problems.
+		const target = [s("NEW_REQUIRED", "1.21.0", true)];
+		expect(newSecretsSince([], "1.20.0", target)).toHaveLength(0);
+	});
+
+	it("stays quiet about old optional secrets left unset", () => {
+		const target = [s("AKISMET_API_KEY", "1.9.0")];
+		expect(newSecretsSince([], "1.20.0", target)).toHaveLength(0);
+	});
+
+	it("does not re-announce a secret the operator already set", () => {
+		const target = [s("GITHUB_TOKEN", "1.21.0")];
+		expect(newSecretsSince(["GITHUB_TOKEN"], "1.20.0", target)).toHaveLength(
+			0,
+		);
+	});
+
+	it("spans several releases, not just the newest tag", () => {
+		const target = [s("A", "1.17.0"), s("B", "1.21.0"), s("C", "1.10.0")];
+		const r = newSecretsSince([], "1.15.0", target);
+		expect(r.map((e) => e.name)).toEqual(["A", "B"]);
+	});
+
+	it("treats a secret with no addedIn as old", () => {
+		const bare: SecretEntry = { name: "MYSTERY", required: false };
+		expect(newSecretsSince([], "1.0.0", [bare])).toHaveLength(0);
+	});
+});
+
 describe("hasMutations + blocksAutoApply", () => {
 	const empty = (): Plan => ({
 		secrets: { missing: [], extra: [] },
 		vars: { missing: [], extra: [] },
 		newVars: [],
+		newSecrets: [],
 		kv: { missing: [], extra: [] },
 		d1: { missing: [], extra: [] },
 		migrations: { pending: [], diverged: [] },
@@ -241,6 +294,14 @@ describe("hasMutations + blocksAutoApply", () => {
 	it("newVars alone never blocks or counts as a mutation", () => {
 		const p = empty();
 		p.newVars.push(v("AUTO_CLOSE_DAYS"));
+		expect(hasMutations(p)).toBe(false);
+		expect(blocksAutoApply(p)).toHaveLength(0);
+	});
+
+	it("newSecrets alone never blocks or counts as a mutation", () => {
+		// Optional by definition — `apply` must not start prompting for them.
+		const p = empty();
+		p.newSecrets.push({ name: "GITHUB_TOKEN", required: false });
 		expect(hasMutations(p)).toBe(false);
 		expect(blocksAutoApply(p)).toHaveLength(0);
 	});

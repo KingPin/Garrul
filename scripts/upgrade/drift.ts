@@ -79,6 +79,35 @@ export const newVarsSince = (
 	);
 };
 
+/**
+ * Optional secrets introduced after the release the operator is on and not
+ * yet set — the secrets-side counterpart to `newVarsSince`.
+ *
+ * Without this an optional new secret is invisible to `upgrade`:
+ * `diffSecrets` filters `missing` on `required`, so `required: false` never
+ * reaches the plan. `GITHUB_TOKEN` shipped in 1.21.0 precisely because
+ * operators hitting GitHub's unauthenticated 60 req/hr cap had no supported
+ * way to discover the fix — declaring it in the manifest only helps if the
+ * upgrade path actually says so.
+ *
+ * Required entries are excluded rather than duplicated: a missing required
+ * secret is already reported, and far more loudly, by `diffSecrets`.
+ */
+export const newSecretsSince = (
+	present: string[],
+	currentVersion: SemVer,
+	target: SecretEntry[],
+): SecretEntry[] => {
+	const presentSet = new Set(present);
+	return target.filter(
+		(s) =>
+			!s.required &&
+			s.addedIn !== undefined &&
+			isNewer(s.addedIn, currentVersion) &&
+			!presentSet.has(s.name),
+	);
+};
+
 export const diffKv = (
 	present: string[],
 	manifest: KvEntry[],
@@ -152,6 +181,8 @@ export type Plan = {
 	vars: Diff<VarEntry>;
 	/** Informational only — never blocks or triggers an apply step. */
 	newVars: VarEntry[];
+	/** Informational only. Optional by definition, so never applied either. */
+	newSecrets: SecretEntry[];
 	kv: Diff<KvEntry>;
 	d1: Diff<D1Entry>;
 	migrations: MigrationDiff;
