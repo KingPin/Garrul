@@ -10,7 +10,7 @@
   },
   "type": "module",
   "engines": {
-    "node": ">=22"
+    "node": ">=24"
   },
   "scripts": {
     "dev": "wrangler dev",
@@ -40,8 +40,8 @@
     "tail": "wrangler tail"
   },
   "dependencies": {
-    "hono": "^4.12.25",
-    "marked": "^18.0.3"
+    "hono": "^4.12.32",
+    "marked": "^18.0.7"
   },
   "overrides": {
     "esbuild": "^0.28.1"
@@ -51,9 +51,9 @@
     "@cloudflare/workers-types": "^4.20251101.0",
     "@types/node": "^25.8.0",
     "esbuild": "^0.28.1",
-    "tsx": "^4.19.0",
+    "tsx": "^4.23.1",
     "typescript": "^5.6.0",
-    "vitest": "^4.1.6",
+    "vitest": "^4.1.10",
     "wrangler": "^4.106.0"
   }
 }
