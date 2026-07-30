@@ -175,7 +175,8 @@ interactive_secrets() {
 	put_secret_pair "Discord OAuth" "from discord.com/developers → OAuth2" DISCORD_CLIENT_ID DISCORD_CLIENT_SECRET
 	put_secret RESEND_API_KEY "from resend.com/api-keys"
 	put_secret WEBHOOK_URL "legacy single-URL webhook; prefer /admin/webhooks endpoints"
-	put_secret_pair "Telegram operator bot" "BotFather token; see docs/telegram.md" TELEGRAM_BOT_TOKEN TELEGRAM_WEBHOOK_SECRET
+	put_secret TELEGRAM_BOT_TOKEN "BotFather token; see docs/telegram.md"
+	put_secret TELEGRAM_WEBHOOK_SECRET "shared secret for setWebhook; required for inbound commands"
 	put_secret AKISMET_API_KEY "required when SPAM_PROVIDER = \"akismet\""
 	put_secret AKISMET_SITE_URL "public site URL registered with Akismet"
 	put_secret SPAM_FORM_TS_SECRET "HMAC key for signed form-timestamp tokens"

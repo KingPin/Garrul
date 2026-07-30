@@ -17,6 +17,7 @@ import {
 	VARS,
 	REQUIRED_SECRET_NAMES,
 	GENERATED_SECRET_NAMES,
+	type ConfigEntry,
 } from "../scripts/config-registry";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -183,14 +184,62 @@ describe("setup.sh prompt lists", () => {
 		}
 	});
 
-	it("collapses two-entry groups into a single paired prompt", () => {
+	it("collapses a declared pair into a single prompt", () => {
 		const prompts = buildSetupPrompts();
-		expect(prompts).toContain(
-			"put_secret_pair \"GitHub OAuth\" ",
-		);
+		expect(prompts).toContain('put_secret_pair "GitHub OAuth" ');
 		expect(prompts).toMatch(/GH_CLIENT_ID GH_CLIENT_SECRET$/m);
-		// Three-entry groups stay individual — there is no sensible pairing.
 		expect(prompts).toMatch(/^\tput_secret AKISMET_API_KEY /m);
+	});
+
+	// Group size used to stand in for `pairWith`, which got Telegram wrong:
+	// the two are independently useful (bot token alone enables outbound
+	// notifications; the webhook secret is only for inbound commands), so
+	// answering yes forced both `wrangler secret put` prompts with no way to
+	// skip one, and only the first hint was ever shown.
+	it("does not pair a two-entry group that declares no pairing", () => {
+		const prompts = buildSetupPrompts();
+		expect(prompts).not.toContain('put_secret_pair "Telegram operator bot"');
+		expect(prompts).toMatch(/^\tput_secret TELEGRAM_BOT_TOKEN /m);
+		expect(prompts).toMatch(/^\tput_secret TELEGRAM_WEBHOOK_SECRET /m);
+	});
+
+	it("shows each unpaired secret its own hint", () => {
+		const prompts = buildSetupPrompts();
+		for (const e of SECRETS) {
+			if (e.generate || e.pairWith) continue;
+			const paired = SECRETS.some((p) => p.pairWith === e.name);
+			if (paired) continue;
+			expect(prompts, e.name).toContain(`put_secret ${e.name} `);
+		}
+	});
+
+	it("rejects a pairWith that names no secret in the group", () => {
+		// A typo here would silently drop the partner's prompt, so it has to be
+		// a build-time failure rather than a quietly shorter setup.sh.
+		const broken: ConfigEntry[] = [
+			{
+				name: "A_ID",
+				kind: "secret",
+				required: false,
+				group: "Example",
+				hint: "h",
+				description: "d",
+				pairWith: "A_SECRET_TYPO",
+				addedIn: "1.0.0",
+			},
+			{
+				name: "A_SECRET",
+				kind: "secret",
+				required: false,
+				group: "Example",
+				hint: "h",
+				description: "d",
+				addedIn: "1.0.0",
+			},
+		];
+		expect(() => buildSetupPrompts("\t", broken)).toThrow(
+			/not a secret in group/,
+		);
 	});
 
 	it("escapes quotes in hints so the script still parses", () => {

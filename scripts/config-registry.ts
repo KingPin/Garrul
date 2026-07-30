@@ -49,8 +49,20 @@ export type ConfigEntry = {
 	 * must not fail over a missing `DISCORD_CLIENT_SECRET`.
 	 */
 	required: boolean;
-	/** Section heading in generated templates; also pairs setup.sh prompts. */
+	/** Section heading in generated templates. */
 	group: string;
+	/**
+	 * Name of the secret that is worthless without this one, so setup.sh asks
+	 * for both behind a single prompt. Set on the first half only.
+	 *
+	 * Declared rather than inferred from group size: an ID/secret pair really
+	 * is all-or-nothing, but `TELEGRAM_BOT_TOKEN` and
+	 * `TELEGRAM_WEBHOOK_SECRET` also make a group of two and are independently
+	 * useful — the bot token alone enables outbound notifications, and the
+	 * webhook secret is only needed for inbound commands. Collapsing them
+	 * forced both prompts on anyone who answered yes and hid the second hint.
+	 */
+	pairWith?: string;
 	/** One-line "where do I get this" shown above the template line. */
 	hint: string;
 	/** Prose for the AGENTS-OPERATE §5 table. */
@@ -208,6 +220,7 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
 		kind: "secret",
 		required: true,
 		group: "Turnstile",
+		pairWith: "TURNSTILE_SECRET",
 		hint: "from dash.cloudflare.com → Turnstile",
 		description:
 			"Cloudflare Turnstile site key. Required for anonymous commenting. Note this value is *public* — it ships in the widget HTML. It is stored as a secret for historical reasons and because doing so is harmless.",
@@ -236,6 +249,7 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
 		kind: "secret",
 		required: false,
 		group: "GitHub OAuth",
+		pairWith: "GH_CLIENT_SECRET",
 		hint: "from github.com/settings/developers",
 		description: "GitHub OAuth client ID. Required for GitHub sign-in.",
 		example: "Iv1.abcdef...",
@@ -256,6 +270,7 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
 		kind: "secret",
 		required: false,
 		group: "Google OAuth",
+		pairWith: "GOOGLE_CLIENT_SECRET",
 		hint: "from console.cloud.google.com → OAuth credentials",
 		description: "Google OAuth client ID. Required for Google sign-in.",
 		example: "1234.apps.googleusercontent.com",
@@ -276,6 +291,7 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
 		kind: "secret",
 		required: false,
 		group: "Facebook OAuth",
+		pairWith: "FACEBOOK_CLIENT_SECRET",
 		hint: "from developers.facebook.com → Facebook Login",
 		description:
 			"Optional. Facebook OAuth client ID from developers.facebook.com. Required for Facebook sign-in. Added v1.13.0.",
@@ -297,6 +313,7 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
 		kind: "secret",
 		required: false,
 		group: "X/Twitter OAuth",
+		pairWith: "TWITTER_CLIENT_SECRET",
 		hint: "from developer.x.com → OAuth 2.0 (returns no email)",
 		description:
 			"Optional. X (Twitter) OAuth 2.0 client ID from developer.x.com. Required for X sign-in; the provider slug stays `twitter`. Added v1.13.0.",
@@ -319,6 +336,7 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
 		kind: "secret",
 		required: false,
 		group: "Discord OAuth",
+		pairWith: "DISCORD_CLIENT_SECRET",
 		hint: "from discord.com/developers → OAuth2",
 		description:
 			"Optional. Discord OAuth client ID from discord.com/developers → OAuth2. Required for Discord sign-in. Added v1.13.0.",
