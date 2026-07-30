@@ -1,7 +1,5 @@
 name: CI
 
-# Workflows are gated below so they don't burn billing while the repo
-# is private. They auto-enable when the repo flips public at v1.0.
 on:
   push:
     branches: [main]
@@ -24,7 +22,6 @@ concurrency:
 
 jobs:
   test:
-    if: ${{ github.event.repository.private == false || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
