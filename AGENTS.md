@@ -387,13 +387,16 @@ is a separate document) but inherits everything else.
 
 ## 7. Authentication flow
 
-Garrul supports two OAuth providers in v1: **GitHub** and **Google**.
-The operator decides which are enabled by setting the matching client
-ID + secret in `wrangler.toml` / secrets. Generic OIDC is v2 backlog.
+Garrul supports five OAuth providers: **GitHub**, **Google**,
+**Facebook**, **X** (provider slug `twitter`), and **Discord**. The
+operator decides which are enabled by setting the matching client ID +
+secret in `wrangler.toml` / secrets — a provider with no credentials
+simply doesn't appear. Generic OIDC is v2 backlog.
 
 What an end user sees when signing in from the embedded widget:
 
-1. They click "Sign in with GitHub" (or Google) in the comment form.
+1. They click "Sign in with GitHub" (or any other enabled provider) in
+   the comment form.
 2. The widget opens a **popup** to
    `{{INSTANCE_URL}}/api/v1/auth/<provider>/start?return=<origin>`,
    which 302s to the provider's authorize page.
