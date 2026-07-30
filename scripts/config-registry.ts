@@ -166,12 +166,12 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
 		addedIn: "1.0.0",
 	},
 
-	// ------------------------------------------------------------ required
+	// ------------------------------------------------- generated secrets
 	{
 		name: "JWT_SECRET",
 		kind: "secret",
 		required: true,
-		group: "Required",
+		group: "Generated secrets",
 		hint: "auto-generated 32-byte secret; reserved for future JWT use",
 		description:
 			"Cookie signing for anon-edit tokens. Reserved; current sessions are KV-backed. Set a random value or skip.",
@@ -184,7 +184,7 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
 		name: "IP_HASH_SECRET",
 		kind: "secret",
 		required: true,
-		group: "Required",
+		group: "Generated secrets",
 		hint: "auto-generated HMAC pepper — generate once and keep it",
 		description:
 			"HMAC-SHA-256 pepper for IP hashing (see `src/lib/ip-hash.ts`). Never log/store raw IPs. Rotating it invalidates existing rate-limit and dedupe buckets.",
@@ -197,7 +197,7 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
 		name: "TURNSTILE_SITE_KEY",
 		kind: "secret",
 		required: true,
-		group: "Required",
+		group: "Turnstile",
 		hint: "from dash.cloudflare.com → Turnstile",
 		description:
 			"Cloudflare Turnstile site key. Required for anonymous commenting. Note this value is *public* — it ships in the widget HTML. It is stored as a secret for historical reasons and because doing so is harmless.",
@@ -209,7 +209,7 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
 		name: "TURNSTILE_SECRET",
 		kind: "secret",
 		required: true,
-		group: "Required",
+		group: "Turnstile",
 		hint: "from dash.cloudflare.com → Turnstile",
 		description: "Turnstile secret. Server-side token verification.",
 		example: "0x4AAAAAAA...",

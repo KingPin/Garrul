@@ -7,6 +7,8 @@ import {
 	buildDevVars,
 	buildSecretsRequired,
 	buildSecretsPointer,
+	buildSetupPrompts,
+	buildSetupGenerated,
 	buildConfigTable,
 	checkVarCoverage,
 } from "../scripts/build-config";
@@ -109,6 +111,54 @@ describe("wrangler.example.toml regions", () => {
 		const toml = read("wrangler.example.toml");
 		expect(toml).toContain(buildSecretsRequired());
 		expect(toml).toContain(buildSecretsPointer());
+	});
+});
+
+describe("setup.sh prompt lists", () => {
+	// The gap that motivated generating these: setup.sh hand-listed 16 of the
+	// 23 secrets, so CF_API_TOKEN, SPAM_FORM_TS_SECRET, AKISMET_*, TELEGRAM_*
+	// and GITHUB_TOKEN were never prompted for on a fresh install.
+	it("covers every secret across both regions", () => {
+		const both = `${buildSetupGenerated()}\n${buildSetupPrompts()}`;
+		for (const e of SECRETS) {
+			expect(both, e.name).toMatch(new RegExp(`\\b${e.name}\\b`));
+		}
+	});
+
+	it("streams the generated secrets and prompts for nothing else", () => {
+		const generated = buildSetupGenerated();
+		expect(
+			generated.match(/^put_random_secret /gm) ?? [],
+		).toHaveLength(GENERATED_SECRET_NAMES.length);
+		expect(generated).not.toMatch(/put_secret\b/);
+	});
+
+	it("never asks for a generated secret in the interactive branch", () => {
+		const prompts = buildSetupPrompts();
+		for (const name of GENERATED_SECRET_NAMES) {
+			expect(prompts, name).not.toMatch(new RegExp(`\\b${name}\\b`));
+		}
+	});
+
+	it("collapses two-entry groups into a single paired prompt", () => {
+		const prompts = buildSetupPrompts();
+		expect(prompts).toContain(
+			"put_secret_pair \"GitHub OAuth\" ",
+		);
+		expect(prompts).toMatch(/GH_CLIENT_ID GH_CLIENT_SECRET$/m);
+		// Three-entry groups stay individual — there is no sensible pairing.
+		expect(prompts).toMatch(/^\tput_secret AKISMET_API_KEY /m);
+	});
+
+	it("escapes quotes in hints so the script still parses", () => {
+		// AKISMET_API_KEY's hint contains a literal `"akismet"`.
+		expect(buildSetupPrompts()).toContain('\\"akismet\\"');
+	});
+
+	it("is the state the committed script is in", () => {
+		const setup = read("scripts/setup.sh");
+		expect(setup).toContain(buildSetupPrompts());
+		expect(setup).toContain(buildSetupGenerated());
 	});
 });
 

@@ -6,11 +6,13 @@
 # Blank values are fine locally — a feature is simply off when its
 # credentials are unset. Fill in only what you're exercising.
 
-# --- Required ---
+# --- Generated secrets ---
 # auto-generated 32-byte secret; reserved for future JWT use
 JWT_SECRET="dev-jwt-secret-change-me"
 # auto-generated HMAC pepper — generate once and keep it
 IP_HASH_SECRET="dev-ip-hash-pepper-change-me"
+
+# --- Turnstile ---
 # from dash.cloudflare.com → Turnstile
 TURNSTILE_SITE_KEY="1x00000000000000000000AA"
 # from dash.cloudflare.com → Turnstile
