@@ -72,10 +72,30 @@ const makeSessions = () => {
 	};
 };
 
+// The edit window is a runtime setting now (DB > env > default), so the route
+// resolves it through loadNumbers — which needs the KV it caches into.
+const makeKv = () => {
+	const store = new Map<string, string>();
+	return {
+		async get(key: string, type?: "json") {
+			const raw = store.get(key);
+			if (raw == null) return null;
+			return type === "json" ? JSON.parse(raw) : raw;
+		},
+		async put(key: string, value: string) {
+			store.set(key, value);
+		},
+		async delete(key: string) {
+			store.delete(key);
+		},
+	};
+};
+
 const mkEnv = (comment: ReturnType<typeof mkComment> | null) =>
 	({
 		DB: makeDb(comment),
 		SESSIONS: makeSessions(),
+		TREE_CACHE: makeKv(),
 		EDIT_WINDOW_MINUTES: "5",
 	}) as unknown as Bindings;
 

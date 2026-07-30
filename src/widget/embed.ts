@@ -2085,7 +2085,9 @@ const loadOnce = async (
 	sort: SortKey,
 ) => {
 	let siteKey: string | null = null;
-	let editWindowMinutes = 5;
+	// Only used when /api/v1/config never answers — the server always sends a
+	// resolved value. Mirrors the server default (src/lib/settings.ts).
+	let editWindowMinutes = 15;
 	let providers: ReadonlyArray<OAuthProvider> = [];
 	let brandingHidden = false;
 	let commentsEnabled = true;
@@ -2122,7 +2124,7 @@ const loadOnce = async (
 				community_collapse_ratio?: number;
 			};
 			siteKey = cfg.turnstile_site_key ?? null;
-			editWindowMinutes = cfg.edit_window_minutes ?? 5;
+			editWindowMinutes = cfg.edit_window_minutes ?? 15;
 			providers = (cfg.providers ?? []).filter((p): p is OAuthProvider =>
 				Object.prototype.hasOwnProperty.call(PROVIDER_LABELS, p),
 			);
