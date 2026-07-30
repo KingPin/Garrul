@@ -13,7 +13,7 @@ Self-hosted comment system on Cloudflare Workers + D1 + KV + Turnstile. This fil
 - **Email**: Resend only (`src/lib/email.ts`). The `EMAIL_PROVIDER` env var leaves room for more adapters, but Resend is the sole implementation today (MailChannels dropped its free Workers plan). Additional adapters are future work.
 - **Widget**: vanilla TypeScript, no framework. Built with esbuild. Bundle budget: `embed.js` ≤ 20KB gzipped.
 - **Admin UI**: server-rendered HTML (Hono JSX) + Alpine.js for interactivity.
-- **Tests**: Vitest + Miniflare for in-memory D1/KV.
+- **Tests**: Vitest in the plain `node` pool. D1/KV are hand-rolled in-memory stubs, *not* Miniflare — see `vitest.config.ts`.
 
 ## Layout
 
@@ -76,7 +76,7 @@ Forward-only SQL files in `src/db/migrations/NNNN_name.sql`. The `_migrations` t
 Use `src/lib/log.ts`. Every request gets an ID; every log line is JSON. Operators tail with `wrangler tail`. No PII (names, emails, comment bodies) in logs.
 
 ### Tests
-Critical paths only: API contracts, sanitizer (XSS attempts), auth cookie roundtrip, rate-limit, depth cap. No coverage threshold. Tests must not require network or paid services — Miniflare for D1/KV, mocks for OAuth/email/Turnstile.
+Critical paths only: API contracts, sanitizer (XSS attempts), auth cookie roundtrip, rate-limit, depth cap. No coverage threshold. Tests must not require network or paid services — hand-rolled in-memory D1/KV stubs (see `tests/helpers/`), mocks for OAuth/email/Turnstile. `@cloudflare/vitest-pool-workers` is installed but unused; moving integration tests onto the Workers pool is future work (`vitest.config.ts:8-10`).
 
 ### Commits
 Atomic commits per concern. Conventional-commits style (`feat:`, `fix:`, `refactor:`, `docs:`, `chore:`, `test:`). No giant "milestone done" commits.
