@@ -703,4 +703,29 @@ describe("renderSettings field-name contract", () => {
 			expect(known.has(name)).toBe(true);
 		}
 	});
+
+	// The fill-time dial does nothing without SPAM_FORM_TS_SECRET, and save()
+	// doesn't reload the page — so the warning has to be client-reactive or it
+	// stays hidden through the one transition that matters (operator raises the
+	// dial off 0 and is told only "Settings saved").
+	it("drives the fill-time inactive warning from Alpine state", () => {
+		const off = renderSettings({} as Bindings, flags, {
+			...numbers,
+			spam_honeypot_min_ms: 0,
+		});
+		expect(off).toContain("hasFormTsSecret: false");
+		expect(off).toContain(
+			'x-show="nums.spam_honeypot_min_ms > 0 && !hasFormTsSecret"',
+		);
+		expect(off).toContain("Fill-time check is inactive.");
+	});
+
+	it("seeds hasFormTsSecret true once the secret is set", () => {
+		const withSecret = renderSettings(
+			{ SPAM_FORM_TS_SECRET: "s3cret" } as Bindings,
+			flags,
+			numbers,
+		);
+		expect(withSecret).toContain("hasFormTsSecret: true");
+	});
 });

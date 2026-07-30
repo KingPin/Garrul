@@ -207,8 +207,13 @@ export const renderSettings = (
 	// signs the form timestamp — an unsigned timestamp is trivially forged, so
 	// evaluateSpam skips the check entirely. Say so rather than letting an
 	// operator turn on a dial that can't fire.
-	const honeypotNeedsSecret =
-		numbers.spam_honeypot_min_ms > 0 && !env.SPAM_FORM_TS_SECRET;
+	//
+	// Seeded into Alpine rather than baked into the server render: save() does
+	// not reload, so a server-only warning would stay hidden through the exact
+	// transition that creates the problem (operator raises the dial off 0, gets
+	// a "saved" toast, and never learns the check is inert). The secret itself
+	// is deploy-time, so its presence can't change while the page is open.
+	const hasFormTsSecret = Boolean(env.SPAM_FORM_TS_SECRET);
 
 	const initial = JSON.stringify(
 		Object.fromEntries(ALL_FLAG_META.map((f) => [f.key, flags[f.key]])),
@@ -223,6 +228,7 @@ export const renderSettings = (
   busy: false,
   flags: ${escapeHtml(initial)},
   nums: ${escapeHtml(numInitial)},
+  hasFormTsSecret: ${hasFormTsSecret},
   // Friendly proxy over the epoch-ms auto_close_at: the date picker reads/writes
   // a YYYY-MM-DD string; the canonical value stays the number in nums. Empty
   // string clears it to 0 (disabled). End-of-day UTC so the chosen date is fully
@@ -332,15 +338,12 @@ export const renderSettings = (
       provider and its API keys stay in <code>wrangler.toml</code>; see the
       Configuration tab.</p>
       ${modToggles}
-      ${spamNumberInputs}${
-				honeypotNeedsSecret
-					? `
-      <p class="muted"><strong>Fill-time check is inactive.</strong> It needs
+      ${spamNumberInputs}
+      <p class="muted" x-show="nums.spam_honeypot_min_ms > 0 && !hasFormTsSecret" x-cloak>
+      <strong>Fill-time check is inactive.</strong> It needs
       <code>SPAM_FORM_TS_SECRET</code> to sign the form timestamp — without it an
       unsigned time is trivially forged, so the check is skipped. Set the secret
-      with <code>wrangler secret put SPAM_FORM_TS_SECRET</code> and redeploy.</p>`
-					: ""
-			}
+      with <code>wrangler secret put SPAM_FORM_TS_SECRET</code> and redeploy.</p>
     </div>
 
     <p class="settings-actions" x-show="tab !== 'config'">
