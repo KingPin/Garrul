@@ -18,8 +18,8 @@ const fakeTargetManifest: Manifest = {
 		{ name: "NEW_SECRET", required: true },
 	],
 	vars: [
-		{ name: "ENV", required: false },
-		{ name: "NEW_FLAG", required: false },
+		{ name: "ENV", required: false, addedIn: "1.0.0" },
+		{ name: "NEW_FLAG", required: false, addedIn: "1.2.0" },
 	],
 	kvNamespaces: [
 		{ binding: "RATE_LIMITS", required: true },
@@ -89,7 +89,7 @@ const loadLocal = vi.fn(
 	(): Manifest => ({
 		...structuredClone(fakeTargetManifest),
 		version: "1.0.0",
-		vars: [{ name: "ENV", required: false }],
+		vars: [{ name: "ENV", required: false, addedIn: "1.0.0" }],
 	}),
 );
 
@@ -209,10 +209,10 @@ describe("upgrade dry-run", () => {
 		});
 
 		const output = logSpy.mock.calls.map((c) => c.join(" ")).join("\n");
-		expect(output).toMatch(/New optional settings in this release/);
-		expect(output).toMatch(/• NEW_FLAG/);
-		// ENV is declared by both releases and already set in wrangler.toml —
-		// announcing it would make the section noise on every upgrade.
+		expect(output).toMatch(/New optional settings since 1\.0\.0/);
+		expect(output).toMatch(/• NEW_FLAG \[1\.2\.0\]/);
+		// ENV predates the installed release and is already set in wrangler.toml
+		// — announcing it would make the section noise on every upgrade.
 		expect(output).not.toMatch(/• ENV\b/);
 		// All vars are optional, so nothing is reported as a hard requirement.
 		expect(output).not.toMatch(/Missing required wrangler\.toml/);

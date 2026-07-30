@@ -194,7 +194,7 @@ const computePlan = (
 	return {
 		secrets: diffSecrets(presentSecrets, target.secrets),
 		vars: diffVars(toml.varNames, target.vars),
-		newVars: newVarsSince(toml.varNames, current.vars, target.vars),
+		newVars: newVarsSince(toml.varNames, current.version, target.vars),
 		kv: diffKv(toml.kvBindings, target.kvNamespaces),
 		d1: diffD1(toml.d1Bindings, target.d1Databases),
 		migrations: diffMigrations(applied, target.migrations),
@@ -223,10 +223,14 @@ const printPlan = (current: Manifest, target: Manifest, plan: Plan): void => {
 		}
 	}
 	if (plan.newVars.length > 0) {
-		console.log("New optional settings in this release (wrangler.toml [vars]):");
+		// "since", not "in this release" — an upgrade can span several tags.
+		console.log(
+			`New optional settings since ${current.version} (wrangler.toml [vars]):`,
+		);
 		for (const v of plan.newVars) {
 			const desc = v.description ? ` — ${v.description}` : "";
-			console.log(`  • ${v.name}${desc}`);
+			const added = v.addedIn ? ` [${v.addedIn}]` : "";
+			console.log(`  • ${v.name}${added}${desc}`);
 		}
 		console.log("  (all have defaults; set only the ones you want to change)");
 	}
@@ -264,7 +268,14 @@ const printPlan = (current: Manifest, target: Manifest, plan: Plan): void => {
 			for (const s of bc.manualSteps) console.log(`      ${s}`);
 		}
 	}
-	if (!hasMutations(plan) && !plan.renderer.bumped && plan.newVars.length === 0) {
+	// `vars` are counted here but not in hasMutations(): they are reported,
+	// never applied, so they must not make the plan look like a no-op.
+	if (
+		!hasMutations(plan) &&
+		!plan.renderer.bumped &&
+		plan.newVars.length === 0 &&
+		plan.vars.missing.length === 0
+	) {
 		console.log("(no infra changes; code-only release)");
 	}
 	console.log("");

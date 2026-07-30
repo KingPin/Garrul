@@ -26,7 +26,11 @@ const secret = (name: string, required = true): SecretEntry => ({
 	name,
 	required,
 });
-const v = (name: string, required = false): VarEntry => ({ name, required });
+const v = (name: string, addedIn = "1.0.0", required = false): VarEntry => ({
+	name,
+	required,
+	addedIn,
+});
 const kv = (binding: string, required = true): KvEntry => ({
 	binding,
 	required,
@@ -134,7 +138,7 @@ describe("diffVars", () => {
 	});
 
 	it("flags a required var the operator has not set", () => {
-		const r = diffVars(["ENV"], [v("ENV"), v("ALLOWED_ORIGINS", true)]);
+		const r = diffVars(["ENV"], [v("ENV"), v("ALLOWED_ORIGINS", "1.0.0", true)]);
 		expect(r.missing.map((e) => e.name)).toEqual(["ALLOWED_ORIGINS"]);
 	});
 
@@ -145,10 +149,14 @@ describe("diffVars", () => {
 });
 
 describe("newVarsSince", () => {
-	it("surfaces only vars the target added and the operator has not set", () => {
-		const current = [v("ENV"), v("VOTING_ENABLED")];
-		const target = [...current, v("AUTO_CLOSE_DAYS"), v("COMMUNITY_MIN_VOTES")];
-		const r = newVarsSince(["ENV"], current, target);
+	it("surfaces only vars added after the operator's version and still unset", () => {
+		const target = [
+			v("ENV", "1.0.0"),
+			v("VOTING_ENABLED", "1.8.0"),
+			v("AUTO_CLOSE_DAYS", "1.21.0"),
+			v("COMMUNITY_MIN_VOTES", "1.21.0"),
+		];
+		const r = newVarsSince(["ENV"], "1.20.0", target);
 		expect(r.map((e) => e.name)).toEqual([
 			"AUTO_CLOSE_DAYS",
 			"COMMUNITY_MIN_VOTES",
@@ -156,25 +164,41 @@ describe("newVarsSince", () => {
 	});
 
 	it("stays quiet about old vars left at their default", () => {
-		// VOTING_ENABLED existed in the current release and is unset. That is a
+		// VOTING_ENABLED predates the operator's version and is unset. That is a
 		// deliberate default, not news — it must not be re-announced every upgrade.
-		const current = [v("ENV"), v("VOTING_ENABLED")];
-		const r = newVarsSince(["ENV"], current, current);
-		expect(r).toHaveLength(0);
+		const target = [v("ENV", "1.0.0"), v("VOTING_ENABLED", "1.8.0")];
+		expect(newVarsSince(["ENV"], "1.20.0", target)).toHaveLength(0);
 	});
 
 	it("does not re-announce a var the operator already set", () => {
-		const target = [v("ENV"), v("AUTO_CLOSE_DAYS")];
-		const r = newVarsSince(["ENV", "AUTO_CLOSE_DAYS"], [v("ENV")], target);
+		const target = [v("ENV", "1.0.0"), v("AUTO_CLOSE_DAYS", "1.21.0")];
+		const r = newVarsSince(["ENV", "AUTO_CLOSE_DAYS"], "1.20.0", target);
 		expect(r).toHaveLength(0);
 	});
 
-	it("treats a pre-1.21.0 manifest's empty vars[] as 'knows nothing'", () => {
-		// Manifests from tags <= 1.20.0 have no vars key; validateManifest
-		// defaults it to []. Everything the target declares is then new.
-		const target = [v("ENV"), v("VOTING_ENABLED")];
-		const r = newVarsSince([], [], target);
-		expect(r.map((e) => e.name)).toEqual(["ENV", "VOTING_ENABLED"]);
+	it("does not flood on the first upgrade from a pre-1.21.0 manifest", () => {
+		// Manifests from tags <= 1.20.0 have no vars key, so a set-difference
+		// against current.vars would call all ~30 long-standing settings "new"
+		// on the one upgrade every existing install has to perform. addedIn is
+		// accurate across that boundary.
+		const target = [
+			v("ENV", "1.0.0"),
+			v("VOTING_ENABLED", "1.8.0"),
+			v("BRANDING_HIDDEN", "1.21.0"),
+		];
+		const r = newVarsSince([], "1.20.0", target);
+		expect(r.map((e) => e.name)).toEqual(["BRANDING_HIDDEN"]);
+	});
+
+	it("spans several releases, not just the newest tag", () => {
+		const target = [v("A", "1.17.0"), v("B", "1.21.0"), v("C", "1.10.0")];
+		const r = newVarsSince([], "1.15.0", target);
+		expect(r.map((e) => e.name)).toEqual(["A", "B"]);
+	});
+
+	it("treats a var with no addedIn as old", () => {
+		const bare: VarEntry = { name: "MYSTERY", required: false };
+		expect(newVarsSince([], "1.0.0", [bare])).toHaveLength(0);
 	});
 });
 

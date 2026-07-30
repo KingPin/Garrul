@@ -56,7 +56,13 @@ export type WranglerToml = {
 	kvBindings: string[];
 	d1Bindings: string[];
 	analyticsBindings: string[];
-	/** Keys set under `[vars]`. Used to report newly available settings. */
+	/**
+	 * Keys set under the top-level `[vars]`. Used to report newly available
+	 * settings. Environment-scoped tables (`[env.production.vars]`) are
+	 * deliberately not merged in — that would need real TOML parsing, and no
+	 * var is `required` today, so the worst case is an informational report
+	 * naming a setting the operator has already set in an env block.
+	 */
 	varNames: string[];
 	raw: string;
 };

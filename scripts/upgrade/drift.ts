@@ -4,12 +4,14 @@
  *
  * No I/O, no subprocesses, no globals — testable as plain unit functions.
  */
+import { isNewer } from "./manifest";
 import type {
 	Manifest,
 	SecretEntry,
 	VarEntry,
 	KvEntry,
 	D1Entry,
+	SemVer,
 } from "./manifest";
 
 export type Diff<TMissing, TExtra = string> = {
@@ -51,19 +53,30 @@ export const diffVars = (
 };
 
 /**
- * Vars the target release declares that the operator has not set and that
- * did not exist in the release they're upgrading from — "new settings you
- * may want to look at". Vars they've deliberately left at their default
- * across several releases stay quiet.
+ * Vars introduced after the release the operator is on and still unset —
+ * "new settings you may want to look at". Vars they've deliberately left at
+ * their default across several releases stay quiet.
+ *
+ * Keyed on each entry's `addedIn`, not on a set-difference against the
+ * current manifest's `vars[]`. Manifests from tags <= 1.20.0 have no `vars`
+ * key at all (`validateManifest` defaults it to `[]`), so a set-difference
+ * would announce all ~30 long-standing settings as "new in this release" on
+ * the one upgrade every existing install has to perform. `addedIn` is
+ * accurate across that boundary. An entry without `addedIn` is treated as
+ * old — staying quiet is the safe direction for an informational report.
  */
 export const newVarsSince = (
 	present: string[],
-	current: VarEntry[],
+	currentVersion: SemVer,
 	target: VarEntry[],
 ): VarEntry[] => {
 	const presentSet = new Set(present);
-	const knownSet = new Set(current.map((v) => v.name));
-	return target.filter((v) => !knownSet.has(v.name) && !presentSet.has(v.name));
+	return target.filter(
+		(v) =>
+			v.addedIn !== undefined &&
+			isNewer(v.addedIn, currentVersion) &&
+			!presentSet.has(v.name),
+	);
 };
 
 export const diffKv = (
