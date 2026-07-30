@@ -50,7 +50,7 @@ jobs:
           echo ""
 
           # Watched source paths — changes here usually mean the AGENTS files need updates.
-          WATCH_REGEX='^(src/widget/|src/routes/embed\.ts|src/routes/api\.comments\.ts|src/db/migrations/|INSTALL\.md|wrangler\.example\.toml|\.dev\.vars\.example)'
+          WATCH_REGEX='^(src/widget/|src/routes/embed\.ts|src/routes/api\.comments\.ts|src/db/migrations/|INSTALL\.md|wrangler\.example\.toml|\.dev\.vars\.example|secrets\.example\.env)'
           AGENTS_REGEX='^(AGENTS\.md|AGENTS-OPERATE\.md)$'
 
           WATCHED_HIT=$(echo "$CHANGED" | grep -E "$WATCH_REGEX" || true)

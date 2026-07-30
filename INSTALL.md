@@ -57,7 +57,7 @@ So for `comments.example.com`:
 **GitHub.** Create an OAuth app at
 <https://github.com/settings/developers> → New OAuth App. Use the
 callback URL above. Save the Client ID and generate a Client
-Secret — you'll feed both to `wrangler secret put` in step 4.
+Secret — you'll set both in step 4.
 
 GitHub apps allow exactly one callback URL. If you need staging +
 production, register two apps.
@@ -96,15 +96,43 @@ cp .dev.vars.example .dev.vars
 
 - create the D1 database (`garrul-db`) and four KV namespaces,
 - write their generated IDs into `wrangler.toml`,
-- prompt you to set each production secret via
-  `wrangler secret put`. Skip any you don't have yet — you can
-  re-run `wrangler secret put NAME` later.
+- generate `JWT_SECRET` and `IP_HASH_SECRET` and stream them
+  straight into Cloudflare — the values are never written to disk,
+- then offer two ways to set the remaining secrets.
 
-Have these handy for the secret prompts:
+### Bulk or one at a time
+
+Nothing is lost by picking either; you can re-run `setup.sh`, or set
+any secret later with `wrangler secret put NAME`.
+
+**Bulk** (fewer keystrokes — one file, one upload):
+
+```bash
+cp secrets.example.env secrets.env   # then edit it
+npx wrangler secret bulk secrets.env
+rm secrets.env
+```
+
+`secrets.example.env` lists every secret Garrul reads, grouped by
+feature, with a one-line note on where each value comes from.
+
+> **Leave the lines you aren't using commented out.** Wrangler treats
+> an empty value as a real, empty secret — an uncommented
+> `RESEND_API_KEY=` overwrites your live key with nothing rather than
+> skipping it. An unedited file is rejected outright, which is
+> deliberate.
+
+`secrets.env` holds plaintext credentials. It is gitignored; delete it
+once the upload succeeds.
+
+**One at a time**: `setup.sh` asks about each secret in turn and runs
+`wrangler secret put` for the ones you say yes to. Skip anything you
+don't have yet.
+
+Have these handy either way:
 
 | Secret                | Where it comes from                                |
 | --------------------- | -------------------------------------------------- |
-| `IP_HASH_SECRET`      | A random 32+ char string you generate              |
 | `TURNSTILE_SITE_KEY`  | From step 3                                        |
 | `TURNSTILE_SECRET`    | From step 3                                        |
 | `GH_CLIENT_ID`        | From step 2 (GitHub)                               |
@@ -114,7 +142,13 @@ Have these handy for the secret prompts:
 | `RESEND_API_KEY`      | <https://resend.com/api-keys> (only if using digests) |
 | `WEBHOOK_URL`         | Optional — fire-and-forget POST on comment events  |
 
-Tip for generating secrets: `openssl rand -hex 32`.
+Those are the common ones; `secrets.example.env` has the full set,
+including the Facebook / X / Discord providers, Telegram, Akismet and
+the Cloudflare usage dashboard.
+
+Tip for generating a secret by hand:
+`openssl rand -base64 32 | npx wrangler secret put NAME` — that keeps
+the value off disk and out of your shell history.
 
 ## 5. Configure `wrangler.toml`
 
@@ -204,9 +238,14 @@ the cron registered at all.
 
 ## Configuration reference
 
-Non-secret values live in `wrangler.toml` under `[vars]`. Secrets
-go through `wrangler secret put NAME` (one secret per command;
-never check secrets into the repo).
+Non-secret values live in `wrangler.toml` under `[vars]`. Secrets go
+through `wrangler secret put NAME`, or `wrangler secret bulk` for a
+whole file at once. Never check secrets into the repo.
+
+The table below is the shortlist most instances need. The **complete**
+reference — every setting, whether it's a var or a secret, and where it
+goes — is section 5 of `AGENTS-OPERATE.md`, generated from
+`scripts/config-registry.ts` so it cannot drift from the code.
 
 | Variable                       | Required             | Notes |
 | ------------------------------ | -------------------- | ----- |
@@ -228,7 +267,8 @@ never check secrets into the repo).
 | `EDIT_WINDOW_MINUTES`          | optional             | Default 15. |
 | `JWT_SECRET`                   | reserved             | Declared in bindings; not used yet (sessions are KV-backed). Safe to set a random value or skip. |
 
-See `wrangler.example.toml` for the full template with inline comments.
+See `wrangler.example.toml` for the `[vars]` template with inline
+comments, and `secrets.example.env` for the secrets.
 
 ## Updating
 

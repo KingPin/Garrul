@@ -56,6 +56,11 @@ export type Bindings = {
 	PUBLIC_BASE_URL: string;
 	CANONICAL_URL?: string;
 	WEBHOOK_URL: string;
+	// Optional GitHub token for the "update available" check on /admin/*
+	// (see src/lib/version-check.ts). Unauthenticated GitHub API allows
+	// 60 req/hr per IP and Cloudflare egress IPs are shared across colos,
+	// so a token raises the cap. Read-only `public_repo` scope is enough.
+	GITHUB_TOKEN?: string;
 	// Telegram integration (optional; feature is off when unset).
 	//   TELEGRAM_BOT_TOKEN      — BotFather token; used to send messages and
 	//                             (Phase 2) receive updates. A webhook endpoint

@@ -26,6 +26,10 @@ garrul-backup-*.sql
 .env
 .env.*
 !.env.example
+# Filled-in `wrangler secret bulk` input — plaintext credentials on disk.
+# `.env.*` above does NOT match `secrets.env`, so it needs its own rule.
+secrets*.env
+!secrets.example.env
 
 # Test / coverage
 coverage/
