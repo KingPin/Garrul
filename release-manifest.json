@@ -1,5 +1,5 @@
 {
-  "version": "1.20.0",
+  "version": "1.21.0",
   "minPreviousVersion": "1.0.0",
   "renderer": {
     "version": 1,
@@ -85,6 +85,11 @@
       "name": "WEBHOOK_URL",
       "required": false,
       "addedIn": "1.0.0"
+    },
+    {
+      "name": "GITHUB_TOKEN",
+      "required": false,
+      "addedIn": "1.21.0"
     },
     {
       "name": "TELEGRAM_BOT_TOKEN",
