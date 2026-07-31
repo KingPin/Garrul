@@ -10,10 +10,13 @@ import {
 	buildSetupPrompts,
 	buildSetupGenerated,
 	buildSetupNextSteps,
+	buildKvNamespaceBlocks,
+	buildSetupKvCreates,
 	buildConfigTable,
 	checkVarCoverage,
 	checkMustEditVars,
 } from "../scripts/build-config";
+import { parseBindings, readBindingsSource } from "../scripts/bindings";
 import {
 	SECRETS,
 	VARS,
@@ -319,6 +322,78 @@ describe("setup.sh next-steps block", () => {
 		const problems = checkMustEditVars(`[vars]\n${commented}\n`);
 		expect(problems).toHaveLength(1);
 		expect(problems[0]).toContain(MUST_EDIT_VARS[0]?.name as string);
+	});
+});
+
+describe("KV binding lists", () => {
+	// KV fields are typed `KVNamespace`, not `string`, so they are deliberately
+	// NOT registry entries — the parity assertion requires the registry to be
+	// exactly the `string` fields. src/index.ts is their source of truth.
+	const kv = parseBindings(readBindingsSource(REPO_ROOT)).kv;
+
+	it("has a binding to generate from", () => {
+		// Guards the tests below: a parser that silently returned [] would make
+		// every "one per binding" assertion vacuously true.
+		expect(kv.length).toBeGreaterThan(0);
+	});
+
+	it("calls create_kv once per KVNamespace field", () => {
+		const calls = buildSetupKvCreates("", kv)
+			.split("\n")
+			.filter((l) => l.startsWith("create_kv "))
+			.map((l) => l.replace("create_kv ", ""));
+		expect(calls).toEqual(kv);
+	});
+
+	it("leaves no create_kv call outside the generated region", () => {
+		const setup = read("scripts/setup.sh");
+		const region = setup.slice(
+			setup.indexOf("# BEGIN:kv-bindings"),
+			setup.indexOf("# END:kv-bindings"),
+		);
+		// The two in create_kv's own body are the definition and its error
+		// message, not calls — count call sites at column 0 instead.
+		const callSites = (setup.match(/^create_kv .*/gm) ?? []).length;
+		expect(callSites).toBe(kv.length);
+		expect((region.match(/^create_kv .*/gm) ?? []).length).toBe(callSites);
+	});
+
+	it("emits one TOML block per binding, each with the placeholder", () => {
+		const toml = buildKvNamespaceBlocks(kv);
+		expect((toml.match(/^\[\[kv_namespaces\]\]$/gm) ?? []).length).toBe(
+			kv.length,
+		);
+		// One placeholder per block — a stray extra would be picked up by
+		// whichever set_kv_id call ran last and look like success.
+		expect(
+			(toml.match(/PASTE_FROM_WRANGLER_KV_CREATE/g) ?? []).length,
+		).toBe(kv.length);
+		for (const binding of kv) {
+			expect(toml, binding).toContain(`binding = "${binding}"`);
+		}
+	});
+
+	it("emits the blocks as live TOML, not commented out", () => {
+		// Unlike the secrets-required region, which must stay commented.
+		for (const line of buildKvNamespaceBlocks(kv).split("\n")) {
+			if (line === "" || line.startsWith("#")) continue;
+			expect(line).toMatch(/^(\[\[kv_namespaces\]\]|binding = |id = )/);
+		}
+	});
+
+	it("is the state the committed files are in", () => {
+		expect(read("scripts/setup.sh")).toContain(buildSetupKvCreates("", kv));
+		expect(read("wrangler.example.toml")).toContain(
+			buildKvNamespaceBlocks(kv),
+		);
+	});
+
+	it("grows both lists when a namespace is added to Bindings", () => {
+		const grown = [...kv, "FUTURE_CACHE"];
+		expect(buildSetupKvCreates("", grown)).toContain("create_kv FUTURE_CACHE");
+		expect(buildKvNamespaceBlocks(grown)).toContain(
+			'binding = "FUTURE_CACHE"',
+		);
 	});
 });
 
