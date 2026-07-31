@@ -9,12 +9,15 @@ import {
 	buildSecretsPointer,
 	buildSetupPrompts,
 	buildSetupGenerated,
+	buildSetupNextSteps,
 	buildConfigTable,
 	checkVarCoverage,
+	checkMustEditVars,
 } from "../scripts/build-config";
 import {
 	SECRETS,
 	VARS,
+	MUST_EDIT_VARS,
 	REQUIRED_SECRET_NAMES,
 	GENERATED_SECRET_NAMES,
 	type ConfigEntry,
@@ -251,6 +254,71 @@ describe("setup.sh prompt lists", () => {
 		const setup = read("scripts/setup.sh");
 		expect(setup).toContain(buildSetupPrompts());
 		expect(setup).toContain(buildSetupGenerated());
+	});
+});
+
+describe("setup.sh next-steps block", () => {
+	// This list was hardcoded ("ALLOWED_ORIGINS, ADMIN_EMAILS, route pattern")
+	// with no flag to generate it from, so a newly added placeholder var would
+	// go unmentioned with config:check green — the drift #42 set out to close.
+	it("names every mustEdit var with its hint, in registry order", () => {
+		const steps = buildSetupNextSteps();
+		const width = Math.max(...MUST_EDIT_VARS.map((e) => e.name.length));
+		const order = MUST_EDIT_VARS.map((e) =>
+			steps.indexOf(`${e.name.padEnd(width)} — ${e.hint}`),
+		);
+		for (const [i, at] of order.entries()) {
+			expect(at, MUST_EDIT_VARS[i]?.name).toBeGreaterThan(-1);
+		}
+		expect(order).toEqual([...order].sort((a, b) => a - b));
+	});
+
+	it("mentions no var that isn't flagged mustEdit", () => {
+		const steps = buildSetupNextSteps();
+		for (const e of VARS) {
+			if (e.mustEdit) continue;
+			expect(steps, e.name).not.toMatch(new RegExp(`\\b${e.name}\\b`));
+		}
+	});
+
+	// The region sits at column 0 in a `set -euo pipefail` script, so anything
+	// other than a comment or an echo is executed on every install.
+	it("emits nothing executable but echo", () => {
+		const offenders = buildSetupNextSteps()
+			.split("\n")
+			.filter((line) => !/^(#|echo ")/.test(line));
+		expect(offenders).toEqual([]);
+	});
+
+	it("is the state the committed script is in", () => {
+		expect(read("scripts/setup.sh")).toContain(buildSetupNextSteps());
+	});
+
+	it("keeps the step numbering contiguous", () => {
+		const setup = read("scripts/setup.sh");
+		for (const n of [1, 2, 3, 4]) {
+			expect(setup, `step ${n}`).toMatch(new RegExp(`^echo "${n}\\. `, "m"));
+		}
+	});
+
+	// A `mustEdit` var that ships commented out leaves the operator's copied
+	// wrangler.toml without the setting at all — no ALLOWED_ORIGINS means every
+	// embed and every state-changing POST is rejected, with nothing in the file
+	// to suggest why.
+	it("requires an uncommented assignment in the template", () => {
+		expect(checkMustEditVars(read("wrangler.example.toml"))).toEqual([]);
+	});
+
+	it("flags a mustEdit var the template only mentions in a comment", () => {
+		const lines = MUST_EDIT_VARS.map((e) => `${e.name} = "x"`).join("\n");
+		expect(checkMustEditVars(`[vars]\n${lines}\n`)).toEqual([]);
+		const commented = lines
+			.split("\n")
+			.map((l, i) => (i === 0 ? `# ${l}` : l))
+			.join("\n");
+		const problems = checkMustEditVars(`[vars]\n${commented}\n`);
+		expect(problems).toHaveLength(1);
+		expect(problems[0]).toContain(MUST_EDIT_VARS[0]?.name as string);
 	});
 });
 

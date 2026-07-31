@@ -20,6 +20,7 @@ import {
 	VARS,
 	REQUIRED_SECRET_NAMES,
 	GENERATED_SECRET_NAMES,
+	MUST_EDIT_VARS,
 } from "../scripts/config-registry";
 import { parseBindings, readBindingsSource } from "../scripts/bindings";
 import { assertRegistryMatchesBindings } from "../scripts/upgrade/build-manifest";
@@ -91,6 +92,32 @@ describe("registry shape", () => {
 			"TURNSTILE_SITE_KEY",
 			"TURNSTILE_SECRET",
 		]);
+	});
+
+	it("marks exactly the four placeholder vars mustEdit", () => {
+		// Spelled out rather than derived so widening the set is a deliberate,
+		// reviewed edit: every name here is echoed at operators in setup.sh's
+		// next-steps block, and a silent addition would bury the real four.
+		expect(MUST_EDIT_VARS.map((e) => e.name)).toEqual([
+			"ALLOWED_ORIGINS",
+			"ADMIN_EMAILS",
+			"PUBLIC_BASE_URL",
+			"OAUTH_CALLBACK_BASE",
+		]);
+	});
+
+	it("only marks vars mustEdit, never secrets", () => {
+		// A secret has no shipped placeholder to replace — setup.sh's prompts
+		// already cover it, so mustEdit on a secret means the entry is miskinded.
+		for (const e of SECRETS) expect(e.mustEdit, `${e.name}`).toBeUndefined();
+	});
+
+	it("never combines mustEdit with adminEditable", () => {
+		// DB > env: an admin save would beat a value the operator has to own, and
+		// these are exactly the settings that can lock an operator out of the
+		// surface they'd use to undo it.
+		for (const e of MUST_EDIT_VARS)
+			expect(e.adminEditable, `${e.name}`).toBeFalsy();
 	});
 
 	it("only marks secrets as generated, never vars", () => {
