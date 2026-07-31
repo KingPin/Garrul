@@ -9,7 +9,8 @@
  *   - secrets / vars from scripts/config-registry.ts, cross-checked against
  *     the Bindings type in src/index.ts (see assertRegistryMatchesBindings)
  *   - KV / D1 / Analytics entries from that same Bindings type (parsed
- *     textually — Bindings is a type, so it has no runtime form)
+ *     textually by scripts/bindings.ts — Bindings is a type, so it has no
+ *     runtime form)
  *   - migrations list from src/db/migrations/*.sql
  *   - renderer.version from CURRENT_RENDERER_VERSION in src/lib/markdown.ts
  *   - version from package.json
@@ -34,61 +35,10 @@ import {
 	type AnalyticsEntry,
 } from "./manifest";
 import { CONFIG_REGISTRY, SECRETS, VARS } from "../config-registry";
+import { parseBindings, readBindingsSource } from "../bindings";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, "..", "..");
-
-type DerivedBindings = {
-	d1: { binding: string; databaseName: string }[];
-	kv: string[];
-	analytics: { binding: string; dataset: string }[];
-	/** Every `string`-typed field, secret or var — classified by the registry. */
-	strings: string[];
-};
-
-const ANALYTICS_DATASET = "garrul_events";
-
-const parseBindings = (): DerivedBindings => {
-	const src = readFileSync(join(REPO_ROOT, "src", "index.ts"), "utf8");
-	const start = src.indexOf("export type Bindings");
-	if (start < 0) {
-		throw new Error("could not locate `export type Bindings` in src/index.ts");
-	}
-	const open = src.indexOf("{", start);
-	const close = src.indexOf("};", open);
-	if (open < 0 || close < 0) {
-		throw new Error("could not find Bindings block braces");
-	}
-	const body = src.slice(open + 1, close);
-	const lines = body
-		.split("\n")
-		.map((l) => l.trim())
-		.filter((l) => l.length > 0 && !l.startsWith("//"));
-
-	const out: DerivedBindings = { d1: [], kv: [], analytics: [], strings: [] };
-
-	for (const line of lines) {
-		const match = /^([A-Z_][A-Z0-9_]*)\??:\s*([^;]+);?$/.exec(line);
-		if (!match) continue;
-		const name = match[1] as string;
-		const type = (match[2] as string).trim();
-
-		if (type === "D1Database") {
-			out.d1.push({
-				binding: name,
-				databaseName: name === "DB" ? "garrul-db" : name.toLowerCase(),
-			});
-		} else if (type === "KVNamespace") {
-			out.kv.push(name);
-		} else if (type === "AnalyticsEngineDataset") {
-			out.analytics.push({ binding: name, dataset: ANALYTICS_DATASET });
-		} else if (type === "string") {
-			out.strings.push(name);
-		}
-	}
-
-	return out;
-};
 
 /**
  * Fail the build when `Bindings` and the registry disagree.
@@ -253,7 +203,7 @@ export const buildManifest = (): Manifest => {
 		}
 	})();
 
-	const bindings = parseBindings();
+	const bindings = parseBindings(readBindingsSource(REPO_ROOT));
 	assertRegistryMatchesBindings(bindings.strings);
 	const version = readVersion();
 

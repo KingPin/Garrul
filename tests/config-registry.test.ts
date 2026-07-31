@@ -21,27 +21,18 @@ import {
 	REQUIRED_SECRET_NAMES,
 	GENERATED_SECRET_NAMES,
 } from "../scripts/config-registry";
+import { parseBindings, readBindingsSource } from "../scripts/bindings";
 import { assertRegistryMatchesBindings } from "../scripts/upgrade/build-manifest";
 
 const REPO_ROOT = join(__dirname, "..");
 
 /**
- * Same textual parse `build-manifest.ts` performs. `Bindings` is a type, so
- * it has no runtime form to import.
+ * The same parse the generators use — shared rather than re-implemented here,
+ * which is what this file used to do. `Bindings` is a type, so it has no
+ * runtime form to import.
  */
-const bindingStringFields = (): string[] => {
-	const src = readFileSync(join(REPO_ROOT, "src", "index.ts"), "utf8");
-	const start = src.indexOf("export type Bindings");
-	const open = src.indexOf("{", start);
-	const close = src.indexOf("};", open);
-	const body = src.slice(open + 1, close);
-	const out: string[] = [];
-	for (const line of body.split("\n")) {
-		const m = /^([A-Z_][A-Z0-9_]*)\??:\s*([^;]+);?$/.exec(line.trim());
-		if (m && (m[2] as string).trim() === "string") out.push(m[1] as string);
-	}
-	return out;
-};
+const bindingStringFields = (): string[] =>
+	parseBindings(readBindingsSource(REPO_ROOT)).strings;
 
 describe("registry ↔ Bindings parity", () => {
 	it("covers every string field in Bindings, and nothing more", () => {
