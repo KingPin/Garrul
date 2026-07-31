@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Garrul setup — prompt-driven first-time configuration.
-# Creates D1 + KV namespaces, writes their IDs into wrangler.toml, and sets
-# production secrets — either in bulk from secrets.env or one prompt at a time.
+# Creates D1 + KV namespaces, writes their IDs into wrangler.toml (matched by
+# binding name, so a reordered or hand-edited file is safe), and sets production
+# secrets — either in bulk from secrets.env or one prompt at a time.
 #
 # The secret call lists and the next-steps var list are generated from
 # scripts/config-registry.ts between BEGIN/END markers. Run
@@ -77,6 +78,74 @@ create_d1() {
 	echo "✓ wrote D1 id $id into wrangler.toml"
 }
 
+# Write an id into the [[kv_namespaces]] block that declares this binding —
+# not into the first remaining placeholder in the file.
+#
+# The positional version substituted `0,/PLACEHOLDER/`, so correctness depended
+# on the block order in wrangler.toml matching the create_kv call order below.
+# setup.sh deliberately keeps an existing wrangler.toml, so an operator who had
+# reordered their own blocks and re-ran setup got every id assigned to the wrong
+# binding — silently. Setup succeeded and the Worker then read sessions out of
+# the rate-limit namespace.
+#
+# Exit codes from the awk pass, so a quiet re-run and a real problem read
+# differently: 0 substituted, 3 the block is already filled in, 4 no such
+# block. 1/2 are awk's own failures — deliberately not reused.
+set_kv_id() {
+	local binding="$1" id="$2" tmp rc
+	tmp=$(mktemp)
+	set +e
+	awk -v binding="$binding" -v newid="$id" '
+		function emit() {
+			if (!nblk) return
+			if (istgt) {
+				found = 1
+				for (i = 1; i <= nblk; i++)
+					if (blk[i] ~ idre) { sub(phre, "\"" newid "\"", blk[i]); hit = 1 }
+			}
+			for (i = 1; i <= nblk; i++) print blk[i]
+			nblk = 0; istgt = 0
+		}
+		BEGIN {
+			hdrre  = "^[[:space:]]*\\[\\[kv_namespaces\\]\\]"
+			bindre = "^[[:space:]]*binding[[:space:]]*=[[:space:]]*\"" binding "\""
+			phre   = "\"PASTE_FROM_WRANGLER_KV_CREATE\""
+			idre   = "^[[:space:]]*id[[:space:]]*=[[:space:]]*" phre
+		}
+		# Any table header closes the block being buffered.
+		/^[[:space:]]*\[/ {
+			emit()
+			if ($0 ~ hdrre) { blk[++nblk] = $0; next }
+			print; next
+		}
+		nblk > 0 {
+			blk[++nblk] = $0
+			# Buffered, so the binding line may follow the id line.
+			if ($0 ~ bindre) istgt = 1
+			next
+		}
+		{ print }
+		END { emit(); exit hit ? 0 : (found ? 3 : 4) }
+	' wrangler.toml > "$tmp"
+	rc=$?
+	set -e
+	case $rc in
+		0)
+			# cat, not mv — keeps wrangler.toml's own permissions, and the file is
+			# only overwritten once awk has produced a complete rewrite.
+			cat "$tmp" > wrangler.toml
+			echo "✓ wrote $binding id $id into wrangler.toml" ;;
+		3) echo "✓ $binding already has an id — leaving wrangler.toml alone" ;;
+		4)
+			echo "warning: no [[kv_namespaces]] block binding $binding in wrangler.toml." >&2
+			echo "         Add one by hand with id = \"$id\"." >&2 ;;
+		*)
+			echo "error: awk failed (exit $rc) setting $binding; wrangler.toml unchanged." >&2
+			echo "       Set id = \"$id\" for $binding by hand." >&2 ;;
+	esac
+	rm -f "$tmp"
+}
+
 create_kv() {
 	local binding="$1"
 	echo
@@ -95,11 +164,7 @@ create_kv() {
 		echo "warning: could not auto-extract id for $binding; copy manually." >&2
 		return
 	fi
-	# Replace the first remaining placeholder. KV bindings appear in
-	# the order RATE_LIMITS, OAUTH_STATE, SESSIONS, TREE_CACHE in the
-	# template; we substitute in that order.
-	sed -i "0,/PASTE_FROM_WRANGLER_KV_CREATE/{s/PASTE_FROM_WRANGLER_KV_CREATE/$id/}" wrangler.toml
-	echo "✓ wrote $binding id $id into wrangler.toml"
+	set_kv_id "$binding" "$id"
 }
 
 create_d1
