@@ -58,7 +58,7 @@ const SOURCE = "scripts/config-registry.ts";
 /** The other source of truth: KV bindings, which are not registry entries. */
 const BINDINGS_SOURCE = "the Bindings type in src/index.ts";
 
-/** Also hardcoded in setup.sh's set_kv_id awk pass; change both together. */
+/** Also hardcoded in setup.sh's set_kv_id wrapper; change both together. */
 const KV_PLACEHOLDER = "PASTE_FROM_WRANGLER_KV_CREATE";
 
 type Region = { begin: string; end: string };

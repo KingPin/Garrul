@@ -56,30 +56,10 @@ confirm_route() {
 }
 confirm_route
 
-create_d1() {
-	echo
-	echo "Creating D1 database 'garrul-db'..."
-	set +e
-	out=$(wrangler d1 create garrul-db 2>&1)
-	rc=$?
-	set -e
-	echo "$out"
-	if [ $rc -ne 0 ] && ! echo "$out" | grep -qE 'already exists|D1_ERROR.*name'; then
-		echo "error: wrangler d1 create failed (exit $rc). Fix the above and re-run." >&2
-		exit $rc
-	fi
-	id=$(echo "$out" | grep -Eo 'database_id = "[a-f0-9-]+"' | head -1 | sed 's/database_id = "//;s/"//')
-	if [ -z "$id" ]; then
-		echo "warning: could not auto-extract database_id; copy it into wrangler.toml manually." >&2
-		return
-	fi
-	# Substitute the placeholder in wrangler.toml.
-	sed -i "s/PASTE_FROM_WRANGLER_D1_CREATE/$id/" wrangler.toml
-	echo "✓ wrote D1 id $id into wrangler.toml"
-}
-
-# Write an id into the [[kv_namespaces]] block that declares this binding —
-# not into the first remaining placeholder in the file.
+# Write an id into the wrangler.toml block that declares this binding — not
+# into the first remaining placeholder in the file.
+#
+#   set_binding_id <table> <binding> <key> <placeholder> <id>
 #
 # The positional version substituted `0,/PLACEHOLDER/`, so correctness depended
 # on the block order in wrangler.toml matching the create_kv call order below.
@@ -88,14 +68,19 @@ create_d1() {
 # binding — silently. Setup succeeded and the Worker then read sessions out of
 # the rate-limit namespace.
 #
+# awk rather than `sed -i`, which is a GNU extension: on macOS/BSD `sed -i`
+# takes the backup suffix as its next argument and dies with "invalid command
+# code" — the D1 substitution used to fail there.
+#
 # Exit codes from the awk pass, so a quiet re-run and a real problem read
 # differently: 0 substituted, 3 the block is already filled in, 4 no such
 # block. 1/2 are awk's own failures — deliberately not reused.
-set_kv_id() {
-	local binding="$1" id="$2" tmp rc
+set_binding_id() {
+	local table="$1" binding="$2" key="$3" ph="$4" id="$5" tmp rc
 	tmp=$(mktemp)
 	set +e
-	awk -v binding="$binding" -v newid="$id" '
+	awk -v table="$table" -v binding="$binding" -v key="$key" -v ph="$ph" \
+		-v newid="$id" '
 		function emit() {
 			if (!nblk) return
 			if (istgt) {
@@ -107,10 +92,11 @@ set_kv_id() {
 			nblk = 0; istgt = 0
 		}
 		BEGIN {
-			hdrre  = "^[[:space:]]*\\[\\[kv_namespaces\\]\\]"
+			hdrre  = "^[[:space:]]*\\[\\[" table "\\]\\]"
 			bindre = "^[[:space:]]*binding[[:space:]]*=[[:space:]]*\"" binding "\""
-			phre   = "\"PASTE_FROM_WRANGLER_KV_CREATE\""
-			idre   = "^[[:space:]]*id[[:space:]]*=[[:space:]]*" phre
+			phre   = "\"" ph "\""
+			# Anchored on the key, so `id` never matches `database_id`.
+			idre   = "^[[:space:]]*" key "[[:space:]]*=[[:space:]]*" phre
 		}
 		# Any table header closes the block being buffered.
 		/^[[:space:]]*\[/ {
@@ -137,13 +123,41 @@ set_kv_id() {
 			echo "✓ wrote $binding id $id into wrangler.toml" ;;
 		3) echo "✓ $binding already has an id — leaving wrangler.toml alone" ;;
 		4)
-			echo "warning: no [[kv_namespaces]] block binding $binding in wrangler.toml." >&2
-			echo "         Add one by hand with id = \"$id\"." >&2 ;;
+			echo "warning: no [[$table]] block binding $binding in wrangler.toml." >&2
+			echo "         Add one by hand with $key = \"$id\"." >&2 ;;
 		*)
 			echo "error: awk failed (exit $rc) setting $binding; wrangler.toml unchanged." >&2
-			echo "       Set id = \"$id\" for $binding by hand." >&2 ;;
+			echo "       Set $key = \"$id\" for $binding by hand." >&2 ;;
 	esac
 	rm -f "$tmp"
+}
+
+set_kv_id() {
+	set_binding_id kv_namespaces "$1" id PASTE_FROM_WRANGLER_KV_CREATE "$2"
+}
+
+set_d1_id() {
+	set_binding_id d1_databases DB database_id PASTE_FROM_WRANGLER_D1_CREATE "$1"
+}
+
+create_d1() {
+	echo
+	echo "Creating D1 database 'garrul-db'..."
+	set +e
+	out=$(wrangler d1 create garrul-db 2>&1)
+	rc=$?
+	set -e
+	echo "$out"
+	if [ $rc -ne 0 ] && ! echo "$out" | grep -qE 'already exists|D1_ERROR.*name'; then
+		echo "error: wrangler d1 create failed (exit $rc). Fix the above and re-run." >&2
+		exit $rc
+	fi
+	id=$(echo "$out" | grep -Eo 'database_id = "[a-f0-9-]+"' | head -1 | sed 's/database_id = "//;s/"//')
+	if [ -z "$id" ]; then
+		echo "warning: could not auto-extract database_id; copy it into wrangler.toml manually." >&2
+		return
+	fi
+	set_d1_id "$id"
 }
 
 create_kv() {
