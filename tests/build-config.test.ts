@@ -326,6 +326,34 @@ describe("setup.sh next-steps block", () => {
 		expect(problems).toHaveLength(1);
 		expect(problems[0]).toContain(MUST_EDIT_VARS[0]?.name as string);
 	});
+
+	// Both checks are about the base config an operator deploys. An assignment
+	// under a per-environment override does not put the var in the wrangler.toml
+	// they copy, so it must not satisfy either check.
+	it("ignores an assignment outside the [vars] table", () => {
+		const [first, ...rest] = MUST_EDIT_VARS;
+		const inVars = rest.map((e) => `${e.name} = "x"`).join("\n");
+		const toml = [
+			"[vars]",
+			inVars,
+			"",
+			"[env.staging.vars]",
+			`${first?.name} = "x"`,
+		].join("\n");
+		const problems = checkMustEditVars(toml);
+		expect(problems).toHaveLength(1);
+		expect(problems[0]).toContain(first?.name as string);
+		// checkVarCoverage reads the same slice, so it agrees.
+		expect(checkVarCoverage(toml).some((p) => p.includes(first?.name as string))).toBe(true);
+	});
+
+	it("refuses a template with no [vars] table rather than passing it", () => {
+		// Silently returning "no problems" for a file it could not find the
+		// table in is how a check stops checking.
+		expect(() => checkMustEditVars("[triggers]\ncrons = []\n")).toThrow(
+			/no \[vars\] table/,
+		);
+	});
 });
 
 describe("KV binding lists", () => {

@@ -478,11 +478,31 @@ const buildConfigTable = (): string =>
  * enforces that no registry var is missing from it — a new flag that nobody
  * can discover is the failure mode worth catching.
  */
+/**
+ * The body of the `[vars]` table, up to the next table header.
+ *
+ * Both checks below run against this rather than the whole file. Unscoped,
+ * `^NAME\s*=` was satisfied by an assignment anywhere in the template —
+ * including under a per-environment `[env.*.vars]` override, which does not
+ * apply to the base config an operator deploys, or under some future table
+ * that happens to reuse a var name as a key.
+ */
+const varsBlock = (toml: string): string => {
+	const header = /^\[vars\]$/m.exec(toml);
+	if (!header) {
+		throw new Error("wrangler.example.toml has no [vars] table");
+	}
+	const body = toml.slice(header.index + header[0].length);
+	const next = body.search(/^\[/m);
+	return next < 0 ? body : body.slice(0, next);
+};
+
 const checkVarCoverage = (toml: string): string[] => {
+	const vars = varsBlock(toml);
 	const problems: string[] = [];
 	for (const e of VARS) {
 		// Matches both `NAME = "x"` and the commented `# NAME = "x"` form.
-		if (!new RegExp(`^#?\\s*${e.name}\\s*=`, "m").test(toml)) {
+		if (!new RegExp(`^#?\\s*${e.name}\\s*=`, "m").test(vars)) {
 			problems.push(
 				`wrangler.example.toml [vars] never mentions ${e.name} — add it (commented is fine) so operators can find it`,
 			);
@@ -499,9 +519,10 @@ const checkVarCoverage = (toml: string): string[] => {
  * rejected, with nothing in the file to suggest why.
  */
 const checkMustEditVars = (toml: string): string[] => {
+	const vars = varsBlock(toml);
 	const problems: string[] = [];
 	for (const e of MUST_EDIT_VARS) {
-		if (!new RegExp(`^${e.name}\\s*=`, "m").test(toml)) {
+		if (!new RegExp(`^${e.name}\\s*=`, "m").test(vars)) {
 			problems.push(
 				`wrangler.example.toml must assign ${e.name} uncommented — it is flagged mustEdit, so operators need a placeholder line to replace`,
 			);
