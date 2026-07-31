@@ -6,8 +6,9 @@
  * no runtime form to import. Everything that needs the binding list therefore
  * parses the source: `scripts/upgrade/build-manifest.ts` (release-manifest.json
  * KV/D1/Analytics entries, plus the registry parity assertion) and
- * `scripts/build-config.ts` (the `[[kv_namespaces]]` blocks in
- * wrangler.example.toml and the `create_kv` call list in setup.sh).
+ * `scripts/build-config.ts` (the `[[d1_databases]]`, `[[kv_namespaces]]` and
+ * `[[analytics_engine_datasets]]` blocks in wrangler.example.toml, and the
+ * `create_d1` / `create_kv` call lists in setup.sh).
  *
  * It lives here rather than in either consumer because it had already been
  * written twice — once in build-manifest.ts and once again in
