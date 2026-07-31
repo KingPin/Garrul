@@ -82,7 +82,13 @@ confirm_route
 # wrangler will reject at deploy, and reporting it with a ✓ buries that.
 set_binding_id() {
 	local table="$1" binding="$2" key="$3" ph="$4" id="$5" tmp rc
-	tmp=$(mktemp)
+	# Alongside wrangler.toml, not in TMPDIR, so the swap below is a
+	# same-filesystem rename rather than a copy.
+	tmp=$(mktemp ./wrangler.toml.new.XXXXXX)
+	# Seed it from the original so it inherits the mode; awk's redirect
+	# truncates without changing it. Ownership is not preservable for a file the
+	# operator does not own, and does not need to be — only the mode does.
+	cp -p wrangler.toml "$tmp" 2>/dev/null || cp wrangler.toml "$tmp"
 	set +e
 	awk -v table="$table" -v binding="$binding" -v key="$key" -v ph="$ph" \
 		-v newid="$id" '
@@ -135,9 +141,10 @@ set_binding_id() {
 	set -e
 	case $rc in
 		0)
-			# cat, not mv — keeps wrangler.toml's own permissions, and the file is
-			# only overwritten once awk has produced a complete rewrite.
-			cat "$tmp" > wrangler.toml
+			# Atomic rename, so an interrupt or a full disk during the swap leaves
+			# the operator's wrangler.toml intact rather than truncated. `cat >`
+			# would have been a visible window with no backup to fall back on.
+			mv "$tmp" wrangler.toml
 			echo "✓ wrote $binding id $id into wrangler.toml" ;;
 		3) echo "✓ $binding already has an id — leaving wrangler.toml alone" ;;
 		4)

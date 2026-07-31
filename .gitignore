@@ -18,6 +18,8 @@ src/lib/version.gen.ts
 .dev.vars.local
 .miniflare/
 wrangler.toml
+# setup.sh's staging file for the atomic id write — only survives an interrupt.
+wrangler.toml.new.*
 
 # D1 backups produced by scripts/db-export.sh — contain real user data
 garrul-backup-*.sql
