@@ -73,8 +73,13 @@ confirm_route
 # code" — the D1 substitution used to fail there.
 #
 # Exit codes from the awk pass, so a quiet re-run and a real problem read
-# differently: 0 substituted, 3 the block is already filled in, 4 no such
-# block. 1/2 are awk's own failures — deliberately not reused.
+# differently: 0 substituted, 3 the block already carries a real id, 4 no such
+# block, 5 the block exists but declares no `key` at all. 1/2 are awk's own
+# failures — deliberately not reused.
+#
+# 3 and 5 are split because collapsing them is how the old positional version
+# read: a block with no `id` line is not a finished install, it is a config
+# wrangler will reject at deploy, and reporting it with a ✓ buries that.
 set_binding_id() {
 	local table="$1" binding="$2" key="$3" ph="$4" id="$5" tmp rc
 	tmp=$(mktemp)
@@ -85,8 +90,10 @@ set_binding_id() {
 			if (!nblk) return
 			if (istgt) {
 				found = 1
-				for (i = 1; i <= nblk; i++)
+				for (i = 1; i <= nblk; i++) {
+					if (blk[i] ~ keyre) haskey = 1
 					if (blk[i] ~ idre) { sub(phre, "\"" newid "\"", blk[i]); hit = 1 }
+				}
 			}
 			for (i = 1; i <= nblk; i++) print blk[i]
 			nblk = 0; istgt = 0
@@ -96,7 +103,8 @@ set_binding_id() {
 			bindre = "^[[:space:]]*binding[[:space:]]*=[[:space:]]*\"" binding "\""
 			phre   = "\"" ph "\""
 			# Anchored on the key, so `id` never matches `database_id`.
-			idre   = "^[[:space:]]*" key "[[:space:]]*=[[:space:]]*" phre
+			keyre  = "^[[:space:]]*" key "[[:space:]]*="
+			idre   = keyre "[[:space:]]*" phre
 		}
 		# Any table header closes the block being buffered.
 		/^[[:space:]]*\[/ {
@@ -111,7 +119,7 @@ set_binding_id() {
 			next
 		}
 		{ print }
-		END { emit(); exit hit ? 0 : (found ? 3 : 4) }
+		END { emit(); exit hit ? 0 : (found ? (haskey ? 3 : 5) : 4) }
 	' wrangler.toml > "$tmp"
 	rc=$?
 	set -e
@@ -125,6 +133,9 @@ set_binding_id() {
 		4)
 			echo "warning: no [[$table]] block binding $binding in wrangler.toml." >&2
 			echo "         Add one by hand with $key = \"$id\"." >&2 ;;
+		5)
+			echo "warning: the [[$table]] block binding $binding declares no $key." >&2
+			echo "         wrangler will reject the deploy — add $key = \"$id\" to it." >&2 ;;
 		*)
 			echo "error: awk failed (exit $rc) setting $binding; wrangler.toml unchanged." >&2
 			echo "       Set $key = \"$id\" for $binding by hand." >&2 ;;
