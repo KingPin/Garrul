@@ -20,28 +20,20 @@ import {
 	VARS,
 	REQUIRED_SECRET_NAMES,
 	GENERATED_SECRET_NAMES,
+	MUST_EDIT_VARS,
 } from "../scripts/config-registry";
+import { parseBindings, readBindingsSource } from "../scripts/bindings";
 import { assertRegistryMatchesBindings } from "../scripts/upgrade/build-manifest";
 
 const REPO_ROOT = join(__dirname, "..");
 
 /**
- * Same textual parse `build-manifest.ts` performs. `Bindings` is a type, so
- * it has no runtime form to import.
+ * The same parse the generators use — shared rather than re-implemented here,
+ * which is what this file used to do. `Bindings` is a type, so it has no
+ * runtime form to import.
  */
-const bindingStringFields = (): string[] => {
-	const src = readFileSync(join(REPO_ROOT, "src", "index.ts"), "utf8");
-	const start = src.indexOf("export type Bindings");
-	const open = src.indexOf("{", start);
-	const close = src.indexOf("};", open);
-	const body = src.slice(open + 1, close);
-	const out: string[] = [];
-	for (const line of body.split("\n")) {
-		const m = /^([A-Z_][A-Z0-9_]*)\??:\s*([^;]+);?$/.exec(line.trim());
-		if (m && (m[2] as string).trim() === "string") out.push(m[1] as string);
-	}
-	return out;
-};
+const bindingStringFields = (): string[] =>
+	parseBindings(readBindingsSource(REPO_ROOT)).strings;
 
 describe("registry ↔ Bindings parity", () => {
 	it("covers every string field in Bindings, and nothing more", () => {
@@ -100,6 +92,32 @@ describe("registry shape", () => {
 			"TURNSTILE_SITE_KEY",
 			"TURNSTILE_SECRET",
 		]);
+	});
+
+	it("marks exactly the four placeholder vars mustEdit", () => {
+		// Spelled out rather than derived so widening the set is a deliberate,
+		// reviewed edit: every name here is echoed at operators in setup.sh's
+		// next-steps block, and a silent addition would bury the real four.
+		expect(MUST_EDIT_VARS.map((e) => e.name)).toEqual([
+			"ALLOWED_ORIGINS",
+			"ADMIN_EMAILS",
+			"PUBLIC_BASE_URL",
+			"OAUTH_CALLBACK_BASE",
+		]);
+	});
+
+	it("only marks vars mustEdit, never secrets", () => {
+		// A secret has no shipped placeholder to replace — setup.sh's prompts
+		// already cover it, so mustEdit on a secret means the entry is miskinded.
+		for (const e of SECRETS) expect(e.mustEdit, `${e.name}`).toBeUndefined();
+	});
+
+	it("never combines mustEdit with adminEditable", () => {
+		// DB > env: an admin save would beat a value the operator has to own, and
+		// these are exactly the settings that can lock an operator out of the
+		// surface they'd use to undo it.
+		for (const e of MUST_EDIT_VARS)
+			expect(e.adminEditable, `${e.name}`).toBeFalsy();
 	});
 
 	it("only marks secrets as generated, never vars", () => {

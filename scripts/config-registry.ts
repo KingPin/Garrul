@@ -17,6 +17,7 @@
  *   secrets.example.env      generated  (scripts/build-config.ts)
  *   .dev.vars.example        generated
  *   wrangler.example.toml    generated  ([secrets] block + pointer)
+ *   scripts/setup.sh         generated  (secret prompts + next-steps vars)
  *   AGENTS-OPERATE.md §5     generated  (between BEGIN/END markers)
  *   release-manifest.json    generated  (scripts/upgrade/build-manifest.ts)
  *   src/index.ts Bindings    CHECKED    (parity assertion, see below)
@@ -49,6 +50,24 @@ export type ConfigEntry = {
 	 * must not fail over a missing `DISCORD_CLIENT_SECRET`.
 	 */
 	required: boolean;
+	/**
+	 * The value shipped in wrangler.example.toml is a placeholder a human has to
+	 * replace before deploying. Drives the "Next steps" list setup.sh prints.
+	 *
+	 * Deliberately distinct from `required`: that one drives deploy-time failure
+	 * and drift reporting, and every var is `required: false` precisely because
+	 * an unset var is never fatal. `mustEdit` is the other question — the var
+	 * *is* set, to `https://comments.example.com`, and shipping that is worse
+	 * than leaving it blank. Without a flag for it, setup.sh's next-steps list
+	 * was hand-maintained and `config:check` stayed green while a newly added
+	 * placeholder went unmentioned (issue #46).
+	 *
+	 * Vars only — secrets are covered by the setup.sh prompts. Never combine
+	 * with `adminEditable`: DB > env means an admin save would beat a value the
+	 * operator has to own, and these four are exactly the settings that can lock
+	 * an operator out of the surface they'd use to undo it.
+	 */
+	mustEdit?: boolean;
 	/** Section heading in generated templates. */
 	group: string;
 	/**
@@ -116,6 +135,8 @@ const SECRET_TARGET = "`wrangler secret put` / `.dev.vars`";
 const VAR_TARGET = "`wrangler.toml`";
 const ADMIN_EDITABLE_TARGET =
 	"`wrangler.toml` default; **Admin → Settings** overrides";
+const MUST_EDIT_TARGET =
+	"`wrangler.toml` — **replace the shipped placeholder before deploying**";
 
 export const CONFIG_REGISTRY: ConfigEntry[] = [
 	// ---------------------------------------------------------------- core
@@ -134,6 +155,7 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
 		name: "ALLOWED_ORIGINS",
 		kind: "var",
 		required: false,
+		mustEdit: true,
 		group: "Core",
 		hint: "comma-separated origins allowed to embed and call /api/*",
 		description:
@@ -145,6 +167,7 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
 		name: "ADMIN_EMAILS",
 		kind: "var",
 		required: false,
+		mustEdit: true,
 		group: "Core",
 		hint: "comma-separated emails that get auto-admin on OAuth signup",
 		description:
@@ -168,6 +191,7 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
 		name: "PUBLIC_BASE_URL",
 		kind: "var",
 		required: false,
+		mustEdit: true,
 		group: "Core",
 		hint: "public URL of this Worker; used in permalinks and email bodies",
 		description:
@@ -190,6 +214,7 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
 		name: "OAUTH_CALLBACK_BASE",
 		kind: "var",
 		required: false,
+		mustEdit: true,
 		group: "Core",
 		hint: "must match the redirect URI registered with each provider",
 		description:
@@ -747,6 +772,12 @@ export const SECRETS = CONFIG_REGISTRY.filter((e) => e.kind === "secret");
 export const VARS = CONFIG_REGISTRY.filter((e) => e.kind === "var");
 
 /**
+ * Vars whose shipped value is a placeholder. Feeds the "Next steps" list
+ * setup.sh prints after a first install — see `mustEdit`.
+ */
+export const MUST_EDIT_VARS = VARS.filter((e) => e.mustEdit);
+
+/**
  * Names for wrangler's `secrets.required` config property. Deliberately
  * only the always-required secrets — the OAuth pairs are optional per
  * provider, so listing them would fail deploys for GitHub-only installs.
@@ -775,7 +806,9 @@ export const targetFor = (e: ConfigEntry): string =>
 		? SECRET_TARGET
 		: e.adminEditable
 			? ADMIN_EDITABLE_TARGET
-			: VAR_TARGET);
+			: e.mustEdit
+				? MUST_EDIT_TARGET
+				: VAR_TARGET);
 
 /** Registry order, grouped, preserving first-seen group order. */
 export const groupsOf = (entries: ConfigEntry[]): [string, ConfigEntry[]][] => {

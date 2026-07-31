@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # Garrul setup — prompt-driven first-time configuration.
-# Creates D1 + KV namespaces, writes their IDs into wrangler.toml, and sets
-# production secrets — either in bulk from secrets.env or one prompt at a time.
+# Creates D1 + KV namespaces, writes their IDs into wrangler.toml (matched by
+# binding name, so a reordered or hand-edited file is safe), and sets production
+# secrets — either in bulk from secrets.env or one prompt at a time.
 #
-# The secret call lists are generated from scripts/config-registry.ts between
-# BEGIN/END markers. Run `npm run config:build` after editing the registry;
-# `npm run config:check` fails CI when they drift.
+# Every config list below is generated between BEGIN/END markers — the secret
+# prompts and the next-steps vars from scripts/config-registry.ts, the create_d1
+# and create_kv calls from the Bindings type in src/index.ts. Run
+# `npm run config:build` after editing either; `npm run config:check` fails CI
+# when they drift.
 #
 # Run from repo root:  ./scripts/setup.sh
 
@@ -54,11 +57,125 @@ confirm_route() {
 }
 confirm_route
 
-create_d1() {
-	echo
-	echo "Creating D1 database 'garrul-db'..."
+# Write an id into the wrangler.toml block that declares this binding — not
+# into the first remaining placeholder in the file.
+#
+#   set_binding_id <table> <binding> <key> <placeholder> <id>
+#
+# The positional version substituted `0,/PLACEHOLDER/`, so correctness depended
+# on the block order in wrangler.toml matching the create_kv call order below.
+# setup.sh deliberately keeps an existing wrangler.toml, so an operator who had
+# reordered their own blocks and re-ran setup got every id assigned to the wrong
+# binding — silently. Setup succeeded and the Worker then read sessions out of
+# the rate-limit namespace.
+#
+# awk rather than `sed -i`, which is a GNU extension: on macOS/BSD `sed -i`
+# takes the backup suffix as its next argument and dies with "invalid command
+# code" — the D1 substitution used to fail there.
+#
+# Exit codes from the awk pass, so a quiet re-run and a real problem read
+# differently: 0 substituted, 3 the block already carries a real id, 4 no such
+# block, 5 the block exists but declares no `key` at all. 1/2 are awk's own
+# failures — deliberately not reused.
+#
+# 3 and 5 are split because collapsing them is how the old positional version
+# read: a block with no `id` line is not a finished install, it is a config
+# wrangler will reject at deploy, and reporting it with a ✓ buries that.
+set_binding_id() {
+	local table="$1" binding="$2" key="$3" ph="$4" id="$5" tmp rc
+	# Alongside wrangler.toml, not in TMPDIR, so the swap below is a
+	# same-filesystem rename rather than a copy.
+	tmp=$(mktemp ./wrangler.toml.new.XXXXXX)
+	# Seed it from the original so it inherits the mode; awk's redirect
+	# truncates without changing it. Ownership is not preservable for a file the
+	# operator does not own, and does not need to be — only the mode does.
+	cp -p wrangler.toml "$tmp" 2>/dev/null || cp wrangler.toml "$tmp"
 	set +e
-	out=$(wrangler d1 create garrul-db 2>&1)
+	awk -v table="$table" -v binding="$binding" -v key="$key" -v ph="$ph" \
+		-v newid="$id" '
+		function emit() {
+			if (!nblk) return
+			if (istgt) {
+				found = 1
+				for (i = 1; i <= nblk; i++) {
+					if (blk[i] ~ keyre) haskey = 1
+					# Always writes the double-quoted form, so a single-quoted
+					# placeholder is normalized to match the rest of the template.
+					if (blk[i] ~ idre) { sub(phre, "\"" newid "\"", blk[i]); hit = 1 }
+				}
+			}
+			for (i = 1; i <= nblk; i++) print blk[i]
+			nblk = 0; istgt = 0
+		}
+		BEGIN {
+			# Either TOML quote style. ASCII 39 is the apostrophe, spelled with
+			# sprintf because a literal one would close the shell quoting that
+			# wraps this whole program.
+			q      = "[\"" sprintf("%c", 39) "]"
+			# An optional dotted prefix matches wranglers per-environment
+			# overrides, [[env.production.kv_namespaces]], which redeclare every
+			# binding. The prefix must end in a dot, so [[foo_kv_namespaces]]
+			# stays unmatched.
+			hdrre  = "^[[:space:]]*\\[\\[([A-Za-z0-9_.-]+\\.)?" table "\\]\\]"
+			bindre = "^[[:space:]]*binding[[:space:]]*=[[:space:]]*" q binding q
+			phre   = q ph q
+			# Anchored on the key, so `id` never matches `database_id`.
+			keyre  = "^[[:space:]]*" key "[[:space:]]*="
+			idre   = keyre "[[:space:]]*" phre
+		}
+		# Any table header closes the block being buffered.
+		/^[[:space:]]*\[/ {
+			emit()
+			if ($0 ~ hdrre) { blk[++nblk] = $0; next }
+			print; next
+		}
+		nblk > 0 {
+			blk[++nblk] = $0
+			# Buffered, so the binding line may follow the id line.
+			if ($0 ~ bindre) istgt = 1
+			next
+		}
+		{ print }
+		END { emit(); exit hit ? 0 : (found ? (haskey ? 3 : 5) : 4) }
+	' wrangler.toml > "$tmp"
+	rc=$?
+	set -e
+	case $rc in
+		0)
+			# Atomic rename, so an interrupt or a full disk during the swap leaves
+			# the operator's wrangler.toml intact rather than truncated. `cat >`
+			# would have been a visible window with no backup to fall back on.
+			mv "$tmp" wrangler.toml
+			echo "✓ wrote $binding id $id into wrangler.toml" ;;
+		3) echo "✓ $binding already has an id — leaving wrangler.toml alone" ;;
+		4)
+			echo "warning: no [[$table]] block binding $binding in wrangler.toml." >&2
+			echo "         Add one by hand with $key = \"$id\"." >&2 ;;
+		5)
+			echo "warning: the [[$table]] block binding $binding declares no $key." >&2
+			echo "         wrangler will reject the deploy — add $key = \"$id\" to it." >&2 ;;
+		*)
+			echo "error: awk failed (exit $rc) setting $binding; wrangler.toml unchanged." >&2
+			echo "       Set $key = \"$id\" for $binding by hand." >&2 ;;
+	esac
+	rm -f "$tmp"
+}
+
+set_kv_id() {
+	set_binding_id kv_namespaces "$1" id PASTE_FROM_WRANGLER_KV_CREATE "$2"
+}
+
+set_d1_id() {
+	set_binding_id d1_databases "$1" database_id PASTE_FROM_WRANGLER_D1_CREATE "$2"
+}
+
+# create_d1 <binding> <database_name>
+create_d1() {
+	local binding="$1" name="$2"
+	echo
+	echo "Creating D1 database '$name'..."
+	set +e
+	out=$(wrangler d1 create "$name" 2>&1)
 	rc=$?
 	set -e
 	echo "$out"
@@ -68,12 +185,10 @@ create_d1() {
 	fi
 	id=$(echo "$out" | grep -Eo 'database_id = "[a-f0-9-]+"' | head -1 | sed 's/database_id = "//;s/"//')
 	if [ -z "$id" ]; then
-		echo "warning: could not auto-extract database_id; copy it into wrangler.toml manually." >&2
+		echo "warning: could not auto-extract database_id for $binding; copy it into wrangler.toml manually." >&2
 		return
 	fi
-	# Substitute the placeholder in wrangler.toml.
-	sed -i "s/PASTE_FROM_WRANGLER_D1_CREATE/$id/" wrangler.toml
-	echo "✓ wrote D1 id $id into wrangler.toml"
+	set_d1_id "$binding" "$id"
 }
 
 create_kv() {
@@ -94,18 +209,20 @@ create_kv() {
 		echo "warning: could not auto-extract id for $binding; copy manually." >&2
 		return
 	fi
-	# Replace the first remaining placeholder. KV bindings appear in
-	# the order RATE_LIMITS, OAUTH_STATE, SESSIONS, TREE_CACHE in the
-	# template; we substitute in that order.
-	sed -i "0,/PASTE_FROM_WRANGLER_KV_CREATE/{s/PASTE_FROM_WRANGLER_KV_CREATE/$id/}" wrangler.toml
-	echo "✓ wrote $binding id $id into wrangler.toml"
+	set_kv_id "$binding" "$id"
 }
 
-create_d1
+# BEGIN:d1-bindings
+# Generated by `npm run config:build` from the Bindings type in src/index.ts. Do not edit by hand.
+create_d1 DB garrul-db
+# END:d1-bindings
+# BEGIN:kv-bindings
+# Generated by `npm run config:build` from the Bindings type in src/index.ts. Do not edit by hand.
 create_kv RATE_LIMITS
 create_kv OAUTH_STATE
 create_kv SESSIONS
 create_kv TREE_CACHE
+# END:kv-bindings
 
 put_secret() {
 	local name="$1"
@@ -264,7 +381,15 @@ esac
 
 echo
 echo "=== Next steps ==="
-echo "1. Edit wrangler.toml: ALLOWED_ORIGINS, ADMIN_EMAILS, route pattern."
+# BEGIN:must-edit-vars
+# Generated by `npm run config:build` from scripts/config-registry.ts. Do not edit by hand.
+echo "1. Edit wrangler.toml before deploying — these ship as placeholders:"
+echo "     ALLOWED_ORIGINS     — comma-separated origins allowed to embed and call /api/*"
+echo "     ADMIN_EMAILS        — comma-separated emails that get auto-admin on OAuth signup"
+echo "     PUBLIC_BASE_URL     — public URL of this Worker; used in permalinks and email bodies"
+echo "     OAUTH_CALLBACK_BASE — must match the redirect URI registered with each provider"
+echo "   Plus the [[routes]] pattern, if you skipped it above."
+# END:must-edit-vars
 echo "2. Apply schema:  npm run migrate -- --remote"
 echo "3. Deploy:        npm run deploy"
 echo "4. Tail logs:     npm run tail"

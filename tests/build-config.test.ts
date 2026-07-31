@@ -9,12 +9,21 @@ import {
 	buildSecretsPointer,
 	buildSetupPrompts,
 	buildSetupGenerated,
+	buildSetupNextSteps,
+	buildKvNamespaceBlocks,
+	buildSetupKvCreates,
+	buildD1Blocks,
+	buildSetupD1Creates,
+	buildAnalyticsBlocks,
 	buildConfigTable,
 	checkVarCoverage,
+	checkMustEditVars,
 } from "../scripts/build-config";
+import { parseBindings, readBindingsSource } from "../scripts/bindings";
 import {
 	SECRETS,
 	VARS,
+	MUST_EDIT_VARS,
 	REQUIRED_SECRET_NAMES,
 	GENERATED_SECRET_NAMES,
 	type ConfigEntry,
@@ -251,6 +260,281 @@ describe("setup.sh prompt lists", () => {
 		const setup = read("scripts/setup.sh");
 		expect(setup).toContain(buildSetupPrompts());
 		expect(setup).toContain(buildSetupGenerated());
+	});
+});
+
+describe("setup.sh next-steps block", () => {
+	// This list was hardcoded ("ALLOWED_ORIGINS, ADMIN_EMAILS, route pattern")
+	// with no flag to generate it from, so a newly added placeholder var would
+	// go unmentioned with config:check green — the drift #42 set out to close.
+	it("names every mustEdit var with its hint, in registry order", () => {
+		const steps = buildSetupNextSteps();
+		const width = Math.max(...MUST_EDIT_VARS.map((e) => e.name.length));
+		const order = MUST_EDIT_VARS.map((e) =>
+			steps.indexOf(`${e.name.padEnd(width)} — ${e.hint}`),
+		);
+		for (const [i, at] of order.entries()) {
+			expect(at, MUST_EDIT_VARS[i]?.name).toBeGreaterThan(-1);
+		}
+		expect(order).toEqual([...order].sort((a, b) => a - b));
+	});
+
+	it("mentions no var that isn't flagged mustEdit", () => {
+		const steps = buildSetupNextSteps();
+		for (const e of VARS) {
+			if (e.mustEdit) continue;
+			expect(steps, e.name).not.toMatch(new RegExp(`\\b${e.name}\\b`));
+		}
+	});
+
+	// The region sits at column 0 in a `set -euo pipefail` script, so anything
+	// other than a comment or an echo is executed on every install.
+	it("emits nothing executable but echo", () => {
+		const offenders = buildSetupNextSteps()
+			.split("\n")
+			.filter((line) => !/^(#|echo ")/.test(line));
+		expect(offenders).toEqual([]);
+	});
+
+	it("is the state the committed script is in", () => {
+		expect(read("scripts/setup.sh")).toContain(buildSetupNextSteps());
+	});
+
+	it("keeps the step numbering contiguous", () => {
+		const setup = read("scripts/setup.sh");
+		for (const n of [1, 2, 3, 4]) {
+			expect(setup, `step ${n}`).toMatch(new RegExp(`^echo "${n}\\. `, "m"));
+		}
+	});
+
+	// A `mustEdit` var that ships commented out leaves the operator's copied
+	// wrangler.toml without the setting at all — no ALLOWED_ORIGINS means every
+	// embed and every state-changing POST is rejected, with nothing in the file
+	// to suggest why.
+	it("requires an uncommented assignment in the template", () => {
+		expect(checkMustEditVars(read("wrangler.example.toml"))).toEqual([]);
+	});
+
+	it("flags a mustEdit var the template only mentions in a comment", () => {
+		const lines = MUST_EDIT_VARS.map((e) => `${e.name} = "x"`).join("\n");
+		expect(checkMustEditVars(`[vars]\n${lines}\n`)).toEqual([]);
+		const commented = lines
+			.split("\n")
+			.map((l, i) => (i === 0 ? `# ${l}` : l))
+			.join("\n");
+		const problems = checkMustEditVars(`[vars]\n${commented}\n`);
+		expect(problems).toHaveLength(1);
+		expect(problems[0]).toContain(MUST_EDIT_VARS[0]?.name as string);
+	});
+
+	// Both checks are about the base config an operator deploys. An assignment
+	// under a per-environment override does not put the var in the wrangler.toml
+	// they copy, so it must not satisfy either check.
+	it("ignores an assignment outside the [vars] table", () => {
+		const [first, ...rest] = MUST_EDIT_VARS;
+		const inVars = rest.map((e) => `${e.name} = "x"`).join("\n");
+		const toml = [
+			"[vars]",
+			inVars,
+			"",
+			"[env.staging.vars]",
+			`${first?.name} = "x"`,
+		].join("\n");
+		const problems = checkMustEditVars(toml);
+		expect(problems).toHaveLength(1);
+		expect(problems[0]).toContain(first?.name as string);
+		// checkVarCoverage reads the same slice, so it agrees.
+		expect(checkVarCoverage(toml).some((p) => p.includes(first?.name as string))).toBe(true);
+	});
+
+	it("refuses a template with no [vars] table rather than passing it", () => {
+		// Silently returning "no problems" for a file it could not find the
+		// table in is how a check stops checking.
+		expect(() => checkMustEditVars("[triggers]\ncrons = []\n")).toThrow(
+			/no \[vars\] table/,
+		);
+	});
+});
+
+describe("KV binding lists", () => {
+	// KV fields are typed `KVNamespace`, not `string`, so they are deliberately
+	// NOT registry entries — the parity assertion requires the registry to be
+	// exactly the `string` fields. src/index.ts is their source of truth.
+	const kv = parseBindings(readBindingsSource(REPO_ROOT)).kv;
+
+	it("has a binding to generate from", () => {
+		// Guards the tests below: a parser that silently returned [] would make
+		// every "one per binding" assertion vacuously true.
+		expect(kv.length).toBeGreaterThan(0);
+	});
+
+	it("calls create_kv once per KVNamespace field", () => {
+		const calls = buildSetupKvCreates("", kv)
+			.split("\n")
+			.filter((l) => l.startsWith("create_kv "))
+			.map((l) => l.replace("create_kv ", ""));
+		expect(calls).toEqual(kv);
+	});
+
+	it("leaves no create_kv call outside the generated region", () => {
+		const setup = read("scripts/setup.sh");
+		const region = setup.slice(
+			setup.indexOf("# BEGIN:kv-bindings"),
+			setup.indexOf("# END:kv-bindings"),
+		);
+		// The two in create_kv's own body are the definition and its error
+		// message, not calls — count call sites at column 0 instead.
+		const callSites = (setup.match(/^create_kv .*/gm) ?? []).length;
+		expect(callSites).toBe(kv.length);
+		expect((region.match(/^create_kv .*/gm) ?? []).length).toBe(callSites);
+	});
+
+	it("emits one TOML block per binding, each with the placeholder", () => {
+		const toml = buildKvNamespaceBlocks(kv);
+		expect((toml.match(/^\[\[kv_namespaces\]\]$/gm) ?? []).length).toBe(
+			kv.length,
+		);
+		// One placeholder per block — a stray extra would be picked up by
+		// whichever set_kv_id call ran last and look like success.
+		expect(
+			(toml.match(/PASTE_FROM_WRANGLER_KV_CREATE/g) ?? []).length,
+		).toBe(kv.length);
+		for (const binding of kv) {
+			expect(toml, binding).toContain(`binding = "${binding}"`);
+		}
+	});
+
+	it("emits the blocks as live TOML, not commented out", () => {
+		// Unlike the secrets-required region, which must stay commented.
+		for (const line of buildKvNamespaceBlocks(kv).split("\n")) {
+			if (line === "" || line.startsWith("#")) continue;
+			expect(line).toMatch(/^(\[\[kv_namespaces\]\]|binding = |id = )/);
+		}
+	});
+
+	it("is the state the committed files are in", () => {
+		expect(read("scripts/setup.sh")).toContain(buildSetupKvCreates("", kv));
+		expect(read("wrangler.example.toml")).toContain(
+			buildKvNamespaceBlocks(kv),
+		);
+	});
+
+	it("grows both lists when a namespace is added to Bindings", () => {
+		const grown = [...kv, "FUTURE_CACHE"];
+		expect(buildSetupKvCreates("", grown)).toContain("create_kv FUTURE_CACHE");
+		expect(buildKvNamespaceBlocks(grown)).toContain(
+			'binding = "FUTURE_CACHE"',
+		);
+	});
+});
+
+describe("D1 and Analytics binding lists", () => {
+	// Same reasoning as the KV lists: `D1Database` and `AnalyticsEngineDataset`
+	// are not `string`, so they are not registry entries. These two were left
+	// hand-maintained when the KV lists were generated — `garrul-db` was spelled
+	// out in setup.sh and in the template, against a type nothing checked.
+	const { d1, analytics } = parseBindings(readBindingsSource(REPO_ROOT));
+
+	it("has bindings to generate from", () => {
+		expect(d1.length).toBeGreaterThan(0);
+		expect(analytics.length).toBeGreaterThan(0);
+	});
+
+	it("calls create_d1 once per D1Database field, with its database name", () => {
+		const calls = buildSetupD1Creates("", d1)
+			.split("\n")
+			.filter((l) => l.startsWith("create_d1 "));
+		expect(calls).toEqual(
+			d1.map((e) => `create_d1 ${e.binding} ${e.databaseName}`),
+		);
+	});
+
+	it("leaves no create_d1 call outside the generated region", () => {
+		const setup = read("scripts/setup.sh");
+		const region = setup.slice(
+			setup.indexOf("# BEGIN:d1-bindings"),
+			setup.indexOf("# END:d1-bindings"),
+		);
+		const callSites = (setup.match(/^create_d1 .*/gm) ?? []).length;
+		expect(callSites).toBe(d1.length);
+		expect((region.match(/^create_d1 .*/gm) ?? []).length).toBe(callSites);
+	});
+
+	it("emits one TOML block per D1 binding, each with the placeholder", () => {
+		const toml = buildD1Blocks(d1);
+		expect((toml.match(/^\[\[d1_databases\]\]$/gm) ?? []).length).toBe(
+			d1.length,
+		);
+		expect((toml.match(/PASTE_FROM_WRANGLER_D1_CREATE/g) ?? []).length).toBe(
+			d1.length,
+		);
+		for (const e of d1) {
+			expect(toml, e.binding).toContain(`binding = "${e.binding}"`);
+			expect(toml, e.binding).toContain(
+				`database_name = "${e.databaseName}"`,
+			);
+		}
+	});
+
+	it("emits one TOML block per Analytics binding, with its dataset", () => {
+		const toml = buildAnalyticsBlocks(analytics);
+		expect(
+			(toml.match(/^\[\[analytics_engine_datasets\]\]$/gm) ?? []).length,
+		).toBe(analytics.length);
+		for (const e of analytics) {
+			expect(toml, e.binding).toContain(`binding = "${e.binding}"`);
+			expect(toml, e.binding).toContain(`dataset = "${e.dataset}"`);
+		}
+	});
+
+	// A dataset is created implicitly on first write, so there is nothing for
+	// setup.sh to create and no id to paste — the region must not imply one.
+	it("promises no setup.sh id for the analytics blocks", () => {
+		expect(buildAnalyticsBlocks(analytics)).not.toContain("setup.sh");
+		expect(buildAnalyticsBlocks(analytics)).not.toContain("PASTE_FROM");
+	});
+
+	it("emits the blocks as live TOML, not commented out", () => {
+		for (const line of [
+			...buildD1Blocks(d1).split("\n"),
+			...buildAnalyticsBlocks(analytics).split("\n"),
+		]) {
+			if (line === "" || line.startsWith("#")) continue;
+			expect(line).toMatch(
+				/^(\[\[d1_databases\]\]|\[\[analytics_engine_datasets\]\]|binding = |database_name = |database_id = |dataset = )/,
+			);
+		}
+	});
+
+	it("is the state the committed files are in", () => {
+		expect(read("scripts/setup.sh")).toContain(buildSetupD1Creates("", d1));
+		expect(read("wrangler.example.toml")).toContain(buildD1Blocks(d1));
+		expect(read("wrangler.example.toml")).toContain(
+			buildAnalyticsBlocks(analytics),
+		);
+	});
+
+	// The drift this closes: `garrul-db` used to be typed by hand into
+	// create_d1's body and the template, so a rename reached neither.
+	it("carries a renamed database through to both files", () => {
+		const renamed = [{ binding: "DB", databaseName: "garrul-prod" }];
+		expect(buildSetupD1Creates("", renamed)).toContain("create_d1 DB garrul-prod");
+		expect(buildD1Blocks(renamed)).toContain('database_name = "garrul-prod"');
+	});
+
+	it("grows every list when a binding is added to Bindings", () => {
+		expect(
+			buildSetupD1Creates("", [
+				...d1,
+				{ binding: "ARCHIVE", databaseName: "archive" },
+			]),
+		).toContain("create_d1 ARCHIVE archive");
+		expect(
+			buildAnalyticsBlocks([
+				...analytics,
+				{ binding: "SLOW_LOG", dataset: "garrul_slow" },
+			]),
+		).toContain('binding = "SLOW_LOG"');
 	});
 });
 
