@@ -92,6 +92,8 @@ set_binding_id() {
 				found = 1
 				for (i = 1; i <= nblk; i++) {
 					if (blk[i] ~ keyre) haskey = 1
+					# Always writes the double-quoted form, so a single-quoted
+					# placeholder is normalized to match the rest of the template.
 					if (blk[i] ~ idre) { sub(phre, "\"" newid "\"", blk[i]); hit = 1 }
 				}
 			}
@@ -99,9 +101,17 @@ set_binding_id() {
 			nblk = 0; istgt = 0
 		}
 		BEGIN {
-			hdrre  = "^[[:space:]]*\\[\\[" table "\\]\\]"
-			bindre = "^[[:space:]]*binding[[:space:]]*=[[:space:]]*\"" binding "\""
-			phre   = "\"" ph "\""
+			# Either TOML quote style. ASCII 39 is the apostrophe, spelled with
+			# sprintf because a literal one would close the shell quoting that
+			# wraps this whole program.
+			q      = "[\"" sprintf("%c", 39) "]"
+			# An optional dotted prefix matches wranglers per-environment
+			# overrides, [[env.production.kv_namespaces]], which redeclare every
+			# binding. The prefix must end in a dot, so [[foo_kv_namespaces]]
+			# stays unmatched.
+			hdrre  = "^[[:space:]]*\\[\\[([A-Za-z0-9_.-]+\\.)?" table "\\]\\]"
+			bindre = "^[[:space:]]*binding[[:space:]]*=[[:space:]]*" q binding q
+			phre   = q ph q
 			# Anchored on the key, so `id` never matches `database_id`.
 			keyre  = "^[[:space:]]*" key "[[:space:]]*="
 			idre   = keyre "[[:space:]]*" phre
