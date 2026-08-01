@@ -45,6 +45,7 @@ import {
 	type User,
 } from "../db/queries";
 import { identiconSvg } from "../lib/identicon";
+import { sanitizePostTitle } from "../lib/post-title";
 import { clientIp, hashIp } from "../lib/ip-hash";
 import { CURRENT_RENDERER_VERSION, renderMarkdown, validateBody } from "../lib/markdown";
 import { checkRateLimit } from "../lib/ratelimit";
@@ -531,7 +532,10 @@ comments.post("/", async (c) => {
 	await upsertPost(
 		c.env.DB,
 		slug,
-		body.post_title ?? null,
+		// post_title is caller-supplied at the same trust level as the comment
+		// body but had no validation at all; see lib/post-title.ts for where it
+		// fans out to (mail subjects, Atom, Slack/Discord).
+		sanitizePostTitle(body.post_title),
 		postUrl,
 		parsePublishedAt(body.post_published),
 	);

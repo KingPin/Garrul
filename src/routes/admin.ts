@@ -147,6 +147,7 @@ import { rerenderBatch, rerenderStats } from "../db/rerender";
 import { runSeedDemo } from "../db/seed-demo";
 import { renderConfirmEmailHtml } from "../lib/digest";
 import { sendEmail } from "../lib/email";
+import { fillSubject, subjectTitle } from "../lib/post-title";
 import { t } from "../i18n";
 
 const admin = new Hono<{ Bindings: Bindings }>();
@@ -1754,17 +1755,18 @@ admin.post("/api/subscriptions/:id", async (c) => {
 	const newToken = randomToken();
 	const post = await getPost(c.env.DB, sub.post_slug);
 	const confirmUrl = `${publicBase}/api/v1/subscribe/confirm/${newToken}`;
+	// Sanitized again here, not just on the write path: a database upgraded from
+	// an earlier version can still hold a title with a CR/LF in it, and a mail
+	// subject is a header value.
+	const title = subjectTitle(post?.title, sub.post_slug);
 	const html = renderConfirmEmailHtml({
-		postTitle: post?.title ?? sub.post_slug,
+		postTitle: title,
 		confirmUrl,
 	});
 	const sent = await sendEmail(c.env, {
 		to: sub.email,
 		from,
-		subject: t("email.confirm.subject").replace(
-			"{title}",
-			post?.title ?? sub.post_slug,
-		),
+		subject: fillSubject(t("email.confirm.subject"), title),
 		html,
 	});
 	if (!sent) {

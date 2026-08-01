@@ -27,6 +27,7 @@ import {
 } from "../db/queries";
 import { sendEmail } from "./email";
 import { sanitizeForEmail } from "./markdown";
+import { subjectTitle } from "./post-title";
 
 type DigestEnv = {
 	DB: D1Database;
@@ -146,8 +147,12 @@ export const runDigest = async (env: DigestEnv, now: number = Date.now()): Promi
 		}
 
 		const unsubscribeUrl = `${publicBase}/api/v1/subscribe/unsubscribe/${d.token}`;
+		// Sanitized again here, not just on the write path: a database upgraded
+		// from an earlier version can still hold a title with a CR/LF in it, and
+		// a mail subject is a header value.
+		const title = subjectTitle(post?.title, d.post_slug);
 		const html = renderDigestHtml({
-			postTitle: post?.title ?? d.post_slug,
+			postTitle: title,
 			publicBase,
 			unsubscribeUrl,
 			items,
@@ -156,7 +161,7 @@ export const runDigest = async (env: DigestEnv, now: number = Date.now()): Promi
 		const ok = await sendEmail(env, {
 			to: d.email,
 			from,
-			subject: `New replies on "${post?.title ?? d.post_slug}"`,
+			subject: `New replies on "${title}"`,
 			html,
 		});
 

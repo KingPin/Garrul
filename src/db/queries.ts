@@ -126,19 +126,23 @@ export const upsertPost = async (
 	publishedAt: number | null = null,
 ): Promise<Post> => {
 	const now = Date.now();
-	// title/url: COALESCE(excluded, existing) so the host can refresh them on a
-	// later comment, but an omitted value never clobbers what's stored.
-	// published_at: COALESCE(existing, excluded) — write-once / first-writer-wins.
-	// It anchors age-based auto-close, so once set it must be immutable; otherwise
-	// an untrusted client could overwrite an established thread's close-anchor with
-	// a bogus date to force it closed. closed is operator-controlled, never set here.
+	// Every column here is write-once / first-writer-wins: COALESCE(existing,
+	// excluded). title and url arrive on an unauthenticated POST /api/v1/comments
+	// at the same trust level as the comment body, and this upsert runs *before*
+	// spam evaluation, so a last-writer-wins update let anyone who could post a
+	// (even quarantined) comment repoint an established thread's title and
+	// canonical URL — which fan out into mail subjects, the Atom feed and webhook
+	// payloads. published_at anchors age-based auto-close, so once set it must be
+	// immutable or a bogus date could force a thread closed. The cost is that a
+	// genuinely renamed page keeps its original title; there is no admin edit path
+	// for it yet. closed is operator-controlled and never set here.
 	await db
 		.prepare(
 			`INSERT INTO posts (slug, title, url, created_at, published_at)
 			 VALUES (?, ?, ?, ?, ?)
 			 ON CONFLICT(slug) DO UPDATE SET
-			   title        = COALESCE(excluded.title, posts.title),
-			   url          = COALESCE(excluded.url,   posts.url),
+			   title        = COALESCE(posts.title, excluded.title),
+			   url          = COALESCE(posts.url,   excluded.url),
 			   published_at = COALESCE(posts.published_at, excluded.published_at)`,
 		)
 		.bind(slug, title, url, now, publishedAt)

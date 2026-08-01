@@ -39,6 +39,7 @@ import { clientIp, hashIp } from "../lib/ip-hash";
 import { checkRateLimit } from "../lib/ratelimit";
 import { renderConfirmEmailHtml } from "../lib/digest";
 import { sendEmail } from "../lib/email";
+import { fillSubject, subjectTitle } from "../lib/post-title";
 import { readSession } from "../lib/session";
 import { t } from "../i18n";
 
@@ -144,17 +145,18 @@ subscriptions.post("/", async (c) => {
 	) {
 		const post = await getPost(c.env.DB, post_slug);
 		const confirmUrl = `${publicBase}/api/v1/subscribe/confirm/${sub.confirm_token}`;
+		// Sanitized again here, not just on the write path: a database upgraded
+		// from an earlier version can still hold a title with a CR/LF in it, and
+		// a mail subject is a header value.
+		const title = subjectTitle(post?.title, post_slug);
 		const html = renderConfirmEmailHtml({
-			postTitle: post?.title ?? post_slug,
+			postTitle: title,
 			confirmUrl,
 		});
 		await sendEmail(c.env, {
 			to: email,
 			from,
-			subject: t("email.confirm.subject").replace(
-				"{title}",
-				post?.title ?? post_slug,
-			),
+			subject: fillSubject(t("email.confirm.subject"), title),
 			html,
 		});
 	}
