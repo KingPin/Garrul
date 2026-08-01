@@ -176,8 +176,17 @@ const parsePublishedAt = (raw: number | string | null | undefined): number | nul
 const editWindowMs = (numbers: ResolvedNumbers): number =>
 	numbers.edit_window_minutes * 60_000;
 
+// C0 controls + DEL + C1 controls, matching sanitizePostTitle's range so a name
+// and a title can't disagree about what's storable.
+const NAME_CONTROL_CHARS = new RegExp("[\\u0000-\\u001F\\u007F-\\u009F]", "g");
+
 const validName = (raw: string | undefined): { ok: true; name: string } | { ok: false; key: "err.name.required" | "err.name.too_long"; max?: number } => {
-	const name = (raw ?? "").trim();
+	// Control characters go first: `.trim()` only removes whitespace, so a name
+	// like "Bob" + U+0001 survived and made the Atom feed not well-formed, which
+	// is a *fatal* XML error — every conforming reader drops the whole document.
+	// feed.ts strips them again at serialization (OAuth display names never come
+	// through here), but a stored name shouldn't carry them in the first place.
+	const name = (raw ?? "").replace(NAME_CONTROL_CHARS, "").trim();
 	if (!name) return { ok: false, key: "err.name.required" };
 	if (name.length > MAX_NAME) return { ok: false, key: "err.name.too_long", max: MAX_NAME };
 	return { ok: true, name };
