@@ -147,7 +147,7 @@ between the two is a build error, not a silent misclassification.
 | `OAUTH_CALLBACK_BASE` | var | Base URL for OAuth callbacks; must match the URI registered with each provider. Usually identical to `PUBLIC_BASE_URL`. | `https://comments.example.com` | `wrangler.toml` — **replace the shipped placeholder before deploying** |
 | `BRANDING_HIDDEN` | var | Optional. Set to `1`/`true` to suppress the "Powered by Garrul" attribution under the comment list. Unset = attribution shown. | `false` | `wrangler.toml` |
 | `JWT_SECRET` | secret | HMAC-SHA-256 key for the signed OAuth state cookie (`src/lib/oauth.ts`). Required for sign-in to work at all. Rotating it invalidates any OAuth flow already in progress — users retry and it works; no other effect, since sessions are KV-backed and not signed with this. | ``openssl rand -base64 32` output` | `wrangler secret put` / `.dev.vars` |
-| `IP_HASH_SECRET` | secret | HMAC-SHA-256 pepper for IP hashing (see `src/lib/ip-hash.ts`). Never log/store raw IPs. Rotating it invalidates existing rate-limit and dedupe buckets. | ``openssl rand -base64 32` output` | `wrangler secret put` / `.dev.vars` |
+| `IP_HASH_SECRET` | secret | HMAC-SHA-256 pepper for IP hashing (see `src/lib/ip-hash.ts`). Never log/store raw IPs. Tier-1 secret: with it, a D1 export discloses every commenter's IPv4 address, so guard it like `JWT_SECRET`. Rotating invalidates existing rate-limit and dedupe buckets, orphans anonymous ghost identities, and does **not** re-key hashes already stored — read `docs/ip-hashing.md` before rotating. | ``openssl rand -base64 32` output` | `wrangler secret put` / `.dev.vars` |
 | `TURNSTILE_SITE_KEY` | secret | Cloudflare Turnstile site key. Required for anonymous commenting. Note this value is *public* — it ships in the widget HTML. It is stored as a secret for historical reasons and because doing so is harmless. | `0x4AAAAAAA...` | `wrangler secret put` / `.dev.vars` |
 | `TURNSTILE_SECRET` | secret | Turnstile secret. Server-side token verification. | `0x4AAAAAAA...` | `wrangler secret put` / `.dev.vars` |
 | `GH_CLIENT_ID` | secret | GitHub OAuth client ID. Required for GitHub sign-in. | `Iv1.abcdef...` | `wrangler secret put` / `.dev.vars` |
@@ -678,6 +678,27 @@ holds the optional Workers-AI spam verdict cache (rate limiting itself
 runs on the Cache API); `OAUTH_STATE` holds 60-second widget handoff
 tokens (OAuth state is a signed cookie, not a KV row); `SESSIONS` loss
 just forces re-sign-in; `TREE_CACHE` rebuilds on next read.
+
+### Hashed IPs in an export
+
+A `.sql` dump carries every `ip_hash` the instance has ever written, and
+those values are permanent — there is no TTL, no purge job, and no
+retention window. They land in three places: `comments.ip_hash` (kept
+even after a soft delete), `comment_reports.reporter_ip_hash` (kept after
+the flags are resolved), and `users.provider_id` for `provider='anon'`
+ghost rows, which is the anonymous identity itself.
+
+The hash is a pseudonym only against someone who *doesn't* have
+`IP_HASH_SECRET`. The construction is unsalted and IPv4 is a 2^32 input
+space, so anyone holding both an export and the secret can rebuild every
+address in it — treat the pair as an IP disclosure and store exports
+accordingly. Rotating the secret re-keys future writes only; it does not
+touch rows already written, and there is no key-version column to tell
+the two apart afterwards. Key epoching is tracked as an enhancement, not
+shipped.
+
+Full posture, including what rotation breaks and what a deletion request
+costs today: [`docs/ip-hashing.md`](docs/ip-hashing.md).
 
 ## 12. Upgrades
 

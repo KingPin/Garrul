@@ -31,6 +31,7 @@ tag's docs rather than `main`.
 | [`ANTISPAM.md`](ANTISPAM.md) | What's always on, which optional layers to enable, and how to work the moderation queue. |
 | [`webhooks.md`](webhooks.md) | Outbound payload format, signature verification, retries and auto-disable, Slack/Discord/Telegram adapters. |
 | [`telegram.md`](telegram.md) | Operator bot: bot creation, secrets, webhook registration, notifications, commands, daily digest. |
+| [`ip-hashing.md`](ip-hashing.md) | What `ip_hash` is, the three places it's stored, how long it's kept, what a leaked `IP_HASH_SECRET` exposes, and what rotation does and doesn't fix. Read before publishing a privacy policy or sharing a D1 export. |
 
 ## Running a public instance
 

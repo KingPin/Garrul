@@ -19,7 +19,10 @@ When you post a comment, the following is stored:
 - The **text of your comment**.
 - A **hashed IP address** — we apply HMAC-SHA-256 with a per-site secret
   to your IP before storing. We never store the raw IP. The hash is used
-  for rate limiting and (if applicable) anonymous-author identity.
+  for rate limiting, duplicate-report detection and (if applicable)
+  anonymous-author identity. IPv6 addresses are shortened to their
+  network prefix before hashing, so the hash identifies a network rather
+  than a single device.
 - A **timestamp**.
 
 If you signed in with **OAuth** (GitHub, Google, Facebook, X, or
@@ -49,7 +52,10 @@ comment-id, reaction-kind)** tuple.
 - **Comments**: retained indefinitely unless you ask us to delete
   them. Soft-deleted comments are kept (showing as `[deleted]`) so
   reply chains remain intact.
-- **Hashed IP**: retained for the lifetime of the comment.
+- **Hashed IP**: retained for the lifetime of the row it belongs to —
+  the comment (including after a soft delete), any abuse report you
+  file, and the anonymous identity we derive from it if you comment
+  without signing in. There is no automatic expiry.
 - **OAuth account data**: until you ask us to remove it.
 - **Subscriptions**: until you click the unsubscribe link in any
   notification email.
