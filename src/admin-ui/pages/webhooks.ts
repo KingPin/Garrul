@@ -1,5 +1,5 @@
 import type { WebhookEndpoint } from "../../db/queries";
-import { escapeHtml } from "../escape";
+import { escapeHtml, jsLiteral, jsLiteralRaw } from "../escape";
 
 const formatTs = (ts: number | null): string =>
 	ts == null ? "—" : new Date(ts).toISOString().slice(0, 16).replace("T", " ");
@@ -44,7 +44,7 @@ const endpointRow = (e: WebhookEndpoint): string => {
   <td class="muted">${formatTs(e.created_at)}</td>
   <td class="actions">
     <a href="/admin/webhooks/${escapeHtml(e.id)}" class="btn">Edit</a>
-    <button :disabled="busy" class="bad" @click="busy=true; del('${escapeHtml(e.id)}').finally(()=>busy=false)">Delete</button>
+    <button :disabled="busy" class="bad" @click="busy=true; del(${jsLiteral(e.id)}).finally(()=>busy=false)">Delete</button>
   </td>
 </tr>`;
 };
@@ -135,9 +135,12 @@ export const renderWebhookForm = (data: WebhookFormData): string => {
 	const adapter = e?.adapter ?? "generic";
 	const enabled = e?.enabled ?? true;
 	const heading = isNew ? "Add webhook endpoint" : "Edit webhook endpoint";
+	// Raw id: this only ever lands in a JS string literal inside the x-data
+	// blob below, where jsLiteralRaw escapes it and the surrounding escapeHtml
+	// handles the attribute. escapeHtml here as well would double-encode.
 	const action = isNew
 		? "/admin/api/webhooks"
-		: `/admin/api/webhooks/${escapeHtml(e.id)}`;
+		: `/admin/api/webhooks/${e.id}`;
 	const errorBlock = data.error
 		? `<p style="color:var(--bad)">${escapeHtml(data.error)}</p>`
 		: "";
@@ -147,7 +150,7 @@ export const renderWebhookForm = (data: WebhookFormData): string => {
 <div class="card" x-data="${escapeHtml(`{
   busy: false,
   rotate: false,
-  error: ${JSON.stringify(data.error)},
+  error: ${data.error == null ? "null" : jsLiteralRaw(data.error)},
   async submit(e) {
     e.preventDefault();
     if (this.busy) return;
@@ -167,8 +170,8 @@ export const renderWebhookForm = (data: WebhookFormData): string => {
     if (form.get('clear_secret')) body.secret = null;
     else if (typed) body.secret = typed;
     try {
-      const r = await fetch(${JSON.stringify(action)}, {
-        method: ${JSON.stringify(isNew ? "POST" : "PATCH")},
+      const r = await fetch(${jsLiteralRaw(action)}, {
+        method: ${jsLiteralRaw(isNew ? "POST" : "PATCH")},
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(body),
       });

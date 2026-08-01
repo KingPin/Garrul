@@ -18,10 +18,14 @@ export const escapeHtml = (s: string | null | undefined): string => {
 // as executable JS (markup-context breakout / older-JS line terminators). We
 // re-encode those as `\uXXXX` escapes — valid inside a JS string and inert —
 // then escapeHtml for the surrounding double-quoted attribute.
-export const jsLiteral = (s: string): string =>
-	escapeHtml(
-		JSON.stringify(s).replace(
-			/[<>\/\u2028\u2029]/g,
-			(c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`,
-		),
+export const jsLiteral = (s: string): string => escapeHtml(jsLiteralRaw(s));
+
+// The same JS literal *without* the HTML-escaping pass, for values embedded in
+// a block that is escapeHtml'd as a whole further out (see the x-data blobs in
+// admin-ui/pages/*). Running escapeHtml twice would emit `&amp;quot;`, which
+// decodes to the text `&quot;` instead of a quote and breaks the expression.
+export const jsLiteralRaw = (s: string): string =>
+	JSON.stringify(s).replace(
+		/[<>\/\u2028\u2029]/g,
+		(c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`,
 	);

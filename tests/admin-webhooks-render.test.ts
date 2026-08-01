@@ -113,8 +113,11 @@ describe("renderWebhookForm", () => {
 	it("uses the create action and POST when endpoint is null", () => {
 		const html = renderWebhookForm({ endpoint: null, error: null });
 		expect(html).toContain(">Add webhook endpoint<");
-		// x-data attribute is HTML-escaped, so literal quotes become &quot;.
-		expect(html).toContain("&quot;/admin/api/webhooks&quot;");
+		// x-data attribute is HTML-escaped, so literal quotes become &quot;, and
+		// jsLiteralRaw unicode-escapes each `/` before that.
+		expect(html).toContain(
+			"&quot;\\u002fadmin\\u002fapi\\u002fwebhooks&quot;",
+		);
 		expect(html).toContain("&quot;POST&quot;");
 		expect(html).toContain(">Create endpoint<");
 	});
@@ -123,7 +126,11 @@ describe("renderWebhookForm", () => {
 		const e = makeEndpoint();
 		const html = renderWebhookForm({ endpoint: e, error: null });
 		expect(html).toContain(">Edit webhook endpoint<");
-		expect(html).toContain(`/admin/api/webhooks/${e.id}`);
+		// The "back to webhooks" link and Edit href keep the plain path; the
+		// fetch target inside x-data is a JS literal, so its slashes are escaped.
+		expect(html).toContain(
+			`&quot;\\u002fadmin\\u002fapi\\u002fwebhooks\\u002f${e.id}&quot;`,
+		);
 		expect(html).toContain("&quot;PATCH&quot;");
 		expect(html).toContain(">Save changes<");
 	});

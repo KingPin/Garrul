@@ -99,7 +99,7 @@ describe("renderSavedReplyForm", () => {
 	it("renders the new-reply form when existing is null", () => {
 		const html = renderSavedReplyForm({ existing: null, error: null });
 		expect(html).toContain("New saved reply");
-		expect(html).toContain("method: 'POST'");
+		expect(html).toContain("method: &quot;POST&quot;");
 		expect(html).toContain("/admin/api/saved-replies");
 		// No Delete button on create.
 		expect(html).not.toContain("Delete saved reply");
@@ -108,8 +108,12 @@ describe("renderSavedReplyForm", () => {
 	it("renders the edit-reply form when existing is set", () => {
 		const html = renderSavedReplyForm({ existing: mkReply(), error: null });
 		expect(html).toContain("Edit saved reply");
-		expect(html).toContain("method: 'PATCH'");
-		expect(html).toContain("/admin/api/saved-replies/01HWH");
+		expect(html).toContain("method: &quot;PATCH&quot;");
+		// jsLiteral escapes each `/` as a \\u002f — it is embedding into JS,
+		// where a raw `/` can start a markup-context breakout.
+		expect(html).toContain(
+			"\\u002fadmin\\u002fapi\\u002fsaved-replies\\u002f01HWH",
+		);
 		expect(html).toContain("Delete saved reply");
 	});
 

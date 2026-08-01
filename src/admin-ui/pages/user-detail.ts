@@ -7,7 +7,7 @@ import type {
 } from "../../db/queries";
 import { identiconSvg } from "../../lib/identicon";
 import { sanitizeForEmail as resanitizeBodyHtml } from "../../lib/markdown";
-import { escapeHtml } from "../escape";
+import { escapeHtml, jsLiteral } from "../escape";
 
 const formatTs = (ts: number): string =>
 	new Date(ts).toISOString().slice(0, 16).replace("T", " ");
@@ -30,7 +30,7 @@ const userHeader = (d: AdminUserDetail, viewer: User): string => {
 	const canManageRole = viewer.role === "admin" && viewer.id !== u.id;
 	const roleControls = canManageRole
 		? `
-  <div class="actions" x-data="{ busy: false, role: ${escapeHtml(JSON.stringify(u.role))} }">
+  <div class="actions" x-data="{ busy: false, role: ${jsLiteral(u.role)} }">
     <template x-if="role !== 'user'">
       <button :disabled="busy" @click="busy=true; setRole('user').then(r=>{role=r}).finally(()=>busy=false)">Demote to user</button>
     </template>
