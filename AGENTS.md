@@ -382,8 +382,12 @@ route and listen for height messages:
 
 Route: `{{INSTANCE_URL}}/embed/:slug`. Pass `parent_origin` so the
 Worker `postMessage`s height updates to a known target instead of `"*"`.
-The iframe variant gives up host-page CSS-variable theming (the iframe
-is a separate document) but inherits everything else.
+**The origin you pass must be listed in the Worker's `ALLOWED_ORIGINS`**
+— anything else gets no `postMessage` at all, and there is no
+`document.referrer` fallback. That same list is what the page's CSP
+`frame-ancestors` permits, so an unlisted host can't frame `/embed/*`
+either. The iframe variant gives up host-page CSS-variable theming (the
+iframe is a separate document) but inherits everything else.
 
 ## 7. Authentication flow
 
@@ -534,6 +538,14 @@ If the host site sets a CSP, allow the Worker origin in:
 - `img-src` and `style-src` are fine as-is; the widget uses its
   Shadow DOM stylesheet and renders avatars inline as SVG or via the
   OAuth provider's CDN (covered by `img-src https:` or similar).
+
+The Worker enforces the mirror image of that last bullet: both `/embed/*`
+pages send their own CSP `frame-ancestors` built from `ALLOWED_ORIGINS`,
+so **a host site must be in `ALLOWED_ORIGINS` to frame them at all** —
+in either mode, since the script-tag embed also mounts the Turnstile
+frame. A missing entry shows up as a browser console refusal to frame,
+not an HTTP error. (Under `ENV=dev` framing is unrestricted, matching the
+CORS gate.)
 
 ### Comment counts on listing pages
 

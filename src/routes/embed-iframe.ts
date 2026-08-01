@@ -57,6 +57,61 @@ const safeApiOrigin = (raw: string): string | null => {
 };
 
 /**
+ * Origins permitted to frame /embed/* and to receive its postMessages.
+ *
+ * ALLOWED_ORIGINS plus the Worker's own origin. Own-origin is load-bearing, not
+ * a courtesy: the widget running *inside* /embed/:slug creates the Turnstile
+ * frame with `parent_origin = window.location.origin`, which there is this
+ * Worker rather than the host site, and operators do not list their own
+ * instance in ALLOWED_ORIGINS.
+ */
+const frameableOrigins = (env: Bindings, selfOrigin: string): Set<string> => {
+	const set = allowedOriginSet(env);
+	set.add(selfOrigin);
+	return set;
+};
+
+/**
+ * The postMessage target for the framing page, or "" to stay silent.
+ *
+ * Being a well-formed origin used to be the whole check. That let any site
+ * frame /embed/turnstile-frame with `?parent_origin=https://attacker.example`
+ * and receive a Turnstile token minted against the operator's site key — a
+ * harvestable anti-spam bypass for that instance. The client-side
+ * `document.referrer` fallback was the same hole without even needing the query
+ * param, so it is gone from both pages; the widget and the documented iframe
+ * snippet have always passed the param explicitly.
+ */
+const safeParentOrigin = (
+	env: Bindings,
+	selfOrigin: string,
+	raw: string | undefined,
+): string => {
+	if (!raw) return "";
+	// Reject anything that isn't already a bare origin, so the string we hand
+	// the page is exactly what the browser will compare `e.origin` against.
+	if (safeApiOrigin(raw) !== raw) return "";
+	// Mirrors lib/cors.ts, which also waives the origin gate under ENV=dev — a
+	// local instance typically has no ALLOWED_ORIGINS configured at all.
+	if (env.ENV === "dev") return raw;
+	return frameableOrigins(env, selfOrigin).has(raw) ? raw : "";
+};
+
+/**
+ * The frame-ancestors directive for the two framable /embed/* routes.
+ *
+ * Omitting it is not the same as inheriting default-src: frame-ancestors has no
+ * fallback, so `default-src 'none'` did nothing to stop framing and these pages
+ * were embeddable anywhere. X-Frame-Options cannot express an allowlist —
+ * ALLOW-FROM is dead in every current browser — so this is the only mechanism
+ * available, and it reuses the list an operator already maintains.
+ */
+const frameAncestors = (env: Bindings, selfOrigin: string): string => {
+	if (env.ENV === "dev") return "frame-ancestors *";
+	return `frame-ancestors ${[...frameableOrigins(env, selfOrigin)].join(" ")}`;
+};
+
+/**
  * GET /embed/turnstile-frame — same-origin host for the Turnstile widget.
  *
  * Why this exists: Cloudflare's api.js fingerprints the rendered element by
@@ -80,8 +135,9 @@ const safeApiOrigin = (raw: string): string | null => {
  *     { type: "garrul:turnstile-reset" }
  *
  * Query params:
- *   ?parent_origin=...   — required for safe postMessage target (falls back
- *                          to document.referrer's origin)
+ *   ?parent_origin=...   — required. Must be in ALLOWED_ORIGINS (or be this
+ *                          Worker's own origin); anything else gets no
+ *                          postMessage at all. There is no referrer fallback.
  *   ?theme=light|dark|auto — passed through to Turnstile's render opts
  *
  * The site key is read from env at render time, never from a query param —
@@ -92,11 +148,12 @@ iframe.get("/turnstile-frame", (c) => {
 	const siteKey = c.env.TURNSTILE_SITE_KEY ?? "";
 	if (!siteKey) return c.text("turnstile not configured", 404);
 
-	const parentOriginRaw = c.req.query("parent_origin");
-	const parentOrigin =
-		parentOriginRaw && safeApiOrigin(parentOriginRaw) === parentOriginRaw
-			? parentOriginRaw
-			: "";
+	const frameUrl = new URL(c.req.url);
+	const parentOrigin = safeParentOrigin(
+		c.env,
+		`${frameUrl.protocol}//${frameUrl.host}`,
+		c.req.query("parent_origin"),
+	);
 
 	const themeRaw = c.req.query("theme") ?? "auto";
 	const theme =
@@ -115,6 +172,7 @@ iframe.get("/turnstile-frame", (c) => {
 		`connect-src 'self' ${TURNSTILE_ORIGIN}`,
 		`frame-src ${TURNSTILE_ORIGIN}`,
 		"style-src 'unsafe-inline'",
+		frameAncestors(c.env, `${frameUrl.protocol}//${frameUrl.host}`),
 	].join("; ");
 
 	const html = `<!doctype html>
@@ -132,10 +190,9 @@ iframe.get("/turnstile-frame", (c) => {
 <script src="${TURNSTILE_ORIGIN}/turnstile/v0/api.js?onload=__gr_onload&render=explicit" async defer></script>
 <script>
 (function () {
+  // No referrer fallback: an origin the operator hasn't allowlisted gets no
+  // token, and a token is what makes this frame worth attacking.
   var parentOrigin = ${JSON.stringify(parentOrigin)};
-  if (!parentOrigin) {
-    try { if (document.referrer) parentOrigin = new URL(document.referrer).origin; } catch (_) {}
-  }
   if (!parentOrigin || window.parent === window) return;
   var post = function (msg) { window.parent.postMessage(msg, parentOrigin); };
   var sitekey = ${JSON.stringify(siteKey)};
@@ -222,18 +279,17 @@ iframe.get("/:slug", (c) => {
 	const pageUrl = c.req.query("url") ?? "";
 	const theme = c.req.query("theme") ?? "auto";
 
-	// Validate parent_origin for the postMessage target (prefer query param,
-	// fall back to document.referrer's origin on the client). Caller can pass
-	// e.g. ?parent_origin=https://yourblog.example.com.
-	const parentOriginRaw = c.req.query("parent_origin");
-	const parentOrigin =
-		parentOriginRaw && safeApiOrigin(parentOriginRaw) === parentOriginRaw
-			? parentOriginRaw
-			: "";
+	// The postMessage target for the height protocol. Must be allowlisted —
+	// see safeParentOrigin. Callers pass ?parent_origin=https://yourblog.example.
+	const parentOrigin = safeParentOrigin(
+		c.env,
+		selfOrigin,
+		c.req.query("parent_origin"),
+	);
 
 	// CSP: third-party origins we contact are apiBase (embed.js + API calls)
-	// and Turnstile (anonymous bot check). frame-ancestors is intentionally
-	// open — operators choose where this gets embedded.
+	// and Turnstile (anonymous bot check). frame-ancestors pins who may frame
+	// this page to the same list the API already gates on.
 	const apiOrigin = apiBase;
 	const csp = [
 		"default-src 'none'",
@@ -243,6 +299,7 @@ iframe.get("/:slug", (c) => {
 		"style-src 'unsafe-inline'",
 		"img-src data: https:",
 		"font-src data:",
+		frameAncestors(c.env, selfOrigin),
 	].join("; ");
 
 	const html = `<!doctype html>
@@ -269,15 +326,9 @@ iframe.get("/:slug", (c) => {
 <script>
 (function () {
   if (window.parent === window) return;
+  // No referrer fallback and no wildcard: an origin the operator hasn't
+  // allowlisted gets no message at all.
   var parentOrigin = ${JSON.stringify(parentOrigin)};
-  if (!parentOrigin) {
-    // Derive from document.referrer (only set if the parent navigated us here,
-    // which is the common case). Wildcard is intentionally NOT used as a
-    // fallback — we'd rather not post than post to anyone.
-    try {
-      if (document.referrer) parentOrigin = new URL(document.referrer).origin;
-    } catch (_) {}
-  }
   if (!parentOrigin) return;
   var lastHeight = 0;
   var post = function () {

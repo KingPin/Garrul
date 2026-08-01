@@ -201,6 +201,12 @@ app.use("*", async (c, next) => {
 //     iframe surface host sites legitimately frame. /embed.js (the
 //     script bundle) lives at the root, not under /embed/, so it
 //     correctly gets DENY (scripts aren't framable anyway).
+//     The skip cannot be narrowed further: XFO has no allowlist form
+//     (ALLOW-FROM is dead in every current browser), so DENY here would
+//     break the feature outright. Those routes instead emit their own
+//     CSP frame-ancestors built from ALLOWED_ORIGINS — see
+//     src/routes/embed-iframe.ts. Setting both would be worse than
+//     setting one: browsers disagree on which wins.
 app.use("*", async (c, next) => {
 	await next();
 	c.header("strict-transport-security", "max-age=63072000; includeSubDomains; preload");
