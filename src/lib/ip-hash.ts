@@ -4,21 +4,10 @@
  *
  * Cloudflare provides the client IP via the `cf-connecting-ip` request header.
  */
-const encoder = new TextEncoder();
+import { hmacHex } from "./hmac";
 
-export const hashIp = async (ip: string, secret: string): Promise<string> => {
-	const key = await crypto.subtle.importKey(
-		"raw",
-		encoder.encode(secret),
-		{ name: "HMAC", hash: "SHA-256" },
-		false,
-		["sign"],
-	);
-	const sig = await crypto.subtle.sign("HMAC", key, encoder.encode(ip));
-	return Array.from(new Uint8Array(sig), (b) =>
-		b.toString(16).padStart(2, "0"),
-	).join("");
-};
+export const hashIp = async (ip: string, secret: string): Promise<string> =>
+	hmacHex(secret, ip);
 
 export const clientIp = (req: Request): string => {
 	return req.headers.get("cf-connecting-ip") ?? "0.0.0.0";

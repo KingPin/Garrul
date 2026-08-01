@@ -20,6 +20,7 @@
  * unreliable. KV state survives the redirect and includes a one-time
  * read.
  */
+import { constantTimeEqual } from "./hmac";
 
 export type ProviderId =
 	| "github"
@@ -285,20 +286,9 @@ export const computeCodeChallenge = async (
 	return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 };
 
-// Length-independent constant-time string compare. The browser_token /
-// handoff tokens we mint are fixed-length hex, so the early length
-// branch doesn't leak useful information to an attacker. A naive `===`
-// short-circuits at the first mismatched byte and is observable via
-// response timing — over enough callback requests an attacker can
-// recover the token byte-by-byte. Use this for any secret comparison.
-export const constantTimeEqual = (a: string, b: string): boolean => {
-	if (a.length !== b.length) return false;
-	let diff = 0;
-	for (let i = 0; i < a.length; i++) {
-		diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-	}
-	return diff === 0;
-};
+// Re-exported from lib/hmac so the many existing `from "./oauth"` importers
+// keep working. New code should import it from lib/hmac directly.
+export { constantTimeEqual };
 
 export type StatePayload = {
 	provider: ProviderId;
