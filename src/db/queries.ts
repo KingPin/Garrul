@@ -2735,6 +2735,17 @@ export type WebhookEndpointInput = {
 	enabled: boolean;
 };
 
+/**
+ * A patch for updateWebhookEndpoint. Not `Partial<WebhookEndpointInput>`:
+ * under exactOptionalPropertyTypes that type forbids an *explicit* undefined,
+ * and callers rely on passing one — the admin webhook form sends
+ * `secret: undefined` to mean "keep the stored secret" (it is write-only and
+ * can't round-trip the value) versus `null` for "remove signing".
+ */
+export type WebhookEndpointPatch = {
+	[K in keyof WebhookEndpointInput]?: WebhookEndpointInput[K] | undefined;
+};
+
 const serializeEvents = (events: string[] | null): string | null =>
 	events == null || events.length === 0 ? null : events.join(",");
 
@@ -2770,7 +2781,7 @@ export const createWebhookEndpoint = async (
 export const updateWebhookEndpoint = async (
 	db: D1Database,
 	id: string,
-	input: Partial<WebhookEndpointInput>,
+	input: WebhookEndpointPatch,
 ): Promise<void> => {
 	// Build the SET clause dynamically so callers can patch one field
 	// (e.g. just enabled, just secret) without overwriting siblings.

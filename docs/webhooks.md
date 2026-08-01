@@ -40,6 +40,12 @@ Required for any endpoint that has a secret configured. Reject every
 unsigned delivery on an endpoint you configured *with* a secret —
 treating unsigned requests as valid defeats the point of having one.
 
+**Keep your own copy of the secret.** The admin UI stores it write-only:
+after you save an endpoint the form shows only whether a secret is set,
+plus buttons to rotate or remove it. It is never rendered back to the
+browser, so there is no way to look it up later. Rotating invalidates the
+old signature on the very next delivery — update the receiver first.
+
 The signed payload is `<ts>.<raw_body>` — the literal request body
 prefixed by the timestamp from the header. **Hash the raw bytes, not a
 re-serialized JSON object** — re-serializing reorders keys.
