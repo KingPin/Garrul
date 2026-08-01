@@ -81,6 +81,11 @@ export type Comment = {
 	ip_hash: string | null;
 	user_agent: string | null;
 	created_at: number;
+	/** 1-based nesting depth: a top-level comment is 1, a direct reply 2.
+	 *  Set on insert as parent.depth + 1 and capped at MAX_REPLY_DEPTH.
+	 *  Distinct from TreeNode.depth in src/lib/tree.ts, which is the 0-based
+	 *  *render* depth after flattening at MAX_DEPTH. */
+	depth: number;
 	score_up: number;
 	score_down: number;
 };
@@ -412,6 +417,11 @@ type InsertCommentInput = {
 	status?: CommentStatus;
 	ip_hash: string | null;
 	user_agent: string | null;
+	/** 1-based; callers pass parent.depth + 1 (or 1 for a top-level comment).
+	 *  Required, not defaulted: the caller has already loaded the parent to
+	 *  validate it, and a silent default would let an unbounded reply chain
+	 *  through the MAX_REPLY_DEPTH check that reads this column. */
+	depth: number;
 };
 
 export const insertComment = async (
@@ -426,8 +436,8 @@ export const insertComment = async (
 			`INSERT INTO comments (
 			   id, post_slug, parent_id, user_id, body_md, body_html,
 			   renderer_version, status, edited_at, deleted_at, deleted_by,
-			   ip_hash, user_agent, created_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?)`,
+			   ip_hash, user_agent, created_at, depth)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?)`,
 		)
 		.bind(
 			id,
@@ -441,6 +451,7 @@ export const insertComment = async (
 			input.ip_hash,
 			input.user_agent,
 			now,
+			input.depth,
 		)
 		.run();
 	return {
@@ -458,6 +469,7 @@ export const insertComment = async (
 		ip_hash: input.ip_hash,
 		user_agent: input.user_agent,
 		created_at: now,
+		depth: input.depth,
 		score_up: 0,
 		score_down: 0,
 	};
@@ -471,7 +483,7 @@ export const getComment = async (
 		.prepare(
 			`SELECT id, post_slug, parent_id, user_id, body_md, body_html,
 			        renderer_version, status, edited_at, deleted_at, deleted_by,
-			        ip_hash, user_agent, created_at, score_up, score_down
+			        ip_hash, user_agent, created_at, depth, score_up, score_down
 			 FROM comments WHERE id = ?`,
 		)
 		.bind(id)
@@ -492,7 +504,7 @@ export const getCommentsByIds = async (
 		.prepare(
 			`SELECT id, post_slug, parent_id, user_id, body_md, body_html,
 			        renderer_version, status, edited_at, deleted_at, deleted_by,
-			        ip_hash, user_agent, created_at, score_up, score_down
+			        ip_hash, user_agent, created_at, depth, score_up, score_down
 			   FROM comments WHERE id IN (${placeholders})`,
 		)
 		.bind(...ids)
@@ -539,7 +551,7 @@ export const listCommentsForPost = async (
 		.prepare(
 			`SELECT id, post_slug, parent_id, user_id, body_md, body_html,
 			        renderer_version, status, edited_at, deleted_at, deleted_by,
-			        ip_hash, user_agent, created_at, score_up, score_down
+			        ip_hash, user_agent, created_at, depth, score_up, score_down
 			 FROM comments
 			 WHERE post_slug = ? AND status NOT IN ('spam', 'pending')
 			 ORDER BY created_at ASC, id ASC`,
@@ -565,7 +577,7 @@ export const listOwnPendingForPost = async (
 		.prepare(
 			`SELECT id, post_slug, parent_id, user_id, body_md, body_html,
 			        renderer_version, status, edited_at, deleted_at, deleted_by,
-			        ip_hash, user_agent, created_at, score_up, score_down
+			        ip_hash, user_agent, created_at, depth, score_up, score_down
 			 FROM comments
 			 WHERE post_slug = ? AND user_id = ? AND status = 'pending'
 			 ORDER BY created_at ASC, id ASC`,
@@ -588,7 +600,7 @@ export const listLatestApprovedComments = async (
 		.prepare(
 			`SELECT c.id, c.post_slug, c.parent_id, c.user_id, c.body_md, c.body_html,
 			        c.renderer_version, c.status, c.edited_at, c.deleted_at, c.deleted_by,
-			        c.ip_hash, c.user_agent, c.created_at, c.score_up, c.score_down,
+			        c.ip_hash, c.user_agent, c.created_at, c.depth, c.score_up, c.score_down,
 			        u.name AS author_name
 			   FROM comments c
 			   JOIN users u ON u.id = c.user_id
@@ -1108,7 +1120,7 @@ export const adminListComments = async (
 	const sql = `
 		SELECT c.id, c.post_slug, c.parent_id, c.user_id, c.body_md, c.body_html,
 		       c.renderer_version, c.status, c.edited_at, c.deleted_at, c.deleted_by,
-		       c.ip_hash, c.user_agent, c.created_at, c.score_up, c.score_down,
+		       c.ip_hash, c.user_agent, c.created_at, c.depth, c.score_up, c.score_down,
 		       u.name       AS author_name,
 		       u.email      AS author_email,
 		       u.avatar_url AS author_avatar_url,
@@ -2139,7 +2151,7 @@ export const adminGetCommentDetail = async (
 		.prepare(
 			`SELECT c.id, c.post_slug, c.parent_id, c.user_id, c.body_md, c.body_html,
 			        c.renderer_version, c.status, c.edited_at, c.deleted_at, c.deleted_by,
-			        c.ip_hash, c.user_agent, c.created_at,
+			        c.ip_hash, c.user_agent, c.created_at, c.depth,
 			        u.name       AS author_name,
 			        u.email      AS author_email,
 			        u.avatar_url AS author_avatar_url,
@@ -2162,7 +2174,7 @@ export const adminGetCommentDetail = async (
 				.prepare(
 					`SELECT c.id, c.post_slug, c.parent_id, c.user_id, c.body_md, c.body_html,
 					        c.renderer_version, c.status, c.edited_at, c.deleted_at, c.deleted_by,
-					        c.ip_hash, c.user_agent, c.created_at,
+					        c.ip_hash, c.user_agent, c.created_at, c.depth,
 					        u.name       AS author_name,
 					        u.email      AS author_email,
 					        u.avatar_url AS author_avatar_url,
@@ -2182,7 +2194,7 @@ export const adminGetCommentDetail = async (
 		.prepare(
 			`SELECT c.id, c.post_slug, c.parent_id, c.user_id, c.body_md, c.body_html,
 			        c.renderer_version, c.status, c.edited_at, c.deleted_at, c.deleted_by,
-			        c.ip_hash, c.user_agent, c.created_at,
+			        c.ip_hash, c.user_agent, c.created_at, c.depth,
 			        u.name       AS author_name,
 			        u.email      AS author_email,
 			        u.avatar_url AS author_avatar_url,
@@ -2206,7 +2218,7 @@ export const adminGetCommentDetail = async (
 				.prepare(
 					`SELECT c.id, c.post_slug, c.parent_id, c.user_id, c.body_md, c.body_html,
 					        c.renderer_version, c.status, c.edited_at, c.deleted_at, c.deleted_by,
-					        c.ip_hash, c.user_agent, c.created_at,
+					        c.ip_hash, c.user_agent, c.created_at, c.depth,
 					        u.name       AS author_name,
 					        u.email      AS author_email,
 					        u.avatar_url AS author_avatar_url,
@@ -2228,7 +2240,7 @@ export const adminGetCommentDetail = async (
 		.prepare(
 			`SELECT c.id, c.post_slug, c.parent_id, c.user_id, c.body_md, c.body_html,
 			        c.renderer_version, c.status, c.edited_at, c.deleted_at, c.deleted_by,
-			        c.ip_hash, c.user_agent, c.created_at,
+			        c.ip_hash, c.user_agent, c.created_at, c.depth,
 			        u.name       AS author_name,
 			        u.email      AS author_email,
 			        u.avatar_url AS author_avatar_url,

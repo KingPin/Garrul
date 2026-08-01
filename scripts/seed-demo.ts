@@ -17,6 +17,7 @@ import {
 	CURRENT_RENDERER_VERSION,
 	renderMarkdown,
 } from "../src/lib/markdown";
+import { MAX_REPLY_DEPTH } from "../src/lib/tree";
 import { ulid } from "../src/lib/ulid";
 
 const DB_NAME = "garrul-db";
@@ -140,6 +141,7 @@ const insertSeedComment = (
 	parent_id: string | null,
 	body_md: string,
 	now: number,
+	depth: number,
 ): string => {
 	const id = ulid();
 	const body_html = renderMarkdown(body_md);
@@ -147,11 +149,11 @@ const insertSeedComment = (
 	const sql = `INSERT INTO comments (
 	               id, post_slug, parent_id, user_id, body_md, body_html,
 	               renderer_version, status, edited_at, deleted_at,
-	               ip_hash, user_agent, created_at)
+	               ip_hash, user_agent, created_at, depth)
 	             VALUES ('${id}', '${sqlEsc(post_slug)}', ${parent_clause},
 	                     '${sqlEsc(user_id)}', '${sqlEsc(body_md)}',
 	                     '${sqlEsc(body_html)}', ${CURRENT_RENDERER_VERSION},
-	                     'approved', NULL, NULL, NULL, NULL, ${now})`;
+	                     'approved', NULL, NULL, NULL, NULL, ${now}, ${depth})`;
 	d1Execute(sql);
 	return id;
 };
@@ -162,14 +164,30 @@ const seedThread = (
 	post_slug: string,
 	baseTs: number,
 	counter: { n: number },
+	depth = 1,
 ) => {
+	// The fixtures are hand-written and shallow, but assert rather than clamp:
+	// a seed row past the cap would be un-replyable in the demo instance, which
+	// looks like a bug in the product rather than a bad fixture.
+	if (depth > MAX_REPLY_DEPTH) {
+		throw new Error(
+			`seed fixture nests past MAX_REPLY_DEPTH (${MAX_REPLY_DEPTH}) on ${post_slug}`,
+		);
+	}
 	const now = baseTs + counter.n * 1000;
 	counter.n += 1;
 	const user_id = insertSeedUser(thread.author, now);
-	const id = insertSeedComment(user_id, post_slug, parent_id, thread.body, now);
+	const id = insertSeedComment(
+		user_id,
+		post_slug,
+		parent_id,
+		thread.body,
+		now,
+		depth,
+	);
 	if (thread.replies) {
 		for (const reply of thread.replies) {
-			seedThread(reply, id, post_slug, baseTs, counter);
+			seedThread(reply, id, post_slug, baseTs, counter, depth + 1);
 		}
 	}
 };

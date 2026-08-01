@@ -64,6 +64,24 @@ export type TreeNode = {
 
 export const MAX_DEPTH = 4;
 
+/**
+ * Hard server-side cap on how deep a reply chain may go, enforced at insert
+ * time against `comments.depth` (1-based: a top-level comment is 1).
+ *
+ * This is NOT the rendering threshold. MAX_DEPTH above is a *display* flatten
+ * point — anything past it still renders, just un-indented — and the widget
+ * already hides the reply button at `n.depth < MAX_DEPTH`, so no reachable UI
+ * path creates a chain this long. The cap exists because nothing stopped a
+ * scripted client from doing it: tree assembly is O(N^2) in chain length, so a
+ * few hundred chained comments exceed the 10ms free-tier CPU budget and the
+ * slug's comment list starts returning Error 1102 to every reader — and since
+ * the response never completes, the edge cache never populates and it never
+ * self-heals.
+ *
+ * 8 leaves headroom above the flatten point for imported threads (Disqus).
+ */
+export const MAX_REPLY_DEPTH = 8;
+
 type ChildIndex = Map<string | null, Comment[]>;
 
 const indexByParent = (rows: Comment[]): ChildIndex => {

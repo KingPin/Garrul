@@ -75,6 +75,7 @@ const baseInput = {
 	renderer_version: 1,
 	ip_hash: "iphash",
 	user_agent: "ua",
+	depth: 1,
 };
 
 describe("comment write paths (real SQLite)", () => {

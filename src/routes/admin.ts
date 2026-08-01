@@ -121,6 +121,7 @@ import {
 	numberBounds,
 } from "../lib/settings";
 import { bustTreeCache } from "../lib/tree-cache";
+import { MAX_REPLY_DEPTH } from "../lib/tree";
 import {
 	renderWebhookForm,
 	renderWebhooksList,
@@ -1414,6 +1415,12 @@ admin.post("/api/saved-replies/:id/post", async (c) => {
 	if (rawBody.length > SAVED_REPLY_BODY_MAX) {
 		return c.json({ error: "body_too_long" }, 400);
 	}
+	// The nesting cap applies to moderators too: the O(N^2) tree-assembly cost
+	// it guards doesn't care who created the chain. Reply higher up instead.
+	const depth = target.depth + 1;
+	if (depth > MAX_REPLY_DEPTH) {
+		return c.json({ error: "thread_too_deep" }, 400);
+	}
 	const body_html = renderMarkdown(rawBody);
 	const inserted = await insertComment(c.env.DB, {
 		post_slug: target.post_slug,
@@ -1425,6 +1432,7 @@ admin.post("/api/saved-replies/:id/post", async (c) => {
 		status: "approved",
 		ip_hash: null,
 		user_agent: null,
+		depth,
 	});
 	await adminInsertAudit(c.env.DB, {
 		admin_id: user.id,

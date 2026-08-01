@@ -34,6 +34,7 @@
  *     is 'anon'; no OAuth identity).
  */
 import { CURRENT_RENDERER_VERSION, renderMarkdown } from "./markdown";
+import { MAX_REPLY_DEPTH } from "./tree";
 import { ulid } from "./ulid";
 
 export type DisqusThread = {
@@ -380,11 +381,14 @@ export const runDisqusImport = async (
 		}
 		await db
 			.prepare(
-				`INSERT INTO comments (
+				// parent_id and depth are both NULL/1 here: parents are linked in a
+			// second pass below, once every dsq_id has a native id, and depth is
+			// only knowable then.
+			`INSERT INTO comments (
 				   id, post_slug, parent_id, user_id, body_md, body_html,
 				   renderer_version, status, ip_hash, user_agent, created_at,
-				   import_source, import_id)
-				 VALUES (?, ?, NULL, ?, ?, ?, ?, 'approved', NULL, NULL, ?, ?, ?)`,
+				   import_source, import_id, depth)
+				 VALUES (?, ?, NULL, ?, ?, ?, ?, 'approved', NULL, NULL, ?, ?, ?, 1)`,
 			)
 			.bind(
 				id,
@@ -402,14 +406,66 @@ export const runDisqusImport = async (
 	}
 
 	if (!opts.dry_run) {
+		// Effective parent links: only pairs where BOTH sides were imported. A
+		// post whose parent was skipped stays a root, and depth has to reflect
+		// that, so resolve depth from this map rather than from parent_dsq_id.
+		const effectiveParent = new Map<string, string>();
 		for (const p of parsed.posts) {
 			if (!p.parent_dsq_id) continue;
-			const child = nativeIdByDsq.get(p.dsq_id);
-			const parent = nativeIdByDsq.get(p.parent_dsq_id);
-			if (!child || !parent) continue;
+			if (!nativeIdByDsq.has(p.dsq_id)) continue;
+			if (!nativeIdByDsq.has(p.parent_dsq_id)) continue;
+			effectiveParent.set(p.dsq_id, p.parent_dsq_id);
+		}
+
+		// 1-based depth over that map, memoized. The visited set makes a
+		// malformed export with a parent cycle terminate instead of hanging the
+		// import — Disqus shouldn't produce one, but this walks untrusted XML.
+		const depthByDsq = new Map<string, number>();
+		const depthOf = (dsqId: string): number => {
+			// `chain` walks child → ancestor, so chain[0] is the deepest and
+			// chain[last] the shallowest entry we visited.
+			const chain: string[] = [];
+			const seen = new Set<string>();
+			let cur: string | undefined = dsqId;
+			// Depth that chain[last] ends up at. 1 when the walk reached a root
+			// (or hit a cycle and bailed); memo+1 when it stopped on an already-
+			// resolved ancestor, since chain[last] sits one below it.
+			let baseDepth = 1;
+			while (cur !== undefined && !seen.has(cur)) {
+				const memo = depthByDsq.get(cur);
+				if (memo !== undefined) {
+					baseDepth = memo + 1;
+					break;
+				}
+				seen.add(cur);
+				chain.push(cur);
+				cur = effectiveParent.get(cur);
+			}
+			for (let i = chain.length - 1; i >= 0; i--) {
+				depthByDsq.set(chain[i]!, baseDepth + (chain.length - 1 - i));
+			}
+			return depthByDsq.get(dsqId) ?? 1;
+		};
+
+		for (const [childDsq, parentDsq] of effectiveParent) {
+			const child = nativeIdByDsq.get(childDsq)!;
+			let parentDsqEffective = parentDsq;
+			let depth = depthOf(childDsq);
+			// Past the cap, re-parent to the deepest permitted ancestor rather
+			// than dropping the comment. This is the same flattening the renderer
+			// already applies past MAX_DEPTH, and it keeps the invariant every
+			// row satisfies — depth <= MAX_REPLY_DEPTH — true for imports too,
+			// which is what keeps the read path's cost bounded.
+			while (depth > MAX_REPLY_DEPTH) {
+				const next = effectiveParent.get(parentDsqEffective);
+				if (next === undefined) break;
+				parentDsqEffective = next;
+				depth -= 1;
+			}
+			const parent = nativeIdByDsq.get(parentDsqEffective)!;
 			await db
-				.prepare(`UPDATE comments SET parent_id = ? WHERE id = ?`)
-				.bind(parent, child)
+				.prepare(`UPDATE comments SET parent_id = ?, depth = ? WHERE id = ?`)
+				.bind(parent, Math.min(depth, MAX_REPLY_DEPTH), child)
 				.run();
 		}
 	}

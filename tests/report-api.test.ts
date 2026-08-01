@@ -119,6 +119,7 @@ const seedComment = async (): Promise<string> => {
 		status: "approved",
 		ip_hash: null,
 		user_agent: null,
+		depth: 1,
 	});
 	return c.id;
 };

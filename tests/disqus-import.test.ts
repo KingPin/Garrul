@@ -23,6 +23,7 @@ import {
 	runDisqusImport,
 	slugFromLink,
 } from "../src/lib/disqus-import";
+import { MAX_REPLY_DEPTH } from "../src/lib/tree";
 
 type Captured = { sql: string; binds: unknown[] };
 
@@ -311,6 +312,52 @@ describe("runDisqusImport", () => {
 		);
 		// Only p2 has a parent. p1 stays NULL.
 		expect(reparents).toHaveLength(1);
+		// The same pass resolves depth: p1 is a root (1), so p2 is 2. Binds are
+		// (parent_native_id, depth, child_native_id).
+		expect(reparents[0]!.binds[1]).toBe(2);
+	});
+
+	it("flattens an over-deep imported chain onto the deepest allowed ancestor", async () => {
+		// A chain longer than MAX_REPLY_DEPTH must not land in the DB as-is: the
+		// read path's cost is bounded only if every row satisfies
+		// depth <= MAX_REPLY_DEPTH. Nothing is dropped — over-deep links are
+		// re-parented upward, the same flattening the renderer already does.
+		const CHAIN = MAX_REPLY_DEPTH + 4;
+		const posts = Array.from({ length: CHAIN }, (_, i) => {
+			const n = i + 1;
+			return `  <post dsq:id="p${n}">
+    <message><![CDATA[<p>m${n}</p>]]></message>
+    <createdAt>2023-04-01T10:0${n % 10}:00Z</createdAt>
+    <isDeleted>false</isDeleted><isSpam>false</isSpam>
+    <author><name>A${n}</name><isAnonymous>true</isAnonymous></author>
+    <thread dsq:id="t100" />
+    ${n > 1 ? `<parent dsq:id="p${n - 1}" />` : ""}
+  </post>`;
+		}).join("\n");
+		const xml = `<disqus>
+  <thread dsq:id="t100">
+    <link>https://example.com/blog/deep</link>
+    <createdAt>2023-04-01T10:00:00Z</createdAt>
+  </thread>
+${posts}
+</disqus>`;
+
+		const { db, captured } = makeFreshDb();
+		await runDisqusImport(db, xml, "secret", {});
+		const depths = captured
+			.filter((c) => c.sql.startsWith("UPDATE comments SET parent_id"))
+			.map((c) => c.binds[1] as number);
+
+		// p2..p{MAX} get their true depth; everything past the cap pins to it.
+		expect(depths).toHaveLength(CHAIN - 1);
+		expect(depths.slice(0, MAX_REPLY_DEPTH - 1)).toEqual(
+			Array.from({ length: MAX_REPLY_DEPTH - 1 }, (_, i) => i + 2),
+		);
+		expect(Math.max(...depths)).toBe(MAX_REPLY_DEPTH);
+		// Every comment survived — the flattening re-parents, it doesn't drop.
+		expect(
+			captured.filter((c) => c.sql.startsWith("INSERT INTO comments")),
+		).toHaveLength(CHAIN);
 	});
 
 	it("skips deleted/spam by default and counts them in the plan", async () => {

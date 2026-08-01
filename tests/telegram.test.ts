@@ -365,6 +365,7 @@ const seedComment = async (status = "pending"): Promise<string> => {
 		status,
 		ip_hash: null,
 		user_agent: null,
+		depth: 1,
 	});
 	return c.id;
 };

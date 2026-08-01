@@ -75,6 +75,7 @@ import { checkSpam } from "../lib/spam";
 import type { CommentStatus } from "../db/queries";
 import {
 	buildTree,
+	MAX_REPLY_DEPTH,
 	type ReactionCount,
 	type TreeAuthor,
 	type TreeNode,
@@ -480,8 +481,12 @@ comments.post("/", async (c) => {
 		parsePublishedAt(body.post_published),
 	);
 
-	// Parent must exist and live on the same post.
+	// Parent must exist, live on the same post, and leave room under the
+	// nesting cap. Without the depth check an unbounded reply chain is
+	// insertable, which makes the slug's comment tree permanently
+	// un-renderable — see MAX_REPLY_DEPTH in src/lib/tree.ts.
 	let parent_id: string | null = null;
+	let depth = 1;
 	if (body.parent_id) {
 		const parent = await getComment(c.env.DB, body.parent_id);
 		if (!parent) return c.json({ error: t("err.parent.not_found") }, 400);
@@ -489,6 +494,10 @@ comments.post("/", async (c) => {
 			return c.json({ error: t("err.parent.different_post") }, 400);
 		}
 		parent_id = parent.id;
+		depth = parent.depth + 1;
+		if (depth > MAX_REPLY_DEPTH) {
+			return c.json({ error: t("err.parent.too_deep") }, 400);
+		}
 	}
 
 	const userAgent = c.req.header("user-agent") ?? null;
@@ -521,6 +530,7 @@ comments.post("/", async (c) => {
 		status: verdict.status,
 		ip_hash: ipHash,
 		user_agent: userAgent,
+		depth,
 	});
 
 	// Bust the cached first page. Older pages bypass cache, so there's
