@@ -17,22 +17,32 @@ import { hmacHex } from "./hmac";
 
 const HEXTET_RE = /^[0-9a-f]{1,4}$/;
 
+// A fixed-width tuple rather than string[], so the /64 slice and the
+// IPv4-mapped fold below can index into it without an undefined check on every
+// hextet. The one cast that produces it is guarded by an explicit length test.
+type Hextets = [string, string, string, string, string, string, string, string];
+
 /**
  * Expand an IPv6 literal into exactly 8 hextets, or null if it doesn't parse.
  * Handles `::` elision and an embedded dotted-quad tail (`::ffff:1.2.3.4`).
  */
-const expandIpv6 = (addr: string): string[] | null => {
+const expandIpv6 = (addr: string): Hextets | null => {
 	let s = addr;
 
 	// The low 32 bits may be written as a dotted quad. Fold it into two hextets
 	// first so the elision maths below only has to deal with one notation.
 	const v4 = s.match(/(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
 	if (v4) {
-		const octets = v4.slice(1, 5).map(Number);
-		if (octets.some((o) => o > 255)) return null;
-		const hi = ((octets[0] << 8) | octets[1]).toString(16);
-		const lo = ((octets[2] << 8) | octets[3]).toString(16);
-		s = `${s.slice(0, s.length - v4[0].length)}${hi}:${lo}`;
+		// Number(undefined) is NaN, so the range test also covers a group the
+		// compiler can't prove matched.
+		const [a, b, c, d] = [v4[1], v4[2], v4[3], v4[4]].map(Number);
+		const octets = [a, b, c, d];
+		if (octets.some((o) => o === undefined || !Number.isInteger(o) || o > 255)) {
+			return null;
+		}
+		const hi = (((a as number) << 8) | (b as number)).toString(16);
+		const lo = (((c as number) << 8) | (d as number)).toString(16);
+		s = `${s.slice(0, s.length - (v4[0]?.length ?? 0))}${hi}:${lo}`;
 	}
 
 	const halves = s.split("::");
@@ -49,7 +59,8 @@ const expandIpv6 = (addr: string): string[] | null => {
 		if (fill < 1) return null;
 		parts = [...head, ...Array<string>(fill).fill("0"), ...tail];
 	}
-	return parts.every((h) => HEXTET_RE.test(h)) ? parts : null;
+	if (parts.length !== 8 || !parts.every((h) => HEXTET_RE.test(h))) return null;
+	return parts as Hextets;
 };
 
 /** Drop leading zeros so `0db8` and `db8` land in the same bucket. */
@@ -69,7 +80,8 @@ export const normalizeIpForHash = (ip: string): string => {
 		.replace(/^\[/, "")
 		.replace(/\]$/, "")
 		// Link-local addresses can carry a zone id; it isn't part of the address.
-		.split("%")[0];
+		// split() always yields at least one element; the fallback is for tsc.
+		.split("%")[0] ?? "";
 	if (!raw.includes(":")) return raw;
 
 	const parts = expandIpv6(raw);
