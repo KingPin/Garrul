@@ -562,7 +562,7 @@ Pages (top nav):
 | `/admin/queue` | Moderation queue. Status tabs (incl. a **Reported** tab — comments with open reader reports, with a count badge) + filter bar (body search, post slug, date range, scoped-by-user). Per-row + bulk actions (Approve/Spam/Delete/Restore). When filtered to a single post slug, a **Close / Open comments for this post** toggle appears. Rows also offer one-click **Ban author**. Each row shows author identity (avatar + provider + admin/banned pills) and the latest audit footer. |
 | `/admin/comments/:id` | Single-comment view: parent + replies, raw markdown, spam-verdicts per source, full audit history for that comment, author block with their last 5 comments. |
 | `/admin/users` | User search + ban toggle. |
-| `/admin/users/:id` | User detail: all their comments paginated, reactions received, audit history affecting them, Ban/Unban. |
+| `/admin/users/:id` | User detail: all their comments paginated, reactions received, audit history affecting them, Ban/Unban, role controls, and a folded-away **Erase personal data** panel (admin-only; see below). |
 | `/admin/audit` | Audit log with filter form (admin, action, target kind/id, date range). |
 | `/admin/subscriptions` | Email subscription list. Filter by email/post/confirmed/unsubscribed. Actions: manual unsubscribe, resend confirmation. |
 | `/admin/operator` | Batch operations: rerender stale comments (POSTs `/admin/api/ops/rerender` in 50-row chunks until done), seed-demo (idempotent; gated to `ENV != "production"`), and the Disqus import upload (see below). |
@@ -581,9 +581,47 @@ responding):
 - `POST /admin/api/comments/:id/reports/resolve` — clears open reader reports on a comment (audited `report.resolve`)
 - `POST /admin/api/posts/close` — `{slug, closed: boolean}` (per-post close/open; audited `post.close` / `post.open`; busts the cached first page)
 - `POST /admin/api/users/:id` — `{banned: boolean, reason?, from_comment?}` (one-click ban-author records the originating comment in audit meta; admin-only)
+- `POST /admin/api/users/:id/role` — `{role: user|mod|admin, reason?}` (admin-only; refuses self-change and the last-admin demotion)
+- `POST /admin/api/users/:id/erase` — `{confirm: "ERASE", redact_bodies: boolean, reason?}` (admin-only, irreversible; see below)
 - `POST /admin/api/subscriptions/:id` — `{action: unsubscribe|resend, reason?}`
 - `POST /admin/api/ops/rerender` — `{batch?: number, cursor?}` → `{processed, next_cursor}`
 - `POST /admin/api/ops/seed-demo` — disabled when `ENV=production`
+
+**Erasing a user's personal data.** `/admin/users/<id>` → **Erase
+personal data**. Admin-only, audit-logged, and irreversible — the button
+stays disabled until you type `ERASE`, and the API requires the same
+string in the body so a stray request can't trigger it.
+
+It anonymizes in place rather than deleting. `comments.user_id` is a
+`NOT NULL` foreign key and threads are `parent_id` chains, so dropping
+the row would orphan every reply written under it. What it clears:
+
+- The account's `name` (→ `[deleted]`), `email`, `avatar_url` and
+  `provider_id`. That last one is the handle their next login is matched
+  on — so a later sign-in creates a **fresh** account instead of
+  resurrecting this one. For an anonymous ghost author, `provider_id`
+  *is* the `ip_hash`.
+- `ip_hash` and `user_agent` on every comment they wrote, and
+  `reporter_ip_hash` on every report they filed.
+- Their email subscriptions (plus any queued digest rows) and their
+  linked Telegram account.
+- Their live sessions, revoked.
+
+Comment **bodies are kept by default**: the author becomes anonymous and
+the thread others replied to stays readable. Tick *"also blank their
+comment bodies"* when the comment text itself holds the personal data —
+that blanks `body_md`/`body_html` and marks the comments deleted. Votes,
+reactions and page-engagement rows are left alone; removing them would
+silently restate scores the thread has been showing.
+
+Two guards: you cannot erase **yourself**, and you cannot erase another
+**admin** (demote them first — otherwise clearing `provider_id` locks
+that person out of the instance for good). The `user.erase` audit row
+records **counts only**, never the removed values: writing the name or
+address into `audit_log.meta` would relocate the data rather than erase
+it. Everything else you might want here — a retention window, key
+epoching, a bulk purge — is still missing; see
+[`../docs/ip-hashing.md`](../docs/ip-hashing.md).
 
 **Reader reporting & thread moderation.** Readers can flag a comment
 from the widget (anonymous allowed, no Turnstile — rate-limited by

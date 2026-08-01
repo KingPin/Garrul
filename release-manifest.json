@@ -327,7 +327,8 @@
     "0012_deleted_by.sql",
     "0013_thread_lifecycle_reports.sql",
     "0014_telegram.sql",
-    "0015_comment_depth.sql"
+    "0015_comment_depth.sql",
+    "0016_user_erasure.sql"
   ],
   "breakingChanges": [
     {

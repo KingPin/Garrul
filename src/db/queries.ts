@@ -60,6 +60,10 @@ export type User = {
 	is_banned: boolean;
 	role: UserRole;
 	created_at: number;
+	/** When an admin erased this identity's personal data, epoch ms; NULL for a
+	 *  normal account. Records only *that* it happened — see migration 0016 and
+	 *  `eraseUserData` for what the action clears. */
+	erased_at: number | null;
 };
 
 export type CommentStatus = "approved" | "pending" | "spam" | "deleted";
@@ -104,6 +108,12 @@ export type TreeComment = Omit<Comment, "body_md" | "ip_hash" | "user_agent">;
 const TREE_COLUMNS = `id, post_slug, parent_id, user_id, body_html,
 	        renderer_version, status, edited_at, deleted_at, deleted_by,
 	        created_at, depth, score_up, score_down`;
+
+// Every users SELECT that feeds `toUser` goes through this list. It used to be
+// spelled out at six call sites, which meant a new column silently arrived as
+// `undefined` on five of them — TypeScript can't see inside a SQL string.
+const USER_COLS = `id, provider, provider_id, name, email, avatar_url,
+	        is_admin, is_banned, role, created_at, erased_at`;
 
 type UserRow = Omit<User, "is_admin" | "is_banned" | "role"> & {
 	is_admin: number;
@@ -300,8 +310,7 @@ export const getOrCreateGhost = async (
 ): Promise<User> => {
 	const existing = await db
 		.prepare(
-			`SELECT id, provider, provider_id, name, email, avatar_url,
-			        is_admin, is_banned, role, created_at
+			`SELECT ${USER_COLS}
 			 FROM users WHERE provider = 'anon' AND provider_id = ?`,
 		)
 		.bind(ipHash)
@@ -330,6 +339,7 @@ export const getOrCreateGhost = async (
 		is_banned: false,
 		role: "user",
 		created_at: now,
+		erased_at: null,
 	};
 };
 
@@ -361,8 +371,7 @@ export const upsertOauthUser = async (
 ): Promise<User> => {
 	const existing = await db
 		.prepare(
-			`SELECT id, provider, provider_id, name, email, avatar_url,
-			        is_admin, is_banned, role, created_at
+			`SELECT ${USER_COLS}
 			 FROM users WHERE provider = ? AND provider_id = ?`,
 		)
 		.bind(provider, provider_id)
@@ -408,6 +417,7 @@ export const upsertOauthUser = async (
 		is_banned: false,
 		role,
 		created_at: now,
+		erased_at: null,
 	};
 };
 
@@ -417,8 +427,7 @@ export const getUser = async (
 ): Promise<User | null> => {
 	const row = await db
 		.prepare(
-			`SELECT id, provider, provider_id, name, email, avatar_url,
-			        is_admin, is_banned, role, created_at
+			`SELECT ${USER_COLS}
 			 FROM users WHERE id = ?`,
 		)
 		.bind(id)
@@ -544,8 +553,7 @@ export const getUsersByIds = async (
 	const placeholders = ids.map(() => "?").join(",");
 	const result = await db
 		.prepare(
-			`SELECT id, provider, provider_id, name, email, avatar_url,
-			        is_admin, is_banned, role, created_at
+			`SELECT ${USER_COLS}
 			   FROM users WHERE id IN (${placeholders})`,
 		)
 		.bind(...ids)
@@ -1331,14 +1339,12 @@ export const adminListUsers = async (
 		? "AND (LOWER(name) LIKE ? ESCAPE '\\' OR LOWER(email) LIKE ? ESCAPE '\\')"
 		: "";
 	const sql = cursorCreatedAt != null && cursorId != null
-		? `SELECT id, provider, provider_id, name, email, avatar_url,
-		          is_admin, is_banned, role, created_at
+		? `SELECT ${USER_COLS}
 		     FROM users
 		    WHERE (created_at, id) < (?, ?) ${filter}
 		    ORDER BY created_at DESC, id DESC
 		    LIMIT ?`
-		: `SELECT id, provider, provider_id, name, email, avatar_url,
-		          is_admin, is_banned, role, created_at
+		: `SELECT ${USER_COLS}
 		     FROM users
 		    WHERE 1=1 ${filter}
 		    ORDER BY created_at DESC, id DESC
@@ -1379,6 +1385,166 @@ export const setUserRole = async (
 		.prepare(`UPDATE users SET role = ?, is_admin = ? WHERE id = ?`)
 		.bind(role, is_admin, id)
 		.run();
+};
+
+/** What an erasure touched. Counts only — never the values removed. */
+export type UserErasureCounts = {
+	/** Comments whose ip_hash + user_agent were cleared. */
+	comments_scrubbed: number;
+	/** Comments whose body was blanked and status forced to `deleted`. */
+	bodies_redacted: number;
+	subscriptions_deleted: number;
+	reports_scrubbed: number;
+	telegram_links_deleted: number;
+};
+
+/**
+ * Erase one user's personal data, in place.
+ *
+ * Anonymize rather than DELETE — see migration 0016 for why the row has to
+ * survive. What this clears, and why each one is personal data:
+ *
+ *   - `users.name` → `placeholderName`, `email`/`avatar_url` → NULL.
+ *   - `users.provider_id` → NULL. For an OAuth account that's the provider's
+ *     user id; for an anonymous ghost it is *the ip_hash itself*, so leaving it
+ *     would defeat the whole action.
+ *   - `comments.ip_hash` + `comments.user_agent` → NULL on every comment they
+ *     wrote. A soft delete never cleared these, so they outlived the comment
+ *     indefinitely and landed in every `db-export.sh` dump.
+ *   - `reports.reporter_ip_hash` → NULL on reports they filed. The UNIQUE
+ *     (comment_id, reporter_ip_hash) still holds: SQLite counts NULLs distinct,
+ *     so this releases the dedup slot rather than colliding.
+ *   - `subscriptions` rows for their address are deleted outright. The email
+ *     *is* the row's identity here; there is nothing left to anonymize.
+ *   - `telegram_links` rows are deleted — they carry an external chat id.
+ *
+ * `redactBodies` is the caller's decision, not ours. Anonymizing the author is
+ * enough when the erasure is about identity, and it leaves a thread others
+ * replied to intact. It is *not* enough when the person's name, address or
+ * employer is written in the comment text, which no amount of author-level
+ * scrubbing reaches. So the admin says which one they mean.
+ *
+ * Votes, reactions and page-engagement rows are left alone: they hold nothing
+ * but a link to the now-anonymous user, and removing them would silently
+ * restate every score the thread has been showing.
+ *
+ * Runs as one `db.batch`, which D1 wraps in a transaction — a half-erased user
+ * is worse than an un-erased one.
+ */
+export const eraseUserData = async (
+	db: D1Database,
+	args: {
+		id: string;
+		/** The address to clear subscriptions for. Read before the identity
+		 *  update, since that is what clears it from the users row. */
+		email: string | null;
+		placeholderName: string;
+		redactBodies: boolean;
+		now: number;
+	},
+): Promise<UserErasureCounts> => {
+	const { id, email, placeholderName, redactBodies, now } = args;
+	// Two statements are conditional, so each one's position in the batch is
+	// captured as it's queued rather than counted out afterwards — the row counts
+	// below have to survive someone inserting a statement in the middle.
+	const statements: D1PreparedStatement[] = [];
+	const queue = (stmt: D1PreparedStatement): number =>
+		statements.push(stmt) - 1;
+
+	queue(
+		db
+			.prepare(
+				`UPDATE users
+				    SET name = ?, email = NULL, avatar_url = NULL,
+				        provider_id = NULL, erased_at = ?
+				  WHERE id = ?`,
+			)
+			.bind(placeholderName, now, id),
+	);
+	const atComments = queue(
+		db
+			.prepare(
+				`UPDATE comments SET ip_hash = NULL, user_agent = NULL
+				  WHERE user_id = ?`,
+			)
+			.bind(id),
+	);
+	const atReports = queue(
+		db
+			.prepare(
+				`UPDATE reports SET reporter_ip_hash = NULL
+				  WHERE reporter_user_id = ?`,
+			)
+			.bind(id),
+	);
+	const atTelegram = queue(
+		db.prepare(`DELETE FROM telegram_links WHERE user_id = ?`).bind(id),
+	);
+	// Blank both renderings, and force the comment to `deleted` so the tree
+	// serves its placeholder instead of an empty bubble. deleted_at is COALESCEd:
+	// an already-deleted comment keeps the timestamp of the original deletion.
+	const atBodies = redactBodies
+		? queue(
+				db
+					.prepare(
+						`UPDATE comments
+						    SET body_md = '', body_html = '',
+						        status = 'deleted',
+						        deleted_at = COALESCE(deleted_at, ?),
+						        deleted_by = 'moderator'
+						  WHERE user_id = ?`,
+					)
+					.bind(now, id),
+			)
+		: null;
+	// Queued notifications have to go first: notifications.subscription_id is a
+	// foreign key, so deleting the subscription out from under an unsent digest
+	// row aborts the constraint and takes the whole transaction with it.
+	let atSubs: number | null = null;
+	if (email) {
+		queue(
+			db
+				.prepare(
+					`DELETE FROM notifications
+					  WHERE subscription_id IN
+					        (SELECT id FROM subscriptions WHERE email = ?)`,
+				)
+				.bind(email),
+		);
+		atSubs = queue(
+			db.prepare(`DELETE FROM subscriptions WHERE email = ?`).bind(email),
+		);
+	}
+
+	const results = await db.batch(statements);
+	const changes = (i: number | null): number => {
+		if (i == null) return 0;
+		const meta = results[i]?.meta as { changes?: number } | undefined;
+		return meta?.changes ?? 0;
+	};
+	return {
+		comments_scrubbed: changes(atComments),
+		bodies_redacted: changes(atBodies),
+		subscriptions_deleted: changes(atSubs),
+		reports_scrubbed: changes(atReports),
+		telegram_links_deleted: changes(atTelegram),
+	};
+};
+
+/**
+ * Distinct post slugs a user has commented on. Used to bust the cached first
+ * page of each affected thread after an erasure — the author name (and possibly
+ * the bodies) just changed on pages that are served from the edge cache.
+ */
+export const listPostSlugsForUser = async (
+	db: D1Database,
+	userId: string,
+): Promise<string[]> => {
+	const result = await db
+		.prepare(`SELECT DISTINCT post_slug FROM comments WHERE user_id = ?`)
+		.bind(userId)
+		.all<{ post_slug: string }>();
+	return (result.results ?? []).map((r) => r.post_slug);
 };
 
 // Used by the role-change endpoint to refuse a demotion that would leave
@@ -1830,6 +1996,7 @@ export const ADMIN_ACTIONS = [
 	"edit",
 	"ban",
 	"unban",
+	"user.erase",
 	"rerender",
 	"seed-demo",
 	"sub.unsubscribe",

@@ -1,0 +1,25 @@
+-- Admin-initiated data erasure for one user.
+--
+-- Anonymize in place, never DELETE. `comments.user_id` is
+-- NOT NULL REFERENCES users(id) and threads are `parent_id` chains, so removing
+-- the row would orphan every reply written under it and break the tree for
+-- everyone else in the conversation. The identity is emptied instead: name
+-- replaced with a placeholder, email and avatar_url set NULL, and — this is the
+-- one that's easy to miss — `provider_id` set NULL too, because for an anonymous
+-- ghost author that column *is* the `ip_hash`.
+--
+-- Clearing provider_id also breaks the (provider, provider_id) lookup that
+-- upsertOauthUser and getOrCreateGhost key on, which is the point: a later login
+-- from the same OAuth account creates a fresh user row rather than resurrecting
+-- the erased one. SQLite treats NULLs as distinct in a UNIQUE index, so any
+-- number of erased rows can coexist.
+--
+-- `erased_at` records only *that* an erasure happened and when. Deliberately
+-- content-free: the whole point of the action is that the name, email and avatar
+-- are gone, so nothing about the erased identity is preserved here. The
+-- audit_log row for the action stores counts for the same reason — see
+-- eraseUser in src/lib/moderation.ts.
+--
+-- Forward-only. Never edit this file once applied.
+
+ALTER TABLE users ADD COLUMN erased_at INTEGER;

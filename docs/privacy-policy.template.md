@@ -55,7 +55,8 @@ comment-id, reaction-kind)** tuple.
 - **Hashed IP**: retained for the lifetime of the row it belongs to —
   the comment (including after a soft delete), any abuse report you
   file, and the anonymous identity we derive from it if you comment
-  without signing in. There is no automatic expiry.
+  without signing in. There is no automatic expiry; it is removed if you
+  ask us to erase your data (see below).
 - **OAuth account data**: until you ask us to remove it.
 - **Subscriptions**: until you click the unsubscribe link in any
   notification email.
@@ -95,8 +96,23 @@ We do not sell or share comment data with any other third party.
 
 ## How to delete your data
 
-Email `[YOUR EMAIL]` and we'll remove your comments, account, and
-subscriptions within a reasonable timeframe.
+Email `[YOUR EMAIL]` and we'll erase your account within a reasonable
+timeframe. Concretely, that means:
+
+- Your display name, email address, avatar and the provider or hashed-IP
+  identifier we matched you on are removed. Your comments then show as
+  `[deleted]` with no author.
+- The hashed IP and browser user-agent stored against every comment you
+  wrote, and against any abuse report you filed, are removed.
+- Your email notification subscriptions are deleted, along with any
+  linked chat account, and you are signed out everywhere.
+- If you sign in again afterwards, you get a **new** account. The erased
+  one is not restored.
+
+**Your comment text is kept by default**, without your name attached, so
+that conversations other people took part in stay readable. Tell us if
+the text itself contains personal information and we'll blank those
+comments too.
 
 For most users a simpler option is to delete individual comments
 using the trash icon next to your comment (available for 15 minutes

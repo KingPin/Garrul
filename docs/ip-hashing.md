@@ -117,8 +117,20 @@ Stated plainly, because someone will need it:
   reasoned about per-row and old values can't be lazily re-keyed.
 - No retention window — nothing expires an `ip_hash` after the moderation
   value has passed.
-- No purge or anonymize path in the admin UI. A deletion request is
-  hand-written SQL today.
+
+There *is* a per-user erase path: **Erase personal data** on
+`/admin/users/<id>` (admin-only, audit-logged). It clears the account's
+name, email, avatar and `provider_id` — which for an anonymous ghost
+author is the `ip_hash` itself — plus the `ip_hash` and `user_agent` on
+every comment they wrote and the `reporter_ip_hash` on every report they
+filed. Their email subscriptions and any linked Telegram account are
+removed and their sessions are revoked. Comment bodies are kept by
+default so the thread stays readable; there's a checkbox to blank them
+too, for when the comment text itself is the personal data.
+
+That covers a deletion request for one person. It does **not** give you a
+retention window, and it can't help with a leaked secret: a bulk purge
+across every `ip_hash` is still hand-written SQL.
 
 Key epoching is tracked in
 [issue #50](https://github.com/KingPin/Garrul/issues/50). Until it ships, the practical

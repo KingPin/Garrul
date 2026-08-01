@@ -84,6 +84,7 @@ import { fireWebhook, type WebhookEvent } from "../lib/webhook";
 import {
 	banUser,
 	type CommentAction,
+	eraseUser,
 	moderateComment,
 	resolveReports,
 } from "../lib/moderation";
@@ -1662,6 +1663,38 @@ admin.post("/api/users/:id", async (c) => {
 	});
 	if (!result.ok) return c.json({ error: result.error }, 404);
 	return c.json({ ok: true, id: result.id, banned: result.banned });
+});
+
+/**
+ * Erase a user's personal data. Irreversible, so the body has to carry an
+ * explicit `confirm: "ERASE"` alongside the flag — a bare POST to this URL does
+ * nothing. Guards on self / other-admins live in `eraseUser`.
+ */
+admin.post("/api/users/:id/erase", async (c) => {
+	const user = await requireAdmin(c);
+	if (user instanceof Response) return user;
+	const id = c.req.param("id");
+	const body = await c.req
+		.json<{ confirm?: unknown; redact_bodies?: unknown; reason?: string }>()
+		.catch(() => null);
+	if (!body || body.confirm !== "ERASE") {
+		return c.json({ error: "confirmation_required" }, 400);
+	}
+	if (typeof body.redact_bodies !== "boolean") {
+		return c.json({ error: "invalid_body" }, 400);
+	}
+	const result = await eraseUser({
+		env: c.env,
+		reqUrl: c.req.url,
+		adminId: user.id,
+		userId: id,
+		redactBodies: body.redact_bodies,
+		reason: body.reason ?? null,
+	});
+	if (!result.ok) {
+		return c.json({ error: result.error }, result.error === "not_found" ? 404 : 400);
+	}
+	return c.json({ ok: true, id: result.id, counts: result.counts });
 });
 
 export const roleAuditAction = (

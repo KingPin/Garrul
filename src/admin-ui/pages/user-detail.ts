@@ -27,6 +27,7 @@ const userHeader = (d: AdminUserDetail, viewer: User): string => {
 	const pill = rolePill(u.role);
 	if (pill) badges.push(pill);
 	if (u.is_banned) badges.push('<span class="pill banned">banned</span>');
+	if (u.erased_at) badges.push('<span class="pill">erased</span>');
 	const canManageRole = viewer.role === "admin" && viewer.id !== u.id;
 	const roleControls = canManageRole
 		? `
@@ -42,6 +43,11 @@ const userHeader = (d: AdminUserDetail, viewer: User): string => {
     </template>
   </div>`
 		: "";
+	// Mirrors the guards in `eraseUser`: an admin, never yourself, never another
+	// admin (demote first — an erasure clears the provider_id their next login is
+	// matched on). Offering a button that can only 400 is worse than no button.
+	const canErase =
+		viewer.role === "admin" && viewer.id !== u.id && u.role !== "admin";
 	return `
 <div class="user-head">
   ${avatar}
@@ -49,6 +55,7 @@ const userHeader = (d: AdminUserDetail, viewer: User): string => {
     <h2 style="margin:0">${escapeHtml(u.name)} ${badges.join(" ")}</h2>
     <div class="muted">${escapeHtml(u.email ?? "—")} · ${escapeHtml(u.provider)} · joined ${formatTs(u.created_at)}</div>
     <div class="muted"><code>${escapeHtml(u.id)}</code></div>
+    ${u.erased_at ? `<div class="muted">Personal data erased ${formatTs(u.erased_at)}.</div>` : ""}
   </div>
   <div class="actions" x-data="{ busy: false, banned: ${u.is_banned} }">
     <template x-if="!banned">
@@ -59,8 +66,53 @@ const userHeader = (d: AdminUserDetail, viewer: User): string => {
     </template>
   </div>
 </div>
-${roleControls}`;
+${roleControls}
+${canErase ? erasePanel() : ""}`;
 };
+
+/**
+ * Erasure is irreversible, so the control is deliberately slow: it stays folded
+ * away, and the button doesn't enable until the word ERASE is typed. The same
+ * string goes in the request body, which the route requires — so a CSRF attempt
+ * or a stray fetch can't erase anyone by hitting the URL.
+ */
+const erasePanel = (): string => `
+<details style="margin-top:1rem;border-top:1px solid #e5e7eb;padding-top:0.75rem">
+  <summary style="cursor:pointer">Erase personal data…</summary>
+  <div x-data="{ busy: false, typed: '', bodies: false, done: false }">
+    <p class="muted">
+      Clears the display name, email, avatar and the provider/IP identifier on
+      this account, plus the stored IP hash and user agent on every comment they
+      wrote. Email subscriptions for their address and any linked Telegram
+      account are removed, and their sessions are revoked. Votes, reactions and
+      scores are left as they are.
+    </p>
+    <p class="muted">
+      Comments are <strong>not</strong> deleted by default — the author becomes
+      anonymous and the thread stays readable. Tick the box below if the comment
+      text itself contains personal data.
+    </p>
+    <label style="display:block;margin:0.5rem 0">
+      <input type="checkbox" x-model="bodies" :disabled="busy || done">
+      Also blank their comment bodies and mark them deleted
+    </label>
+    <label style="display:block;margin:0.5rem 0">
+      Type <code>ERASE</code> to confirm:
+      <input type="text" x-model="typed" :disabled="busy || done"
+             autocomplete="off" spellcheck="false" style="font:inherit">
+    </label>
+    <p class="muted">This cannot be undone.</p>
+    <div class="actions">
+      <button class="bad" :disabled="busy || done || typed !== 'ERASE'"
+              @click="busy=true; erase(bodies).then(()=>{done=true}).finally(()=>busy=false)">
+        Erase this user's data
+      </button>
+    </div>
+    <template x-if="done">
+      <p class="muted">Erased. Reload to see the anonymized record.</p>
+    </template>
+  </div>
+</details>`;
 
 const commentRow = (c: AdminComment): string => `
 <tr>
@@ -119,6 +171,21 @@ export const renderUserDetail = (
     }).then(r => {
       if (!r.ok) throw new Error('action failed: ' + r.status);
       this.$dispatch('toast', { text: banned ? 'User banned' : 'User unbanned' });
+    }).catch(e => {
+      this.$dispatch('toast', { text: e.message, kind: 'bad' });
+      throw e;
+    });
+  },
+  erase(bodies) {
+    return fetch('/admin/api/users/${escapeHtml(u.id)}/erase', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ confirm: 'ERASE', redact_bodies: bodies }),
+    }).then(async r => {
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || ('action failed: ' + r.status));
+      this.$dispatch('toast', { text: 'Personal data erased' });
+      return j;
     }).catch(e => {
       this.$dispatch('toast', { text: e.message, kind: 'bad' });
       throw e;
