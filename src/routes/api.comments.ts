@@ -112,6 +112,28 @@ const MAX_NAME = 40;
 const SLUG_RE = /^[a-zA-Z0-9_\-./]{1,200}$/;
 const HONEYPOT_FIELD = "website";
 
+// Signed-in writes get their own, looser budget. Signing in is a real cost to
+// an attacker and a real signal about a reader, so the anonymous 1-per-10s
+// floor would be a usability tax on the people most likely to be having an
+// actual conversation. It is still a ceiling: unthrottled is what let one
+// throwaway OAuth account drain D1's daily write quota.
+//
+// Own `scope` per the limiter's contract — a config only applies to the bucket
+// it is passed with, so sharing "comment" would mean these caps were enforced
+// against stamps written under the anonymous budget.
+const AUTHED_COMMENT_LIMITS = {
+	short: { max: 3, windowSec: 10 },
+	long: { max: 60, windowSec: 600 },
+};
+
+// Edits and deletes are cheaper than a post (no spam evaluation, no
+// notification fan-out) but still cost a D1 write plus a cache bust and an
+// outbound webhook each, and neither had any limit at all.
+const MUTATE_COMMENT_LIMITS = {
+	short: { max: 5, windowSec: 10 },
+	long: { max: 100, windowSec: 600 },
+};
+
 type CreateBody = {
 	slug?: string;
 	parent_id?: string | null;
@@ -369,11 +391,42 @@ comments.post("/", async (c) => {
 
 	const session = await readSession(c);
 
-	// Anonymous path: name + Turnstile + rate-limit required.
+	// Anonymous path: name + Turnstile required on top of the rate limit.
 	let author: User;
 	const ipHash = await hashIp(clientIp(c.req.raw), c.env.IP_HASH_SECRET);
 
+	// Both identities get metered, and on each path the budget is spent AFTER
+	// the free local validation but BEFORE anything that costs a quota — the
+	// Turnstile siteverify fetch, the ghost upsert, the insert.
+	//
+	// The check used to live inside the `!session` branch below, and *after* the
+	// siteverify call. Two consequences: a signed-in caller fell straight
+	// through to the insert unthrottled, so one throwaway OAuth account could
+	// burn D1's 100k daily row-writes in minutes (every accepted comment costs
+	// upsertPost + insertComment + bustTreeCache plus one enqueueNotification
+	// write *per confirmed subscriber*); and the unauthenticated siteverify was
+	// an unmetered outbound-fetch amplifier. Authentication raises the cost of
+	// an attack; it doesn't remove the need for a ceiling.
+	const enforceWriteBudget = async (): Promise<Response | null> => {
+		const rl = await checkRateLimit(
+			c.req.url,
+			session ? `user:${session.user_id}` : ipHash,
+			session
+				? { scope: "comment-authed", config: AUTHED_COMMENT_LIMITS }
+				: { scope: "comment" },
+		);
+		if (rl.ok) return null;
+		writeEvent(c.env.ANALYTICS, "ratelimit.hit", {
+			outcome: rl.reason ?? null,
+			post_slug: slug,
+		});
+		return c.json({ error: t("err.ratelimit") }, 429);
+	};
+
 	if (!session) {
+		// Name and token *presence* are checked first and deliberately cost
+		// nothing: at 1 request per 10s, making a typo spend the caller's slot
+		// would lock a legitimate reader out of their own retry.
 		const nameCheck = validName(body.name);
 		if (!nameCheck.ok) {
 			const args = nameCheck.max != null ? { max: nameCheck.max } : undefined;
@@ -383,6 +436,10 @@ comments.post("/", async (c) => {
 		if (!body.turnstile_token) {
 			return c.json({ error: t("err.turnstile.required") }, 400);
 		}
+
+		const denied = await enforceWriteBudget();
+		if (denied) return denied;
+
 		// Turnstile binds the token to the hostname where the widget was
 		// SOLVED. The widget renders inside our same-origin iframe at
 		// GET /embed/turnstile-frame (the Shadow-DOM-dodging fix), so the
@@ -407,18 +464,14 @@ comments.post("/", async (c) => {
 		);
 		if (!ts) return c.json({ error: t("err.turnstile.invalid") }, 400);
 
-		const rl = await checkRateLimit(c.req.url, ipHash, { scope: "comment" });
-		if (!rl.ok) {
-			writeEvent(c.env.ANALYTICS, "ratelimit.hit", {
-				outcome: rl.reason ?? null,
-				post_slug: slug,
-			});
-			return c.json({ error: t("err.ratelimit") }, 429);
-		}
-
 		author = await getOrCreateGhost(c.env.DB, ipHash, nameCheck.name);
 		if (author.is_banned) return c.json({ error: t("err.banned") }, 403);
 	} else {
+		// Nothing free to reject on this path — the session cookie is already
+		// verified — so the budget gates the user lookup too.
+		const denied = await enforceWriteBudget();
+		if (denied) return denied;
+
 		const u = await c.env.DB
 			.prepare(
 				`SELECT id, provider, provider_id, name, email, avatar_url,
@@ -851,12 +904,25 @@ comments.get("/:id/source", async (c) => {
 
 comments.patch("/:id", async (c) => {
 	const id = c.req.param("id");
+
+	// Session and rate limit before the comment lookup, so an unauthenticated
+	// or over-budget caller can't spend a D1 read per request. (This also stops
+	// the handler answering 404-vs-403 to callers who aren't signed in at all,
+	// which leaked whether a given comment id exists.)
+	const session = await readSession(c);
+	const sessionUserId = session?.user_id;
+	if (!sessionUserId) return c.json({ error: t("err.edit.not_author") }, 403);
+
+	const rl = await checkRateLimit(c.req.url, `user:${sessionUserId}`, {
+		scope: "comment-mutate",
+		config: MUTATE_COMMENT_LIMITS,
+	});
+	if (!rl.ok) return c.json({ error: t("err.ratelimit") }, 429);
+
 	const existing = await getComment(c.env.DB, id);
 	if (!existing) return c.json({ error: t("err.not_found") }, 404);
 
-	const session = await readSession(c);
-	const sessionUserId = session?.user_id;
-	if (!sessionUserId || sessionUserId !== existing.user_id) {
+	if (sessionUserId !== existing.user_id) {
 		return c.json({ error: t("err.edit.not_author") }, 403);
 	}
 
@@ -906,14 +972,23 @@ comments.patch("/:id", async (c) => {
 
 comments.delete("/:id", async (c) => {
 	const id = c.req.param("id");
-	const existing = await getComment(c.env.DB, id);
-	if (!existing) return c.json({ error: t("err.not_found") }, 404);
 
+	// Same ordering as PATCH above: session, then budget, then the D1 read.
 	const session = await readSession(c);
 	const sessionUserId = session?.user_id;
 	if (!sessionUserId) {
 		return c.json({ error: t("err.delete.not_author") }, 403);
 	}
+
+	const rl = await checkRateLimit(c.req.url, `user:${sessionUserId}`, {
+		scope: "comment-mutate",
+		config: MUTATE_COMMENT_LIMITS,
+	});
+	if (!rl.ok) return c.json({ error: t("err.ratelimit") }, 429);
+
+	const existing = await getComment(c.env.DB, id);
+	if (!existing) return c.json({ error: t("err.not_found") }, 404);
+
 	if (sessionUserId !== existing.user_id) {
 		// Admin override: allow admins to delete any comment via the public
 		// API, mirroring the moderation queue's delete action. Editing
