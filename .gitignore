@@ -83,6 +83,11 @@ SOURCE-DESIGN.md
 NOTES.md
 docs/superpowers/
 
+# Security audit reports. These are roadmaps of *unpatched* vulnerabilities and
+# this repo is public — publishing one hands an attacker the exploit list. Keep
+# them local; fold the findings into commits and discard the report.
+SECURITY-AUDIT-*.md
+
 # Lockfiles from package managers we don't use
 yarn.lock
 pnpm-lock.yaml
