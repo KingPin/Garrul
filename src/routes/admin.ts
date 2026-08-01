@@ -1116,7 +1116,10 @@ admin.get("/usage", async (c) => {
 	}
 	// Verify the token before hitting GraphQL — surfaces revoked / wrong-
 	// scope tokens with a clear error instead of cryptic GraphQL failures.
-	const tokenOk = await verifyToken(c.env.CF_API_TOKEN as string);
+	const tokenOk = await verifyToken(
+		c.env.CF_API_TOKEN as string,
+		c.env.CF_ACCOUNT_ID as string,
+	);
 	if (!tokenOk.ok || tokenOk.status !== "active") {
 		const errMsg = tokenOk.ok ? `status:${tokenOk.status}` : tokenOk.error;
 		return c.html(

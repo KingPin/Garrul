@@ -25,7 +25,12 @@ export const isUsageConfigured = (env: {
 }): boolean => Boolean(env.CF_API_TOKEN && env.CF_ACCOUNT_ID);
 
 const CF_GRAPHQL_URL = "https://api.cloudflare.com/client/v4/graphql";
-const CF_VERIFY_URL = "https://api.cloudflare.com/client/v4/user/tokens/verify";
+const CF_USER_VERIFY_URL =
+	"https://api.cloudflare.com/client/v4/user/tokens/verify";
+const cfAccountVerifyUrl = (accountId: string): string =>
+	`https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(
+		accountId,
+	)}/tokens/verify`;
 const CACHE_TTL_SEC = 300; // 5 minutes
 const REQUEST_TIMEOUT_MS = 10_000;
 
@@ -62,13 +67,14 @@ export type TokenVerifyResult =
 	| { ok: true; status: "active" | "disabled" | "expired" }
 	| { ok: false; error: string };
 
-export const verifyToken = async (
+const probeVerify = async (
+	url: string,
 	token: string,
 ): Promise<TokenVerifyResult> => {
 	const controller = new AbortController();
 	const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 	try {
-		const res = await fetch(CF_VERIFY_URL, {
+		const res = await fetch(url, {
 			headers: { authorization: `Bearer ${token}` },
 			signal: controller.signal,
 		});
@@ -91,6 +97,43 @@ export const verifyToken = async (
 	} finally {
 		clearTimeout(timer);
 	}
+};
+
+/**
+ * Cloudflare issues two kinds of API token and each one is only
+ * verifiable at its own endpoint:
+ *
+ *   user-owned     -> /user/tokens/verify
+ *   account-owned  -> /accounts/{id}/tokens/verify   (`cfat`-prefixed)
+ *
+ * Probing the wrong endpoint returns 401 "Invalid API Token" even for a
+ * valid, correctly-scoped token. We used to probe only the user one, so
+ * every operator holding an account-owned token got the token-error page
+ * and never reached the GraphQL calls that would have worked fine.
+ *
+ * Try the account endpoint first — the dashboard flow our setup guide
+ * links to hands out account-owned tokens — and fall back to the user
+ * endpoint. The extra round trip is only paid by user-owned tokens.
+ *
+ * This is a token-validity check only, never an account check: the
+ * account endpoint ignores the ID in its path and verifies the bearer
+ * alone, so a wrong CF_ACCOUNT_ID still passes here and surfaces later
+ * as a per-panel `account_not_found` on the dashboard. Verified against
+ * the live API 2026-08-01.
+ */
+export const verifyToken = async (
+	token: string,
+	accountId?: string,
+): Promise<TokenVerifyResult> => {
+	if (!accountId) return probeVerify(CF_USER_VERIFY_URL, token);
+	const account = await probeVerify(cfAccountVerifyUrl(accountId), token);
+	if (account.ok) return account;
+	const user = await probeVerify(CF_USER_VERIFY_URL, token);
+	if (user.ok) return user;
+	// Both failed. Keep each probe's error instead of collapsing to one —
+	// the two can disagree (a transient 5xx on one, a hard 401 on the
+	// other), and the operator needs to see which said what.
+	return { ok: false, error: `account:${account.error} user:${user.error}` };
 };
 
 // -- date helpers ------------------------------------------------------------

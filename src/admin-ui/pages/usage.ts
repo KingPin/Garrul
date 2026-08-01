@@ -220,10 +220,16 @@ export const renderUsageTokenError = (
     Cloudflare's verify endpoint returned: <code>${escapeHtml(error)}</code>.
   </p>
   <p>
-    Common causes: the token was revoked, the wrong account ID is set,
-    or a scope was dropped. Re-create the token with the three scopes
-    listed in the setup guide and run <code>wrangler secret put
+    Common causes: the token was revoked or expired, or the stored value
+    was truncated when it was set. Re-create the token with the three
+    scopes listed in the setup guide and run <code>wrangler secret put
     CF_API_TOKEN</code> again.
+  </p>
+  <p class="muted">
+    Both account-owned (<code>cfat</code>-prefixed) and user-owned tokens
+    are accepted — Garrul probes each verify endpoint. A dropped scope or
+    a wrong <code>CF_ACCOUNT_ID</code> does <em>not</em> land here: those
+    surface as a per-panel error on the dashboard instead.
   </p>
 </div>
 ${byHostPanel(byHost)}`;
