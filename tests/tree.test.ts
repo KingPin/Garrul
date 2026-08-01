@@ -11,7 +11,6 @@ const author = (id: string, name = id, provider = "anon"): TreeAuthor => ({
 	id,
 	name,
 	provider,
-	is_admin: false,
 	avatar_svg: null,
 	avatar_url: null,
 });

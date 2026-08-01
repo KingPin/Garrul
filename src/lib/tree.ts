@@ -22,11 +22,16 @@
 
 import type { Comment, TreeComment } from "../db/queries";
 
+/**
+ * Deliberately no `is_admin`/`role`: the tree is served to anonymous readers,
+ * and a per-author privilege flag in it lets anyone enumerate which accounts
+ * are worth attacking. `role` was already withheld; `is_admin` was the same
+ * fact under an older name. Nothing in the widget rendered a badge from it.
+ */
 export type TreeAuthor = {
 	id: string;
 	name: string;
 	provider: string;
-	is_admin: boolean;
 	avatar_svg: string | null;
 	avatar_url: string | null;
 };
@@ -174,7 +179,6 @@ const buildAuthor = (
 		id: user_id,
 		name: "unknown",
 		provider: "anon",
-		is_admin: false,
 		avatar_svg: null,
 		avatar_url: null,
 	};

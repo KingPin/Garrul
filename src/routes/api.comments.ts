@@ -204,11 +204,13 @@ const serializeComment = (c: Comment, author: User) => {
 		deleted_at: c.deleted_at,
 		deleted_by: isDeleted ? c.deleted_by : null,
 		created_at: c.created_at,
+		// No `is_admin` here either — see the TreeAuthor comment in lib/tree.ts.
+		// This is the POST/PATCH echo of a single comment, but it's the same
+		// public surface and the widget renders both through one code path.
 		author: {
 			id: author.id,
 			name: author.name,
 			provider: author.provider,
-			is_admin: author.is_admin,
 			avatar_svg: author.avatar_url ? null : identiconSvg(author.id),
 			avatar_url: author.avatar_url,
 		},
@@ -698,7 +700,6 @@ const loadAuthors = async (
 				id: user.id,
 				name: user.name,
 				provider: user.provider,
-				is_admin: user.is_admin,
 				avatar_url: user.avatar_url,
 				avatar_svg: user.avatar_url ? null : identiconSvg(user.id),
 			});

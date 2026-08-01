@@ -32,11 +32,12 @@
 
 import { loadErrorMessage } from "./load-error";
 
+// Mirrors lib/tree.ts's TreeAuthor. No `is_admin`: the API stopped sending it
+// (it let anyone enumerate privileged accounts) and nothing here rendered it.
 type TreeAuthor = {
 	id: string;
 	name: string;
 	provider: string;
-	is_admin: boolean;
 	avatar_svg: string | null;
 	avatar_url: string | null;
 };
