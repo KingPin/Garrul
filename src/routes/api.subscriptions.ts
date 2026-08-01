@@ -4,9 +4,11 @@
  * GET  /api/v1/subscribe/unsubscribe/:token
  *
  * Subscription model:
- *   - One row per (post_slug, email). Re-subscribing the same address
- *     re-activates the row and rotates its unsubscribe token (the old
- *     unsubscribe link becomes inert).
+ *   - One row per (post_slug, email). This endpoint is unauthenticated and
+ *     takes an arbitrary address, so re-subscribing an existing address is
+ *     deliberately non-destructive: it keeps the row's unsubscribe token and
+ *     does not un-cancel it. See `upsertSubscription` for what each branch is
+ *     allowed to touch and why.
  *   - Tokens are 32 random bytes hex-encoded. We don't sign them with
  *     JWT_SECRET because storage + lookup is just as cheap and avoids
  *     a class of "I forgot to invalidate the secret" bugs.
@@ -184,9 +186,10 @@ subscriptions.get("/confirm/:token", async (c) => {
 		return c.html(pageHtml("Link expired or already used."));
 	}
 
-	if (sub.confirmed_at == null) {
-		await confirmSubscription(c.env.DB, sub.id);
-	}
+	// Idempotent by its WHERE clause, so no pre-read guard is needed: a mail
+	// client's prefetch may already have confirmed the row, and the human's later
+	// click still has to land on the success page.
+	await confirmSubscription(c.env.DB, sub.id);
 
 	const post = await getPost(c.env.DB, sub.post_slug);
 	const postLabel = post?.title ?? sub.post_slug;

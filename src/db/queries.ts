@@ -1457,14 +1457,27 @@ export type Subscription = {
  *
  * `auto_confirm` is passed by the route only when the caller is a logged-in
  * user submitting their own provider-verified email — that path skips the
- * email-loop because the user has already proved control of the inbox.
+ * email-loop because the user has already proved control of the inbox. It is
+ * therefore the *only* unattended signal that whoever is POSTing owns the
+ * address, and every destructive branch below hangs off it.
  *
- * Re-subscribing the same address:
- *   - rotates the unsubscribe `token` and clears `unsubscribed_at` so the
- *     row is live again,
- *   - leaves `confirmed_at` alone if it was already set (you don't have to
- *     re-confirm an already-confirmed address — but you DO have to confirm
- *     a never-confirmed re-attempt; we rotate `confirm_token` for that case).
+ * POST /subscribe is unauthenticated and takes an arbitrary email, so an
+ * existing row must survive a stranger naming it. This used to run
+ * `token = excluded.token` and `unsubscribed_at = NULL` unconditionally, which
+ * meant anyone could (a) invalidate every unsubscribe link already sitting in a
+ * victim's mailbox, and (b) resurrect a subscription they had cancelled — with
+ * `confirmed_at` preserved, so no confirmation mail fired and the victim was
+ * never told.
+ *
+ * Re-subscribing the same address now:
+ *   - keeps the existing unsubscribe `token`, unless `auto_confirm` proves the
+ *     requester owns the inbox;
+ *   - leaves `unsubscribed_at` set. A cancelled row comes back only through the
+ *     confirm link (see `confirmSubscription`), or immediately on
+ *     `auto_confirm`. Its `confirmed_at` is reset so that link is required;
+ *   - refreshes `confirm_token` while the row is unconfirmed, so a legitimate
+ *     "resend me the link" works;
+ *   - is a complete no-op on a live confirmed row.
  */
 export const upsertSubscription = async (
 	db: D1Database,
@@ -1485,15 +1498,31 @@ export const upsertSubscription = async (
 			    confirm_token, confirmed_at)
 			 VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?)
 			 ON CONFLICT(post_slug, email) DO UPDATE SET
-			   token = excluded.token,
-			   unsubscribed_at = NULL,
-			   -- only refresh confirm_token if the row is still unconfirmed;
-			   -- if already confirmed we don't reset it (preserves one-shot).
-			   confirm_token = CASE WHEN subscriptions.confirmed_at IS NULL
+			   -- excluded.confirmed_at is non-NULL only on the auto_confirm path,
+			   -- i.e. only when the requester has proved they own this inbox. That
+			   -- is the one case allowed to rotate the token an unsubscribe link
+			   -- already depends on, or to revive a cancelled row.
+			   token = CASE WHEN excluded.confirmed_at IS NOT NULL
+			                THEN excluded.token
+			                ELSE subscriptions.token END,
+			   unsubscribed_at = CASE WHEN excluded.confirmed_at IS NOT NULL
+			                          THEN NULL
+			                          ELSE subscriptions.unsubscribed_at END,
+			   -- Refresh the link while the row can't receive digests anyway
+			   -- (never confirmed, or cancelled). On a live confirmed row we keep
+			   -- the existing value so re-subscribing is inert.
+			   confirm_token = CASE WHEN excluded.confirmed_at IS NOT NULL
+			                        THEN NULL
+			                        WHEN subscriptions.confirmed_at IS NULL
+			                          OR subscriptions.unsubscribed_at IS NOT NULL
 			                        THEN excluded.confirm_token
 			                        ELSE subscriptions.confirm_token END,
 			   confirmed_at  = CASE WHEN excluded.confirmed_at IS NOT NULL
 			                        THEN excluded.confirmed_at
+			                        -- Coming back from an unsubscribe is a fresh
+			                        -- opt-in, not a restore.
+			                        WHEN subscriptions.unsubscribed_at IS NOT NULL
+			                        THEN NULL
 			                        ELSE subscriptions.confirmed_at END`,
 		)
 		.bind(
@@ -1550,28 +1579,41 @@ export const getSubscriptionByConfirmToken = async (
 		.first<Subscription>();
 };
 
-// We deliberately do NOT clear `confirm_token` here. Mail clients
-// (Gmail, Outlook, corporate link-scanners) routinely prefetch every
-// URL in an inbound email — if the first GET nulled the token, the
-// human's later click would land on a 404 "link expired" page even
-// though the address was already confirmed by the bot's prefetch.
-// Leaving the token alive makes the GET handler idempotent: the
-// re-click finds the row, sees confirmed_at is set, and renders the
-// success page again. The token never grants more than the same
-// (already-exercised) confirm capability, so leaving it valid is safe.
+/**
+ * Confirm a pending subscription. Returns whether *this* call was the one that
+ * confirmed it, so a caller can tell a real confirmation from a replay.
+ *
+ * `confirmed_at IS NULL` is load-bearing, not just an optimisation. It is what
+ * makes the call idempotent, and — since confirming also clears
+ * `unsubscribed_at` — what stops a confirm link from resurrecting a
+ * subscription the recipient later cancelled. A cancelled row keeps its
+ * `confirmed_at`, so it is not eligible; re-subscribing resets that field and
+ * issues a fresh token, which retires the old link.
+ *
+ * We deliberately do NOT clear `confirm_token` here. Mail clients
+ * (Gmail, Outlook, corporate link-scanners) routinely prefetch every
+ * URL in an inbound email — if the first GET nulled the token, the
+ * human's later click would land on a 404 "link expired" page even
+ * though the address was already confirmed by the bot's prefetch.
+ * Leaving the token alive makes the GET handler idempotent: the
+ * re-click finds the row, sees confirmed_at is set, and renders the
+ * success page again. The token never grants more than the same
+ * (already-exercised) confirm capability, so leaving it valid is safe.
+ */
 export const confirmSubscription = async (
 	db: D1Database,
 	id: string,
-): Promise<void> => {
+): Promise<boolean> => {
 	const now = Date.now();
-	await db
+	const res = await db
 		.prepare(
 			`UPDATE subscriptions
-			    SET confirmed_at = ?
+			    SET confirmed_at = ?, unsubscribed_at = NULL
 			  WHERE id = ? AND confirmed_at IS NULL`,
 		)
 		.bind(now, id)
 		.run();
+	return (res.meta?.changes ?? 0) > 0;
 };
 
 export const countPendingSubscriptionsForEmail = async (
