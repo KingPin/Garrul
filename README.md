@@ -19,6 +19,9 @@ billing, your data stays in your account.
 - **Telegram operator bot** — moderate from your phone with inline buttons,
   query the queue with `/queue` & `/stats`, optional daily digest
 
+Every doc in the repo, grouped by task:
+[`docs/README.md`](docs/README.md).
+
 ## Install
 
 Deploying to production takes ~20 minutes the first time. Step-by-step
