@@ -44,9 +44,19 @@ const mk = (
 	ip_hash: null,
 	user_agent: null,
 	created_at,
+	// Stored depth is irrelevant to these tests: buildTree derives render depth
+	// from the traversal, not from the column (a re-parented import would
+	// otherwise report a depth that doesn't match where it renders).
+	depth: 1,
 	score_up: 0,
 	score_down: 0,
 });
+
+/** Chain of `n` comments, each a reply to the previous. */
+const chain = (n: number): Comment[] =>
+	Array.from({ length: n }, (_, i) =>
+		mk(`c${i}`, i === 0 ? null : `c${i - 1}`, 1000 + i),
+	);
 
 describe("buildTree — basic shape and order", () => {
 	it("returns top-level threads sorted by created_at ASC", () => {
@@ -112,6 +122,85 @@ describe("buildTree — depth cap", () => {
 		expect(lifted[0]!.flatten_from).toBe(`user-${MAX_DEPTH - 1}`);
 		expect(lifted[1]!.depth).toBe(MAX_DEPTH);
 		expect(lifted[1]!.flatten_from).toBe(`user-${MAX_DEPTH}`);
+	});
+
+	it("keeps flattened descendants in DFS pre-order when a branch forks past the cap", () => {
+		// Branching past the flatten threshold is where an iterative builder can
+		// silently reorder: every lifted node lands in the *same* array, so a
+		// breadth-first pop would interleave sibling subtrees. Each lifted node
+		// must still sit directly after the node it was lifted out of.
+		const rows = [
+			...Array.from({ length: MAX_DEPTH + 1 }, (_, d) =>
+				mk(`d${d}`, d === 0 ? null : `d${d - 1}`, 100 + d, `u${d}`),
+			),
+			mk("forkA", `d${MAX_DEPTH}`, 200, "ua"),
+			mk("forkB", `d${MAX_DEPTH}`, 300, "ub"),
+			mk("leafA", "forkA", 400, "ul"),
+		];
+		const authors = [
+			...Array.from({ length: MAX_DEPTH + 1 }, (_, i) => author(`u${i}`, `user-${i}`)),
+			author("ua", "user-a"),
+			author("ub", "user-b"),
+			author("ul", "user-l"),
+		];
+		const { threads } = buildTree(rows, usersById(...authors));
+
+		let node = threads[0];
+		for (let d = 0; d < MAX_DEPTH - 1; d++) node = node?.replies[0];
+		const lifted = node?.replies ?? [];
+		expect(lifted.map((n) => n.id)).toEqual([
+			`d${MAX_DEPTH}`,
+			"forkA",
+			"leafA",
+			"forkB",
+		]);
+		expect(lifted.every((n) => n.depth === MAX_DEPTH)).toBe(true);
+		// flatten_from always names the *real* parent, not the node above it in
+		// the flattened list.
+		expect(lifted.map((n) => n.flatten_from)).toEqual([
+			`user-${MAX_DEPTH - 1}`,
+			`user-${MAX_DEPTH}`,
+			"user-a",
+			`user-${MAX_DEPTH}`,
+		]);
+	});
+});
+
+describe("buildTree — bounded complexity and malformed input", () => {
+	it("assembles a 20,000-deep chain without recursing or going quadratic", () => {
+		// The old builder recursed once per level *including past the flatten
+		// threshold*, so a chain this long threw RangeError, and keepableSet
+		// re-walked the full ancestor chain per node — O(N^2), measured at 223ms
+		// for 5,000 against a 10ms CPU budget. Linear work here is tens of ms;
+		// the quadratic version needs seconds at this size.
+		const rows = chain(20_000);
+		const started = performance.now();
+		const { threads } = buildTree(rows, usersById(author("u1")));
+		const elapsed = performance.now() - started;
+
+		const count = (n: (typeof threads)[number]): number =>
+			1 + n.replies.reduce((sum, r) => sum + count(r), 0);
+		expect(threads).toHaveLength(1);
+		expect(count(threads[0]!)).toBe(20_000); // nothing dropped
+		expect(elapsed).toBeLessThan(1000);
+	});
+
+	it("terminates on a malformed parent_id cycle instead of looping forever", () => {
+		// parent_id cannot cycle today (a reply can only point at a comment that
+		// already existed), but the failure mode of being wrong about that is a
+		// hung request, not a bad render.
+		const rows = [mk("root", null, 50), mk("a", "b", 100), mk("b", "a", 200)];
+		const { threads } = buildTree(rows, usersById(author("u1")));
+		// A cycle is unreachable from a top-level thread, so it simply renders
+		// nothing — the point is that we get here at all.
+		expect(threads.map((t) => t.id)).toEqual(["root"]);
+		expect(threads[0]!.replies).toEqual([]);
+	});
+
+	it("emits a duplicated row only once", () => {
+		const rows = [mk("root", null, 50), mk("dup", "root", 100), mk("dup", "root", 100)];
+		const { threads } = buildTree(rows, usersById(author("u1")));
+		expect(threads[0]!.replies.map((r) => r.id)).toEqual(["dup"]);
 	});
 });
 
