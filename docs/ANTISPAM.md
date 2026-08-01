@@ -7,7 +7,7 @@ Garrul defends against spam in layers. The base protections below are **always o
 These don't need configuration; they ship with every Garrul instance:
 
 - **Turnstile** — Cloudflare's CAPTCHA-alternative. Required for anonymous POSTs whenever `TURNSTILE_SITE_KEY` is set.
-- **Rate-limit** — KV-backed sliding window keyed on the hashed client IP. 1 comment per 10s and 5 per 10 min by default.
+- **Rate-limit** — sliding window on the edge Cache API (not KV), keyed on the hashed client IP for anonymous callers and on the user id for signed-in ones. 1 anonymous comment per 10s and 5 per 10 min by default; signed-in authors get 3 per 10s and 60 per 10 min. Every caller is also held under one shared per-identity envelope across all endpoints. Counters are per-datacenter, so a globally distributed attacker sees a looser effective limit than a single client does.
 - **Markdown sanitizer** — strict allowlist; only `https:`/`http:`/`mailto:` links survive, raw HTML and `<img>` are dropped, every link gets `rel="nofollow ugc"`.
 - **Field honeypot** — a hidden `website` input in the embed form. If a bot fills it, the POST is rejected with HTTP 400.
 
