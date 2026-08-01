@@ -41,8 +41,31 @@ const SESSION_REFRESH_SECONDS = 24 * 60 * 60;
 const SESSION_ID_RE = /^[0-9a-f]{64}$/;
 const sessionKey = (sid: string): string => `sess:${sid}`;
 
+/**
+ * Per-user session revocation epoch: every session issued at or before this
+ * timestamp is dead.
+ *
+ * The only session key is `sess:<sid>`, so there is no reverse index a ban
+ * could walk to delete a user's sessions — and because readSession *slides*
+ * the 30-day TTL, an active banned user's cookie would otherwise never expire.
+ * A ban stamps this key instead and readSession compares it against the
+ * session's `issued_at`. That costs one extra KV **read** per authenticated
+ * request, deliberately spending the abundant quota (reads) rather than the
+ * scarce one — KV writes are capped at 1000/day *account-wide*, which is the
+ * outage primitive this project has already been burned by.
+ *
+ * The stamp is not cleared on unban: it stays a cutoff so cookies minted before
+ * the ban can never come back to life. A subsequent fresh login gets a newer
+ * `issued_at` and is unaffected.
+ */
+const revocationKey = (userId: string): string => `sessrev:${userId}`;
+
 type SessionRecord = {
 	user_id: string;
+	// Set once at issue and never moved. `expires_at` can't stand in for it:
+	// the sliding TTL pushes that forward, which would let a session outrun a
+	// revocation stamp simply by staying active.
+	issued_at: number;
 	expires_at: number;
 };
 
@@ -141,9 +164,11 @@ export const issueSession = async (
 	userId: string,
 ): Promise<string> => {
 	const sid = newSessionId();
+	const now = Date.now();
 	const record: SessionRecord = {
 		user_id: userId,
-		expires_at: Date.now() + SESSION_TTL_SECONDS * 1000,
+		issued_at: now,
+		expires_at: now + SESSION_TTL_SECONDS * 1000,
 	};
 	await c.env.SESSIONS.put(sessionKey(sid), JSON.stringify(record), {
 		expirationTtl: SESSION_TTL_SECONDS,
@@ -165,6 +190,20 @@ export const revokeSession = async (c: SessionCtx): Promise<void> => {
 	if (sid && SESSION_ID_RE.test(sid)) {
 		await c.env.SESSIONS.delete(sessionKey(sid));
 	}
+};
+
+/**
+ * Kill every session this user currently holds, without needing to enumerate
+ * them. Called when a user is banned — see `revocationKey`.
+ */
+export const revokeUserSessions = async (
+	env: Pick<Env, "SESSIONS">,
+	userId: string,
+): Promise<void> => {
+	await env.SESSIONS.put(revocationKey(userId), String(Date.now()), {
+		// No session can outlive the TTL, so neither does the stamp.
+		expirationTtl: SESSION_TTL_SECONDS,
+	});
 };
 
 export const destroySession = async (c: SessionCtx): Promise<void> => {
@@ -190,6 +229,20 @@ export const readSession = async (
 	if (record.expires_at < now) {
 		await c.env.SESSIONS.delete(sessionKey(sid));
 		return null;
+	}
+	// Revocation, checked before the TTL slide below so a dead session is never
+	// refreshed on its way out.
+	const revoked = await c.env.SESSIONS.get(revocationKey(record.user_id));
+	if (revoked !== null) {
+		const epoch = Number(revoked);
+		// A record written before `issued_at` existed reads as 0, so any
+		// revocation kills it. An unparseable stamp is treated as revoking
+		// everything: it can only come from our own write, and failing closed on
+		// a ban is the safe direction.
+		if (!Number.isFinite(epoch) || (record.issued_at ?? 0) <= epoch) {
+			await c.env.SESSIONS.delete(sessionKey(sid));
+			return null;
+		}
 	}
 	// Sliding TTL, but only re-write once the record has aged past the refresh
 	// interval — avoids a KV write on every authenticated request.

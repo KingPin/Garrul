@@ -13,6 +13,7 @@ import {
 	issueSession,
 	readSession,
 	revokeSession,
+	revokeUserSessions,
 } from "../src/lib/session";
 
 class StubKV {
@@ -26,11 +27,15 @@ class StubKV {
 		}
 		return row.value;
 	}
+	// Counted so a test can prove readSession did *not* re-write the record —
+	// the sliding TTL is the reason a ban needs a revocation stamp at all.
+	puts = 0;
 	async put(
 		key: string,
 		value: string,
 		opts?: { expirationTtl?: number },
 	): Promise<void> {
+		this.puts++;
 		const ttl = opts?.expirationTtl ?? 60 * 60;
 		this.store.set(key, { value, expiresAt: Date.now() + ttl * 1000 });
 	}
@@ -277,6 +282,152 @@ describe("session cookie roundtrip", () => {
 		expect(sc).toMatch(/SameSite=Lax/);
 		expect(sc).not.toMatch(/Secure/);
 		expect(sc).not.toMatch(/Partitioned/);
+	});
+});
+
+/**
+ * Session revocation on ban. There is no reverse index from user to sessions, so
+ * a ban stamps a per-user epoch and readSession compares it to the session's
+ * immutable `issued_at`.
+ */
+describe("session revocation epoch", () => {
+	const userId = "01HXXXXXXXXXXXXXXXXXXXXXXX";
+
+	// Rewrite the stored record's issued_at so the before/after relationship to a
+	// revocation stamp is deterministic — a real ban and a real login can land in
+	// the same millisecond.
+	const setIssuedAt = (kv: StubKV, sid: string, issuedAt: number): void => {
+		const key = `sess:${sid}`;
+		const row = kv.store.get(key)!;
+		const record = JSON.parse(row.value) as Record<string, unknown>;
+		record.issued_at = issuedAt;
+		kv.store.set(key, {
+			value: JSON.stringify(record),
+			expiresAt: row.expiresAt,
+		});
+	};
+
+	const issue = async (): Promise<{ kv: StubKV; sid: string }> => {
+		const { ctx, kv, setCookies } = makeCtx({});
+		await issueSession(ctx, userId);
+		return { kv, sid: extractCookieValue(setCookies[0]!) };
+	};
+
+	it("issueSession stamps an issued_at that never moves", async () => {
+		const { kv, sid } = await issue();
+		const record = JSON.parse(kv.store.get(`sess:${sid}`)!.value) as {
+			issued_at: number;
+			expires_at: number;
+		};
+		expect(record.issued_at).toBeGreaterThan(0);
+		expect(record.expires_at).toBeGreaterThan(record.issued_at);
+	});
+
+	it("rejects a session issued before the ban and deletes its record", async () => {
+		const { kv, sid } = await issue();
+		setIssuedAt(kv, sid, Date.now() - 5_000);
+		await revokeUserSessions({ SESSIONS: kv as unknown as KVNamespace }, userId);
+
+		const { ctx } = makeCtxWithSameKv(kv, {
+			cookieHeader: `garrul_sess=${sid}`,
+		});
+		expect(await readSession(ctx)).toBeNull();
+		// Purged, so the cookie is inert without paying the extra read next time.
+		expect(kv.store.has(`sess:${sid}`)).toBe(false);
+	});
+
+	it("keeps a session issued after the ban (re-login after unban)", async () => {
+		const { ctx: issueCtx, kv, setCookies } = makeCtx({});
+		// Stamp first, dated in the past, then log in.
+		await kv.put(`sessrev:${userId}`, String(Date.now() - 5_000));
+		await issueSession(issueCtx, userId);
+		const sid = extractCookieValue(setCookies[0]!);
+
+		const { ctx } = makeCtxWithSameKv(kv, {
+			cookieHeader: `garrul_sess=${sid}`,
+		});
+		expect((await readSession(ctx))?.user_id).toBe(userId);
+		expect(kv.store.has(`sess:${sid}`)).toBe(true);
+	});
+
+	it("kills a legacy record that predates issued_at", async () => {
+		const { kv, sid } = await issue();
+		const key = `sess:${sid}`;
+		const row = kv.store.get(key)!;
+		// Exactly the shape written before this field existed.
+		kv.store.set(key, {
+			value: JSON.stringify({
+				user_id: userId,
+				expires_at: Date.now() + 29 * 24 * 60 * 60 * 1000,
+			}),
+			expiresAt: row.expiresAt,
+		});
+		await revokeUserSessions({ SESSIONS: kv as unknown as KVNamespace }, userId);
+
+		const { ctx } = makeCtxWithSameKv(kv, {
+			cookieHeader: `garrul_sess=${sid}`,
+		});
+		expect(await readSession(ctx)).toBeNull();
+		expect(kv.store.has(key)).toBe(false);
+	});
+
+	it("fails closed on an unparseable stamp", async () => {
+		const { kv, sid } = await issue();
+		await kv.put(`sessrev:${userId}`, "not-a-timestamp");
+
+		const { ctx } = makeCtxWithSameKv(kv, {
+			cookieHeader: `garrul_sess=${sid}`,
+		});
+		expect(await readSession(ctx)).toBeNull();
+		expect(kv.store.has(`sess:${sid}`)).toBe(false);
+	});
+
+	it("does not slide the TTL of a session it is about to revoke", async () => {
+		const { kv, sid } = await issue();
+		const key = `sess:${sid}`;
+		const row = kv.store.get(key)!;
+		// Age it past the refresh interval so an unrevoked read *would* re-write.
+		kv.store.set(key, {
+			value: JSON.stringify({
+				user_id: userId,
+				issued_at: Date.now() - 2 * 24 * 60 * 60 * 1000,
+				expires_at: Date.now() + (30 - 2) * 24 * 60 * 60 * 1000,
+			}),
+			expiresAt: row.expiresAt,
+		});
+		await revokeUserSessions({ SESSIONS: kv as unknown as KVNamespace }, userId);
+		const putsBefore = kv.puts;
+
+		const { ctx } = makeCtxWithSameKv(kv, {
+			cookieHeader: `garrul_sess=${sid}`,
+		});
+		expect(await readSession(ctx)).toBeNull();
+		// A revoked session must never cost a KV write on its way out.
+		expect(kv.puts).toBe(putsBefore);
+	});
+
+	it("a stamp for another user leaves this session alone", async () => {
+		const { kv, sid } = await issue();
+		setIssuedAt(kv, sid, Date.now() - 5_000);
+		await revokeUserSessions(
+			{ SESSIONS: kv as unknown as KVNamespace },
+			"01HOTHERUSER00000000000000",
+		);
+
+		const { ctx } = makeCtxWithSameKv(kv, {
+			cookieHeader: `garrul_sess=${sid}`,
+		});
+		expect((await readSession(ctx))?.user_id).toBe(userId);
+	});
+
+	it("the stamp expires with the longest possible session", async () => {
+		const { kv } = await issue();
+		await revokeUserSessions({ SESSIONS: kv as unknown as KVNamespace }, userId);
+		const row = kv.store.get(`sessrev:${userId}`)!;
+		// 30 days — a stamp outliving every session it could revoke is dead weight.
+		expect(row.expiresAt).toBeGreaterThan(
+			Date.now() + 29 * 24 * 60 * 60 * 1000,
+		);
 	});
 });
 

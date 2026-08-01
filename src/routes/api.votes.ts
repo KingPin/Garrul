@@ -19,15 +19,10 @@
  */
 import { Hono } from "hono";
 import type { Bindings } from "../index";
-import {
-	castVote,
-	getComment,
-	getOrCreateGhost,
-	type VoteValue,
-} from "../db/queries";
+import { castVote, getComment, type VoteValue } from "../db/queries";
+import { resolveActor } from "../lib/active-user";
 import { clientIp, hashIp } from "../lib/ip-hash";
 import { checkRateLimit } from "../lib/ratelimit";
-import { readSession } from "../lib/session";
 import { writeEvent } from "../lib/analytics";
 import { loadFlags } from "../lib/settings";
 import { t } from "../i18n";
@@ -87,14 +82,9 @@ votes.post("/", async (c) => {
 		return c.json({ error: t("err.ratelimit") }, 429);
 	}
 
-	const session = await readSession(c);
-	let userId: string;
-	if (session) {
-		userId = session.user_id;
-	} else {
-		const ghost = await getOrCreateGhost(c.env.DB, ipHash, "anon");
-		userId = ghost.id;
-	}
+	const actor = await resolveActor(c, ipHash);
+	if (!actor.ok) return c.json({ error: t("err.banned") }, 403);
+	const userId = actor.userId;
 
 	// Authors can't vote on their own comment. Works for both authenticated
 	// users (session user_id) and anonymous viewers (IP-hash ghost) because

@@ -24,6 +24,7 @@ import type { Bindings } from "../index";
 import { getComment, insertReport } from "../db/queries";
 import { clientIp, hashIp } from "../lib/ip-hash";
 import { checkRateLimit } from "../lib/ratelimit";
+import { requireActiveUser } from "../lib/active-user";
 import { readSession } from "../lib/session";
 import { writeEvent } from "../lib/analytics";
 import { fireWebhook } from "../lib/webhook";
@@ -65,7 +66,12 @@ reports.post("/:id/report", async (c) => {
 	const target = await getComment(c.env.DB, id);
 	if (!target || target.status === "deleted") return c.json({ ok: true });
 
+	// A banned user doesn't get to file reports: the queue is a moderator's
+	// inbox, and an unchecked ban leaves it usable for harassment.
 	const session = await readSession(c);
+	if (session && !(await requireActiveUser(c.env.DB, session.user_id))) {
+		return c.json({ error: t("err.banned") }, 403);
+	}
 	const isNew = await insertReport(c.env.DB, {
 		comment_id: id,
 		reporter_user_id: session?.user_id ?? null,

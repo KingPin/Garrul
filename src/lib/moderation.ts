@@ -20,6 +20,7 @@ import {
 	updateCommentStatus,
 } from "../db/queries";
 import type { Bindings } from "../index";
+import { revokeUserSessions } from "./session";
 import { bustTreeCache } from "./tree-cache";
 import { fireWebhook, type WebhookEvent } from "./webhook";
 
@@ -129,6 +130,10 @@ export const banUser = async (args: {
 	const target = await getUser(env.DB, userId);
 	if (!target) return { ok: false, error: "not_found" };
 	await setUserBanned(env.DB, userId, banned);
+	// A ban has to take their live sessions with it. `is_banned` alone doesn't:
+	// readSession slides the 30-day TTL, so an active banned user's cookie stays
+	// valid indefinitely. Not undone on unban — see revocationKey in session.ts.
+	if (banned) await revokeUserSessions(env, userId);
 	const fromComment =
 		typeof args.fromComment === "string" && args.fromComment.length > 0
 			? args.fromComment

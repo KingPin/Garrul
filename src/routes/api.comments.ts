@@ -49,6 +49,7 @@ import { sanitizePostTitle } from "../lib/post-title";
 import { clientIp, hashIp } from "../lib/ip-hash";
 import { CURRENT_RENDERER_VERSION, renderMarkdown, validateBody } from "../lib/markdown";
 import { checkRateLimit } from "../lib/ratelimit";
+import { requireActiveUser } from "../lib/active-user";
 import { readSession } from "../lib/session";
 import { verifyTurnstile } from "../lib/turnstile";
 import { writeEvent } from "../lib/analytics";
@@ -953,6 +954,13 @@ comments.patch("/:id", async (c) => {
 	});
 	if (!rl.ok) return c.json({ error: t("err.ratelimit") }, 429);
 
+	// Editing was the one write path a banned user kept: POST checks is_banned,
+	// this didn't, so anything already inside the edit window could be rewritten
+	// into whatever they liked.
+	if (!(await requireActiveUser(c.env.DB, sessionUserId))) {
+		return c.json({ error: t("err.banned") }, 403);
+	}
+
 	const existing = await getComment(c.env.DB, id);
 	if (!existing) return c.json({ error: t("err.not_found") }, 404);
 
@@ -1019,6 +1027,12 @@ comments.delete("/:id", async (c) => {
 		config: MUTATE_COMMENT_LIMITS,
 	});
 	if (!rl.ok) return c.json({ error: t("err.ratelimit") }, 429);
+
+	// Also covers the admin-override branch below, which reads is_admin without
+	// looking at is_banned.
+	if (!(await requireActiveUser(c.env.DB, sessionUserId))) {
+		return c.json({ error: t("err.banned") }, 403);
+	}
 
 	const existing = await getComment(c.env.DB, id);
 	if (!existing) return c.json({ error: t("err.not_found") }, 404);

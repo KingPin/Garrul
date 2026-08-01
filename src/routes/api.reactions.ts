@@ -9,10 +9,10 @@
  */
 import { Hono } from "hono";
 import type { Bindings } from "../index";
-import { getComment, getOrCreateGhost, toggleReaction } from "../db/queries";
+import { getComment, toggleReaction } from "../db/queries";
+import { resolveActor } from "../lib/active-user";
 import { clientIp, hashIp } from "../lib/ip-hash";
 import { checkRateLimit } from "../lib/ratelimit";
-import { readSession } from "../lib/session";
 import { writeEvent } from "../lib/analytics";
 import { loadFlags } from "../lib/settings";
 import { bustTreeCache } from "../lib/tree-cache";
@@ -59,16 +59,11 @@ reactions.post("/", async (c) => {
 		return c.json({ error: t("err.ratelimit") }, 429);
 	}
 
-	const session = await readSession(c);
-	let userId: string;
-	if (session) {
-		userId = session.user_id;
-	} else {
-		// Anonymous reactor: reuse the ghost user keyed on ip_hash so
-		// repeated clicks from the same browser/IP toggle the same row.
-		const ghost = await getOrCreateGhost(c.env.DB, ipHash, "anon");
-		userId = ghost.id;
-	}
+	// Anonymous reactors fall back to the ghost user keyed on ip_hash so
+	// repeated clicks from the same browser/IP toggle the same row.
+	const actor = await resolveActor(c, ipHash);
+	if (!actor.ok) return c.json({ error: t("err.banned") }, 403);
+	const userId = actor.userId;
 
 	const result = await toggleReaction(c.env.DB, comment_id, userId, kind);
 

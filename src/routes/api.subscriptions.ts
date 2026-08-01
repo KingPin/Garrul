@@ -31,10 +31,10 @@ import {
 	getPost,
 	getSubscriptionByConfirmToken,
 	getSubscriptionByToken,
-	getUser,
 	markSubscriptionUnsubscribed,
 	upsertSubscription,
 } from "../db/queries";
+import { requireActiveUser } from "../lib/active-user";
 import { clientIp, hashIp } from "../lib/ip-hash";
 import { checkRateLimit } from "../lib/ratelimit";
 import { renderConfirmEmailHtml } from "../lib/digest";
@@ -88,9 +88,12 @@ subscriptions.post("/", async (c) => {
 	let autoConfirm = false;
 	const session = await readSession(c);
 	if (session) {
-		const user = await getUser(c.env.DB, session.user_id);
+		// requireActiveUser, not getUser: a banned user must not get the
+		// skip-the-confirmation-email fast path, and shouldn't be subscribing
+		// under their account at all.
+		const user = await requireActiveUser(c.env.DB, session.user_id);
+		if (!user) return c.json({ error: t("err.banned") }, 403);
 		if (
-			user &&
 			user.email &&
 			user.email.toLowerCase() === email &&
 			PROVIDER_VERIFIED.has(user.provider)
