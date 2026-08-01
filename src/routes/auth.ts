@@ -48,6 +48,15 @@ import { log } from "../lib/log";
 const OAUTH_BIND_COOKIE_PREFIX = "garrul_oauth_b_";
 const OAUTH_BIND_TTL_SECONDS = 600;
 
+// `state` is always 48 lowercase hex chars (randomState in lib/oauth). Check
+// that on the way back in, *before* the value reaches bindCookieName: the first
+// 8 chars land in a Set-Cookie **name**, where a `;` or `=` would let an
+// unauthenticated caller append attributes to that header (a cookie-planting
+// primitive), a control character would make the runtime reject the header
+// outright, and an over-long value would just be a logged 500. verifyState
+// catches a wrong state, but only after it has already been interpolated.
+const STATE_RE = /^[0-9a-f]{48}$/;
+
 const bindCookieName = (state: string): string =>
 	`${OAUTH_BIND_COOKIE_PREFIX}${state.slice(0, 8)}`;
 
@@ -207,6 +216,9 @@ auth.get("/:provider/callback", async (c) => {
 	const code = c.req.query("code");
 	const state = c.req.query("state");
 	if (!code || !state) return c.text("missing code/state", 400);
+	// Same generic message verifyState failures get — a malformed state is not
+	// worth a distinguishable answer.
+	if (!STATE_RE.test(state)) return c.text("invalid state", 400);
 
 	// The signed payload lives in this flow's cookie. verifyState checks the
 	// signature, the 10-minute age bound, the provider, and — in constant
@@ -324,6 +336,11 @@ auth.post("/session/exchange", async (c) => {
 	}
 	const userId = await consumeHandoff(c.env.OAUTH_STATE, token);
 	if (!userId) return c.json({ error: "err.token.invalid" }, 400);
+	// Same reason /callback does it two functions up: without this, the sid this
+	// browser already holds stays live and replayable in KV for its full 30 days,
+	// so "sign out everywhere by signing in again" silently failed for every
+	// widget user — which is the only path that reaches this route.
+	await revokeSession(c);
 	await issueSession(c, userId);
 	return c.json({ ok: true });
 });
