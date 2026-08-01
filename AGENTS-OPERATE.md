@@ -842,8 +842,14 @@ all defaulted, shown so a new flag isn't invisible.
   serving traffic. Fix the deploy and re-run `npm run deploy`, or
   `wrangler rollback` to the prior deployment. Do **not** hand-revert
   the schema — Garrul migrations are additive.
-- **Deploy succeeds, rerender fails** → warn only; the renderer is
-  lazy-on-read, so stored comments still resolve correctly.
+- **Deploy succeeds, rerender fails** → warn only; the instance keeps
+  serving and new comments render with the new sanitizer. But it is **not**
+  self-healing: `body_html` is rendered once at write time and served
+  verbatim, with no re-render on read, so every pre-existing comment keeps
+  its old markup until the rerender actually completes. Re-run
+  `npm run rerender -- --remote`, or use `/admin/operator` → Rerender.
+  Treat it as required, not cosmetic, when the bump was made for a
+  sanitizer change — see the renderer-version note below.
 
 **Migration ordering.** Always migrate **before** deploying new Worker
 code. The orchestrator enforces this. If you step through manually:
@@ -865,6 +871,27 @@ npm run rerender -- --remote   # only if the renderer version bumped
 ```
 
 Back up first — see §11.
+
+### Renderer version
+
+`release-manifest.json` carries `renderer.version` (mirroring
+`CURRENT_RENDERER_VERSION` in `src/lib/markdown.ts`) and
+`renderer.eagerRerender`. A bump means the markdown sanitizer's output
+changed. Because `body_html` is written once and served verbatim, the change
+reaches **new** comments immediately and **existing** ones only when you
+re-render; `eagerRerender: true` tells the upgrade orchestrator to run it
+without asking. It is safe to re-run and resumable — it pages through
+comments whose `renderer_version` is below the target.
+
+Bumps so far:
+
+- **1 → 2** — GFM task-list checkboxes stopped emitting
+  `<input type="checkbox">` (a disabled form control in user-generated
+  content, outside the tag allowlist) and now render as literal `[ ]` / `[x]`
+  text; the `class="language-…"` on fenced code is dropped unless the info
+  string looks like a language label. Nothing else in the output changed, and
+  no comment text is altered — `body_md` is the source of truth and is
+  re-rendered from, not edited.
 
 ### Update notifications
 

@@ -59,7 +59,7 @@ Session cookies are `SameSite=None; Secure; HttpOnly; Partitioned`. Cross-site e
 Browser CSRF defense is the `Origin` header allowlist (reuses `ALLOWED_ORIGINS`). Every state-changing route (`POST/PATCH/DELETE`) goes through the origin check middleware.
 
 ### Markdown
-Server-side render via `marked` with a strict allowlist renderer in `src/lib/markdown.ts`. Allowed: `p br em strong code pre a blockquote ul ol li`. No raw HTML. No images. Links auto-get `rel="nofollow ugc"`. URLs validated against `^(https?:|mailto:)`. Every comment stores `body_md`, `body_html`, and `renderer_version`. Bump `CURRENT_RENDERER_VERSION` to trigger a re-render via `scripts/rerender.ts`.
+Server-side render via `marked` with a strict allowlist renderer in `src/lib/markdown.ts`. Allowed tags: `p br em strong del code pre a blockquote ul ol li`. Allowed attributes: `href`/`rel`/`target`/`title` on `<a>`, and `class="language-…"` on `<code>` (clamped to `CODE_LANG_RE`) — nothing else, on any tag. No raw HTML. No images. No tables. Task-list checkboxes render as literal `[ ]`/`[x]` text, not `<input>`. Links auto-get `rel="nofollow ugc noopener" target="_blank"`. URLs validated against `^(https?:|mailto:)`. Every comment stores `body_md`, `body_html`, and `renderer_version`. Bump `CURRENT_RENDERER_VERSION` when emitted HTML changes and re-render via `npm run rerender` (or `/admin/operator` → Rerender); `body_html` is served verbatim, so existing comments do not pick up a sanitizer change on their own.
 
 ### Sessions
 Random 32-byte session ID in an HttpOnly cookie, KV-looked-up. No JWT. KV `SESSIONS` namespace, 30-day TTL, refreshed on use.
