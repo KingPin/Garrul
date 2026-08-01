@@ -147,7 +147,10 @@ telegram.post("/webhook", async (c) => {
 	const fromId =
 		update.callback_query?.from?.id ?? update.message?.from?.id ?? null;
 	if (fromId != null) {
-		const rl = await checkRateLimit(c.env, `tg:${fromId}`, TELEGRAM_RATE_LIMIT);
+		const rl = await checkRateLimit(c.req.url, `tg:${fromId}`, {
+			scope: "telegram",
+			config: TELEGRAM_RATE_LIMIT,
+		});
 		if (!rl.ok) {
 			// Tell the operator instead of dropping silently. Callbacks answer as
 			// a toast; messages get a reply so a throttled command isn't a no-op.

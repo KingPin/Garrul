@@ -26,6 +26,12 @@ import { sessionMiddleware } from "./lib/session";
 
 export type Bindings = {
 	DB: D1Database;
+	// Named for its original use; the rate limiter moved to the Cache API
+	// (see lib/ratelimit.ts) because KV's 1000 writes/day is account-wide and
+	// the limiter writes on every allowed request. Today this namespace only
+	// holds the optional Workers-AI spam verdict cache. Kept bound so existing
+	// deployments need no binding change — same historical reason TREE_CACHE
+	// still exists after the response cache moved to the Cache API.
 	RATE_LIMITS: KVNamespace;
 	OAUTH_STATE: KVNamespace;
 	SESSIONS: KVNamespace;

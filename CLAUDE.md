@@ -7,8 +7,9 @@ Self-hosted comment system on Cloudflare Workers + D1 + KV + Turnstile. This fil
 - **Runtime**: Cloudflare Workers (not Pages Functions).
 - **Framework**: Hono (TypeScript).
 - **Database**: Cloudflare D1 (SQLite).
-- **KV**: rate-limits, OAuth state, sessions, resolved settings, version checks, CF usage snapshots.
-- **Edge cache**: the comment-tree response cache uses the Cache API (`caches.default`), *not* KV — see `src/lib/response-cache.ts`. The KV namespace is still bound as `TREE_CACHE` for historical reasons.
+- **KV**: OAuth state, sessions, resolved settings, version checks, CF usage snapshots, the optional Workers-AI spam verdict cache.
+- **Edge cache**: the comment-tree response cache and the rate limiter both use the Cache API (`caches.default`), *not* KV — see `src/lib/response-cache.ts` and `src/lib/ratelimit.ts`. The `TREE_CACHE` and `RATE_LIMITS` KV namespaces are still bound for historical reasons.
+- **Never put a per-request write on KV.** The free tier allows 1000 writes/day *account-wide*, so any unauthenticated endpoint that writes KV per request is an account-wide outage primitive. Counters and response caches belong on the Cache API; KV is for sessions, OAuth state and settings.
 - **Anti-spam**: Cloudflare Turnstile.
 - **Email**: Resend only (`src/lib/email.ts`). The `EMAIL_PROVIDER` env var leaves room for more adapters, but Resend is the sole implementation today (MailChannels dropped its free Workers plan). Additional adapters are future work.
 - **Widget**: vanilla TypeScript, no framework. Built with esbuild. Bundle budget: `embed.js` ≤ 20KB gzipped.

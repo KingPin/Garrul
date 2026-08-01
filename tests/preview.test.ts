@@ -6,35 +6,29 @@
  * comment, so the widget's Preview tab can't diverge from reality (and can't
  * be tricked into rendering markup the sanitizer would have stripped).
  *
- * No Miniflare: a KV stub for the rate-limit bucket, real renderMarkdown for
- * the parity assertion.
+ * No Miniflare: a mock `caches.default` for the rate-limit buckets (the limiter
+ * lives on the Cache API, not KV — see src/lib/ratelimit.ts), real
+ * renderMarkdown for the parity assertion.
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { Hono } from "hono";
 import { preview } from "../src/routes/api.preview";
 import { renderMarkdown } from "../src/lib/markdown";
+import { installMockCaches, uninstallMockCaches } from "./helpers/mock-caches";
 
-const mkKv = () => {
-	const store = new Map<string, string>();
-	return {
-		store,
-		async get(key: string) {
-			return store.get(key) ?? null;
-		},
-		async put(key: string, value: string) {
-			store.set(key, value);
-		},
-		async delete(key: string) {
-			store.delete(key);
-		},
-	};
-};
+// The limiter fails OPEN when the cache is unavailable, so without this the
+// rate-limit assertion below would silently pass through and test nothing.
+beforeEach(() => {
+	installMockCaches();
+});
+afterEach(() => {
+	uninstallMockCaches();
+});
 
 const mkApp = () => {
 	const app = new Hono<{ Bindings: Record<string, unknown> }>();
 	app.route("/", preview);
 	const env = {
-		RATE_LIMITS: mkKv(),
 		IP_HASH_SECRET: "x".repeat(32),
 	};
 	return { app, env };

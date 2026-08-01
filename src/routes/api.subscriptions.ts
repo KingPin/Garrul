@@ -59,7 +59,7 @@ subscriptions.post("/", async (c) => {
 	// anyone with a valid email shape and a post slug, so without this
 	// the endpoint is an enumeration / spam vector.
 	const ipHash = await hashIp(clientIp(c.req.raw), c.env.IP_HASH_SECRET);
-	const rl = await checkRateLimit(c.env, ipHash);
+	const rl = await checkRateLimit(c.req.url, ipHash, { scope: "subscribe" });
 	if (!rl.ok) {
 		return c.json(
 			{ error: t("err.ratelimit"), reason: rl.reason ?? null },

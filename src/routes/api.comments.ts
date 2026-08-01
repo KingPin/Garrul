@@ -406,7 +406,7 @@ comments.post("/", async (c) => {
 		);
 		if (!ts) return c.json({ error: t("err.turnstile.invalid") }, 400);
 
-		const rl = await checkRateLimit(c.env, ipHash);
+		const rl = await checkRateLimit(c.req.url, ipHash, { scope: "comment" });
 		if (!rl.ok) {
 			writeEvent(c.env.ANALYTICS, "ratelimit.hit", {
 				outcome: rl.reason ?? null,

@@ -15,11 +15,20 @@
  * fireWebhook is mocked so we can assert it's called exactly when a NEW report
  * lands (and not on a duplicate) without standing up a real delivery pipeline.
  */
-import { describe, it, expect, beforeEach, vi, type Mock } from "vitest";
+import {
+	describe,
+	it,
+	expect,
+	beforeEach,
+	afterEach,
+	vi,
+	type Mock,
+} from "vitest";
 import { Hono } from "hono";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { installMockCaches, uninstallMockCaches } from "./helpers/mock-caches";
 
 vi.mock("../src/lib/webhook", () => ({ fireWebhook: vi.fn() }));
 
@@ -63,27 +72,16 @@ const freshDb = () => {
 	return { sqlite, db: makeD1(sqlite) };
 };
 
-// Counting KV: records request stamps, so the rate-limit actually triggers on
-// the second rapid call (short bucket default = 1 / 10s).
-const countingKv = () => {
-	const store = new Map<string, string>();
-	return {
-		async get(key: string, type?: "json") {
-			const raw = store.get(key);
-			if (raw == null) return null;
-			return type === "json" ? JSON.parse(raw) : raw;
-		},
-		async put(key: string, value: string) {
-			store.set(key, value);
-		},
-		async delete(key: string) {
-			store.delete(key);
-		},
-	};
-};
+// The rate limiter stores its buckets in the Cache API, not KV, so these tests
+// control it by whether a mock `caches.default` is installed:
+//   installed → stamps persist, the short bucket (default 1 / 10s) trips on the
+//               second rapid call;
+//   absent    → the limiter's documented fail-open path allows everything,
+//               which isolates the DB-level dedup from the rate limit.
+// Default is absent; enforceRateLimits() opts a test in.
+const enforceRateLimits = () => installMockCaches();
 
-// Always-empty KV: rate-limit reads see no prior requests, so every call is
-// allowed. Used to isolate the DB-level dedup from the rate-limit.
+// Always-empty KV, still needed for the TREE_CACHE binding.
 const openKv = () => ({
 	async get() {
 		return null;
@@ -100,10 +98,9 @@ const execCtx = {
 let sqlite: DatabaseSync;
 let db: any;
 
-const mkEnv = (rateLimits: unknown): Bindings =>
+const mkEnv = (): Bindings =>
 	({
 		DB: db,
-		RATE_LIMITS: rateLimits,
 		TREE_CACHE: openKv(),
 		SESSIONS: { async get() { return null; }, async put() {}, async delete() {} },
 		ANALYTICS: { writeDataPoint() {} },
@@ -163,10 +160,14 @@ beforeEach(() => {
 	(fireWebhook as Mock).mockClear();
 });
 
+afterEach(() => {
+	uninstallMockCaches();
+});
+
 describe("POST /api/v1/comments/:id/report", () => {
 	it("records a fresh report and fires the comment.reported webhook", async () => {
 		const id = await seedComment();
-		const res = await report(mkEnv(openKv()), id, { reason: "spam link" });
+		const res = await report(mkEnv(), id, { reason: "spam link" });
 		expect(res.status).toBe(200);
 		expect(await res.json()).toEqual({ ok: true });
 		expect(reportRowCount(id)).toBe(1);
@@ -180,9 +181,10 @@ describe("POST /api/v1/comments/:id/report", () => {
 
 	it("dedupes a second report from the same network (no new row, no webhook)", async () => {
 		const id = await seedComment();
-		// openKv → rate-limit never blocks, so both calls reach insertReport and
-		// the UNIQUE(comment_id, ip_hash) is what makes the second a no-op.
-		const env = mkEnv(openKv());
+		// No mock cache installed → the rate limit never blocks, so both calls
+		// reach insertReport and UNIQUE(comment_id, ip_hash) is what makes the
+		// second a no-op.
+		const env = mkEnv();
 		await report(env, id, { reason: "first" });
 		(fireWebhook as Mock).mockClear();
 		const res = await report(env, id, { reason: "second" });
@@ -193,8 +195,9 @@ describe("POST /api/v1/comments/:id/report", () => {
 	});
 
 	it("rate-limits rapid repeats from the same IP with 429", async () => {
+		enforceRateLimits();
 		const id = await seedComment();
-		const env = mkEnv(countingKv());
+		const env = mkEnv();
 		const first = await report(env, id);
 		expect(first.status).toBe(200);
 		const second = await report(env, id);
@@ -204,7 +207,7 @@ describe("POST /api/v1/comments/:id/report", () => {
 	});
 
 	it("returns ok for a non-existent comment without inserting (no enumeration)", async () => {
-		const res = await report(mkEnv(openKv()), "01HNOPE0000000000000000000");
+		const res = await report(mkEnv(), "01HNOPE0000000000000000000");
 		expect(res.status).toBe(200);
 		expect(await res.json()).toEqual({ ok: true });
 		expect(fireWebhook).not.toHaveBeenCalled();
@@ -213,7 +216,7 @@ describe("POST /api/v1/comments/:id/report", () => {
 	it("returns ok for a deleted comment without opening a report", async () => {
 		const id = await seedComment();
 		sqlite.prepare("UPDATE comments SET status = 'deleted' WHERE id = ?").run(id);
-		const res = await report(mkEnv(openKv()), id);
+		const res = await report(mkEnv(), id);
 		expect(res.status).toBe(200);
 		expect(await res.json()).toEqual({ ok: true });
 		expect(reportRowCount(id)).toBe(0);
@@ -222,7 +225,7 @@ describe("POST /api/v1/comments/:id/report", () => {
 
 	it("caps an over-long reason instead of rejecting", async () => {
 		const id = await seedComment();
-		const res = await report(mkEnv(openKv()), id, { reason: "x".repeat(5000) });
+		const res = await report(mkEnv(), id, { reason: "x".repeat(5000) });
 		expect(res.status).toBe(200);
 		const row = sqlite
 			.prepare("SELECT reason FROM reports WHERE comment_id = ?")

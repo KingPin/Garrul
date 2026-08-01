@@ -124,7 +124,9 @@ pageEngagement.post("/reactions", async (c) => {
 	if (!ALLOWED_KINDS.has(kind)) return c.json({ error: "invalid_kind" }, 400);
 
 	const ipHash = await hashIp(clientIp(c.req.raw), c.env.IP_HASH_SECRET);
-	const rl = await checkRateLimit(c.env, ipHash);
+	const rl = await checkRateLimit(c.req.url, ipHash, {
+		scope: "page-reaction",
+	});
 	if (!rl.ok) {
 		writeEvent(c.env.ANALYTICS, "ratelimit.hit", {
 			outcome: rl.reason ?? null,
@@ -173,7 +175,7 @@ pageEngagement.post("/votes", async (c) => {
 	}
 
 	const ipHash = await hashIp(clientIp(c.req.raw), c.env.IP_HASH_SECRET);
-	const rl = await checkRateLimit(c.env, ipHash);
+	const rl = await checkRateLimit(c.req.url, ipHash, { scope: "page-vote" });
 	if (!rl.ok) {
 		writeEvent(c.env.ANALYTICS, "ratelimit.hit", {
 			outcome: rl.reason ?? null,
