@@ -34,17 +34,27 @@ import type { Bindings } from "../src/index";
 // bustFlagsCache() actually drops the resolved object.
 const makeKv = () => {
 	const store = new Map<string, string>();
+	// Options passed to put(), by key. KV's free tier caps writes at 1000/day
+	// *account wide*, and these two keys re-populate once per TTL window per
+	// edge colo, so the TTL is a quota decision worth pinning down in a test.
+	const putOpts = new Map<string, { expirationTtl?: number }>();
 	let deletes = 0;
 	return {
 		store,
+		putOpts,
 		deletes: () => deletes,
 		async get(key: string, type?: "json") {
 			const raw = store.get(key);
 			if (raw == null) return null;
 			return type === "json" ? JSON.parse(raw) : raw;
 		},
-		async put(key: string, value: string) {
+		async put(
+			key: string,
+			value: string,
+			opts?: { expirationTtl?: number },
+		) {
 			store.set(key, value);
+			putOpts.set(key, opts ?? {});
 		},
 		async delete(key: string) {
 			deletes++;
@@ -224,6 +234,20 @@ describe("loadFlags — KV cache", () => {
 		);
 		const stillCached = await loadFlags(env);
 		expect(stillCached.comments_enabled).toBe(false);
+	});
+
+	// Both keys are on the hot path and re-populate once per TTL window per
+	// edge colo against a 1000-writes/day account-wide cap. At 300s a modest
+	// three-colo footprint spent ~576 of that budget re-deriving settings that
+	// hadn't changed. Freshness comes from bustFlagsCache/bustNumbersCache on
+	// save, not from the TTL, so shortening it back buys nothing and costs
+	// quota — assert the value so a future edit is a deliberate one.
+	it("writes both cache keys with a one-hour TTL", async () => {
+		const { env, kv } = mkEnv({ comments_enabled: "false" });
+		await loadFlags(env);
+		await loadNumbers(env);
+		expect(kv.putOpts.get("settings:flags")?.expirationTtl).toBe(3600);
+		expect(kv.putOpts.get("settings:numbers")?.expirationTtl).toBe(3600);
 	});
 });
 

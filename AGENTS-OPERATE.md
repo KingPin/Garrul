@@ -212,11 +212,20 @@ DB settings row  >  env var  >  hardcoded default
 Operators flip them at runtime from the **admin Settings page** (`/admin`
 → Settings), which writes a row to the `settings` D1 table — no redeploy,
 no `wrangler` round-trip. "Reset to defaults" deletes the rows so the env
-var / default applies again. The resolved set is KV-cached briefly and
-busted on save, so a toggle takes effect within seconds across the widget
-(`/api/v1/config`) and the server-side gates. Leaving a flag untouched in
-the admin UI writes no row, so existing installs that only set env vars are
-unaffected. Implementation: `src/lib/settings.ts`.
+var / default applies again. The resolved set is KV-cached and busted on save,
+so a toggle takes effect within seconds across the widget (`/api/v1/config`)
+and the server-side gates. Leaving a flag untouched in the admin UI writes no
+row, so existing installs that only set env vars are unaffected.
+Implementation: `src/lib/settings.ts`.
+
+**Changing one of these by env var instead takes up to an hour.** The cache TTL
+is 1 hour (raised from 5 minutes: it's a fixed pair of KV keys that
+re-populate once per TTL window *per edge colo*, against a free-tier cap of 1000
+KV writes/day **account-wide** — at 5 minutes a handful of colos was spending
+most of that budget re-deriving settings that hadn't changed). Only the admin
+save path busts the cache; a `wrangler deploy` does not, so an edited
+`wrangler.toml` var can be masked by a warm entry for up to an hour. Use the
+Settings page for anything you want to take effect now, or accept the wait.
 
 ### Display & pagination: numeric settings (since v1.11.0)
 
@@ -530,12 +539,26 @@ tracked by the `_migrations` table. Current set:
 - `0012_deleted_by.sql` — records who deleted a comment
 - `0013_thread_lifecycle_reports.sql` — per-post close/`published_at` + reader `reports` table
 - `0014_telegram.sql` — `telegram_links` (operator account ↔ Telegram identity, + digest opt-in)
+- `0015_comment_depth.sql` — `comments.depth`, backfilled from `parent_id`; enforces the reply-depth cap at insert
+- `0016_user_erasure.sql` — `users.erased_at`, for the admin erase-personal-data path
+- `0017_subscriptions_email_index.sql` — `subscriptions(email, confirmed_at)`; the per-email pending cap was a full table scan on every subscribe
 
 Run with `npm run migrate` (local Miniflare) or
 `npm run migrate -- --remote` (production D1). Idempotent. Never edit a
 migration after it's applied to prod — add new behavior as a new
 numbered file. When upgrading an existing install, re-running
 `npm run migrate -- --remote` applies whatever the new release added.
+
+**Request size limit.** Every request body is capped at **64 KB** before
+anything parses it; over that the response is `413 {"error":"too_large"}`. The
+cap exists because all the per-field limits (comment length, name length, bulk
+action id count) are applied *after* `c.req.json()` has already deserialized the
+whole body, so without it a multi-megabyte payload costs a full parse against the
+Worker's 10 ms CPU budget before any of them get a say. 64 KB is far above every
+legitimate payload — the largest is a comment at the 10,000-character body limit.
+The one exemption is `POST /admin/api/ops/import-disqus`, which takes a raw
+Disqus XML export up to 50 MB and enforces its own limit. Implementation:
+`src/lib/body-limit.ts`.
 
 **Roles.** Since v1.8.0 there are three permission tiers
 (`0005_user_roles.sql`):
