@@ -84,7 +84,11 @@ signature is accepted.
 ## Retries and auto-disable
 
 Failed deliveries (network error or non-2xx response) are retried via
-an exponential schedule:
+an exponential schedule. **Redirects count as failures** — a 3xx is
+logged as `redirect_refused` and never followed, because following it
+would replay the comment body and its signature to a host that was
+never checked against the SSRF guard. Point the endpoint at its final
+URL rather than a redirector.
 
 | Attempt | Delay from previous |
 |--------:|---------------------|

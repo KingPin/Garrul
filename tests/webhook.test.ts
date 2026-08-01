@@ -222,6 +222,52 @@ describe("webhook_deliveries body cap (issue #13)", () => {
 	});
 });
 
+// A redirect must never be followed: checkOutboundUrl can only vet the URL the
+// operator typed, so a 307 from that host would replay the comment body AND the
+// x-garrul-signature HMAC over it to an attacker-chosen target — including the
+// private addresses the SSRF guard just refused.
+describe("webhook redirects are refused, not followed", () => {
+	let fetchMock: ReturnType<typeof vi.fn>;
+	let warnSpy: ReturnType<typeof vi.spyOn>;
+
+	beforeEach(() => {
+		fetchMock = vi.fn(
+			async () =>
+				new Response(null, {
+					status: 307,
+					headers: { location: "http://169.254.169.254/latest/meta-data/" },
+				}),
+		);
+		vi.stubGlobal("fetch", fetchMock);
+		warnSpy = vi.spyOn(log, "warn").mockImplementation(() => {});
+	});
+
+	afterEach(() => {
+		vi.unstubAllGlobals();
+		warnSpy.mockRestore();
+	});
+
+	it("passes redirect: manual to fetch", async () => {
+		const { db } = makeDbWithEndpoint();
+		await dispatchWebhook({ DB: db, ENV: "production" }, payload);
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
+			redirect: "manual",
+		});
+	});
+
+	it("treats the 3xx as a delivery failure tagged redirect_refused", async () => {
+		const { db, inserts } = makeDbWithEndpoint();
+		await dispatchWebhook({ DB: db, ENV: "production" }, payload);
+		expect(warnSpy).toHaveBeenCalledWith(
+			"webhook.failed",
+			expect.objectContaining({ error: "redirect_refused", status: 307 }),
+		);
+		// Failure → the normal retry machinery, not a special case.
+		expect(inserts).toHaveLength(1);
+	});
+});
+
 // D1 stub: one enabled *discord* endpoint plus comment/user/post rows so
 // the adapter's loadContext can build links. Proves the PUBLIC_BASE_URL →
 // dispatch → renderBody → adapter threading actually reaches the wire,

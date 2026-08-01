@@ -220,7 +220,21 @@ const postOnce = async (
 			headers,
 			body,
 			signal: controller.signal,
+			// Never follow a redirect. checkOutboundUrl vetted target.url, but it
+			// can only vet what the operator typed: a 307 from that host replays
+			// this exact request — comment body and the x-garrul-signature HMAC
+			// over it — to whatever Location says, including a private address the
+			// SSRF guard just rejected. A 3xx here is a misconfigured receiver, so
+			// surface it as a delivery failure and let the retry/auto-disable
+			// machinery treat it like any other bad response.
+			redirect: "manual",
 		});
+		// Workers hands a manual-mode 3xx straight back with its real status (no
+		// opaque-redirect placeholder), so `ok` is already false — this only
+		// replaces the `http_3xx` tag with something an operator can act on.
+		if (res.status >= 300 && res.status < 400) {
+			return { ok: false, status: res.status, error: "redirect_refused" };
+		}
 		return { ok: res.ok, status: res.status };
 	} catch (err) {
 		// The telegram target URL embeds the bot token; some runtimes include the
