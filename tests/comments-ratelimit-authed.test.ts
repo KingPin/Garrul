@@ -274,3 +274,74 @@ describe("DELETE /comments/:id — budget", () => {
 		expect((await patch(id, "six")).status).toBe(429);
 	});
 });
+
+/**
+ * The public DELETE's admin override — the only authorization site in the app
+ * that used to read `is_admin` directly, via its own `SELECT is_admin` that saw
+ * neither `is_banned` nor `role`. It now authorizes on the `role` column and
+ * reuses the `requireActiveUser` row the ban check already fetched.
+ *
+ * Lives in this file because the real-SQLite harness above is what makes these
+ * assertions worth anything: the override is one branch away from a soft delete
+ * of someone else's comment, so the status column is checked after every call.
+ */
+describe("DELETE /comments/:id — admin override authorization", () => {
+	const setRole = (userId: string, role: string, is_admin: number) => {
+		sqlite
+			.prepare("UPDATE users SET role = ?, is_admin = ? WHERE id = ?")
+			.run(role, is_admin, userId);
+	};
+
+	const statusOf = (id: string): string =>
+		(
+			sqlite.prepare("SELECT status FROM comments WHERE id = ?").get(id) as {
+				status: string;
+			}
+		).status;
+
+	/** A comment owned by USER; USER_OTHER is the caller under test. */
+	const seedVictim = () => seedOwnComment(COMMENT, USER);
+
+	it("403s a plain user deleting someone else's comment", async () => {
+		const id = seedVictim();
+		expect((await del(id, SID_OTHER)).status).toBe(403);
+		expect(statusOf(id)).toBe("approved");
+	});
+
+	it("403s a mod — the override is deliberately admin-only", async () => {
+		// Mods moderate through /admin, which audit-logs. Widening this branch to
+		// `mod` would be a privilege change, not a refactor, so it stays narrow.
+		const id = seedVictim();
+		setRole(USER_OTHER, "mod", 0);
+		expect((await del(id, SID_OTHER)).status).toBe(403);
+		expect(statusOf(id)).toBe("approved");
+	});
+
+	it("lets an admin delete another user's comment", async () => {
+		const id = seedVictim();
+		setRole(USER_OTHER, "admin", 1);
+		expect((await del(id, SID_OTHER)).status).toBe(200);
+		expect(statusOf(id)).toBe("deleted");
+	});
+
+	it("authorizes on role, not the legacy is_admin mirror", async () => {
+		// Migration 0005 keeps `is_admin=1 ⇔ role='admin'` as an invariant and says
+		// the column is going away. Breaking the invariant on purpose shows which
+		// side the check reads: role='admin' with is_admin=0 must still authorize.
+		const id = seedVictim();
+		setRole(USER_OTHER, "admin", 0);
+		expect((await del(id, SID_OTHER)).status).toBe(200);
+		expect(statusOf(id)).toBe("deleted");
+	});
+
+	it("403s a banned admin", async () => {
+		// The old `SELECT is_admin` never looked at is_banned, so a demoted-by-ban
+		// admin kept the override for as long as their cookie lasted.
+		const id = seedVictim();
+		setRole(USER_OTHER, "admin", 1);
+		sqlite.prepare("UPDATE users SET is_banned = 1 WHERE id = ?").run(USER_OTHER);
+		const res = await del(id, SID_OTHER);
+		expect(res.status).toBe(403);
+		expect(statusOf(id)).toBe("approved");
+	});
+});

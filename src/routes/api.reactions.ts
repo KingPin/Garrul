@@ -45,7 +45,10 @@ reactions.post("/", async (c) => {
 
 	const comment = await getComment(c.env.DB, comment_id);
 	if (!comment) return c.json({ error: t("err.not_found") }, 404);
-	if (comment.status === "deleted") {
+	// Same gate as votes: anything not `approved` is indistinguishable from a
+	// missing row here. A 200 on a held comment both confirmed the moderation
+	// decision and let reaction rows accumulate on content no reader can see.
+	if (comment.status !== "approved") {
 		return c.json({ error: t("err.not_found") }, 404);
 	}
 

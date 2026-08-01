@@ -155,6 +155,7 @@ const mkRouteApp = (
 		DOWNVOTES_ENABLED: string;
 	}> = {},
 	commentAuthorId: string = COMMENT_AUTHOR_ID,
+	status: string = "approved",
 ) => {
 	const app = new Hono<{ Bindings: Record<string, unknown> }>();
 	const { db } = makeDb({
@@ -166,7 +167,7 @@ const mkRouteApp = (
 			body_md: "x",
 			body_html: "<p>x</p>",
 			renderer_version: 1,
-			status: "approved",
+			status,
 			edited_at: null,
 			deleted_at: null,
 			ip_hash: null,
@@ -310,5 +311,29 @@ describe("POST /votes — self-vote forbidden", () => {
 		const { app, env } = mkRouteApp({}, GHOST_ID);
 		const res = await post(app, env, { comment_id: ULID_OK, value: 0 });
 		expect(res.status).toBe(403);
+	});
+});
+
+describe("POST /votes — only approved comments are votable", () => {
+	// Previously only `deleted` was rejected, so a vote on a held comment
+	// returned 200 plus the live tallies. That confirmed the moderator's
+	// decision to anyone holding the id and let a score be built up on content
+	// no reader can see yet. Every non-approved state must be
+	// indistinguishable from a missing row.
+	for (const status of ["pending", "spam", "deleted"]) {
+		it(`404s a vote on a ${status} comment`, async () => {
+			const { app, env } = mkRouteApp({}, COMMENT_AUTHOR_ID, status);
+			const res = await post(app, env, { comment_id: ULID_OK, value: 1 });
+			expect(res.status).toBe(404);
+			// Same body as a missing row — no separate error code to key off.
+			const body = (await res.json()) as { error: string };
+			expect(body.error).toBe("Not found.");
+		});
+	}
+
+	it("still accepts a vote on an approved comment", async () => {
+		const { app, env } = mkRouteApp({}, COMMENT_AUTHOR_ID, "approved");
+		const res = await post(app, env, { comment_id: ULID_OK, value: 1 });
+		expect(res.status).toBe(200);
 	});
 });

@@ -68,7 +68,13 @@ votes.post("/", async (c) => {
 
 	const comment = await getComment(c.env.DB, comment_id);
 	if (!comment) return c.json({ error: t("err.not_found") }, 404);
-	if (comment.status === "deleted") {
+	// Only an approved comment is votable, and every other state answers 404
+	// exactly like a missing row. Accepting a vote on a `pending` or `spam`
+	// comment confirmed to anyone holding the id that a moderator had held it,
+	// and returned the live tallies for content no reader can see — so a
+	// scripted clicker could pre-load a score onto a comment before it was ever
+	// approved.
+	if (comment.status !== "approved") {
 		return c.json({ error: t("err.not_found") }, 404);
 	}
 

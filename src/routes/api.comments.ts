@@ -934,13 +934,28 @@ comments.get("/", async (c) => {
  */
 comments.get("/:id/source", async (c) => {
 	const id = c.req.param("id");
-	const existing = await getComment(c.env.DB, id);
-	if (!existing) return c.json({ error: t("err.not_found") }, 404);
 
+	// Session before the lookup, matching PATCH. The other order answered 404
+	// for an unknown id and 403 for a real one, so an unauthenticated caller
+	// could probe which comment ids exist. A signed-in caller can still tell
+	// "someone else's comment" (403) from "no such comment" (404), which is the
+	// same shape PATCH has and a far weaker signal: it costs a session and a
+	// guess at a 128-bit ULID.
 	const session = await readSession(c);
 	const sessionUserId = session?.user_id;
-	if (!sessionUserId || sessionUserId !== existing.user_id) {
+	if (!sessionUserId) return c.json({ error: t("err.edit.not_author") }, 403);
+
+	const existing = await getComment(c.env.DB, id);
+	if (!existing) return c.json({ error: t("err.not_found") }, 404);
+	if (sessionUserId !== existing.user_id) {
 		return c.json({ error: t("err.edit.not_author") }, 403);
+	}
+
+	// Only what PATCH would accept an edit to. Without this the form could
+	// prefill from a comment the author can no longer edit — and, for `spam`,
+	// the 200 disclosed the quarantine that PATCH deliberately hides behind 404.
+	if (existing.status !== "approved" && existing.status !== "pending") {
+		return c.json({ error: t("err.not_found") }, 404);
 	}
 
 	const numbers = await loadNumbers(c.env);
@@ -1084,11 +1099,13 @@ comments.delete("/:id", async (c) => {
 	});
 	if (!rl.ok) return c.json({ error: t("err.ratelimit") }, 429);
 
-	// Also covers the admin-override branch below, which reads is_admin without
-	// looking at is_banned.
-	if (!(await requireActiveUser(c.env.DB, sessionUserId))) {
-		return c.json({ error: t("err.banned") }, 403);
-	}
+	// Also the caller row for the admin-override branch below, which used to run
+	// its own `SELECT is_admin` — a second D1 read that saw neither `is_banned`
+	// nor `role`. `is_admin` is a legacy mirror of `role` (migration 0005 says
+	// the column is going away), so authorize on `role` and keep the two in one
+	// place.
+	const caller = await requireActiveUser(c.env.DB, sessionUserId);
+	if (!caller) return c.json({ error: t("err.banned") }, 403);
 
 	const existing = await getComment(c.env.DB, id);
 	if (!existing) return c.json({ error: t("err.not_found") }, 404);
@@ -1096,12 +1113,10 @@ comments.delete("/:id", async (c) => {
 	if (sessionUserId !== existing.user_id) {
 		// Admin override: allow admins to delete any comment via the public
 		// API, mirroring the moderation queue's delete action. Editing
-		// other users' comments is intentionally still author-only.
-		const caller = await c.env.DB
-			.prepare(`SELECT is_admin FROM users WHERE id = ?`)
-			.bind(sessionUserId)
-			.first<{ is_admin: number }>();
-		if (!caller || caller.is_admin !== 1) {
+		// other users' comments is intentionally still author-only. Mods are
+		// deliberately not included — this stays exactly as narrow as the
+		// is_admin check it replaces.
+		if (caller.role !== "admin") {
 			return c.json({ error: t("err.delete.not_author") }, 403);
 		}
 	}
