@@ -166,14 +166,18 @@ subscriptions.post("/", async (c) => {
 		});
 	}
 
+	// Constant unless *this* caller proved they own the inbox. Mirroring the
+	// stored `confirmed_at` made this a silent subscription oracle: a "confirmed"
+	// answer told an unauthenticated prober the address is already subscribed to
+	// this post, and that branch sends no mail, so the victim saw nothing.
+	// `subscription_id` is gone for the same reason — a ULID also leaks *when*
+	// they subscribed. Nothing consumes it: the widget ignores the body entirely.
 	return c.json({
 		ok: true,
-		subscription_id: sub.id,
-		status: sub.confirmed_at != null ? "confirmed" : "pending",
-		message:
-			sub.confirmed_at != null
-				? t("ui.subscribe.confirmed")
-				: t("ui.subscribe.pending"),
+		status: autoConfirm ? "confirmed" : "pending",
+		message: autoConfirm
+			? t("ui.subscribe.confirmed")
+			: t("ui.subscribe.pending"),
 	});
 });
 
