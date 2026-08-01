@@ -494,9 +494,17 @@ Operators who don't want digests can leave both unset and remove the
 `[triggers]` block to avoid registering the cron at all.
 
 Triggers (events that produce a send): a subscriber to a thread sees a
-new reply land (digest email); an unsubscribe-link click (clears the
-subscription, no send). No transactional sends per comment; everything
-flows through the debounced cron.
+new reply land (digest email); an unsubscribe-link click (opens a
+confirmation page, no send). No transactional sends per comment;
+everything flows through the debounced cron.
+
+The unsubscribe link is a two-step flow: the `GET` from the email only
+renders a "Yes, unsubscribe me" button, and the `POST` behind that
+button does the write. Mail clients, link scanners and corporate
+security gateways prefetch every URL in a message, so a `GET` that
+wrote would silently unsubscribe recipients who never clicked. Expect
+support questions from operators who remember one click; the extra
+click is deliberate.
 
 ## 10. Operating the instance
 

@@ -204,7 +204,41 @@ subscriptions.get("/confirm/:token", async (c) => {
 	);
 });
 
+/**
+ * The GET only *offers* to unsubscribe. Mail clients, link scanners and
+ * corporate security gateways prefetch every URL in a message, so a GET that
+ * wrote silently unsubscribed people who never clicked — and the row is
+ * `unsubscribed_at`-stamped, so their next reply notification just never
+ * arrived. `confirmSubscription` has carried a note about exactly this hazard
+ * since it shipped; unsubscribe never got the same treatment.
+ *
+ * The POST below does the write. It is same-origin-checked (see
+ * SELF_ORIGIN_POST_PATHS in lib/cors.ts) and the token stays the capability.
+ */
 subscriptions.get("/unsubscribe/:token", async (c) => {
+	const token = c.req.param("token");
+	if (!token) return c.text("missing token", 400);
+
+	const sub = await getSubscriptionByToken(c.env.DB, token);
+	if (!sub) {
+		return c.html(pageHtml("Link expired or already used."));
+	}
+
+	const post = await getPost(c.env.DB, sub.post_slug);
+	const postLabel = escape(post?.title ?? sub.post_slug);
+
+	if (sub.unsubscribed_at != null) {
+		return c.html(
+			pageHtml(
+				`You're already unsubscribed from comment notifications for "${postLabel}".`,
+			),
+		);
+	}
+
+	return c.html(confirmPageHtml(postLabel));
+});
+
+subscriptions.post("/unsubscribe/:token", async (c) => {
 	const token = c.req.param("token");
 	if (!token) return c.text("missing token", 400);
 
@@ -234,7 +268,7 @@ const escape = (s: string): string =>
 		.replace(/"/g, "&quot;")
 		.replace(/'/g, "&#39;");
 
-const pageHtml = (message: string): string => `
+const pageHtml = (message: string, extra = ""): string => `
 <!doctype html>
 <html lang="en">
 <head>
@@ -250,7 +284,28 @@ const pageHtml = (message: string): string => `
 <body>
 <h1>Garrul</h1>
 <p>${message}</p>
+${extra}
 </body>
 </html>`;
+
+/**
+ * The one-click confirmation. No `action` attribute: the form posts back to the
+ * current URL, so the token never has to be re-serialized (and can't be
+ * mangled) on the way out.
+ *
+ * `postLabel` arrives already escaped — it is interpolated as text here.
+ */
+const confirmPageHtml = (postLabel: string): string =>
+	pageHtml(
+		`Unsubscribe from comment notifications for "${postLabel}"?`,
+		`<form method="post">
+  <button type="submit" style="font:inherit;padding:0.5rem 1rem;cursor:pointer">
+    Yes, unsubscribe me
+  </button>
+</form>
+<p style="color:#6b7280;font-size:0.875rem">
+  Nothing has changed yet — you stay subscribed until you confirm.
+</p>`,
+	);
 
 export { subscriptions };
