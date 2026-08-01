@@ -141,6 +141,51 @@ describe("akismet provider", () => {
 		);
 		expect(v).toBeNull();
 	});
+
+	// Akismet's API contract puts the key in the hostname, so the secret is in
+	// every request URL — and a fetch error string or an error body can echo that
+	// URL straight into the operator's log stream, where it is durable and
+	// readable by anyone with `wrangler tail` access.
+	describe("never logs the API key", () => {
+		const SECRET = "ak-do-not-log-me";
+		const env = {
+			SPAM_PROVIDER: "akismet",
+			AKISMET_API_KEY: SECRET,
+			AKISMET_SITE_URL: "https://example.com",
+		};
+		let lines: string[];
+
+		beforeEach(() => {
+			lines = [];
+			vi.spyOn(console, "log").mockImplementation((s: unknown) => {
+				lines.push(String(s));
+			});
+		});
+		afterEach(() => vi.restoreAllMocks());
+
+		it("scrubs it from a fetch error that echoes the request URL", async () => {
+			globalThis.fetch = (async (url: string) => {
+				throw new Error(`request to ${url} failed`);
+			}) as typeof fetch;
+
+			expect(await checkSpam(env, input)).toBeNull();
+			expect(lines.join("\n")).not.toContain(SECRET);
+			// Still diagnosable: the redaction marker proves the line was emitted.
+			expect(lines.join("\n")).toContain("***");
+		});
+
+		it("scrubs it from an error response body", async () => {
+			mockFetch({ ok: false, text: `invalid key ${SECRET} for site` });
+			expect(await checkSpam(env, input)).toBeNull();
+			expect(lines.join("\n")).not.toContain(SECRET);
+		});
+
+		it("scrubs it from an unexpected response body", async () => {
+			mockFetch({ ok: true, text: `nope ${SECRET}` });
+			expect(await checkSpam(env, input)).toBeNull();
+			expect(lines.join("\n")).not.toContain(SECRET);
+		});
+	});
 });
 
 describe("workers-ai provider", () => {
