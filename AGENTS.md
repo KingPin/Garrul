@@ -421,10 +421,14 @@ top-level navigation. The callback then redirects the user back to
 `ALLOWED_ORIGINS` allowlist). This is expected behavior — don't try to
 "fix" it by removing the popup or the redirect fallback.
 
-**Session cookie**: `garrul_sess`, 32 random bytes, `HttpOnly; Secure;
-SameSite=None; Partitioned`. KV-backed lookup, 30-day TTL refreshed on
-use. No JWT. The `Partitioned` flag is required for cross-site embeds
-to work in Chrome's 3PC phase-out and Safari ITP — don't strip it.
+**Session cookie**: `__Host-garrul_sess`, 32 random bytes, `HttpOnly;
+Secure; SameSite=None; Partitioned; Path=/`. KV-backed lookup, 30-day TTL
+refreshed on use. No JWT. The `Partitioned` flag is required for
+cross-site embeds to work in Chrome's 3PC phase-out and Safari ITP —
+don't strip it. The `__Host-` prefix binds the cookie to the exact host
+that set it, so a sibling subdomain can't plant a session id; it needs
+`Secure` and `Path=/`, which is why a `wrangler dev` instance over plain
+HTTP uses the unprefixed `garrul_sess` instead.
 
 **Endpoints integrators may call client-side**: `GET /api/v1/auth/me`
 returns the current session user (or `{user:null}`); `POST
@@ -493,8 +497,8 @@ email + avatar + provider ID.
 
 Cookies set by Garrul:
 
-- `garrul_sess` — session lookup ID. `HttpOnly; Secure;
-  SameSite=None; Partitioned`. No tracking cookies are set.
+- `__Host-garrul_sess` — session lookup ID. `HttpOnly; Secure;
+  SameSite=None; Partitioned; Path=/`. No tracking cookies are set.
 
 For the operator-facing privacy posture (retention policy, deletion
 flow, Cloudflare/Resend subprocessor disclosure, GDPR/COPPA notes),

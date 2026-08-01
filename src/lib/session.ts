@@ -27,7 +27,31 @@ type SessionCtx = {
 	header(name: string, value: string, options?: { append?: boolean }): void;
 };
 
-const COOKIE_NAME = "garrul_sess";
+/**
+ * The session cookie carries the `__Host-` prefix in production.
+ *
+ * The prefix makes the *browser* enforce what we already send — Secure, Path=/,
+ * no Domain — and, critically, refuse the cookie from any host but the exact
+ * one that set it. Without it, script on a compromised sibling subdomain can
+ * set `garrul_sess` with `Domain=yourdomain.com`; the browser then sends two
+ * cookies of that name and `parseCookie` returns whichever arrives first, so an
+ * attacker can fixate a session id of their choosing. That's not hypothetical
+ * here: the documented deployment is `comments.<yourdomain>`, sharing eTLD+1
+ * with everything else the operator runs.
+ *
+ * `__Host-` requires Secure, which a `wrangler dev` instance over plain HTTP
+ * can't set — hence the env-dependent name rather than an unconditional one.
+ *
+ * Renaming the cookie invalidates the one every signed-in user currently holds,
+ * so deploying this signs everybody out once. The old KV records stay until
+ * their TTL runs out; nothing reads them, and LEGACY_COOKIE_NAME is expired
+ * alongside every cookie write below so the dead cookie doesn't linger for a
+ * month in the browsers of upgraded installs.
+ */
+const COOKIE_NAME_PROD = "__Host-garrul_sess";
+const LEGACY_COOKIE_NAME = "garrul_sess";
+const cookieName = (env: Pick<Env, "ENV">): string =>
+	env.ENV === "dev" ? LEGACY_COOKIE_NAME : COOKIE_NAME_PROD;
 const SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
 // Slide the TTL at most once a day rather than on every read: a KV write per
 // authenticated request would burn the (account-wide) write quota, and the
@@ -111,9 +135,10 @@ const buildSetCookie = (
 	value: string,
 	maxAgeSeconds: number,
 	env: Env,
+	name = cookieName(env),
 ): string => {
 	const parts = [
-		`${COOKIE_NAME}=${value}`,
+		`${name}=${value}`,
 		"Path=/",
 		`Max-Age=${maxAgeSeconds}`,
 		"HttpOnly",
@@ -124,6 +149,20 @@ const buildSetCookie = (
 		parts.push("SameSite=None", "Secure", "Partitioned");
 	}
 	return parts.join("; ");
+};
+
+/**
+ * Expire the pre-`__Host-` cookie. Emitted alongside every session-cookie write
+ * in production so an upgraded install doesn't leave an inert `garrul_sess`
+ * sitting in the browser for the rest of its 30-day Max-Age. Attributes have to
+ * match the original write for the removal to apply to a Partitioned cookie.
+ * Droppable a release or two after the rename has shipped.
+ */
+const clearLegacyCookie = (c: SessionCtx): void => {
+	if (c.env.ENV === "dev") return;
+	c.header("Set-Cookie", buildSetCookie("", 0, c.env, LEGACY_COOKIE_NAME), {
+		append: true,
+	});
 };
 
 /**
@@ -176,6 +215,7 @@ export const issueSession = async (
 	c.header("Set-Cookie", buildSetCookie(sid, SESSION_TTL_SECONDS, c.env), {
 		append: true,
 	});
+	clearLegacyCookie(c);
 	return sid;
 };
 
@@ -186,7 +226,7 @@ export const issueSession = async (
  * session never orphans a still-replayable record.
  */
 export const revokeSession = async (c: SessionCtx): Promise<void> => {
-	const sid = parseCookie(c.req.header("cookie"), COOKIE_NAME);
+	const sid = parseCookie(c.req.header("cookie"), cookieName(c.env));
 	if (sid && SESSION_ID_RE.test(sid)) {
 		await c.env.SESSIONS.delete(sessionKey(sid));
 	}
@@ -209,12 +249,16 @@ export const revokeUserSessions = async (
 export const destroySession = async (c: SessionCtx): Promise<void> => {
 	await revokeSession(c);
 	c.header("Set-Cookie", buildSetCookie("", 0, c.env), { append: true });
+	clearLegacyCookie(c);
 };
 
 export const readSession = async (
 	c: SessionCtx,
 ): Promise<{ sid: string; user_id: string } | null> => {
-	const sid = parseCookie(c.req.header("cookie"), COOKIE_NAME);
+	// Deliberately only the current name: accepting LEGACY_COOKIE_NAME as a
+	// fallback would keep the sibling-subdomain fixation path open, which is the
+	// whole reason for the prefix.
+	const sid = parseCookie(c.req.header("cookie"), cookieName(c.env));
 	if (!sid || !SESSION_ID_RE.test(sid)) return null;
 	const raw = await c.env.SESSIONS.get(sessionKey(sid));
 	if (!raw) return null;

@@ -198,7 +198,7 @@ describe("GET /comments — own pending visibility", () => {
 
 	it("shows the author their own pending comment", async () => {
 		const env = mkEnv(approved, pending);
-		const page = await get(env, `garrul_sess=${SID_AUTHOR}`);
+		const page = await get(env, `__Host-garrul_sess=${SID_AUTHOR}`);
 		const ids = page.threads.map((t) => t.id);
 		expect(ids).toContain("01HUPENDING00000000000");
 		const node = page.threads.find((t) => t.id === "01HUPENDING00000000000");
@@ -207,7 +207,7 @@ describe("GET /comments — own pending visibility", () => {
 
 	it("does NOT show a pending comment to a different signed-in user", async () => {
 		const env = mkEnv(approved, pending);
-		const page = await get(env, `garrul_sess=${SID_OTHER}`);
+		const page = await get(env, `__Host-garrul_sess=${SID_OTHER}`);
 		const ids = page.threads.map((t) => t.id);
 		expect(ids).not.toContain("01HUPENDING00000000000");
 	});

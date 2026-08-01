@@ -112,7 +112,7 @@ const getSource = async (env: Bindings, cookie?: string) => {
 describe("GET /comments/:id/source", () => {
 	it("returns body_md to the author within the edit window", async () => {
 		const env = mkEnv(mkComment(Date.now() - 60_000)); // 1 min ago
-		const res = await getSource(env, `garrul_sess=${SID_AUTHOR}`);
+		const res = await getSource(env, `__Host-garrul_sess=${SID_AUTHOR}`);
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as { body_md: string };
 		expect(body.body_md).toBe("the **original** source");
@@ -120,7 +120,7 @@ describe("GET /comments/:id/source", () => {
 
 	it("403s for a different signed-in user", async () => {
 		const env = mkEnv(mkComment(Date.now() - 60_000));
-		const res = await getSource(env, `garrul_sess=${SID_OTHER}`);
+		const res = await getSource(env, `__Host-garrul_sess=${SID_OTHER}`);
 		expect(res.status).toBe(403);
 	});
 
@@ -132,13 +132,13 @@ describe("GET /comments/:id/source", () => {
 
 	it("403s once the edit window has expired", async () => {
 		const env = mkEnv(mkComment(Date.now() - 10 * 60_000)); // 10 min ago
-		const res = await getSource(env, `garrul_sess=${SID_AUTHOR}`);
+		const res = await getSource(env, `__Host-garrul_sess=${SID_AUTHOR}`);
 		expect(res.status).toBe(403);
 	});
 
 	it("404s for a missing comment", async () => {
 		const env = mkEnv(null);
-		const res = await getSource(env, `garrul_sess=${SID_AUTHOR}`);
+		const res = await getSource(env, `__Host-garrul_sess=${SID_AUTHOR}`);
 		expect(res.status).toBe(404);
 	});
 });

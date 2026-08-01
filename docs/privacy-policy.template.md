@@ -62,7 +62,7 @@ comment-id, reaction-kind)** tuple.
 
 ## Cookies
 
-We set one cookie, `garrul_sess`, on the comments subdomain
+We set one cookie, `__Host-garrul_sess`, on the comments subdomain
 `[comments.yourdomain.com]`. It's:
 
 - **HttpOnly** — JavaScript can't read it.

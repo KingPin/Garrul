@@ -103,7 +103,7 @@ const makeCtx = (sid: string | null): any => ({
 	req: {
 		header: (name: string) =>
 			name.toLowerCase() === "cookie" && sid
-				? `garrul_sess=${sid}`
+				? `__Host-garrul_sess=${sid}`
 				: undefined,
 	},
 	header: () => {},
