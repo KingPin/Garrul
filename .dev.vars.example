@@ -7,7 +7,7 @@
 # credentials are unset. Fill in only what you're exercising.
 
 # --- Generated secrets ---
-# auto-generated 32-byte secret; reserved for future JWT use
+# auto-generated 32-byte HMAC key for signed OAuth state
 JWT_SECRET="dev-jwt-secret-change-me"
 # auto-generated HMAC pepper — generate once and keep it
 IP_HASH_SECRET="dev-ip-hash-pepper-change-me"

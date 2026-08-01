@@ -3,10 +3,13 @@
  *
  * Flow:
  *   1. Widget opens a popup at /api/v1/auth/:provider/start?return=<origin>.
- *   2. We generate a random `state`, stash it in OAUTH_STATE KV (TTL 10min),
- *      and 302 to the provider's authorize URL.
+ *   2. We generate a random `state`, put an HMAC-signed payload carrying it
+ *      into a per-flow HttpOnly cookie, and 302 to the provider's authorize
+ *      URL. No server-side storage.
  *   3. Provider redirects to /api/v1/auth/:provider/callback?code&state.
- *   4. We verify `state`, exchange `code` for an access token, fetch the
+ *   4. We verify the cookie's signature and that it is bound to this `state`,
+ *      clear the cookie (single use), exchange `code` for an access token,
+ *      fetch the
  *      user profile, upsert into `users` (provider + provider_id),
  *      issue a session cookie (lib/session.ts), and render a tiny HTML
  *      page that postMessages back to the opener and closes.
@@ -15,12 +18,11 @@
  *   OAUTH_CALLBACK_BASE env var (e.g. "https://comments.garrul.com").
  *   Falls back to the request origin when unset — useful for dev.
  *
- * Why state in KV: we don't carry it in a cookie because the round-trip
- * goes off-origin (provider → us), and 3rd-party cookie behavior is
- * unreliable. KV state survives the redirect and includes a one-time
- * read.
+ * Why state is signed rather than stored: see `issueState` below. The
+ * off-origin round-trip is fine for a cookie — the provider redirects the
+ * browser back to us top-level, so a SameSite=Lax cookie is delivered.
  */
-import { constantTimeEqual } from "./hmac";
+import { constantTimeEqual, signPayload, verifyPayload } from "./hmac";
 
 export type ProviderId =
 	| "github"
@@ -294,45 +296,89 @@ export type StatePayload = {
 	provider: ProviderId;
 	return_origin: string;
 	created_at: number;
-	// Random per-flow token also written to a `garrul_oauth_b` cookie at
-	// /start. /callback requires the cookie value to match — without this,
-	// an attacker could trick a victim's browser into completing the
-	// callback with the attacker's code+state, planting the attacker's
-	// session (RFC 6749 §10.12 login-CSRF). Required for callers from
-	// /api/v1/auth/:provider/start; pre-existing state payloads in KV
-	// from before this column shipped may lack it.
-	browser_token?: string;
-	// PKCE code_verifier for providers with `pkce: true` (e.g. X/Twitter).
-	// Lives only here in KV — never sent to the browser — and is replayed at
-	// the token exchange. Absent for non-PKCE providers.
+	/**
+	 * The `state` value handed to the provider. Binding it INTO the signed
+	 * payload is what makes the flow non-transferable: the payload only lives
+	 * in a per-flow HttpOnly cookie, so a valid (cookie, state) pair can't be
+	 * replayed against a different `state` and can't be planted in someone
+	 * else's browser at all (RFC 6749 §10.12 login-CSRF).
+	 *
+	 * This replaces the old separate `browser_token`, which was an OPTIONAL
+	 * field: the callback failed closed only because of the order of a `||`
+	 * chain, so a refactor that reordered it would have silently dropped the
+	 * login-CSRF check with no test catching it. Required, and inside the
+	 * signature, it cannot be dropped.
+	 */
+	state: string;
+	/**
+	 * PKCE code_verifier for providers with `pkce: true` (e.g. X/Twitter),
+	 * replayed at the token exchange. Absent for non-PKCE providers.
+	 *
+	 * It now rides in the signed cookie rather than server-side storage, so it
+	 * does reach the user agent — but only inside an HttpOnly, Secure,
+	 * SameSite=Lax cookie scoped to /api/v1/auth, so page JS cannot read it.
+	 * This is the standard stateless-BFF placement. PKCE is defense-in-depth
+	 * here regardless: Garrul is a confidential client and always presents a
+	 * client_secret at the exchange.
+	 */
 	code_verifier?: string;
 };
 
-const STATE_TTL = 600; // 10 minutes
+/**
+ * State lifetime. Enforced by `verifyState` reading `created_at` — the old KV
+ * implementation stored that field and never read it, leaving freshness to
+ * best-effort KV expiry.
+ */
+export const STATE_MAX_AGE_MS = 600_000; // 10 minutes
 
+/**
+ * Mint a flow: a random `state` for the provider redirect, plus a signed,
+ * self-contained payload for the per-flow cookie.
+ *
+ * Why signed rather than stored: `/start` is unauthenticated, exempt from the
+ * Origin gate (lib/cors.ts), and needs no cookie, token or body. The KV write
+ * it used to perform was therefore an unauthenticated write against a quota of
+ * 1000/day scoped to the operator's ENTIRE Cloudflare account — about 1000
+ * requests took every KV-backed feature offline account-wide. A signature
+ * costs nothing and needs no storage. Same reasoning as lib/ratelimit.ts.
+ *
+ * Not a JWT (see lib/hmac.ts): no `alg` header, so no algorithm confusion.
+ */
 export const issueState = async (
-	kv: KVNamespace,
-	payload: StatePayload,
-): Promise<string> => {
+	secret: string,
+	payload: Omit<StatePayload, "state" | "created_at">,
+): Promise<{ state: string; token: string }> => {
 	const state = randomState();
-	await kv.put(`oauth:state:${state}`, JSON.stringify(payload), {
-		expirationTtl: STATE_TTL,
+	const token = await signPayload<StatePayload>(secret, {
+		...payload,
+		state,
+		created_at: Date.now(),
 	});
-	return state;
+	return { state, token };
 };
 
-export const consumeState = async (
-	kv: KVNamespace,
-	state: string,
+/**
+ * Verify a per-flow cookie against the `state` the provider echoed back.
+ *
+ * Returns null — never distinguishing the reason — on a bad signature, an
+ * expired or future-dated payload, a `state` mismatch, or a provider mismatch.
+ * The caller must still clear the cookie so the flow is single-use.
+ */
+export const verifyState = async (
+	secret: string,
+	token: string,
+	expected: { provider: ProviderId; state: string },
 ): Promise<StatePayload | null> => {
-	const raw = await kv.get(`oauth:state:${state}`);
-	if (!raw) return null;
-	await kv.delete(`oauth:state:${state}`);
-	try {
-		return JSON.parse(raw) as StatePayload;
-	} catch {
-		return null;
-	}
+	const payload = await verifyPayload<StatePayload>(secret, token, {
+		maxAgeMs: STATE_MAX_AGE_MS,
+	});
+	if (!payload) return null;
+	if (payload.provider !== expected.provider) return null;
+	if (typeof payload.state !== "string") return null;
+	// Constant-time: a byte-by-byte timing leak here would let an attacker
+	// recover a live state value from response timing.
+	if (!constantTimeEqual(payload.state, expected.state)) return null;
+	return payload;
 };
 
 // One-time handoff token used to ferry an OAuth-completed user_id from the

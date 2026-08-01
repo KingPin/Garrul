@@ -1,6 +1,10 @@
 /**
- * OAuth helpers — state issue/consume round-trip, callback URL derivation,
+ * OAuth helpers — signed-state issue/verify, callback URL derivation,
  * authorize URL building, and provider id type-guard.
+ *
+ * State is stateless and HMAC-signed (no KV write on the unauthenticated
+ * /start route), so its rejection cases ARE the login-CSRF and replay
+ * defenses — they matter more than the happy path.
  *
  * We don't exercise the actual provider HTTPS calls — those happen at the
  * boundary in fetch_profile / exchangeCodeForToken. Those callers are
@@ -13,7 +17,6 @@ import {
 	computeCodeChallenge,
 	constantTimeEqual,
 	consumeHandoff,
-	consumeState,
 	exchangeCodeForToken,
 	genCodeVerifier,
 	isProvider,
@@ -21,7 +24,10 @@ import {
 	issueState,
 	PROVIDERS,
 	randomHex,
+	STATE_MAX_AGE_MS,
+	verifyState,
 } from "../src/lib/oauth";
+import { base64UrlEncode } from "../src/lib/hmac";
 
 class StubKV {
 	private map = new Map<string, string>();
@@ -50,66 +56,152 @@ describe("isProvider", () => {
 	});
 });
 
-describe("issueState / consumeState", () => {
-	let store: KVNamespace;
-	beforeEach(() => {
-		store = kv();
-	});
+describe("issueState / verifyState", () => {
+	const SECRET = "state-signing-secret";
 
-	it("round-trips state payload", async () => {
-		const state = await issueState(store, {
+	it("round-trips the state payload", async () => {
+		const { state, token } = await issueState(SECRET, {
 			provider: "github",
 			return_origin: "https://blog.example.com",
-			created_at: 1700000000000,
-			browser_token: "abc123",
 		});
-		const got = await consumeState(store, state);
-		expect(got).toEqual({
+		const got = await verifyState(SECRET, token, {
+			provider: "github",
+			state,
+		});
+		expect(got).toMatchObject({
 			provider: "github",
 			return_origin: "https://blog.example.com",
-			created_at: 1700000000000,
-			browser_token: "abc123",
+			state,
 		});
+		expect(typeof got?.created_at).toBe("number");
 	});
 
-	it("consumes state exactly once (CSRF / replay defense)", async () => {
-		const state = await issueState(store, {
-			provider: "google",
-			return_origin: "https://x.test",
-			created_at: 1,
-			browser_token: "tok",
-		});
-		expect(await consumeState(store, state)).not.toBeNull();
-		expect(await consumeState(store, state)).toBeNull();
+	it("issues a fresh 48-hex state per flow", async () => {
+		const a = await issueState(SECRET, { provider: "github", return_origin: "" });
+		const b = await issueState(SECRET, { provider: "github", return_origin: "" });
+		expect(a.state).toMatch(/^[0-9a-f]{48}$/);
+		expect(a.state).not.toBe(b.state);
+		expect(a.token).not.toBe(b.token);
 	});
 
-	it("returns null for unknown state", async () => {
-		expect(await consumeState(store, "nope")).toBeNull();
-	});
-
-	it("carries browser_token through KV roundtrip", async () => {
-		const tok = randomHex(16);
-		const state = await issueState(store, {
+	it("rejects a token signed with a different secret", async () => {
+		const { state, token } = await issueState("attacker-secret", {
 			provider: "github",
 			return_origin: "https://x.test",
-			created_at: 2,
-			browser_token: tok,
 		});
-		const got = await consumeState(store, state);
-		expect(got?.browser_token).toBe(tok);
+		expect(
+			await verifyState(SECRET, token, { provider: "github", state }),
+		).toBeNull();
 	});
 
-	it("carries the PKCE code_verifier through KV roundtrip", async () => {
+	it("rejects a token bound to a different state (replay defense)", async () => {
+		// The core login-CSRF property: a (cookie, state) pair is not
+		// transferable. An attacker's own valid token must not validate against
+		// a state value they didn't mint it for.
+		const a = await issueState(SECRET, {
+			provider: "github",
+			return_origin: "https://x.test",
+		});
+		const b = await issueState(SECRET, {
+			provider: "github",
+			return_origin: "https://x.test",
+		});
+		expect(
+			await verifyState(SECRET, a.token, { provider: "github", state: b.state }),
+		).toBeNull();
+	});
+
+	it("rejects a provider mismatch", async () => {
+		// Stops a state minted for one provider being redeemed at another's
+		// callback, where a different client_secret and profile shape apply.
+		const { state, token } = await issueState(SECRET, {
+			provider: "github",
+			return_origin: "https://x.test",
+		});
+		expect(
+			await verifyState(SECRET, token, { provider: "google", state }),
+		).toBeNull();
+	});
+
+	it("rejects a tampered payload", async () => {
+		const { state, token } = await issueState(SECRET, {
+			provider: "github",
+			return_origin: "https://x.test",
+		});
+		const [, sig] = token.split(".");
+		// Re-encode a payload the attacker wants, keeping the real signature.
+		const forgedBody = base64UrlEncode(
+			JSON.stringify({
+				provider: "github",
+				return_origin: "https://evil.test",
+				state,
+				created_at: Date.now(),
+			}),
+		);
+		expect(
+			await verifyState(SECRET, `${forgedBody}.${sig}`, {
+				provider: "github",
+				state,
+			}),
+		).toBeNull();
+	});
+
+	it("rejects malformed and empty tokens without throwing", async () => {
+		for (const bad of ["", ".", "nodot", "body.", "body.short"]) {
+			expect(
+				await verifyState(SECRET, bad, { provider: "github", state: "x" }),
+			).toBeNull();
+		}
+	});
+
+	it("expires a state past STATE_MAX_AGE_MS", async () => {
+		// created_at is now actually READ. Under the old KV implementation the
+		// field was written and never checked, leaving freshness entirely to
+		// best-effort KV expiry.
+		vi.useFakeTimers();
+		try {
+			vi.setSystemTime(1_700_000_000_000);
+			const { state, token } = await issueState(SECRET, {
+				provider: "github",
+				return_origin: "https://x.test",
+			});
+			vi.setSystemTime(1_700_000_000_000 + STATE_MAX_AGE_MS - 1);
+			expect(
+				await verifyState(SECRET, token, { provider: "github", state }),
+			).not.toBeNull();
+			vi.setSystemTime(1_700_000_000_000 + STATE_MAX_AGE_MS + 1);
+			expect(
+				await verifyState(SECRET, token, { provider: "github", state }),
+			).toBeNull();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("carries the PKCE code_verifier through the signed payload", async () => {
 		const verifier = genCodeVerifier();
-		const state = await issueState(store, {
-			provider: "github",
+		const { state, token } = await issueState(SECRET, {
+			provider: "twitter",
 			return_origin: "https://x.test",
-			created_at: 3,
-			browser_token: "tok",
 			code_verifier: verifier,
 		});
-		const got = await consumeState(store, state);
+		const got = await verifyState(SECRET, token, {
+			provider: "twitter",
+			state,
+		});
 		expect(got?.code_verifier).toBe(verifier);
+	});
+
+	it("fits comfortably inside a cookie", async () => {
+		// The payload now rides in a Set-Cookie header; blowing the ~4KB
+		// per-cookie limit would break sign-in for the PKCE providers only,
+		// which is exactly the kind of thing that ships unnoticed.
+		const { token } = await issueState(SECRET, {
+			provider: "twitter",
+			return_origin: "https://a-fairly-long-subdomain.example.com",
+			code_verifier: genCodeVerifier(),
+		});
+		expect(token.length).toBeLessThan(1024);
 	});
 });
 

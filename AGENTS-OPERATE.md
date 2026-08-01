@@ -146,7 +146,7 @@ between the two is a build error, not a silent misclassification.
 | `CANONICAL_URL` | var | Optional. Override for the public URL used by the `/AGENTS.md` route when the inbound `Host` differs from the canonical address. | `https://comments.example.com` | `wrangler.toml` |
 | `OAUTH_CALLBACK_BASE` | var | Base URL for OAuth callbacks; must match the URI registered with each provider. Usually identical to `PUBLIC_BASE_URL`. | `https://comments.example.com` | `wrangler.toml` — **replace the shipped placeholder before deploying** |
 | `BRANDING_HIDDEN` | var | Optional. Set to `1`/`true` to suppress the "Powered by Garrul" attribution under the comment list. Unset = attribution shown. | `false` | `wrangler.toml` |
-| `JWT_SECRET` | secret | Cookie signing for anon-edit tokens. Reserved; current sessions are KV-backed. Set a random value or skip. | ``openssl rand -base64 32` output` | `wrangler secret put` / `.dev.vars` |
+| `JWT_SECRET` | secret | HMAC-SHA-256 key for the signed OAuth state cookie (`src/lib/oauth.ts`). Required for sign-in to work at all. Rotating it invalidates any OAuth flow already in progress — users retry and it works; no other effect, since sessions are KV-backed and not signed with this. | ``openssl rand -base64 32` output` | `wrangler secret put` / `.dev.vars` |
 | `IP_HASH_SECRET` | secret | HMAC-SHA-256 pepper for IP hashing (see `src/lib/ip-hash.ts`). Never log/store raw IPs. Rotating it invalidates existing rate-limit and dedupe buckets. | ``openssl rand -base64 32` output` | `wrangler secret put` / `.dev.vars` |
 | `TURNSTILE_SITE_KEY` | secret | Cloudflare Turnstile site key. Required for anonymous commenting. Note this value is *public* — it ships in the widget HTML. It is stored as a secret for historical reasons and because doing so is harmless. | `0x4AAAAAAA...` | `wrangler secret put` / `.dev.vars` |
 | `TURNSTILE_SECRET` | secret | Turnstile secret. Server-side token verification. | `0x4AAAAAAA...` | `wrangler secret put` / `.dev.vars` |
@@ -660,11 +660,12 @@ third-party-cookie blocking in Safari/Brave breaks sign-in.
 
 ## 11. Backups and data export
 
-D1 is the only durable store. KV holds rate-limit counters, OAuth state
-(short TTL), sessions (30-day TTL), and rebuildable caches (resolved
-settings, version check). The comment first-page and counts caches live in
-the edge Cache API (`caches.default`), not KV — so they never count against
-the KV write budget.
+D1 is the only durable store. KV holds sessions (30-day TTL), widget
+OAuth handoff tokens (60-second TTL), and rebuildable caches (resolved
+settings, version check, optional Workers-AI spam verdicts). Rate-limit
+counters and the comment first-page and counts caches live in the edge
+Cache API (`caches.default`), not KV — so they never count against the
+KV write budget.
 
 **D1 export.** `npm run db:export` wraps `bash scripts/db-export.sh`,
 writing a `.sql` dump locally. Cloudflare also keeps point-in-time
@@ -672,9 +673,11 @@ backups of D1 in the dashboard — the local export is for the operator's
 own archive (e.g. nightly cron on their workstation). For programmatic
 exports beyond `.sql`, use `wrangler d1 export <db>`.
 
-**KV considerations.** Don't bother backing up KV: `RATE_LIMITS` is
-ephemeral; `OAUTH_STATE` has a 10-minute TTL; `SESSIONS` loss just
-forces re-sign-in; `TREE_CACHE` rebuilds on next read.
+**KV considerations.** Don't bother backing up KV: `RATE_LIMITS` only
+holds the optional Workers-AI spam verdict cache (rate limiting itself
+runs on the Cache API); `OAUTH_STATE` holds 60-second widget handoff
+tokens (OAuth state is a signed cookie, not a KV row); `SESSIONS` loss
+just forces re-sign-in; `TREE_CACHE` rebuilds on next read.
 
 ## 12. Upgrades
 
