@@ -3,11 +3,92 @@
  * Returns hex. Never log or store the raw IP; this is the only entry point.
  *
  * Cloudflare provides the client IP via the `cf-connecting-ip` request header.
+ *
+ * IPv6 is truncated to its /64 prefix before hashing. A residential IPv6
+ * allocation is a /64 or larger, so hashing the full address gave one household
+ * 2^64 distinct `ip_hash` values — and every defense keyed on that hash counts
+ * per value: rate-limit buckets, anonymous ghost identities, vote dedup, and the
+ * `UNIQUE (comment_id, reporter_ip_hash)` on reports. All of them were
+ * unenforceable for any IPv6 client. /64 is the smallest unit an operator can
+ * assume is one subscriber; going coarser (/48) would start grouping unrelated
+ * customers of the same ISP.
  */
 import { hmacHex } from "./hmac";
 
+const HEXTET_RE = /^[0-9a-f]{1,4}$/;
+
+/**
+ * Expand an IPv6 literal into exactly 8 hextets, or null if it doesn't parse.
+ * Handles `::` elision and an embedded dotted-quad tail (`::ffff:1.2.3.4`).
+ */
+const expandIpv6 = (addr: string): string[] | null => {
+	let s = addr;
+
+	// The low 32 bits may be written as a dotted quad. Fold it into two hextets
+	// first so the elision maths below only has to deal with one notation.
+	const v4 = s.match(/(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+	if (v4) {
+		const octets = v4.slice(1, 5).map(Number);
+		if (octets.some((o) => o > 255)) return null;
+		const hi = ((octets[0] << 8) | octets[1]).toString(16);
+		const lo = ((octets[2] << 8) | octets[3]).toString(16);
+		s = `${s.slice(0, s.length - v4[0].length)}${hi}:${lo}`;
+	}
+
+	const halves = s.split("::");
+	if (halves.length > 2) return null;
+	const head = halves[0] ? halves[0].split(":") : [];
+	const tail = halves.length === 2 && halves[1] ? halves[1].split(":") : [];
+
+	let parts: string[];
+	if (halves.length === 1) {
+		if (head.length !== 8) return null;
+		parts = head;
+	} else {
+		const fill = 8 - head.length - tail.length;
+		if (fill < 1) return null;
+		parts = [...head, ...Array<string>(fill).fill("0"), ...tail];
+	}
+	return parts.every((h) => HEXTET_RE.test(h)) ? parts : null;
+};
+
+/** Drop leading zeros so `0db8` and `db8` land in the same bucket. */
+const trimHextet = (h: string): string => parseInt(h, 16).toString(16);
+
+/**
+ * Canonicalize a client IP for hashing.
+ *
+ * IPv4 is returned as-is. IPv6 is reduced to its /64 prefix. An unparseable
+ * value is hashed verbatim rather than rejected — a malformed
+ * `cf-connecting-ip` should still land in *some* bucket, just not everyone's.
+ */
+export const normalizeIpForHash = (ip: string): string => {
+	const raw = ip
+		.trim()
+		.toLowerCase()
+		.replace(/^\[/, "")
+		.replace(/\]$/, "")
+		// Link-local addresses can carry a zone id; it isn't part of the address.
+		.split("%")[0];
+	if (!raw.includes(":")) return raw;
+
+	const parts = expandIpv6(raw);
+	if (!parts) return raw;
+
+	// IPv4-mapped (::ffff:a.b.c.d) is an IPv4 client wearing an IPv6 hat. Emit
+	// the dotted form so it shares a bucket with the same client arriving over
+	// v4 — and so every mapped address doesn't collapse into a single `::/64`.
+	if (parts.slice(0, 5).every((h) => h === "0") && parts[5] === "ffff") {
+		const hi = parseInt(parts[6], 16);
+		const lo = parseInt(parts[7], 16);
+		return `${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`;
+	}
+
+	return `${parts.slice(0, 4).map(trimHextet).join(":")}::/64`;
+};
+
 export const hashIp = async (ip: string, secret: string): Promise<string> =>
-	hmacHex(secret, ip);
+	hmacHex(secret, normalizeIpForHash(ip));
 
 export const clientIp = (req: Request): string => {
 	return req.headers.get("cf-connecting-ip") ?? "0.0.0.0";
