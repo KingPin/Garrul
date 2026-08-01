@@ -829,23 +829,42 @@ export const deleteSettings = async (
 		.run();
 };
 
+/**
+ * Rewrite a comment's body, optionally re-routing its moderation status in the
+ * same statement.
+ *
+ * `status` is passed when the edit's spam re-evaluation quarantines it. Folding
+ * it into this one UPDATE keeps an edit at a single D1 row-write, and leaves the
+ * common case (no status change) byte-identical to before.
+ */
 export const updateCommentBody = async (
 	db: D1Database,
 	id: string,
 	body_md: string,
 	body_html: string,
 	renderer_version: number,
+	status?: CommentStatus,
 ): Promise<void> => {
 	const now = Date.now();
-	await db
-		.prepare(
-			`UPDATE comments
-			    SET body_md = ?, body_html = ?, renderer_version = ?,
-			        edited_at = ?
-			  WHERE id = ?`,
-		)
-		.bind(body_md, body_html, renderer_version, now, id)
-		.run();
+	const stmt =
+		status === undefined
+			? db
+					.prepare(
+						`UPDATE comments
+						    SET body_md = ?, body_html = ?, renderer_version = ?,
+						        edited_at = ?
+						  WHERE id = ?`,
+					)
+					.bind(body_md, body_html, renderer_version, now, id)
+			: db
+					.prepare(
+						`UPDATE comments
+						    SET body_md = ?, body_html = ?, renderer_version = ?,
+						        edited_at = ?, status = ?
+						  WHERE id = ?`,
+					)
+					.bind(body_md, body_html, renderer_version, now, status, id);
+	await stmt.run();
 };
 
 /**

@@ -264,6 +264,11 @@ const evaluateSpam = async (
 	postUrl: string | null,
 	userAgent: string | null,
 	formTs: string | undefined,
+	// The form-timing heuristic is a submission-time signal. An edit has no
+	// freshly-rendered form and therefore no token to verify, and a *missing*
+	// token flags — so on that path the check has to be skipped rather than
+	// silently marking every edit as a bot.
+	opts: { skipFormTs?: boolean } = {},
 ): Promise<SpamEvaluation> => {
 	if (author.is_admin) return { status: "approved", reasons: [], verdicts: [] };
 	const reasons: string[] = [];
@@ -271,7 +276,7 @@ const evaluateSpam = async (
 	const heuristicsRaw: Record<string, unknown> = {};
 
 	const minMs = numbers.spam_honeypot_min_ms;
-	if (minMs > 0 && env.SPAM_FORM_TS_SECRET) {
+	if (minMs > 0 && env.SPAM_FORM_TS_SECRET && !opts.skipFormTs) {
 		const v = await verifyFormTimestamp(
 			formTs,
 			env.SPAM_FORM_TS_SECRET,
@@ -956,16 +961,22 @@ comments.patch("/:id", async (c) => {
 
 	// Editing was the one write path a banned user kept: POST checks is_banned,
 	// this didn't, so anything already inside the edit window could be rewritten
-	// into whatever they liked.
-	if (!(await requireActiveUser(c.env.DB, sessionUserId))) {
-		return c.json({ error: t("err.banned") }, 403);
-	}
+	// into whatever they liked. The row doubles as the author for the spam pass
+	// and the response below — same user, since only the author may edit.
+	const author = await requireActiveUser(c.env.DB, sessionUserId);
+	if (!author) return c.json({ error: t("err.banned") }, 403);
 
 	const existing = await getComment(c.env.DB, id);
 	if (!existing) return c.json({ error: t("err.not_found") }, 404);
 
 	if (sessionUserId !== existing.user_id) {
 		return c.json({ error: t("err.edit.not_author") }, 403);
+	}
+
+	// Only a live comment is editable. `deleted` and `spam` answer 404 like a
+	// missing row rather than confirming what a moderator did with it.
+	if (existing.status !== "approved" && existing.status !== "pending") {
+		return c.json({ error: t("err.not_found") }, 404);
 	}
 
 	const numbers = await loadNumbers(c.env);
@@ -981,6 +992,38 @@ comments.patch("/:id", async (c) => {
 		return c.json({ error: t(bodyCheck.key, args) }, 400);
 	}
 
+	// Re-run the spam pass on the new text. Without this, "post something benign,
+	// get approved, then rewrite it inside the edit window" published arbitrary
+	// content straight past moderation — bustTreeCache below makes it live
+	// immediately.
+	const flags = await loadFlags(c.env);
+	const post = await getPost(c.env.DB, existing.post_slug);
+	const verdict = await evaluateSpam(
+		c.env,
+		flags,
+		numbers,
+		author,
+		bodyCheck.body,
+		post?.url ?? null,
+		c.req.header("user-agent") ?? null,
+		undefined,
+		{ skipFormTs: true },
+	);
+	// An edit can send a comment back to the queue but never pull one out of it:
+	// approving is a moderator's call.
+	const nextStatus: CommentStatus =
+		verdict.status === "pending" || existing.status === "pending"
+			? "pending"
+			: "approved";
+	if (verdict.reasons.length > 0) {
+		log.info("spam.flagged", {
+			reasons: verdict.reasons,
+			post_slug: existing.post_slug,
+			provider: author.provider,
+			on: "edit",
+		});
+	}
+
 	const body_html = renderMarkdown(bodyCheck.body);
 	await updateCommentBody(
 		c.env.DB,
@@ -988,9 +1031,22 @@ comments.patch("/:id", async (c) => {
 		bodyCheck.body,
 		body_html,
 		CURRENT_RENDERER_VERSION,
+		nextStatus === existing.status ? undefined : nextStatus,
 	);
 	await bustTreeCache(c.env, c.req.url, existing.post_slug);
-	writeEvent(c.env.ANALYTICS, "comment.edited", { post_slug: existing.post_slug });
+
+	// Same fire-and-forget shape as POST, so the moderator sees why the edit was
+	// held.
+	if (verdict.verdicts.length > 0) {
+		const persist = persistVerdicts(c.env.DB, id, verdict.verdicts);
+		if (c.executionCtx) c.executionCtx.waitUntil(persist);
+		else await persist;
+	}
+
+	writeEvent(c.env.ANALYTICS, "comment.edited", {
+		post_slug: existing.post_slug,
+		outcome: nextStatus,
+	});
 	fireWebhook(c.env, c.executionCtx, {
 		event: "comment.edited",
 		comment_id: id,
@@ -1000,16 +1056,7 @@ comments.patch("/:id", async (c) => {
 	});
 	const updated = await getComment(c.env.DB, id);
 	if (!updated) return c.json({ error: t("err.internal") }, 500);
-	const authorRow = await c.env.DB
-		.prepare(
-			`SELECT id, provider, provider_id, name, email, avatar_url,
-			        is_admin, is_banned, role, created_at
-			 FROM users WHERE id = ?`,
-		)
-		.bind(updated.user_id)
-		.first<UserRow>();
-	if (!authorRow) return c.json({ error: t("err.internal") }, 500);
-	return c.json({ comment: serializeComment(updated, rowToUser(authorRow)) });
+	return c.json({ comment: serializeComment(updated, author) });
 });
 
 comments.delete("/:id", async (c) => {
