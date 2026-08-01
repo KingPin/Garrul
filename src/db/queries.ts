@@ -90,6 +90,21 @@ export type Comment = {
 	score_down: number;
 };
 
+/**
+ * A comment as the public read path sees it. `body_md`, `ip_hash` and
+ * `user_agent` are deliberately absent: none of them is ever emitted by
+ * src/lib/tree.ts, and selecting them meant every cache miss on a busy slug
+ * dragged the full markdown source plus two pieces of pseudonymous PII out of
+ * D1 for nothing. Editing round-trips fetch `body_md` for one comment through
+ * GET /:id/source, which is author-gated.
+ */
+export type TreeComment = Omit<Comment, "body_md" | "ip_hash" | "user_agent">;
+
+/** Column list backing `TreeComment`. Keep the two in sync. */
+const TREE_COLUMNS = `id, post_slug, parent_id, user_id, body_html,
+	        renderer_version, status, edited_at, deleted_at, deleted_by,
+	        created_at, depth, score_up, score_down`;
+
 type UserRow = Omit<User, "is_admin" | "is_banned" | "role"> & {
 	is_admin: number;
 	is_banned: number;
@@ -537,54 +552,155 @@ export const getUsersByIds = async (
 };
 
 /**
- * Fetch publicly visible comments for a post. Excludes `spam` and
- * `pending` — both are stored in D1 and visible in the admin queue,
- * but never leak via the public tree. Returned `deleted` comments are
- * kept so the tree builder can preserve chain ancestry; their body_html
- * is blanked at render time.
+ * Visibility predicate for the public read path. Excludes `spam` and `pending`
+ * — both are stored in D1 and visible in the admin queue, but never leak via
+ * the public tree. `deleted` rows ARE returned so the tree builder can preserve
+ * chain ancestry; their body_html is blanked at render time.
+ *
+ * When `viewer_id` is set, that one viewer additionally sees their OWN pending
+ * comments, so posting into a moderated thread gives visible confirmation the
+ * comment landed. Signed-in responses bypass the anonymous edge cache, so these
+ * rows can never end up in a shared cached copy.
  */
-export const listCommentsForPost = async (
+const visiblePredicate = (
+	viewer_id: string | null,
+	alias = "",
+): { sql: string; binds: string[] } => {
+	const col = alias ? `${alias}.status` : "status";
+	const user = alias ? `${alias}.user_id` : "user_id";
+	if (!viewer_id) {
+		return { sql: `${col} NOT IN ('spam', 'pending')`, binds: [] };
+	}
+	return {
+		sql: `(${col} NOT IN ('spam', 'pending')
+		       OR (${col} = 'pending' AND ${user} = ?))`,
+		binds: [viewer_id],
+	};
+};
+
+/**
+ * Hard backstop on how many comment rows one page of a tree may pull out of D1.
+ *
+ * Pagination below is thread-scoped, so the normal cost of a page is "the
+ * threads on it plus their replies". This bound exists for the pathological
+ * shape that bounding alone doesn't cover: a single top-level comment with tens
+ * of thousands of direct replies. D1's free tier allows 5M rows read per DAY
+ * account-wide, so an unbounded read on one popular slug is an account-wide
+ * outage primitive; truncating a freakishly large thread is strictly better,
+ * and the caller logs when it happens so the operator isn't guessing.
+ */
+export const TREE_ROW_LIMIT = 2000;
+
+export type ThreadRef = { id: string; score: number };
+
+/**
+ * One page of top-level thread ids in the requested sort order, plus their net
+ * score (the `top` cursor needs it).
+ *
+ * `limit` should be pageSize + 1: the caller uses the extra row purely to learn
+ * whether another page exists, and must not fetch its subtree.
+ *
+ * Both sorts page on a total order so no thread can be skipped or repeated:
+ *   - new: (created_at DESC, id DESC), cursor `id < ?` — ULIDs are
+ *     time-prefixed and unique, so id order tracks created_at order and breaks
+ *     same-millisecond ties.
+ *   - top: (score DESC, id DESC), cursor "ranked strictly after (score, id)".
+ */
+export const listThreadRefsForPost = async (
 	db: D1Database,
 	post_slug: string,
-): Promise<Comment[]> => {
+	opts: {
+		sort: "new" | "top";
+		limit: number;
+		cursor?: { score?: number; id: string } | null;
+		viewer_id?: string | null;
+	},
+): Promise<ThreadRef[]> => {
+	const visible = visiblePredicate(opts.viewer_id ?? null);
+	const binds: unknown[] = [post_slug, ...visible.binds];
+	let cursorSql = "";
+	if (opts.cursor && opts.sort === "top" && opts.cursor.score !== undefined) {
+		cursorSql = `AND ((score_up - score_down) < ?
+		              OR ((score_up - score_down) = ? AND id < ?))`;
+		binds.push(opts.cursor.score, opts.cursor.score, opts.cursor.id);
+	} else if (opts.cursor) {
+		cursorSql = "AND id < ?";
+		binds.push(opts.cursor.id);
+	}
+	const order =
+		opts.sort === "top"
+			? "(score_up - score_down) DESC, id DESC"
+			: "created_at DESC, id DESC";
+	binds.push(opts.limit);
+
 	const result = await db
 		.prepare(
-			`SELECT id, post_slug, parent_id, user_id, body_md, body_html,
-			        renderer_version, status, edited_at, deleted_at, deleted_by,
-			        ip_hash, user_agent, created_at, depth, score_up, score_down
+			`SELECT id, (score_up - score_down) AS score
 			 FROM comments
-			 WHERE post_slug = ? AND status NOT IN ('spam', 'pending')
-			 ORDER BY created_at ASC, id ASC`,
+			 WHERE post_slug = ? AND parent_id IS NULL AND ${visible.sql}
+			   ${cursorSql}
+			 ORDER BY ${order}
+			 LIMIT ?`,
 		)
-		.bind(post_slug)
-		.all<Comment>();
+		.bind(...binds)
+		.all<ThreadRef>();
 	return result.results ?? [];
 };
 
 /**
- * Fetch a single viewer's own `pending` comments for a post. Merged into
- * the public tree only for the authenticated author so they can see their
- * comment is queued for moderation — never exposed to other viewers (the
- * caller scopes this to `session.user_id`). Signed-in list responses bypass
- * the edge cache, so these rows never leak into the anonymous cached copy.
+ * Every visible comment belonging to the given top-level threads.
+ *
+ * Replaces a query that selected EVERY comment on the slug with no LIMIT at
+ * all: ~5,000 rows on a busy post, multiplied by the four-to-five queries this
+ * endpoint runs, put D1's 5M daily row-read cap within reach of about a
+ * thousand unauthenticated requests.
+ *
+ * The recursive CTE applies the visibility predicate to the recursive step as
+ * well as the seed, so an unreachable subtree (children of a spam comment) is
+ * never read. Those rows were previously fetched and then silently dropped by
+ * the tree builder, which couldn't reach them either — same output, fewer rows.
+ *
+ * `truncated` reports that TREE_ROW_LIMIT clipped the result; the caller logs
+ * it. Rows come back created_at ASC so the builder's sibling ordering is a
+ * no-op scan.
  */
-export const listOwnPendingForPost = async (
+export const listCommentsForThreads = async (
 	db: D1Database,
-	post_slug: string,
-	user_id: string,
-): Promise<Comment[]> => {
+	threadIds: string[],
+	viewer_id: string | null = null,
+): Promise<{ rows: TreeComment[]; truncated: boolean }> => {
+	if (threadIds.length === 0) return { rows: [], truncated: false };
+	const seed = visiblePredicate(viewer_id, "s");
+	const step = visiblePredicate(viewer_id, "c");
+	const placeholders = threadIds.map(() => "?").join(",");
 	const result = await db
 		.prepare(
-			`SELECT id, post_slug, parent_id, user_id, body_md, body_html,
-			        renderer_version, status, edited_at, deleted_at, deleted_by,
-			        ip_hash, user_agent, created_at, depth, score_up, score_down
+			`WITH RECURSIVE thread(id) AS (
+			 	SELECT s.id FROM comments s
+			 	 WHERE s.id IN (${placeholders}) AND ${seed.sql}
+			 	UNION
+			 	SELECT c.id FROM comments c
+			 	 JOIN thread t ON c.parent_id = t.id
+			 	 WHERE ${step.sql}
+			 )
+			 SELECT ${TREE_COLUMNS}
 			 FROM comments
-			 WHERE post_slug = ? AND user_id = ? AND status = 'pending'
-			 ORDER BY created_at ASC, id ASC`,
+			 WHERE id IN (SELECT id FROM thread)
+			 ORDER BY created_at ASC, id ASC
+			 LIMIT ?`,
 		)
-		.bind(post_slug, user_id)
-		.all<Comment>();
-	return result.results ?? [];
+		.bind(
+			...threadIds,
+			...seed.binds,
+			...step.binds,
+			TREE_ROW_LIMIT + 1,
+		)
+		.all<TreeComment>();
+	const rows = result.results ?? [];
+	if (rows.length > TREE_ROW_LIMIT) {
+		return { rows: rows.slice(0, TREE_ROW_LIMIT), truncated: true };
+	}
+	return { rows, truncated: false };
 };
 
 /**

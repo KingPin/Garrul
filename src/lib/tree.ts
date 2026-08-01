@@ -20,7 +20,7 @@
  * on the client.
  */
 
-import type { Comment } from "../db/queries";
+import type { Comment, TreeComment } from "../db/queries";
 
 export type TreeAuthor = {
 	id: string;
@@ -82,9 +82,9 @@ export const MAX_DEPTH = 4;
  */
 export const MAX_REPLY_DEPTH = 8;
 
-type ChildIndex = Map<string | null, Comment[]>;
+type ChildIndex = Map<string | null, TreeComment[]>;
 
-const indexByParent = (rows: Comment[]): ChildIndex => {
+const indexByParent = (rows: TreeComment[]): ChildIndex => {
 	const idx: ChildIndex = new Map();
 	for (const row of rows) {
 		const list = idx.get(row.parent_id) ?? [];
@@ -138,7 +138,7 @@ const markAncestors = (
  * flag), every deleted comment is kept too, so leaf deletions surface as a
  * placeholder rather than being pruned.
  */
-const keepableSet = (rows: Comment[], keepAllDeleted: boolean): Set<string> => {
+const keepableSet = (rows: TreeComment[], keepAllDeleted: boolean): Set<string> => {
 	const parentOf = new Map<string, string | null>();
 	for (const r of rows) parentOf.set(r.id, r.parent_id);
 
@@ -180,7 +180,7 @@ const buildAuthor = (
 	};
 
 const toNode = (
-	row: Comment,
+	row: TreeComment,
 	depth: number,
 	flatten_from: string | null,
 	usersById: Map<string, TreeAuthor>,
@@ -225,7 +225,7 @@ const toNode = (
  * stored depth that doesn't match where it actually renders.
  */
 type Frame = {
-	row: Comment;
+	row: TreeComment;
 	parentId: string;
 	/** Depth this node renders at, before flatten clamping. */
 	depth: number;
@@ -240,7 +240,7 @@ const buildSubtree = (
 	children: ChildIndex,
 	keep: Set<string>,
 	usersById: Map<string, TreeAuthor>,
-	byId: Map<string, Comment>,
+	byId: Map<string, TreeComment>,
 	reactionsById: Map<string, ReactionCount[]>,
 	myVotes: Map<string, -1 | 1>,
 ): TreeNode[] => {
@@ -306,13 +306,13 @@ export type BuildResult = {
 };
 
 export const buildTree = (
-	rows: Comment[],
+	rows: TreeComment[],
 	usersById: Map<string, TreeAuthor>,
 	reactionsById: Map<string, ReactionCount[]> = new Map(),
 	myVotes: Map<string, -1 | 1> = new Map(),
 	opts: { keepAllDeleted?: boolean } = {},
 ): BuildResult => {
-	const byId = new Map<string, Comment>();
+	const byId = new Map<string, TreeComment>();
 	for (const r of rows) byId.set(r.id, r);
 	const children = indexByParent(rows);
 	const keep = keepableSet(rows, opts.keepAllDeleted ?? false);

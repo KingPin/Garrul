@@ -30,16 +30,18 @@ import {
 	insertComment,
 	isUserRole,
 	listActiveSubscriptionsForPost,
-	listCommentsForPost,
-	listOwnPendingForPost,
+	listCommentsForThreads,
 	listReactionsForPost,
+	listThreadRefsForPost,
 	listUserReactionsOnPost,
 	softDeleteComment,
+	TREE_ROW_LIMIT,
 	updateCommentBody,
 	upsertPost,
 	type Comment,
 	type SpamVerdictSource,
 	type SpamVerdictValue,
+	type TreeComment,
 	type User,
 } from "../db/queries";
 import { identiconSvg } from "../lib/identicon";
@@ -644,32 +646,44 @@ comments.post("/", async (c) => {
  * also fills in an inline identicon SVG so the widget doesn't need to
  * make a per-author request.
  */
+/**
+ * Chunk size for the author lookup. The `IN (…)` list scales with the number of
+ * DISTINCT authors on a page, and D1 caps bound parameters per statement — one
+ * busy thread of individually-named anonymous ghosts was enough to blow that
+ * ceiling and 500 the whole comment list. Well under any plausible cap while
+ * still keeping the round-trip count at one for an ordinary page.
+ */
+const AUTHOR_BATCH = 90;
+
 const loadAuthors = async (
 	db: D1Database,
-	rows: Comment[],
+	rows: TreeComment[],
 ): Promise<Map<string, TreeAuthor>> => {
 	if (rows.length === 0) return new Map();
 	const userIds = Array.from(new Set(rows.map((r) => r.user_id)));
-	const placeholders = userIds.map(() => "?").join(",");
-	const result = await db
-		.prepare(
-			`SELECT id, provider, provider_id, name, email, avatar_url,
-			        is_admin, is_banned, role, created_at
-			 FROM users WHERE id IN (${placeholders})`,
-		)
-		.bind(...userIds)
-		.all<UserRow>();
 	const out = new Map<string, TreeAuthor>();
-	for (const u of result.results ?? []) {
-		const user = rowToUser(u);
-		out.set(user.id, {
-			id: user.id,
-			name: user.name,
-			provider: user.provider,
-			is_admin: user.is_admin,
-			avatar_url: user.avatar_url,
-			avatar_svg: user.avatar_url ? null : identiconSvg(user.id),
-		});
+	for (let i = 0; i < userIds.length; i += AUTHOR_BATCH) {
+		const batch = userIds.slice(i, i + AUTHOR_BATCH);
+		const placeholders = batch.map(() => "?").join(",");
+		const result = await db
+			.prepare(
+				`SELECT id, provider, provider_id, name, email, avatar_url,
+				        is_admin, is_banned, role, created_at
+				 FROM users WHERE id IN (${placeholders})`,
+			)
+			.bind(...batch)
+			.all<UserRow>();
+		for (const u of result.results ?? []) {
+			const user = rowToUser(u);
+			out.set(user.id, {
+				id: user.id,
+				name: user.name,
+				provider: user.provider,
+				is_admin: user.is_admin,
+				avatar_url: user.avatar_url,
+				avatar_svg: user.avatar_url ? null : identiconSvg(user.id),
+			});
+		}
 	}
 	return out;
 };
@@ -697,15 +711,16 @@ const decodeCursor = (raw: string | null): string | null => {
 	return ULID_RE.test(raw) ? raw : null;
 };
 
-/** Net score (up − down) of a thread, the `top`-sort key. */
-const threadScore = (t: TreeNode): number => t.score_up - t.score_down;
-
 /**
  * `top`-sort cursor: `<score>:<ulid>` of the last thread on the current page.
  * `top` is ordered by (score DESC, id DESC) — a total order, since ULIDs are
  * unique — so the next page is everything ranked strictly after the cursor:
  * `score < cur.score || (score === cur.score && id < cur.id)`. Tie-breaking on
  * id (rather than created_at) keeps the cursor stable against ms collisions.
+ *
+ * Both cursors are re-encoded from the decoded value before use — as the page
+ * cursor and as part of the cache key — so a cosmetically different spelling of
+ * the same position can't mint a second cache entry.
  */
 type TopCursor = { score: number; id: string };
 const decodeTopCursor = (raw: string | null): TopCursor | null => {
@@ -717,7 +732,6 @@ const decodeTopCursor = (raw: string | null): TopCursor | null => {
 	if (!Number.isFinite(score) || !ULID_RE.test(id)) return null;
 	return { score, id };
 };
-const encodeTopCursor = (t: TreeNode): string => `${threadScore(t)}:${t.id}`;
 
 comments.get("/", async (c) => {
 	const slug = (c.req.query("slug") ?? "").trim();
@@ -741,15 +755,24 @@ comments.get("/", async (c) => {
 	const numbers = await loadNumbers(c.env);
 	const pageSize = numbers.comments_per_page;
 
-	// Fast path: first page is cached at the edge (Cache API, not KV — see
-	// response-cache.ts) for anonymous viewers only, keyed by sort AND page
-	// size so `top`/`new` and a changed page size don't serve each other's
-	// slices. Signed-in viewers see per-user my_vote / mine flags so they
-	// bypass the cache. Hit-rate stays high on the public reader path, which
-	// dominates traffic.
-	const cacheReq = treeCacheKey(c.req.url, slug, sort, pageSize);
-	const hasCursor = cursor !== null || topCursor !== null;
-	const cacheable = !hasCursor && !session;
+	// Cached at the edge (Cache API, not KV — see response-cache.ts) for
+	// anonymous viewers only, keyed by sort AND page size so `top`/`new` and a
+	// changed page size don't serve each other's slices. Signed-in viewers see
+	// per-user my_vote / mine flags so they bypass the cache. Hit-rate stays
+	// high on the public reader path, which dominates traffic.
+	//
+	// The cursor is part of the key rather than a reason to skip caching. It
+	// used to be the latter, and because `decodeCursor` only checked ULID
+	// *shape*, ANY well-formed ULID in `?before=` disabled the cache and sent
+	// the request to D1 — an unauthenticated, cache-bypassing read amplifier in
+	// front of an unbounded query. Only the canonically re-encoded cursor goes
+	// into the key, so garbage normalizes to the first page instead of minting a
+	// key of its own.
+	const cursorKey = topCursor
+		? `${topCursor.score}:${topCursor.id}`
+		: (cursor ?? null);
+	const cacheReq = treeCacheKey(c.req.url, slug, sort, pageSize, cursorKey);
+	const cacheable = !session;
 	if (cacheable) {
 		const hit = await matchCache(cacheReq);
 		// Re-emit the body WITHOUT the edge copy's public Cache-Control: the
@@ -759,18 +782,40 @@ comments.get("/", async (c) => {
 	}
 
 	const post = await getPost(c.env.DB, slug);
-	const rows = await listCommentsForPost(c.env.DB, slug);
-	// Signed-in authors also see their own queued comments so they get a
-	// visible confirmation that the post landed in moderation. Scoped to the
-	// session user; never exposed to other viewers. Safe to merge here because
-	// signed-in responses bypass the anonymous edge cache (see `cacheable`).
-	if (session) {
-		const ownPending = await listOwnPendingForPost(
-			c.env.DB,
-			slug,
-			session.user_id,
-		);
-		if (ownPending.length > 0) rows.push(...ownPending);
+
+	// Pagination happens in SQL. One query picks this page's top-level threads
+	// in the sort's own order; a second pulls just those threads' subtrees. The
+	// old shape loaded EVERY comment on the slug — no LIMIT, full markdown
+	// source and ip_hash included — built the whole tree, then sliced 25 threads
+	// off the top in memory.
+	//
+	// A signed-in viewer additionally sees their own `pending` comments (so a
+	// moderated post visibly landed); that predicate is pushed into both queries
+	// rather than merged from a third, and those responses are uncached.
+	const viewerId = session?.user_id ?? null;
+	const refs = await listThreadRefsForPost(c.env.DB, slug, {
+		sort,
+		// One extra row, purely to learn whether a further page exists. Its
+		// subtree is deliberately NOT fetched.
+		limit: pageSize + 1,
+		cursor: topCursor ?? (cursor ? { id: cursor } : null),
+		viewer_id: viewerId,
+	});
+	const pageRefs = refs.slice(0, pageSize);
+	const more = refs.length > pageSize;
+
+	const { rows, truncated } = await listCommentsForThreads(
+		c.env.DB,
+		pageRefs.map((r) => r.id),
+		viewerId,
+	);
+	if (truncated) {
+		log.warn("comments.page_truncated", {
+			post_slug: slug,
+			sort,
+			threads: pageRefs.length,
+			limit: TREE_ROW_LIMIT,
+		});
 	}
 	const authors = await loadAuthors(c.env.DB, rows);
 
@@ -803,44 +848,23 @@ comments.get("/", async (c) => {
 		keepAllDeleted,
 	});
 
-	if (sort === "top") {
-		// Top-level only — replies stay in created_at ASC so threaded
-		// conversation reads top-down. Order by (score DESC, id DESC): a total
-		// order over unique ULIDs, which the composite score:id cursor pages
-		// through. id-desc also floats a fresher same-score comment above an
-		// older one (ULIDs are time-monotonic).
-		allThreads.sort((a, b) => {
-			const d = threadScore(b) - threadScore(a);
-			if (d !== 0) return d;
-			return a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
-		});
-	} else {
-		// Newest-first top-level ordering. The tree builder returns ASC so
-		// we reverse here; widget pages with ?before=<oldest_id_on_page>.
-		allThreads.reverse();
-	}
+	// SQL already ordered and sliced the threads; restore that order over the
+	// builder's output, which always comes back created_at ASC. Replies stay
+	// created_at ASC either way so threaded conversation reads top-down.
+	const rank = new Map(pageRefs.map((r, i) => [r.id, i]));
+	const page = allThreads.sort(
+		(a, b) => (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0),
+	);
 
-	// Apply the cursor: drop everything up to and including it, in the sort's
-	// own order. `new` → id < cursor; `top` → ranked strictly after (score,id).
-	let startIdx = 0;
-	if (cursor) {
-		const i = allThreads.findIndex((t) => t.id < cursor);
-		startIdx = i < 0 ? allThreads.length : i;
-	} else if (topCursor) {
-		const i = allThreads.findIndex(
-			(t) =>
-				threadScore(t) < topCursor.score ||
-				(threadScore(t) === topCursor.score && t.id < topCursor.id),
-		);
-		startIdx = i < 0 ? allThreads.length : i;
-	}
-	const page = allThreads.slice(startIdx, startIdx + pageSize);
-	const more = allThreads.length > startIdx + pageSize;
-	const last = page[page.length - 1];
-	const next_cursor = more && last
+	// Cursor comes from the last thread SQL *selected*, not the last one
+	// rendered. They differ when the builder pruned a tail thread (a deleted
+	// comment whose whole subtree is also deleted), and using the rendered one
+	// would re-scan the pruned thread on every subsequent page.
+	const lastRef = pageRefs[pageRefs.length - 1];
+	const next_cursor = more && lastRef
 		? sort === "top"
-			? encodeTopCursor(last)
-			: last.id
+			? `${lastRef.score}:${lastRef.id}`
+			: lastRef.id
 		: null;
 
 	// Whether new comments are accepted, so the widget can show the composer or a
@@ -862,9 +886,15 @@ comments.get("/", async (c) => {
 		closed_reason: threadState.reason ?? null,
 	};
 
-	if (cacheable) {
-		// Write-through to the edge cache; the put runs after the response when
-		// an ExecutionContext is available (real requests), else inline.
+	// Write-through to the edge cache; the put runs after the response when an
+	// ExecutionContext is available (real requests), else inline.
+	//
+	// An empty cursor page is deliberately NOT stored. A cursor is unvalidated
+	// against the data — any well-formed ULID decodes fine and simply matches no
+	// thread — so caching those would let one client mint unlimited distinct
+	// cache entries from a random-ULID loop. Real pages are bounded by the
+	// thread count.
+	if (cacheable && (cursorKey === null || page.length > 0)) {
 		return cacheJson(
 			cacheReq,
 			JSON.stringify(payload),
