@@ -167,7 +167,10 @@ const clearLegacyCookie = (c: SessionCtx): void => {
 
 /**
  * Short-lived auxiliary cookie used by the OAuth state-binding double-
- * submit check (`garrul_oauth_b`). Scoped tightly to /api/v1/auth so it
+ * submit check. The name is per-flow — `garrul_oauth_b_<state[0:8]>`, see
+ * OAUTH_BIND_COOKIE_PREFIX in routes/auth.ts — not a single fixed cookie,
+ * so two tabs mid-login don't clobber each other's state. Scoped tightly
+ * to /api/v1/auth so it
  * is sent only on the start → callback round-trip, and uses SameSite=Lax
  * because the callback is a top-level same-site GET from the provider
  * (SameSite=Strict would not deliver after the cross-site redirect).

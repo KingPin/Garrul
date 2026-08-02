@@ -285,9 +285,19 @@ see AGENTS-OPERATE.md §5) control the volume:
   **3**) start folded so a hot deep thread doesn't shove the page down. `0` =
   never auto-collapse.
 
-Reply collapsing is **purely client-side** — all replies still arrive in the
-single list response; the widget folds them. There is no `data-*` per-page
-override; these are instance-wide. The new affordances inherit the existing
+- **Reply depth cap.** A reply nested more than **8** levels deep is rejected
+  server-side with HTTP 400 and `err.parent.too_deep`. The widget already hides
+  the reply button below the flatten threshold, so this is invisible in normal
+  use — it exists because an unbounded chain made the whole thread
+  un-renderable. Existing deeper rows (from a Disqus import, say) still render;
+  they just can't be replied to.
+
+Reply collapsing is **purely client-side** — the replies arrive in the single
+list response and the widget folds them. There is no `data-*` per-page
+override; these are instance-wide. One backstop applies to that response: a
+single page of the tree pulls at most 2000 rows out of the database, and a
+thread past that is truncated (and logged) rather than allowed to time the
+request out. Real threads don't reach it. The new affordances inherit the existing
 theming variables — the collapse toggle from `--garrul-muted`, the
 "Show N more replies" / "Load older comments" buttons from `--garrul-link`
 (see `docs/THEMING.md`).
