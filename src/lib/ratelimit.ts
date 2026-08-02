@@ -210,12 +210,23 @@ export const checkRateLimit = async (
 		);
 		if (global.reason) return { ok: false, reason: "global" };
 
-		// Non-atomic read-modify-write. Concurrent requests from one identity
-		// can each observe room and each append, briefly exceeding the cap by
-		// the concurrent-request count. The Cache API has no compare-and-swap,
-		// so this is inherent to the backend; bounded burst slop is an
-		// acceptable trade for a comment system. A Durable Object backend would
-		// close it.
+		// Non-atomic read-modify-write, and the write is a full overwrite rather
+		// than an append: `decide` hands back the stamps it read, this pushes
+		// one, and `store.write` replaces the whole entry. So N concurrent
+		// requests from one identity all observe the same pre-state, all pass
+		// the gate, and all write back a bucket grown by exactly one stamp —
+		// last writer wins, and the other N-1 leave no trace.
+		//
+		// The overshoot is therefore a MULTIPLIER, not a one-off burst: a client
+		// keeping N requests in flight sustains roughly N× the configured cap
+		// indefinitely, because the bucket only ever advances one stamp per
+		// round no matter how many got through. The global envelope races the
+		// same way and multiplies with it, so it is not a backstop against this.
+		//
+		// The Cache API has no compare-and-swap, so it is inherent to the
+		// backend, and the trade stays accepted for a comment system — a Durable
+		// Object backend is what would close it. Settled in a5b384b; only the
+		// magnitude above was understated, which is all this corrects.
 		scoped.stamps.push(now);
 		global.stamps.push(now);
 		await Promise.all([

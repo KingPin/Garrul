@@ -123,6 +123,41 @@ describe("checkRateLimit", () => {
 		expect(writes).toBe(2);
 	});
 
+	it("lets N concurrent requests through while advancing the bucket by one", async () => {
+		// Pins the documented bound on the non-atomic read-modify-write, which
+		// used to be described as "briefly exceeding the cap by the
+		// concurrent-request count". It is worse than that: the write is a full
+		// overwrite, not an append, so the N-1 losing writers leave no trace and
+		// the bucket advances by a single stamp however many got through. That
+		// makes the overshoot a sustained multiplier rather than a one-off burst.
+		//
+		// The trade-off itself is settled (the Cache API has no CAS) — this is
+		// here so the comment above can't drift back to understating it.
+		const slow = memoryStore();
+		const concurrent: RateLimitStore = {
+			// A tick between read and write is what a real colo's latency gives
+			// every in-flight request for free.
+			read: async (k) => {
+				await Promise.resolve();
+				return slow.read(k);
+			},
+			write: (k, s, t) => slow.write(k, s, t),
+		};
+		const N = 5;
+		const results = await Promise.all(
+			Array.from({ length: N }, () =>
+				checkRateLimit(REQ_URL, "ip-race", {
+					scope: "test",
+					// short.max = 1: serially, only the first would be allowed.
+					config: DEFAULTS,
+					store: concurrent,
+				}),
+			),
+		);
+		expect(results.every((r) => r.ok)).toBe(true);
+		expect(await slow.read("test:ip-race")).toHaveLength(1);
+	});
+
 	it("fails open and flags degraded when the store is unavailable", async () => {
 		// A cache outage must not take every write endpoint down with it. The
 		// limiter has no write quota of its own to protect anymore, so allowing
