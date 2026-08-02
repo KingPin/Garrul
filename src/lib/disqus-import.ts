@@ -34,6 +34,7 @@
  *     is 'anon'; no OAuth identity).
  */
 import { CURRENT_RENDERER_VERSION, renderMarkdown } from "./markdown";
+import { sanitizePostTitle } from "./post-title";
 import { MAX_REPLY_DEPTH } from "./tree";
 import { ulid } from "./ulid";
 
@@ -241,6 +242,27 @@ export const slugFromLink = (link: string | null, fallback: string): string => {
 	}
 };
 
+/**
+ * A thread `<link>` reduced to something safe to store in `posts.url`, or null.
+ *
+ * `posts.url` is what `permalink.ts` redirects a reader to, so a non-http(s)
+ * value there is an open-redirect / `javascript:` gadget reachable from a
+ * comment permalink. POST /api/v1/comments has applied this check to its
+ * `post_url` since before the importer existed (api.comments.ts:513-527); the
+ * importer wrote `t.link` straight through, so a hand-edited export XML — or a
+ * Disqus forum whose thread links were themselves attacker-set — landed an
+ * unvalidated URL in the same column by the other door.
+ */
+export const safePostUrl = (link: string | null): string | null => {
+	if (!link) return null;
+	try {
+		const u = new URL(link);
+		return u.protocol === "https:" || u.protocol === "http:" ? link : null;
+	} catch {
+		return null;
+	}
+};
+
 const authorKey = async (
 	author: DisqusAuthor,
 	secret: string,
@@ -301,7 +323,16 @@ export const runDisqusImport = async (
 				`INSERT INTO posts (slug, title, url, created_at)
 				 VALUES (?, ?, ?, ?)`,
 			)
-			.bind(slug, t.title ?? slug, t.link ?? null, t.created_at)
+			// Both columns go through the same guards the Worker's write path
+			// applies: the title through M1's sanitizer (it reaches mail subject
+			// lines, where a CR is header injection) and the link through the
+			// scheme check. Neither ran on this path before.
+			.bind(
+				slug,
+				sanitizePostTitle(t.title) ?? slug,
+				safePostUrl(t.link),
+				t.created_at,
+			)
 			.run();
 		plan.new_posts += 1;
 	}

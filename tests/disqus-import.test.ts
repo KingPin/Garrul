@@ -21,8 +21,10 @@ import {
 	disqusHtmlToMarkdown,
 	parseDisqusXml,
 	runDisqusImport,
+	safePostUrl,
 	slugFromLink,
 } from "../src/lib/disqus-import";
+import { MAX_POST_TITLE } from "../src/lib/post-title";
 import { MAX_REPLY_DEPTH } from "../src/lib/tree";
 
 type Captured = { sql: string; binds: unknown[] };
@@ -250,9 +252,116 @@ describe("slugFromLink", () => {
 	});
 });
 
+// ------------------------------- safePostUrl -------------------------------
+
+describe("safePostUrl", () => {
+	it("keeps http and https links", () => {
+		expect(safePostUrl("https://example.com/blog/hello")).toBe(
+			"https://example.com/blog/hello",
+		);
+		expect(safePostUrl("http://example.com/x")).toBe("http://example.com/x");
+	});
+
+	it("drops every other scheme", () => {
+		// posts.url is what the permalink route redirects to, so these are
+		// open-redirect and script-execution gadgets, not cosmetic issues.
+		for (const bad of [
+			"javascript:alert(1)",
+			"data:text/html,<script>alert(1)</script>",
+			"vbscript:msgbox(1)",
+			"file:///etc/passwd",
+			"//evil.example.com/x",
+			"not a url",
+		]) {
+			expect(safePostUrl(bad)).toBeNull();
+		}
+	});
+
+	it("treats a missing link as no url", () => {
+		expect(safePostUrl(null)).toBeNull();
+	});
+});
+
 // ------------------------------ runDisqusImport ----------------------------
 
 describe("runDisqusImport", () => {
+	// The importer INSERTs into posts directly rather than going through
+	// upsertPost, so it bypassed both guards the Worker's write path applies to
+	// the same two columns. A hand-edited export — or a Disqus forum whose
+	// thread links were attacker-supplied — is untrusted input either way.
+	const postInsert = (captured: Captured[]) => {
+		const ins = captured.filter((c) => c.sql.startsWith("INSERT INTO posts"));
+		expect(ins).toHaveLength(1);
+		return ins[0]!.binds;
+	};
+
+	const xmlWith = (link: string, title: string) => `<disqus>
+  <thread dsq:id="t100">
+    <link>${link}</link>
+    <title><![CDATA[${title}]]></title>
+    <createdAt>2023-04-01T10:00:00Z</createdAt>
+  </thread>
+</disqus>`;
+
+	it("stores an http thread link as the post url", async () => {
+		const { db, captured } = makeFreshDb();
+		await runDisqusImport(db, SAMPLE_XML, "secret", {});
+		expect(postInsert(captured)[2]).toBe("https://example.com/blog/hello");
+	});
+
+	it("nulls a non-http thread link instead of storing it", async () => {
+		const { db, captured } = makeFreshDb();
+		await runDisqusImport(
+			db,
+			xmlWith("javascript:alert(1)", "Hello"),
+			"secret",
+			{},
+		);
+		// Binds are (slug, title, url, created_at). The slug still derives from
+		// the link's fallback path, so the row is usable — only the redirect
+		// target is dropped.
+		expect(postInsert(captured)[2]).toBeNull();
+	});
+
+	it("strips control characters from an imported title", async () => {
+		// posts.title reaches mail subject lines via the digest, where a CR or
+		// LF is a header-injection primitive. See src/lib/post-title.ts.
+		const { db, captured } = makeFreshDb();
+		await runDisqusImport(
+			db,
+			xmlWith("https://example.com/p", "Hi\r\nBcc: victim@example.com"),
+			"secret",
+			{},
+		);
+		const title = postInsert(captured)[1] as string;
+		expect(title).not.toMatch(/[\r\n]/);
+		expect(title).toBe("Hi Bcc: victim@example.com");
+	});
+
+	it("caps an over-long imported title", async () => {
+		const { db, captured } = makeFreshDb();
+		await runDisqusImport(
+			db,
+			xmlWith("https://example.com/p", "T".repeat(MAX_POST_TITLE + 50)),
+			"secret",
+			{},
+		);
+		expect((postInsert(captured)[1] as string).length).toBe(MAX_POST_TITLE);
+	});
+
+	it("falls back to the slug when a title sanitizes to nothing", async () => {
+		const { db, captured } = makeFreshDb();
+		await runDisqusImport(
+			db,
+			xmlWith("https://example.com/blog/hi", ""),
+			"secret",
+			{},
+		);
+		const binds = postInsert(captured);
+		expect(binds[1]).toBe(binds[0]);
+		expect(binds[1]).toBe("blog/hi");
+	});
+
 	it("dry-run reports counts without issuing INSERTs", async () => {
 		const { db, captured } = makeFreshDb();
 		const plan = await runDisqusImport(db, SAMPLE_XML, "secret", {

@@ -737,16 +737,39 @@ Disqus comment ID, tracked in `0009_import_tracking.sql`; re-running
 the same export inserts zero rows):
 
 - CLI (preferred for big exports):
-  `npm run import-disqus -- ./export.xml --dry-run`, then without
-  `--dry-run` to commit.
+  `IP_HASH_SECRET=... npm run import-disqus -- ./export.xml --dry-run`,
+  then without `--dry-run` to commit.
 - Admin upload on `/admin/operator` — capped at 50 MB, with dry-run /
   include-deleted / include-spam toggles.
 
 Imported HTML is stripped and re-rendered through the standard
-markdown allowlist. Imported authors become `provider='anon'` ghost
+markdown allowlist. Thread titles and links go through the same
+guards the comment write path applies — control characters stripped
+and the title capped (it reaches mail subject lines), and a link that
+isn't `http(s):` is stored as no URL rather than becoming a permalink
+redirect target. Imported authors become `provider='anon'` ghost
 users whose `provider_id` is an HMAC (keyed by `IP_HASH_SECRET`) of
 the Disqus author identity, keeping their display names without
 storing emails.
+
+**`IP_HASH_SECRET` is required for the CLI, and must be the same
+secret the Worker uses.** It keys the ghost-identity HMAC above, so a
+different value imports the same person as a different user — and the
+same person commenting live afterwards becomes a third. The script
+used to fall back to a hard-coded literal when the variable was
+unset; it now refuses to run. Read the value from `.dev.vars` for a
+local import, or from wherever you stored it for `--remote`. The
+admin upload path takes it from the Worker's own binding, so it is
+unaffected.
+
+The CLI drives D1 through `wrangler d1 execute`, which accepts only
+`--command` — there is no parameter-binding flag, so that shim
+assembles SQL by substitution (the Worker path binds normally). It
+refuses any value it can't inline exactly rather than emitting
+approximately-right SQL, and aborts the import if wrangler's output
+can't be read — previously an unreadable envelope was treated as "row
+already exists", which made the whole CLI import a silent no-op that
+still printed `DONE`.
 
 **Custom domains.** Strongly recommended. Set in `wrangler.toml`:
 
@@ -775,6 +798,15 @@ writing a `.sql` dump locally. Cloudflare also keeps point-in-time
 backups of D1 in the dashboard — the local export is for the operator's
 own archive (e.g. nightly cron on their workstation). For programmatic
 exports beyond `.sql`, use `wrangler d1 export <db>`.
+
+The output filename must match `garrul-backup-*.sql`; the script
+exits 2 on anything else. That is the pattern `.gitignore` covers, and
+the dump holds every comment body, every subscriber email address and
+every `ip_hash` in the database — so a name like `backup.sql` in a
+clone of this repo is one `git add -A` away from committing all of it.
+A directory prefix is fine (`../backups/garrul-backup-nightly.sql`);
+only the basename is checked. `npm run db:export` with no argument
+picks a conforming name for you.
 
 **KV considerations.** Don't bother backing up KV: `RATE_LIMITS` only
 holds the optional Workers-AI spam verdict cache (rate limiting itself
