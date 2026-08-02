@@ -421,6 +421,40 @@ export const loadLocal = (repoRoot: string): Manifest | null => {
 	return validateManifest(parsed);
 };
 
+/**
+ * Do two manifests describe the same release?
+ *
+ * Used to confirm, after `git checkout <tag>`, that the tree about to be
+ * deployed is the one the plan was computed from. `fetchRemote` reads the
+ * manifest over HTTPS from raw.githubusercontent at the tag; the checkout
+ * gets its copy over the git transport from the operator's own remote. Two
+ * transports, two moments in time, and everything the operator approved —
+ * pending migrations, new secrets, breaking changes — came from the first
+ * one while the code that runs comes from the second.
+ *
+ * Both sides are already `validateManifest` output, so field order is fixed
+ * by the validator rather than by JSON key order in the file, and a plain
+ * stringify is a stable comparison.
+ */
+export const manifestsEqual = (a: Manifest, b: Manifest): boolean =>
+	JSON.stringify(a) === JSON.stringify(b);
+
+/**
+ * Every field where two manifests for the same tag disagree.
+ *
+ * Only for the error message — `manifestsEqual` is the decision.
+ */
+export const manifestDiffKeys = (a: Manifest, b: Manifest): string[] => {
+	const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+	return [...keys]
+		.filter(
+			(k) =>
+				JSON.stringify((a as Record<string, unknown>)[k]) !==
+				JSON.stringify((b as Record<string, unknown>)[k]),
+		)
+		.sort();
+};
+
 export const fetchRemote = async (
 	owner: string,
 	repo: string,

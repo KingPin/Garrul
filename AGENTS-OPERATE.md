@@ -856,7 +856,9 @@ The 12 steps (each prints `→ name… OK`):
 4. **Drift detection** (read-only): secrets via `wrangler secret list`; `[vars]`, KV and D1 by parsing `wrangler.toml`; migrations via `SELECT name FROM _migrations`; renderer via `CURRENT_RENDERER_VERSION` vs `target.renderer.version`
 5. **Print plan** grouped as config drift / migrations / breaking changes
 6. **Confirm** (`Proceed? [y/N]`) unless `--yes`
-7. **Checkout** the target tag
+7. **Checkout** the target tag, then verify the `release-manifest.json` in
+   the checked-out tree is byte-for-byte the one step 3 fetched — see
+   *What the upgrade trusts* below
 8. **`npm ci`**
 9. **Apply infra drift** — create missing KV/D1 and append blocks to `wrangler.toml`; prompt for missing secrets via `wrangler secret put NAME`. Missing required `[vars]` block auto-apply: they must be added to `wrangler.toml` by hand
 10. **Migrate** (`npm run migrate -- --remote`) — idempotent, forward-only
@@ -900,9 +902,66 @@ operator's file and is never rewritten in place. It also lists
 `[vars]` a new release introduced that you haven't set — all optional,
 all defaulted, shown so a new flag isn't invisible.
 
+### What the upgrade trusts
+
+An upgrade ends in migrations against your production D1 and a
+`wrangler deploy` with your Cloudflare credentials loaded. Worth knowing
+exactly what has to be honest for that to be safe.
+
+Three fetches, three different trust anchors:
+
+| Fetch | Source | What it decides |
+| --- | --- | --- |
+| Target tag + release notes | `api.github.com` (HTTPS) | Which version you're going to |
+| `release-manifest.json` | `raw.githubusercontent.com` at that tag (HTTPS) | The plan: which secrets are prompted for, which KV/D1 get created, which migrations are expected, whether a rerender runs |
+| The code itself | the git transport (`git fetch` + `git checkout <tag>`) | Everything that actually gets deployed |
+
+**Git is the anchor for what runs.** `npm run upgrade` never downloads a
+release asset. It checks out the tag and builds from source, so the
+Worker you deploy is whatever the git tag contains — the release page's
+`embed.js` is not in that path at all.
+
+**The plan and the code arrive over different transports**, which is the
+gap the post-checkout check closes. Step 7 re-reads
+`release-manifest.json` from the checked-out tree and compares it to the
+one fetched in step 3. A mismatch aborts *before* the first migration —
+the last cheap point to stop, since migrations are forward-only. The
+error names the differing fields.
+
+What that catches: a tag moved between the fetch and the checkout; a
+stale or poisoned CDN response for the raw manifest; a fork whose tag
+doesn't carry the upstream tree; a manifest that was simply never
+regenerated for the release.
+
+What it does **not** catch, and don't read it as more than it is: it is
+**not a signature**. Whoever can rewrite the tag rewrites both copies and
+they agree. Garrul does not ship signed tags today. Your real defenses
+against a rewritten tag are the SHA-pinned actions in the release
+workflow and reading the diff between your current tag and the target
+before you say yes.
+
+**Verifying a release asset by hand.** If you take `embed.js` from the
+release page rather than building it, each release attaches `SHA256SUMS`
+covering `embed.js`, `embed.js.map` and `release-manifest.json`:
+
+```bash
+# in a directory holding the downloaded assets and SHA256SUMS
+sha256sum -c SHA256SUMS
+```
+
+That file is uploaded by the same publishing step that uploads the
+artifacts, so on its own it proves only internal consistency. The
+digests are *also* printed into the release workflow's job log (the
+`SHA256SUMS` group), which is public, immutable, and written **before**
+the publishing step runs. Compare against the job log, not just the
+attached file, if you care about the difference.
+
 ### Failure modes
 
 - **Steps 1–9 fail** → nothing committed, exit 1.
+- **Manifest mismatch at step 7** → exit 1, before any migration or
+  deploy. Re-run `npm run upgrade`; if it repeats, compare the tag
+  against the repository before continuing.
 - **Migrate succeeds, deploy fails** → exit code **2**. Migrations are
   forward-only and already applied; the previous Worker is still
   serving traffic. Fix the deploy and re-run `npm run deploy`, or

@@ -33,6 +33,8 @@ import {
 	fetchRemote,
 	compareSemver,
 	isNewer,
+	manifestDiffKeys,
+	manifestsEqual,
 	parseSemver,
 	type Manifest,
 } from "./upgrade/manifest";
@@ -310,6 +312,7 @@ const applyPlan = async (
 	git: typeof gitModule,
 	fromVersion: string,
 	targetTag: string,
+	readLocal: typeof loadLocal,
 ): Promise<{ migratedNames: string[] }> => {
 	for (const k of plan.kv.missing) {
 		step(`Creating KV namespace ${k.binding}…`);
@@ -341,6 +344,46 @@ const applyPlan = async (
 	git.fetchTags(REPO_ROOT);
 	git.checkout(targetTag, REPO_ROOT);
 	stepOk(targetTag);
+
+	// The plan the operator just approved — pending migrations, new secrets,
+	// breaking changes, the renderer bump — was computed from the manifest
+	// fetched over HTTPS from raw.githubusercontent at this tag. The code about
+	// to be deployed arrived separately, over the git transport from their own
+	// remote. Nothing until now checked that the two agree.
+	//
+	// This is the last point where that's cheap to check and still means
+	// something: after this line come migrations against the production
+	// database and a deploy. Both are hard to walk back, and a migration that
+	// wasn't in the plan is the worst version of the surprise.
+	//
+	// It is not a signature, and it doesn't claim to be — an attacker who can
+	// rewrite the tag rewrites both copies. What it does catch: a tag moved
+	// between the fetch and the checkout, a stale or poisoned raw.git CDN
+	// response, a fork whose tag doesn't carry the upstream tree, and the
+	// ordinary case of a manifest that was never regenerated for the release.
+	step("Verifying checkout matches the fetched manifest…");
+	const checkedOut = readLocal(REPO_ROOT);
+	if (checkedOut === null) {
+		stepFail("no release-manifest.json in the checked-out tag");
+		throw new Error(
+			`${targetTag} has no release-manifest.json; refusing to migrate or deploy`,
+		);
+	}
+	if (!manifestsEqual(checkedOut, target)) {
+		const keys = manifestDiffKeys(checkedOut, target);
+		stepFail(`checkout disagrees with the fetched manifest (${keys.join(", ")})`);
+		console.error("");
+		console.error(
+			"!! The release-manifest.json in the checked-out tag is not the one\n" +
+				"!! this upgrade plan was built from, so the plan you approved may not\n" +
+				`!! describe what would be deployed. Differing fields: ${keys.join(", ")}\n` +
+				"!! No migrations have run and nothing has been deployed.\n" +
+				"!! Re-run `npm run upgrade`. If it persists, compare the tag against\n" +
+				"!! the repository before continuing.",
+		);
+		throw new Error("manifest mismatch between fetched plan and checkout");
+	}
+	stepOk();
 
 	step("Installing dependencies (npm ci)…");
 	wrangler.npmCi(REPO_ROOT);
@@ -527,7 +570,16 @@ export const main = async (
 		}
 	}
 
-	await applyPlan(plan, target, flags, wrangler, git, local.version, targetTag);
+	await applyPlan(
+		plan,
+		target,
+		flags,
+		wrangler,
+		git,
+		local.version,
+		targetTag,
+		readLocal,
+	);
 
 	console.log(`[upgrade] Upgraded ${local.version} → ${target.version}`);
 };

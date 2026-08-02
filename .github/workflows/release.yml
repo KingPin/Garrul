@@ -44,6 +44,32 @@ jobs:
       - run: npm run manifest:check
       - run: npm run build
       - run: npm run size
+      # Checksums over exactly what gets attached below, computed in this job
+      # before the publishing step runs.
+      #
+      # Note what this is and isn't. The upgrade path does not consume these
+      # assets at all — `npm run upgrade` checks out the git tag and builds
+      # from source — so this is not a link in that chain. It's for anyone
+      # who takes embed.js from the release page instead of building it, and
+      # for after-the-fact verification.
+      #
+      # The `cat` matters as much as the file. A job log is public and
+      # immutable, and it is written before the third-party publishing action
+      # runs; the SHA256SUMS asset is uploaded by that action and could be
+      # replaced by whoever controls it, along with the artifacts. Comparing
+      # an asset against the digest printed here is therefore a check the
+      # publishing step cannot forge — which is the whole point, since that
+      # step is the one with contents: write.
+      - name: Generate SHA256SUMS
+        run: |
+          # Basenames, so the entries match the asset filenames on the release
+          # page and `sha256sum -c SHA256SUMS` works in a directory of
+          # downloaded assets.
+          ( cd dist && sha256sum embed.js embed.js.map ) > SHA256SUMS
+          sha256sum release-manifest.json >> SHA256SUMS
+          echo "::group::SHA256SUMS (compare release assets against this)"
+          cat SHA256SUMS
+          echo "::endgroup::"
       # The one third-party action in the one job with contents: write, holding
       # GITHUB_TOKEN and the built artifacts. A repointed tag here could publish
       # an arbitrary release-manifest.json and embed.js that every self-hoster's
@@ -58,3 +84,4 @@ jobs:
             dist/embed.js
             dist/embed.js.map
             release-manifest.json
+            SHA256SUMS

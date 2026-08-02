@@ -8,6 +8,8 @@ import {
 	parseSemver,
 	compareSemver,
 	isNewer,
+	manifestDiffKeys,
+	manifestsEqual,
 	ManifestError,
 	type Manifest,
 } from "../scripts/upgrade/manifest";
@@ -243,5 +245,88 @@ describe("validateManifest", () => {
 			secrets: [{ name: "X", required: true, addedIn: "v1.2.3" }],
 		});
 		expect(m.secrets[0]?.addedIn).toBe("v1.2.3");
+	});
+});
+
+/**
+ * `npm run upgrade` builds its plan from the manifest fetched over HTTPS at
+ * the tag, then deploys whatever `git checkout <tag>` produced — two
+ * transports, and until now nothing compared them. These back the check that
+ * runs after checkout and before the first migration.
+ */
+describe("manifestsEqual", () => {
+	const clone = (m: Manifest): Manifest =>
+		validateManifest(JSON.parse(JSON.stringify(m)));
+
+	it("accepts two validated copies of the same manifest", () => {
+		expect(manifestsEqual(clone(validRaw), clone(validRaw))).toBe(true);
+	});
+
+	it("ignores JSON key order, which differs by serializer not by content", () => {
+		// The validator fixes field order, so a manifest whose file happens to
+		// list keys differently must not read as a mismatch and abort an
+		// otherwise fine upgrade.
+		const reordered = validateManifest({
+			breakingChanges: [],
+			migrations: ["0001_init.sql"],
+			analyticsDatasets: validRaw.analyticsDatasets,
+			d1Databases: validRaw.d1Databases,
+			kvNamespaces: validRaw.kvNamespaces,
+			secrets: validRaw.secrets,
+			renderer: validRaw.renderer,
+			minPreviousVersion: "0.0.1",
+			version: "0.0.2",
+		});
+		expect(manifestsEqual(reordered, clone(validRaw))).toBe(true);
+	});
+
+	it("catches a migration present in one copy and not the other", () => {
+		// The case that matters most: the plan the operator approved listed one
+		// set of pending migrations, and the tree about to run them lists
+		// another. Migrations are the hardest step to walk back.
+		const tampered = validateManifest({
+			...JSON.parse(JSON.stringify(validRaw)),
+			migrations: ["0001_init.sql", "0002_surprise.sql"],
+		});
+		expect(manifestsEqual(tampered, clone(validRaw))).toBe(false);
+		expect(manifestDiffKeys(tampered, clone(validRaw))).toEqual(["migrations"]);
+	});
+
+	it("catches an added required secret", () => {
+		const tampered = validateManifest({
+			...JSON.parse(JSON.stringify(validRaw)),
+			secrets: [
+				...validRaw.secrets,
+				{ name: "EXFIL_TOKEN", required: true, addedIn: "0.0.2" },
+			],
+		});
+		expect(manifestsEqual(tampered, clone(validRaw))).toBe(false);
+		expect(manifestDiffKeys(tampered, clone(validRaw))).toEqual(["secrets"]);
+	});
+
+	it("catches a swapped D1 database name", () => {
+		const tampered = validateManifest({
+			...JSON.parse(JSON.stringify(validRaw)),
+			d1Databases: [
+				{ binding: "DB", databaseName: "attacker-db", required: true },
+			],
+		});
+		expect(manifestsEqual(tampered, clone(validRaw))).toBe(false);
+	});
+
+	it("reports every differing field, sorted, for the error message", () => {
+		const tampered = validateManifest({
+			...JSON.parse(JSON.stringify(validRaw)),
+			version: "9.9.9",
+			migrations: ["0001_init.sql", "0002_x.sql"],
+		});
+		expect(manifestDiffKeys(tampered, clone(validRaw))).toEqual([
+			"migrations",
+			"version",
+		]);
+	});
+
+	it("reports nothing when the manifests agree", () => {
+		expect(manifestDiffKeys(clone(validRaw), clone(validRaw))).toEqual([]);
 	});
 });
