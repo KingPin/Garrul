@@ -26,7 +26,7 @@ import {
 	type VoteValue,
 } from "../db/queries";
 import { resolveActor } from "../lib/active-user";
-import { clientIp, hashIp } from "../lib/ip-hash";
+import { requireIpHash } from "../lib/ip-hash";
 import { checkRateLimit } from "../lib/ratelimit";
 import { readSession } from "../lib/session";
 import { writeEvent } from "../lib/analytics";
@@ -112,7 +112,8 @@ pageEngagement.post("/reactions", async (c) => {
 	const kind = (body.kind ?? "").trim();
 	if (!ALLOWED_KINDS.has(kind)) return c.json({ error: "invalid_kind" }, 400);
 
-	const ipHash = await hashIp(clientIp(c.req.raw), c.env.IP_HASH_SECRET);
+	const ipHash = await requireIpHash(c);
+	if (ipHash instanceof Response) return ipHash;
 	const rl = await checkRateLimit(c.req.url, ipHash, {
 		scope: "page-reaction",
 	});
@@ -164,7 +165,8 @@ pageEngagement.post("/votes", async (c) => {
 		return c.json({ error: "downvotes_disabled" }, 403);
 	}
 
-	const ipHash = await hashIp(clientIp(c.req.raw), c.env.IP_HASH_SECRET);
+	const ipHash = await requireIpHash(c);
+	if (ipHash instanceof Response) return ipHash;
 	const rl = await checkRateLimit(c.req.url, ipHash, { scope: "page-vote" });
 	if (!rl.ok) {
 		writeEvent(c.env.ANALYTICS, "ratelimit.hit", {

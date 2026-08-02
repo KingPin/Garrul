@@ -104,7 +104,12 @@ const post = async (
 		"/r",
 		{
 			method: "POST",
-			headers: { "content-type": "application/json" },
+			// Cloudflare's edge sets this on every real request; requireIpHash
+			// refuses the route without it outside dev.
+			headers: {
+				"content-type": "application/json",
+				"cf-connecting-ip": "203.0.113.7",
+			},
 			body: JSON.stringify(body),
 		},
 		env,
@@ -138,7 +143,12 @@ describe("POST /reactions — input validation", () => {
 			"/r",
 			{
 				method: "POST",
-				headers: { "content-type": "application/json" },
+				// Cloudflare's edge sets this on every real request;
+				// requireIpHash refuses the route without it outside dev.
+				headers: {
+					"content-type": "application/json",
+					"cf-connecting-ip": "203.0.113.7",
+				},
 				body: "{not json",
 			},
 			env,

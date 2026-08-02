@@ -11,7 +11,7 @@ import { Hono } from "hono";
 import type { Bindings } from "../index";
 import { getComment, toggleReaction } from "../db/queries";
 import { resolveActor } from "../lib/active-user";
-import { clientIp, hashIp } from "../lib/ip-hash";
+import { requireIpHash } from "../lib/ip-hash";
 import { checkRateLimit } from "../lib/ratelimit";
 import { writeEvent } from "../lib/analytics";
 import { loadFlags } from "../lib/settings";
@@ -52,7 +52,8 @@ reactions.post("/", async (c) => {
 		return c.json({ error: t("err.not_found") }, 404);
 	}
 
-	const ipHash = await hashIp(clientIp(c.req.raw), c.env.IP_HASH_SECRET);
+	const ipHash = await requireIpHash(c);
+	if (ipHash instanceof Response) return ipHash;
 	const rl = await checkRateLimit(c.req.url, ipHash, { scope: "reaction" });
 	if (!rl.ok) {
 		writeEvent(c.env.ANALYTICS, "ratelimit.hit", {

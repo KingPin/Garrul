@@ -107,6 +107,28 @@ four always-needed secrets (`JWT_SECRET`, `IP_HASH_SECRET`,
 Uncommented, a deploy that would leave one unset fails rather than
 shipping a Worker that 500s on first request.
 
+**Two of those four are checked again at runtime.** `JWT_SECRET` and
+`IP_HASH_SECRET` are load-bearing for the whole Worker — the first signs the
+OAuth state payload, the second is the HMAC key behind every `ip_hash` — and
+neither has a "feature is off" mode. If either is unset or empty, the Worker
+refuses every request with `500 {"error":"server_misconfigured"}` and writes
+one line naming the missing secrets:
+
+```
+{"level":"error","msg":"config.missing_required_secrets","missing":["IP_HASH_SECRET"]}
+```
+
+The names are in the log, not in the response body — `wrangler tail` to see
+them. This replaces what used to happen: an empty HMAC key makes WebCrypto
+throw, so the instance served anonymous 500s with stack traces from eight
+different endpoints and nothing pointing at the cause.
+
+Turnstile deliberately isn't in that runtime check even though the deploy-time
+block lists it. An instance that only accepts OAuth-authenticated comments
+works fine without it, and anonymous posts already fail closed — hard-failing
+would take such a deployment offline on upgrade over configuration it never
+needed. Implementation: `src/lib/require-config.ts`.
+
 Uncomment it only in a config you never run `wrangler dev` against.
 Declaring a `[secrets]` table changes how wrangler reads `.dev.vars` for
 the whole file: only names in `required` (or already in `[vars]`) are
@@ -560,6 +582,18 @@ The one exemption is `POST /admin/api/ops/import-disqus`, which takes a raw
 Disqus XML export up to 50 MB and enforces its own limit. Implementation:
 `src/lib/body-limit.ts`.
 
+**Client IP is required, not guessed.** Every endpoint that meters or dedupes
+by IP — comments, votes, reactions, reports, page engagement, subscribe,
+preview — reads Cloudflare's `cf-connecting-ip` header. The edge sets it on
+every request that reaches a Worker, so its absence means the Worker was
+reached some other way; those requests now get `400 {"error":"no_client_ip"}`.
+Previously they were all folded into a literal `0.0.0.0`, which is worse than
+no answer: a *shared* identity means one rate-limit bucket, one anonymous
+ghost user, and one row against the per-comment report and vote uniqueness
+constraints for every such caller at once. Under `ENV=dev` the Worker
+substitutes `127.0.0.1` so local development still exercises the path.
+Implementation: `src/lib/ip-hash.ts`.
+
 **Roles.** Since v1.8.0 there are three permission tiers
 (`0005_user_roles.sql`):
 
@@ -949,7 +983,15 @@ in `wrangler.toml` (section 5).
 **Email digests never arrive.** Check, in order: `EMAIL_PROVIDER` is
 `resend`; `RESEND_API_KEY` is set; `EMAIL_FROM` uses a Resend-verified
 domain; `wrangler.toml` has the `[triggers]` block; `wrangler tail`
-shows `email.send_failed` with the underlying Resend error.
+shows `email.send_failed` with the HTTP status and Resend's error *code*
+(`validation_error`, `rate_limit_exceeded`, …).
+
+That line carries the code and nothing else on purpose. Resend's error
+bodies interpolate the offending field into a free-text `message`, so a
+422 for a bad address quotes the address — and the digest path's
+recipients are your subscribers. Log lines are not a safe place for
+that. If the code alone isn't enough to diagnose a delivery problem, the
+Resend dashboard has the full message against the specific send.
 
 **`*.workers.dev` in production.** Works just enough to be tempting,
 then breaks sign-in for Safari/Brave users. Map a custom subdomain

@@ -13,13 +13,23 @@ type Env = Partial<{
 	TURNSTILE_SITE_KEY: string;
 	ALLOWED_ORIGINS: string;
 	ENV: string;
+	IP_HASH_SECRET: string;
+	JWT_SECRET: string;
 }>;
 
 const SELF = "https://comments.test.example";
 
+// src/lib/require-config.ts refuses to serve *any* route without these, so a
+// harness that drives the real app has to supply them.
+const REQUIRED_SECRETS = {
+	IP_HASH_SECRET: "test-ip-hash-secret",
+	JWT_SECRET: "test-jwt-secret",
+} as const;
+
 const fetchPage = (path: string, env: Env = {}): Promise<Response> => {
 	const merged: Env = {
 		ALLOWED_ORIGINS: "https://blog.example.com",
+		...REQUIRED_SECRETS,
 		...env,
 	};
 	return worker.fetch(
@@ -120,10 +130,11 @@ describe("GET /embed/:slug", () => {
 			// other host.
 			const res = await worker.fetch(
 				new Request("http://localhost:8787/embed/hello"),
-				{ ENV: "dev", ALLOWED_ORIGINS: "" } as unknown as Record<
-					string,
-					unknown
-				>,
+				{
+					ENV: "dev",
+					ALLOWED_ORIGINS: "",
+					...REQUIRED_SECRETS,
+				} as unknown as Record<string, unknown>,
 				{} as ExecutionContext,
 			);
 			expect(res.status).toBe(200);

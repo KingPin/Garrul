@@ -37,7 +37,7 @@ import {
 	upsertSubscription,
 } from "../db/queries";
 import { requireActiveUser } from "../lib/active-user";
-import { clientIp, hashIp } from "../lib/ip-hash";
+import { requireIpHash } from "../lib/ip-hash";
 import { checkRateLimit } from "../lib/ratelimit";
 import { renderConfirmEmailHtml } from "../lib/digest";
 import { sendEmail } from "../lib/email";
@@ -61,7 +61,8 @@ subscriptions.post("/", async (c) => {
 	// Rate-limit before any DB work. Subscribing is otherwise free for
 	// anyone with a valid email shape and a post slug, so without this
 	// the endpoint is an enumeration / spam vector.
-	const ipHash = await hashIp(clientIp(c.req.raw), c.env.IP_HASH_SECRET);
+	const ipHash = await requireIpHash(c);
+	if (ipHash instanceof Response) return ipHash;
 	const rl = await checkRateLimit(c.req.url, ipHash, { scope: "subscribe" });
 	if (!rl.ok) {
 		return c.json(

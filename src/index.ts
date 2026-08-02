@@ -23,6 +23,7 @@ import { runWebhookRetries } from "./lib/webhook";
 import { log, requestLogger } from "./lib/log";
 import { corsAndCsrf } from "./lib/cors";
 import { jsonBodyLimit } from "./lib/body-limit";
+import { requireConfig } from "./lib/require-config";
 import { sessionMiddleware } from "./lib/session";
 
 export type Bindings = {
@@ -188,6 +189,12 @@ app.use("*", async (c, next) => {
 	}
 	await next();
 });
+
+// Refuse to serve a deployment that's missing a secret nothing works without.
+// Placed here so it fires before any route, cache lookup or D1 query. See
+// src/lib/require-config.ts for which secrets qualify and why Turnstile isn't
+// one of them.
+app.use("*", requireConfig());
 
 // Global security headers. Cheap to set and shrinks the attack surface
 // independent of which route serves the response. Admin's stricter CSP

@@ -39,7 +39,12 @@ const post = (app: Hono, env: Record<string, unknown>, body: unknown) =>
 		"/",
 		{
 			method: "POST",
-			headers: { "content-type": "application/json" },
+			// Cloudflare's edge sets this on every real request; requireIpHash
+			// refuses the route without it outside dev.
+			headers: {
+				"content-type": "application/json",
+				"cf-connecting-ip": "203.0.113.7",
+			},
 			body: typeof body === "string" ? body : JSON.stringify(body),
 		},
 		env,

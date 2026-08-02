@@ -22,7 +22,7 @@
 import { Hono } from "hono";
 import type { Bindings } from "../index";
 import { getComment, insertReport } from "../db/queries";
-import { clientIp, hashIp } from "../lib/ip-hash";
+import { requireIpHash } from "../lib/ip-hash";
 import { checkRateLimit } from "../lib/ratelimit";
 import { requireActiveUser } from "../lib/active-user";
 import { readSession } from "../lib/session";
@@ -48,7 +48,8 @@ reports.post("/:id/report", async (c) => {
 		reason = trimmed.length > 0 ? trimmed : null;
 	}
 
-	const ipHash = await hashIp(clientIp(c.req.raw), c.env.IP_HASH_SECRET);
+	const ipHash = await requireIpHash(c);
+	if (ipHash instanceof Response) return ipHash;
 	const rl = await checkRateLimit(c.req.url, ipHash, { scope: "report" });
 	if (!rl.ok) {
 		writeEvent(c.env.ANALYTICS, "ratelimit.hit", {

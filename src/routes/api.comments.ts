@@ -46,7 +46,7 @@ import {
 } from "../db/queries";
 import { identiconSvg } from "../lib/identicon";
 import { sanitizePostTitle } from "../lib/post-title";
-import { clientIp, hashIp } from "../lib/ip-hash";
+import { clientIp, requireIpHash } from "../lib/ip-hash";
 import { CURRENT_RENDERER_VERSION, renderMarkdown, validateBody } from "../lib/markdown";
 import { checkRateLimit } from "../lib/ratelimit";
 import { requireActiveUser } from "../lib/active-user";
@@ -413,7 +413,8 @@ comments.post("/", async (c) => {
 
 	// Anonymous path: name + Turnstile required on top of the rate limit.
 	let author: User;
-	const ipHash = await hashIp(clientIp(c.req.raw), c.env.IP_HASH_SECRET);
+	const ipHash = await requireIpHash(c);
+	if (ipHash instanceof Response) return ipHash;
 
 	// Both identities get metered, and on each path the budget is spent AFTER
 	// the free local validation but BEFORE anything that costs a quota — the
@@ -474,11 +475,15 @@ comments.post("/", async (c) => {
 		if (c.env.ENV === "dev") {
 			expectedHostname = "example.com";
 		}
+		const rawClientIp = clientIp(c.req.raw);
 		const ts = await verifyTurnstile(
 			body.turnstile_token,
 			c.env.TURNSTILE_SECRET,
 			{
-				clientIp: clientIp(c.req.raw),
+				// `remoteip` is optional to siteverify, and requireIpHash above
+				// already refused the request if the edge header was missing
+				// outside dev — so this only omits it on the local-dev path.
+				...(rawClientIp ? { clientIp: rawClientIp } : {}),
 				expectedHostname,
 			},
 		);

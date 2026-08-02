@@ -9,12 +9,18 @@ import worker from "../src/index";
 type Env = Partial<{
 	TURNSTILE_SITE_KEY: string;
 	ALLOWED_ORIGINS: string;
+	IP_HASH_SECRET: string;
+	JWT_SECRET: string;
 }>;
 
 const fetchFrame = (path: string, env: Env = {}): Promise<Response> => {
 	const merged: Env = {
 		TURNSTILE_SITE_KEY: "0x4AAAAAAA_test_key",
 		ALLOWED_ORIGINS: "https://blog.example.com",
+		// src/lib/require-config.ts refuses to serve *any* route without these,
+		// so a harness that drives the real app has to supply them.
+		IP_HASH_SECRET: "test-ip-hash-secret",
+		JWT_SECRET: "test-jwt-secret",
 		...env,
 	};
 	return worker.fetch(
