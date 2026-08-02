@@ -59,6 +59,10 @@ const makeDb = (config: {
 						is_admin: 0,
 						is_banned: 0,
 						created_at: 1_700_000_000_000,
+						// `USER_COLS` selects erased_at, so real D1 returns null.
+						// Dropping it leaves `undefined`, which the active-user gate
+						// reads as erased and refuses.
+						erased_at: null,
 					};
 				}
 				return null;

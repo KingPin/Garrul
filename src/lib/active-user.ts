@@ -73,6 +73,15 @@ export const isActiveUser = (user: User): boolean =>
  * abusive anonymous author from the admin queue expects that to stick; without
  * this the ban only reached comment POST (which checks the row it creates) and
  * votes, reactions and page engagement stayed open to them.
+ *
+ * It runs the whole `isActiveUser` predicate and not just `is_banned`, even
+ * though an erased ghost is currently unreachable: `eraseUserData` nulls
+ * `provider_id`, and the ghost lookup keys on `provider = 'anon' AND
+ * provider_id = ?`, so erasing a ghost orphans the row and the next request
+ * mints a fresh one. That is a property of the erase statement, not of this
+ * gate. Checking both columns costs nothing here and means a future change to
+ * that statement — preserving `provider_id` to keep an audit trail, say —
+ * can't silently reopen the write window `isActiveUser` exists to close.
  */
 export const resolveActor = async (
 	c: ActorCtx,
@@ -84,12 +93,12 @@ export const resolveActor = async (
 		return user ? { ok: true, userId: user.id } : { ok: false };
 	}
 	const ghost = await getOrCreateGhost(c.env.DB, ipHash, "anon");
-	if (ghost.is_banned) return { ok: false };
+	if (!isActiveUser(ghost)) return { ok: false };
 	return { ok: true, userId: ghost.id };
 };
 
 /**
- * Whether this ip_hash's anonymous identity is banned — without minting one.
+ * Whether this ip_hash's anonymous identity is refused — without minting one.
  *
  * For the routes that accept an anonymous caller but never attribute the write
  * to a ghost. Reporting is the case: it stores `reporter_user_id = NULL` and
@@ -97,13 +106,17 @@ export const resolveActor = async (
  * it would create a user row per anonymous reporter, a D1 write on an
  * unauthenticated path for an identity nothing goes on to read.
  *
- * No row means no ban: an ip_hash that has never posted has no identity to have
- * banned, so this is `false` and the caller carries on.
+ * Named for the predicate rather than for the ban, because it is the same
+ * `isActiveUser` gate as everywhere else — see `resolveActor` on why the erased
+ * half is unreachable today and checked anyway.
+ *
+ * No row means nothing to refuse: an ip_hash that has never posted has no
+ * identity to have banned, so this is `false` and the caller carries on.
  */
-export const isBannedGhost = async (
+export const isInactiveGhost = async (
 	db: D1Database,
 	ipHash: string,
 ): Promise<boolean> => {
 	const ghost = await getGhostByIpHash(db, ipHash);
-	return ghost?.is_banned === true;
+	return ghost !== null && !isActiveUser(ghost);
 };

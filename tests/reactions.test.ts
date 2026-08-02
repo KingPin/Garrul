@@ -58,6 +58,10 @@ const makeDb = (status: string) => ({
 					is_banned: 0,
 					role: "user",
 					created_at: 1_700_000_000_000,
+					// `USER_COLS` selects erased_at, so real D1 returns null.
+					// Dropping it leaves `undefined`, which the active-user gate
+					// reads as erased and refuses.
+					erased_at: null,
 				};
 			}
 			// toggleReaction's existence probe: no existing row, so it inserts.

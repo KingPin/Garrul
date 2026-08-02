@@ -491,7 +491,11 @@ comments.post("/", async (c) => {
 		if (!ts) return c.json({ error: t("err.turnstile.invalid") }, 400);
 
 		author = await getOrCreateGhost(c.env.DB, ipHash, nameCheck.name);
-		if (author.is_banned) return c.json({ error: t("err.banned") }, 403);
+		// Same predicate as the signed-in branch below, so a ghost can't be
+		// gated on a narrower rule than a session user. `resolveActor` documents
+		// why the erased half can't currently fire on a ghost, and why running it
+		// anyway is what keeps that true.
+		if (!isActiveUser(author)) return c.json({ error: t("err.banned") }, 403);
 	} else {
 		// Nothing free to reject on this path — the session cookie is already
 		// verified — so the budget gates the user lookup too.

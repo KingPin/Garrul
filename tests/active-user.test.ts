@@ -13,7 +13,11 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { requireActiveUser, resolveActor } from "../src/lib/active-user";
+import {
+	isInactiveGhost,
+	requireActiveUser,
+	resolveActor,
+} from "../src/lib/active-user";
 import { banUser } from "../src/lib/moderation";
 import type { Bindings } from "../src/index";
 
@@ -113,6 +117,30 @@ beforeEach(() => {
 	} as unknown as Bindings;
 });
 
+/**
+ * Seed the ghost row for IP_HASH in a chosen state.
+ *
+ * Written directly rather than through `getOrCreateGhost` + an UPDATE because
+ * the erased case has to be constructed: `eraseUserData` nulls `provider_id`,
+ * so erasing a ghost the production way orphans it rather than leaving an
+ * erased one behind.
+ */
+const makeGhost = (opts: { banned: boolean; erasedAt: number | null }): void => {
+	sqlite
+		.prepare(
+			`INSERT INTO users (id, provider, provider_id, name, is_admin, role,
+			                    is_banned, created_at, erased_at)
+			 VALUES (?, 'anon', ?, 'anon', 0, 'user', ?, ?, ?)`,
+		)
+		.run(
+			"01HGHOST0000000000000000GH",
+			IP_HASH,
+			opts.banned ? 1 : 0,
+			1_700_000_000_000,
+			opts.erasedAt,
+		);
+};
+
 const makeCtx = (sid: string | null): any => ({
 	env,
 	req: {
@@ -200,9 +228,49 @@ describe("resolveActor", () => {
 		expect((await resolveActor(makeCtx(null), IP_HASH)).ok).toBe(false);
 	});
 
+	it("rejects an anonymous caller whose ip_hash ghost is erased", async () => {
+		// Erased-not-banned, built by hand: the production erase path nulls
+		// provider_id, which orphans the ghost and makes this state unreachable
+		// through it. That is a property of the erase statement, so this pins the
+		// gate independently of it — if `eraseUserData` ever keeps provider_id,
+		// the erased row becomes reachable and this is already covered.
+		makeGhost({ banned: false, erasedAt: 1_700_000_002_000 });
+		expect((await resolveActor(makeCtx(null), IP_HASH)).ok).toBe(false);
+	});
+
 	it("treats an unknown cookie as anonymous", async () => {
 		const actor = await resolveActor(makeCtx("c".repeat(64)), IP_HASH);
 		expect(actor.ok).toBe(true);
+	});
+});
+
+describe("isInactiveGhost", () => {
+	it("is false for an ip_hash that has never posted", async () => {
+		// No row means nothing to refuse — and, just as importantly, no row is
+		// created by asking. Reporting calls this on an unauthenticated path.
+		expect(await isInactiveGhost(env.DB, IP_HASH)).toBe(false);
+		const ghosts = sqlite
+			.prepare(
+				"SELECT COUNT(*) AS n FROM users WHERE provider = 'anon' AND provider_id = ?",
+			)
+			.get(IP_HASH) as { n: number };
+		expect(ghosts.n).toBe(0);
+	});
+
+	it("is false for an active ghost", async () => {
+		// The baseline that keeps the two assertions below from being vacuous.
+		makeGhost({ banned: false, erasedAt: null });
+		expect(await isInactiveGhost(env.DB, IP_HASH)).toBe(false);
+	});
+
+	it("is true for a banned ghost", async () => {
+		makeGhost({ banned: true, erasedAt: null });
+		expect(await isInactiveGhost(env.DB, IP_HASH)).toBe(true);
+	});
+
+	it("is true for an erased ghost", async () => {
+		makeGhost({ banned: false, erasedAt: 1_700_000_002_000 });
+		expect(await isInactiveGhost(env.DB, IP_HASH)).toBe(true);
 	});
 });
 

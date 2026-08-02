@@ -106,6 +106,12 @@ const makeDb = () => {
 						is_banned: 0,
 						role: "user",
 						created_at: 1,
+						// `USER_COLS` selects erased_at, so real D1 returns null here.
+						// Omitting it makes the row `undefined` after `toUser`, and the
+						// active-user gate compares against null — a stub that drops the
+						// column reads as an erased user and refuses every anonymous
+						// caller.
+						erased_at: null,
 					} as T;
 				}
 				if (sql.includes("FROM posts")) {

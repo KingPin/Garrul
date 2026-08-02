@@ -25,7 +25,7 @@ import type { Bindings } from "../index";
 import { getComment, insertReport } from "../db/queries";
 import { requireIpHash } from "../lib/ip-hash";
 import { checkRateLimit } from "../lib/ratelimit";
-import { isBannedGhost, requireActiveUser } from "../lib/active-user";
+import { isInactiveGhost, requireActiveUser } from "../lib/active-user";
 import { readSession } from "../lib/session";
 import { writeEvent } from "../lib/analytics";
 import { fireWebhook } from "../lib/webhook";
@@ -67,7 +67,7 @@ reports.post("/:id/report", async (c) => {
 	// left the anonymous half open — an operator bans an abusive anonymous
 	// author by banning their ghost row (provider='anon', provider_id=ip_hash),
 	// and that ip_hash could still file a report from the same browser by
-	// signing out or never signing in. `isBannedGhost` is the read-only lookup:
+	// signing out or never signing in. `isInactiveGhost` is the read-only lookup:
 	// this route deliberately never creates a ghost (reporter_user_id stays NULL
 	// and the dedup keys on the ip_hash), and a check has no business minting a
 	// user row on an unauthenticated path.
@@ -81,7 +81,7 @@ reports.post("/:id/report", async (c) => {
 		if (!(await requireActiveUser(c.env.DB, session.user_id))) {
 			return c.json({ error: t("err.banned") }, 403);
 		}
-	} else if (await isBannedGhost(c.env.DB, ipHash)) {
+	} else if (await isInactiveGhost(c.env.DB, ipHash)) {
 		return c.json({ error: t("err.banned") }, 403);
 	}
 
