@@ -23,17 +23,23 @@ type ActorCtx = {
 };
 
 /**
- * The user behind a session id, or null if they're banned or gone.
+ * The user behind a session id, or null if they're banned, erased or gone.
  *
  * Returning null for a deleted user matters as much as for a banned one: a
  * session outliving its row would otherwise attribute writes to a dangling id.
+ *
+ * `erased_at` is the same story as `is_banned`. `eraseUser` revokes their
+ * sessions, but that stamp lives in KV and takes up to a minute to reach every
+ * colo — and unlike a ban, the row it leaves behind is an emptied identity, so
+ * a write landing inside that window attributes to a user whose name is now a
+ * placeholder. This is the D1-backed layer that closes the window immediately.
  */
 export const requireActiveUser = async (
 	db: D1Database,
 	userId: string,
 ): Promise<User | null> => {
 	const user = await getUser(db, userId);
-	if (!user || user.is_banned) return null;
+	if (!user || user.is_banned || user.erased_at !== null) return null;
 	return user;
 };
 

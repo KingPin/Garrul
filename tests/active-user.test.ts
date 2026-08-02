@@ -1,10 +1,13 @@
 /**
- * The shared banned-user gate, against REAL SQLite (every migration applied).
+ * The shared inactive-user gate, against REAL SQLite (every migration applied).
  *
  * Before this existed `is_banned` was consulted in four places, so a banned
  * user's cookie still worked for comment edit/delete, votes, reactions, reports,
  * page engagement and subscribe. These cover the two entry points every one of
  * those routes now goes through, plus the ban → session-revocation wiring.
+ *
+ * "Inactive" is banned *or* erased: both revoke sessions through KV, so both
+ * need the D1 read to cover the propagation window.
  */
 import { describe, it, expect, beforeEach } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
@@ -55,8 +58,10 @@ class StubKV {
 const ADMIN_ID = "01HADMIN0000000000000000AB";
 const ACTIVE_ID = "01HACTIVE000000000000000AC";
 const BANNED_ID = "01HBANNED000000000000000BN";
+const ERASED_ID = "01HERASED000000000000000ER";
 const ACTIVE_SID = "a".repeat(64);
 const BANNED_SID = "b".repeat(64);
+const ERASED_SID = "e".repeat(64);
 const IP_HASH = "f".repeat(64);
 
 let sqlite: DatabaseSync;
@@ -77,6 +82,12 @@ beforeEach(() => {
 	seed.run(ADMIN_ID, "github", "1", "Op", 1, "admin", 0, 1_700_000_000_000);
 	seed.run(ACTIVE_ID, "github", "2", "Reader", 0, "user", 0, 1_700_000_000_000);
 	seed.run(BANNED_ID, "github", "3", "Spammer", 0, "user", 1, 1_700_000_000_000);
+	// Erased, not banned: `eraseUserData` empties the identity and stamps
+	// erased_at, and leaves is_banned alone.
+	seed.run(ERASED_ID, "github", null, "[del]", 0, "user", 0, 1_700_000_000_000);
+	sqlite
+		.prepare("UPDATE users SET erased_at = ? WHERE id = ?")
+		.run(1_700_000_001_000, ERASED_ID);
 
 	kv = new StubKV();
 	// Both sessions are live and unrevoked: the point of these tests is the D1
@@ -89,6 +100,10 @@ beforeEach(() => {
 	kv.store.set(
 		`sess:${BANNED_SID}`,
 		JSON.stringify({ user_id: BANNED_ID, issued_at: 1, expires_at: far }),
+	);
+	kv.store.set(
+		`sess:${ERASED_SID}`,
+		JSON.stringify({ user_id: ERASED_ID, issued_at: 1, expires_at: far }),
 	);
 
 	env = {
@@ -119,6 +134,13 @@ describe("requireActiveUser", () => {
 		expect(await requireActiveUser(env.DB, BANNED_ID)).toBeNull();
 	});
 
+	it("returns null for an erased user", async () => {
+		// `eraseUser` revokes their sessions, but that stamp is KV and takes up to
+		// a minute to propagate. Without this the window let a live cookie keep
+		// writing as an identity that is now a placeholder.
+		expect(await requireActiveUser(env.DB, ERASED_ID)).toBeNull();
+	});
+
 	it("returns null for an id with no row", async () => {
 		// A session outliving its user row would otherwise attribute writes to a
 		// dangling id and trip the FK.
@@ -139,6 +161,17 @@ describe("resolveActor", () => {
 		expect(actor.ok).toBe(false);
 		// Falling back would hand them the anonymous budget — so no ghost row
 		// should have been created either.
+		const ghosts = sqlite
+			.prepare(
+				"SELECT COUNT(*) AS n FROM users WHERE provider = 'anon' AND provider_id = ?",
+			)
+			.get(IP_HASH) as { n: number };
+		expect(ghosts.n).toBe(0);
+	});
+
+	it("rejects an erased session instead of downgrading it to a ghost", async () => {
+		const actor = await resolveActor(makeCtx(ERASED_SID), IP_HASH);
+		expect(actor.ok).toBe(false);
 		const ghosts = sqlite
 			.prepare(
 				"SELECT COUNT(*) AS n FROM users WHERE provider = 'anon' AND provider_id = ?",
@@ -192,7 +225,7 @@ describe("banUser session revocation", () => {
 			banned: true,
 		});
 		expect(res).toEqual({ ok: false, error: "not_found" });
-		expect(kv.store.size).toBe(2); // the two seeded sessions, nothing more
+		expect(kv.store.size).toBe(3); // the three seeded sessions, nothing more
 	});
 
 	it("makes the banned user's live session record inert", async () => {
