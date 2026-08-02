@@ -267,11 +267,14 @@ export const randomHex = (n: number): string => {
 	return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 };
 
-// PKCE (RFC 7636). The verifier is a high-entropy secret minted at /start,
-// stashed server-side in the KV state payload (never sent to the browser),
-// and replayed at the token exchange to prove the client that redeems the
-// code is the same one that started the flow. 32 random bytes → 64 hex chars,
-// well within PKCE's 43–128-char unreserved-charset range.
+// PKCE (RFC 7636). The verifier is a high-entropy secret minted at /start and
+// replayed at the token exchange to prove the client that redeems the code is
+// the same one that started the flow. 32 random bytes → 64 hex chars, well
+// within PKCE's 43–128-char unreserved-charset range.
+//
+// It travels in the signed state cookie, not in server-side storage — see the
+// `code_verifier` field on StatePayload below for where that leaves it and why
+// that placement is sound.
 export const genCodeVerifier = (): string => randomHex(32);
 
 // SHA-256(verifier), base64url-encoded without padding — the `S256` challenge
