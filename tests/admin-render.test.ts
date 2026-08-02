@@ -25,9 +25,9 @@ import {
 	type ResolvedFlags,
 	type ResolvedNumbers,
 } from "../src/lib/settings";
+import { ADMIN_ACTIONS } from "../src/db/queries";
 import type {
 	AdminComment,
-	ADMIN_ACTIONS,
 	AdminStats,
 	AuditRowWithAdmin,
 	Subscription,
@@ -48,6 +48,10 @@ const makeComment = (over: Partial<AdminComment> = {}): AdminComment => ({
 	ip_hash: null,
 	user_agent: null,
 	created_at: 1_700_000_000_000,
+	deleted_by: null,
+	depth: 1,
+	score_up: 0,
+	score_down: 0,
 	author_name: "Alice",
 	author_email: null,
 	author_avatar_url: null,
@@ -68,6 +72,7 @@ const emptyQueueFilters: QueueFilters = {
 	from: "",
 	to: "",
 	host: "",
+	reported: false,
 };
 
 describe("renderQueue", () => {
@@ -291,23 +296,9 @@ describe("renderAudit", () => {
 		to: "",
 		host: "",
 	};
-	const adminActions: typeof ADMIN_ACTIONS = [
-		"approve",
-		"spam",
-		"delete",
-		"restore",
-		"edit",
-		"ban",
-		"unban",
-		"rerender",
-		"seed-demo",
-		"sub.unsubscribe",
-		"sub.resend",
-		"bulk.approve",
-		"bulk.spam",
-		"bulk.delete",
-		"bulk.restore",
-	];
+	// The real list, not a copy: a hand-maintained duplicate had already
+	// drifted to 15 of the 34 actions without anything noticing.
+	const adminActions = ADMIN_ACTIONS;
 
 	it("populates the action dropdown from the supplied enum", () => {
 		const html = renderAudit([], filters, null, adminActions);
@@ -697,7 +688,7 @@ describe("renderSettings field-name contract", () => {
 		const known = new Set<string>([...FLAG_KEYS, ...NUMBER_KEYS]);
 		const inputNames = [
 			...html.matchAll(/<input\b[^>]*\bname="([^"]+)"/g),
-		].map((m) => m[1]);
+		].map((m) => m[1]!);
 		expect(inputNames.length).toBeGreaterThan(0);
 		for (const name of inputNames) {
 			expect(known.has(name)).toBe(true);

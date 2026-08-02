@@ -14,6 +14,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { Hono } from "hono";
+import type { Requestable } from "./helpers/app";
 import {
 	loadFlags,
 	bustFlagsCache,
@@ -462,7 +463,7 @@ const mkGatedEnv = (cachedFlags: Partial<Record<FlagKey, boolean>>) => {
 	} as unknown as Bindings;
 };
 
-const postJson = (app: Hono, env: Bindings, body: unknown) =>
+const postJson = (app: Requestable, env: Bindings, body: unknown) =>
 	app.request(
 		"/",
 		{

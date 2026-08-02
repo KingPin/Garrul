@@ -26,10 +26,16 @@ const runMiddleware = async (
 ): Promise<Outcome> => {
 	const headers: Record<string, string> = {};
 	let nextCalled = false;
-	let earlyResponse:
+	// Named so the reads below can restate it. TypeScript's control-flow
+	// analysis narrows this to `null` at the declaration and never widens
+	// back, because every assignment happens inside a stub method it can't
+	// prove was invoked — so `earlyResponse?.kind` would be a check on
+	// `never`.
+	type Early =
 		| { kind: "blocked"; status: number; body: unknown }
 		| { kind: "preflight"; status: number }
-		| null = null;
+		| null;
+	let earlyResponse: Early = null;
 
 	// The middleware also backfills headers onto c.res after next(); the stub
 	// models it as a plain reassignable Response like Hono's context.
@@ -72,9 +78,13 @@ const runMiddleware = async (
 		next,
 	);
 
-	if (earlyResponse?.kind === "blocked") return earlyResponse;
-	if (earlyResponse?.kind === "preflight") {
-		return { kind: "preflight", status: earlyResponse.status, headers };
+	// Read through an annotated function: a plain `const early: Early = …`
+	// still inherits the narrowed `null` from the initializer.
+	const readEarly = (): Early => earlyResponse;
+	const early = readEarly();
+	if (early?.kind === "blocked") return early;
+	if (early?.kind === "preflight") {
+		return { kind: "preflight", status: early.status, headers };
 	}
 	if (!nextCalled) {
 		throw new Error("middleware neither blocked nor called next()");

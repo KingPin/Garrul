@@ -9,6 +9,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { Hono } from "hono";
+import type { TestApp, TestEnv } from "./helpers/app";
 import { counts } from "../src/routes/api.counts";
 import { corsAndCsrf } from "../src/lib/cors";
 import {
@@ -140,7 +141,7 @@ const mkApp = (seed: Parameters<typeof makeDb>[0]) => {
 	return { app, env, kv };
 };
 
-const get = (app: Hono, env: Record<string, unknown>, path: string) =>
+const get = (app: TestApp, env: Record<string, unknown>, path: string) =>
 	app.request(path, {}, env);
 
 describe("counts — default shape (backward compatible)", () => {
@@ -243,7 +244,7 @@ describe("counts — CORS headers through the real middleware", () => {
 		};
 		return { app, env };
 	};
-	const getFrom = (app: Hono, env: Record<string, unknown>, origin: string) =>
+	const getFrom = (app: TestApp, env: Record<string, unknown>, origin: string) =>
 		app.request("/api/v1/counts?slugs=a", { headers: { origin } }, env);
 
 	it("cache miss: GET response carries Access-Control-Allow-Origin", async () => {
@@ -272,7 +273,7 @@ describe("counts — CORS headers through the real middleware", () => {
 		await getFrom(app, env, "https://blog.example.com");
 		const stored = [...mockCache.store.values()];
 		expect(stored.length).toBe(1);
-		expect(stored[0].headers.get("Access-Control-Allow-Origin")).toBeNull();
+		expect(stored[0]!.headers.get("Access-Control-Allow-Origin")).toBeNull();
 	});
 });
 

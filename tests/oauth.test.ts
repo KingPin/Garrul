@@ -397,10 +397,10 @@ describe("exchangeCodeForToken", () => {
 			"the-verifier",
 		);
 		expect(token).toBe("tok-123");
-		expect(calls[0].url).toBe(PROVIDERS.twitter.token_url);
-		const headers = calls[0].init.headers as Record<string, string>;
+		expect(calls[0]!.url).toBe(PROVIDERS.twitter.token_url);
+		const headers = calls[0]!.init.headers as Record<string, string>;
 		expect(headers.authorization).toBe(`Basic ${btoa("cid:csecret")}`);
-		const body = (calls[0].init.body as URLSearchParams).toString();
+		const body = (calls[0]!.init.body as URLSearchParams).toString();
 		expect(body).toContain("code_verifier=the-verifier");
 		// The secret must never appear in the body when using Basic auth.
 		expect(body).not.toContain("csecret");
@@ -416,9 +416,9 @@ describe("exchangeCodeForToken", () => {
 			"sec",
 			"https://x.test/cb",
 		);
-		const headers = calls[0].init.headers as Record<string, string>;
+		const headers = calls[0]!.init.headers as Record<string, string>;
 		expect(headers.authorization).toBeUndefined();
-		const body = (calls[0].init.body as URLSearchParams).toString();
+		const body = (calls[0]!.init.body as URLSearchParams).toString();
 		expect(body).toContain("client_secret=sec");
 		expect(body).not.toContain("code_verifier");
 	});

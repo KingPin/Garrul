@@ -194,7 +194,7 @@ describe("upgrade dry-run", () => {
 			loadLocal,
 		});
 
-		const output = logSpy.mock.calls.map((c) => c.join(" ")).join("\n");
+		const output: string = logSpy.mock.calls.map((c: unknown[]) => c.join(" ")).join("\n");
 		expect(output).toMatch(/Release notes \(v1\.2\.0\):/);
 		expect(output).toMatch(/new shiny thing/);
 		expect(output.indexOf("Release notes")).toBeLessThan(
@@ -212,7 +212,7 @@ describe("upgrade dry-run", () => {
 			loadLocal,
 		});
 
-		const output = logSpy.mock.calls.map((c) => c.join(" ")).join("\n");
+		const output: string = logSpy.mock.calls.map((c: unknown[]) => c.join(" ")).join("\n");
 		expect(output).toMatch(/New optional settings since 1\.0\.0/);
 		expect(output).toMatch(/• NEW_FLAG \[1\.2\.0\]/);
 		// ENV predates the installed release and is already set in wrangler.toml
@@ -232,7 +232,7 @@ describe("upgrade dry-run", () => {
 			loadLocal,
 		});
 
-		const output = logSpy.mock.calls.map((c) => c.join(" ")).join("\n");
+		const output: string = logSpy.mock.calls.map((c: unknown[]) => c.join(" ")).join("\n");
 		expect(output).toMatch(/New optional secrets since 1\.0\.0/);
 		expect(output).toMatch(/• NEW_TOKEN \[1\.2\.0\]/);
 		// Predates the installed release and is deliberately unset — repeating it
@@ -261,7 +261,7 @@ describe("upgrade dry-run", () => {
 			loadLocal,
 		});
 
-		const output = logSpy.mock.calls.map((c) => c.join(" ")).join("\n");
+		const output: string = logSpy.mock.calls.map((c: unknown[]) => c.join(" ")).join("\n");
 		expect(output).toMatch(/no GitHub release published/);
 	});
 

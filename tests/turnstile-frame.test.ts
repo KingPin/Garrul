@@ -13,7 +13,7 @@ type Env = Partial<{
 	JWT_SECRET: string;
 }>;
 
-const fetchFrame = (path: string, env: Env = {}): Promise<Response> => {
+const fetchFrame = async (path: string, env: Env = {}): Promise<Response> => {
 	const merged: Env = {
 		TURNSTILE_SITE_KEY: "0x4AAAAAAA_test_key",
 		ALLOWED_ORIGINS: "https://blog.example.com",

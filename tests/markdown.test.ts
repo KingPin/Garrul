@@ -131,7 +131,7 @@ describe("renderMarkdown — allowlist contract", () => {
 	const tagsIn = (html: string): string[] => [
 		...new Set(
 			[...html.matchAll(/<\/?([a-zA-Z][a-zA-Z0-9]*)/g)].map((m) =>
-				m[1].toLowerCase(),
+				m[1]!.toLowerCase(),
 			),
 		),
 	];

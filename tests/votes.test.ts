@@ -14,6 +14,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { Hono } from "hono";
+import type { TestApp, TestEnv } from "./helpers/app";
 import { votes } from "../src/routes/api.votes";
 import { castVote } from "../src/db/queries";
 
@@ -202,7 +203,7 @@ const mkRouteApp = (
 };
 
 const post = async (
-	app: Hono,
+	app: TestApp,
 	env: Record<string, unknown>,
 	body: unknown,
 ) =>

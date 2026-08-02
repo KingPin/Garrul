@@ -14,6 +14,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { Hono } from "hono";
+import type { TestApp, TestEnv } from "./helpers/app";
 import { pageEngagement } from "../src/routes/api.page-engagement";
 
 type Reaction = { post_slug: string; user_id: string; kind: string };
@@ -44,7 +45,7 @@ const makeDb = () => {
 					return { meta: { changes: 1 } };
 				}
 				if (sql.includes("INSERT INTO page_reactions")) {
-					const [post_slug, user_id, kind] = binds as string[];
+					const [post_slug, user_id, kind] = binds as [string, string, string];
 					const dup = reactions.some(
 						(r) =>
 							r.post_slug === post_slug &&
@@ -56,7 +57,7 @@ const makeDb = () => {
 					return { meta: { changes: 1 } };
 				}
 				if (sql.includes("DELETE FROM page_reactions")) {
-					const [post_slug, user_id, kind] = binds as string[];
+					const [post_slug, user_id, kind] = binds as [string, string, string];
 					for (let i = reactions.length - 1; i >= 0; i--) {
 						const r = reactions[i]!;
 						if (
@@ -205,7 +206,7 @@ const mkApp = (flags: Record<string, boolean>) => {
 };
 
 const post = (
-	app: Hono,
+	app: TestApp,
 	env: Record<string, unknown>,
 	path: string,
 	body: unknown,

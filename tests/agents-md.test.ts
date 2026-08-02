@@ -14,10 +14,10 @@ type Env = Partial<{
   JWT_SECRET: string;
 }>;
 
-const fetchAgents = (
+const fetchAgents = async (
   path: string,
   init: { host?: string; env?: Env } = {},
-) => {
+): Promise<Response> => {
   const url = `https://${init.host ?? "comments.test.example"}${path}`;
   const env: Env = {
     ALLOWED_ORIGINS: "https://blog.example.com",

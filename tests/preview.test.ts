@@ -12,6 +12,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { Hono } from "hono";
+import type { TestApp, TestEnv } from "./helpers/app";
 import { preview } from "../src/routes/api.preview";
 import { renderMarkdown } from "../src/lib/markdown";
 import { installMockCaches, uninstallMockCaches } from "./helpers/mock-caches";
@@ -34,7 +35,7 @@ const mkApp = () => {
 	return { app, env };
 };
 
-const post = (app: Hono, env: Record<string, unknown>, body: unknown) =>
+const post = (app: TestApp, env: Record<string, unknown>, body: unknown) =>
 	app.request(
 		"/",
 		{

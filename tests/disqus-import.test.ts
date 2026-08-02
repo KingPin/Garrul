@@ -26,6 +26,7 @@ import {
 } from "../src/lib/disqus-import";
 import { MAX_POST_TITLE } from "../src/lib/post-title";
 import { MAX_REPLY_DEPTH } from "../src/lib/tree";
+import { asD1 } from "./helpers/d1";
 
 type Captured = { sql: string; binds: unknown[] };
 
@@ -61,7 +62,7 @@ const makeFreshDb = () => {
 			return chain(sql);
 		},
 	};
-	return { db, captured };
+	return { db: asD1(db), captured };
 };
 
 // A stub where the comment-existence check always returns a row (i.e.
@@ -101,7 +102,7 @@ const makeAlreadyImportedDb = () => {
 		return stmt;
 	};
 	return {
-		db: { prepare: (s: string) => chain(s) },
+		db: asD1({ prepare: (s: string) => chain(s) }),
 		captured,
 	};
 };

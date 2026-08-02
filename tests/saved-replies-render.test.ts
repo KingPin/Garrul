@@ -16,10 +16,11 @@ const mkUser = (over: Partial<User> = {}): User => ({
 	name: "Alice",
 	email: "a@example.com",
 	avatar_url: null,
-	is_admin: 0,
+	is_admin: false,
 	role: "mod",
-	is_banned: 0,
+	is_banned: false,
 	created_at: 1_700_000_000_000,
+	erased_at: null,
 	...over,
 });
 

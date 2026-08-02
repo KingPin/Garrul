@@ -119,7 +119,11 @@ describe("requireIpHash", () => {
 	// Exercised through a mounted route rather than a bare object, so the
 	// `instanceof Response` idiom the eight call sites use is what's tested.
 	const mount = (env: Record<string, unknown>) => {
-		const app = new Hono();
+		// Bindings spelled out: a bare `new Hono()` is `Hono<BlankEnv>`, whose
+		// `c.env` is `unknown` and so doesn't satisfy `IpHashCtx`.
+		const app = new Hono<{
+			Bindings: { IP_HASH_SECRET?: string; ENV?: string };
+		}>();
 		app.post("/x", async (c) => {
 			const ipHash = await requireIpHash(c);
 			if (ipHash instanceof Response) return ipHash;

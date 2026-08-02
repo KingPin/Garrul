@@ -226,6 +226,7 @@ describe("renderTelegramBody", () => {
 // --------------------------------------------------------------------------
 
 import { insertComment } from "../src/db/queries";
+import type { CommentStatus } from "../src/db/queries";
 import type { Bindings } from "../src/index";
 import { issueTelegramLinkToken, telegram } from "../src/routes/telegram";
 
@@ -354,7 +355,9 @@ const seedUser = (id: string, role: "user" | "mod" | "admin", name = "Mod") => {
 		.run(id, id, name, role, role === "admin" ? 1 : 0, 1_700_000_000_000);
 };
 
-const seedComment = async (status = "pending"): Promise<string> => {
+const seedComment = async (
+	status: CommentStatus = "pending",
+): Promise<string> => {
 	const c = await insertComment(db, {
 		post_slug: "hello",
 		parent_id: null,
@@ -498,7 +501,7 @@ describe("POST /telegram/webhook — callback moderation + role gate", () => {
 		);
 
 		expect(vi.mocked(fireWebhook)).toHaveBeenCalledTimes(1);
-		const [, ctx, payload] = vi.mocked(fireWebhook).mock.calls[0];
+		const [, ctx, payload] = vi.mocked(fireWebhook).mock.calls[0]!;
 		expect(typeof ctx?.waitUntil).toBe("function");
 		expect(payload.event).toBe("comment.spam");
 		expect(payload.comment_id).toBe(id);

@@ -26,7 +26,7 @@ const REQUIRED_SECRETS = {
 	JWT_SECRET: "test-jwt-secret",
 } as const;
 
-const fetchPage = (path: string, env: Env = {}): Promise<Response> => {
+const fetchPage = async (path: string, env: Env = {}): Promise<Response> => {
 	const merged: Env = {
 		ALLOWED_ORIGINS: "https://blog.example.com",
 		...REQUIRED_SECRETS,

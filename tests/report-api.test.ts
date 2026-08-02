@@ -173,7 +173,7 @@ describe("POST /api/v1/comments/:id/report", () => {
 		expect(await res.json()).toEqual({ ok: true });
 		expect(reportRowCount(id)).toBe(1);
 		expect(fireWebhook).toHaveBeenCalledTimes(1);
-		expect((fireWebhook as Mock).mock.calls[0][2]).toMatchObject({
+		expect((fireWebhook as Mock).mock.calls[0]![2]).toMatchObject({
 			event: "comment.reported",
 			comment_id: id,
 			post_slug: "hello",

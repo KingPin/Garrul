@@ -42,6 +42,7 @@ const mkUser = (over: Partial<User> = {}): User => ({
 	is_banned: false,
 	role: "user",
 	created_at: 1_700_000_000_000,
+	erased_at: null,
 	...over,
 });
 

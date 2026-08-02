@@ -351,7 +351,7 @@ describe("discord adapter dispatch threads PUBLIC_BASE_URL to the wire", () => {
 			payload,
 		);
 		expect(fetchMock).toHaveBeenCalledTimes(1);
-		const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+		const body = JSON.parse(fetchMock.mock.calls[0]![1].body);
 		expect(Array.isArray(body.embeds)).toBe(true);
 		const links = body.embeds[0].fields[0].value;
 		expect(links).toContain(
@@ -443,7 +443,7 @@ describe("telegram dispatch never logs the bot token", () => {
 			{ DB: makeDbForTelegram(), ENV: "production", TELEGRAM_BOT_TOKEN: TOKEN },
 			payload,
 		);
-		const failCall = warnSpy.mock.calls.find((c) => c[0] === "webhook.failed");
+		const failCall = warnSpy.mock.calls.find((c: unknown[]) => c[0] === "webhook.failed");
 		expect(failCall).toBeDefined();
 		const logged = JSON.stringify(failCall?.[1]);
 		expect(logged).not.toContain(TOKEN);

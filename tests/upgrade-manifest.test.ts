@@ -19,6 +19,7 @@ const validRaw: Manifest = {
 	minPreviousVersion: "0.0.1",
 	renderer: { version: 1, eagerRerender: false },
 	secrets: [{ name: "JWT_SECRET", required: true, addedIn: "0.0.1" }],
+	vars: [],
 	kvNamespaces: [{ binding: "RATE_LIMITS", required: true }],
 	d1Databases: [
 		{ binding: "DB", databaseName: "garrul-db", required: true },

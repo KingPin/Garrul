@@ -202,7 +202,12 @@ const mkEnv = (envVars: Record<string, string> = {}) =>
 	}) as unknown as Bindings;
 
 type ListResp = {
-	threads: { id: string; score_up: number; score_down: number }[];
+	threads: {
+		id: string;
+		score_up: number;
+		score_down: number;
+		replies: unknown[];
+	}[];
 	next_cursor: string | null;
 };
 
@@ -289,9 +294,7 @@ describe("GET /comments — pagination is pushed into SQL", () => {
 		expect(page.threads).toHaveLength(10);
 		// 10 threads + their 20 replies. The pre-fix read path returned all 90.
 		expect(subtreeQuery()!.rows).toBe(30);
-		expect(page.threads.every((t) => (t as { replies: unknown[] }).replies.length === 2)).toBe(
-			true,
-		);
+		expect(page.threads.every((t) => t.replies.length === 2)).toBe(true);
 	});
 
 	it("never selects body_md, ip_hash or user_agent", async () => {
