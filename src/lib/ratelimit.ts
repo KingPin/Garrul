@@ -223,10 +223,25 @@ export const checkRateLimit = async (
 		// round no matter how many got through. The global envelope races the
 		// same way and multiplies with it, so it is not a backstop against this.
 		//
-		// The Cache API has no compare-and-swap, so it is inherent to the
-		// backend, and the trade stays accepted for a comment system — a Durable
-		// Object backend is what would close it. Settled in a5b384b; only the
-		// magnitude above was understated, which is all this corrects.
+		// The Cache API has no compare-and-swap, so this is inherent to the
+		// backend: a Durable Object behind `RateLimitStore` is what closes it
+		// (tracked in #53, and it would fix the per-colo undercount above too).
+		//
+		// Accepted for now, and the reason is not "it's only a burst" — it isn't
+		// one. It is that the limiter is deliberately not the sole control on any
+		// endpoint taking an unauthenticated caller (Turnstile on anonymous
+		// comment POST, UNIQUE(comment_id, reporter_ip_hash) on reports,
+		// idempotent toggles on votes and reactions, PENDING_PER_EMAIL_CAP on
+		// subscribe), and that for every IP-keyed bucket this is not even the
+		// cheapest bypass — IPv6 rotation already defeats per-IP limiting
+		// outright, so closing the race would not lower the achievable abuse
+		// rate there. It IS the only bypass on the `user:`-keyed buckets and the
+		// Telegram route, which cost an attacker a bannable account.
+		//
+		// This is an operator-visible property, not just an internal caveat:
+		// docs/ANTISPAM.md § "Rate-limit accuracy" states it, and points
+		// operators who need a hard ceiling at Cloudflare WAF rate-limiting
+		// rules. Keep the two in sync.
 		scoped.stamps.push(now);
 		global.stamps.push(now);
 		await Promise.all([
