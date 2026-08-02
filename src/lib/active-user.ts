@@ -13,7 +13,12 @@
  * this check reads D1 — one indexed lookup by primary key on a path that is
  * already doing D1 work.
  */
-import { getOrCreateGhost, getUser, type User } from "../db/queries";
+import {
+	getGhostByIpHash,
+	getOrCreateGhost,
+	getUser,
+	type User,
+} from "../db/queries";
 import { readSession } from "./session";
 
 type ActorCtx = {
@@ -70,4 +75,24 @@ export const resolveActor = async (
 	const ghost = await getOrCreateGhost(c.env.DB, ipHash, "anon");
 	if (ghost.is_banned) return { ok: false };
 	return { ok: true, userId: ghost.id };
+};
+
+/**
+ * Whether this ip_hash's anonymous identity is banned — without minting one.
+ *
+ * For the routes that accept an anonymous caller but never attribute the write
+ * to a ghost. Reporting is the case: it stores `reporter_user_id = NULL` and
+ * keys its dedup on the ip_hash instead, so `resolveActor` is the wrong tool —
+ * it would create a user row per anonymous reporter, a D1 write on an
+ * unauthenticated path for an identity nothing goes on to read.
+ *
+ * No row means no ban: an ip_hash that has never posted has no identity to have
+ * banned, so this is `false` and the caller carries on.
+ */
+export const isBannedGhost = async (
+	db: D1Database,
+	ipHash: string,
+): Promise<boolean> => {
+	const ghost = await getGhostByIpHash(db, ipHash);
+	return ghost?.is_banned === true;
 };

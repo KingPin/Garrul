@@ -34,6 +34,7 @@ vi.mock("../src/lib/webhook", () => ({ fireWebhook: vi.fn() }));
 
 import { reports } from "../src/routes/api.reports";
 import { insertComment } from "../src/db/queries";
+import { hashIp } from "../src/lib/ip-hash";
 import { fireWebhook } from "../src/lib/webhook";
 import type { Bindings } from "../src/index";
 
@@ -104,7 +105,7 @@ const mkEnv = (): Bindings =>
 		TREE_CACHE: openKv(),
 		SESSIONS: { async get() { return null; }, async put() {}, async delete() {} },
 		ANALYTICS: { writeDataPoint() {} },
-		IP_HASH_SECRET: "test-secret",
+		IP_HASH_SECRET: IP_SECRET,
 		ENV: "dev",
 	}) as unknown as Bindings;
 
@@ -126,12 +127,15 @@ const seedComment = async (): Promise<string> => {
 
 const app = () => new Hono<{ Bindings: Bindings }>().route("/", reports);
 
+const REPORTER_IP = "203.0.113.7";
+const IP_SECRET = "test-secret";
+
 const report = (env: Bindings, id: string, body: unknown = {}) =>
 	app().request(
 		`/${id}/report`,
 		{
 			method: "POST",
-			headers: { "content-type": "application/json", "cf-connecting-ip": "203.0.113.7" },
+			headers: { "content-type": "application/json", "cf-connecting-ip": REPORTER_IP },
 			body: JSON.stringify(body),
 		},
 		env as unknown as Record<string, unknown>,
@@ -222,6 +226,40 @@ describe("POST /api/v1/comments/:id/report", () => {
 		expect(await res.json()).toEqual({ ok: true });
 		expect(reportRowCount(id)).toBe(0);
 		expect(fireWebhook).not.toHaveBeenCalled();
+	});
+
+	it("rejects an anonymous reporter whose ip_hash ghost is banned", async () => {
+		// Banning an abusive anonymous author bans their ghost row. The gate used
+		// to run only when a session existed, so that same browser could keep
+		// filing reports — a moderator's inbox left usable for harassment by the
+		// person the ban was for.
+		const id = await seedComment();
+		const ipHash = await hashIp(REPORTER_IP, IP_SECRET);
+		sqlite
+			.prepare(
+				"INSERT INTO users (id, provider, provider_id, name, is_banned, created_at) VALUES (?, 'anon', ?, 'Ghost', 1, ?)",
+			)
+			.run("01HGHOST0000000000000000GH", ipHash, 1_700_000_000_000);
+
+		const res = await report(mkEnv(), id, { reason: "harassment" });
+		expect(res.status).toBe(403);
+		expect(reportRowCount(id)).toBe(0);
+		expect(fireWebhook).not.toHaveBeenCalled();
+	});
+
+	it("does not create a ghost row for an anonymous reporter", async () => {
+		// The ban check is read-only on purpose: reports store
+		// reporter_user_id = NULL, so minting a user row here would be a D1 write
+		// on an unauthenticated path for an identity nothing ever reads.
+		const id = await seedComment();
+		const before = (
+			sqlite.prepare("SELECT COUNT(*) AS n FROM users").get() as { n: number }
+		).n;
+		expect((await report(mkEnv(), id)).status).toBe(200);
+		expect(
+			(sqlite.prepare("SELECT COUNT(*) AS n FROM users").get() as { n: number })
+				.n,
+		).toBe(before);
 	});
 
 	it("caps an over-long reason instead of rejecting", async () => {

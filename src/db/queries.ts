@@ -296,6 +296,30 @@ export const resolveReportsForComment = async (
 };
 
 /**
+ * The ghost user for this ip_hash if one already exists, else null.
+ *
+ * The read half of `getOrCreateGhost`, for callers that want to know whether an
+ * anonymous visitor has an identity *without* minting one — a route that only
+ * needs to answer "is this ip_hash banned?" has no business creating a user row
+ * as a side effect of the check.
+ *
+ * Hits the same (provider, provider_id) UNIQUE index the create path keys on.
+ */
+export const getGhostByIpHash = async (
+	db: D1Database,
+	ipHash: string,
+): Promise<User | null> => {
+	const row = await db
+		.prepare(
+			`SELECT ${USER_COLS}
+			 FROM users WHERE provider = 'anon' AND provider_id = ?`,
+		)
+		.bind(ipHash)
+		.first<UserRow>();
+	return row ? toUser(row) : null;
+};
+
+/**
  * Returns the existing ghost user for this ip_hash, or creates one.
  *
  * Ghost users are the per-IP anonymous identity used for anonymous comments.
@@ -308,14 +332,8 @@ export const getOrCreateGhost = async (
 	ipHash: string,
 	displayName: string,
 ): Promise<User> => {
-	const existing = await db
-		.prepare(
-			`SELECT ${USER_COLS}
-			 FROM users WHERE provider = 'anon' AND provider_id = ?`,
-		)
-		.bind(ipHash)
-		.first<UserRow>();
-	if (existing) return toUser(existing);
+	const existing = await getGhostByIpHash(db, ipHash);
+	if (existing) return existing;
 
 	const id = ulid();
 	const now = Date.now();

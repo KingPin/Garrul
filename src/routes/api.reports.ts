@@ -5,7 +5,8 @@
  *
  * Low-friction by design: anonymous reports are allowed and there is NO
  * Turnstile challenge (a challenge on a one-tap "report" is overkill and
- * hurts adoption). Abuse is bounded three ways instead:
+ * hurts adoption). Abuse is bounded four ways instead:
+ *   - a banned identity — session user *or* ip_hash ghost — is refused 403;
  *   - the shared per-IP-hash rate-limit bucket (same as commenting);
  *   - a UNIQUE(comment_id, reporter_ip_hash) dedup — a second report from the
  *     same network is a silent no-op (INSERT OR IGNORE in insertReport);
@@ -24,7 +25,7 @@ import type { Bindings } from "../index";
 import { getComment, insertReport } from "../db/queries";
 import { requireIpHash } from "../lib/ip-hash";
 import { checkRateLimit } from "../lib/ratelimit";
-import { requireActiveUser } from "../lib/active-user";
+import { isBannedGhost, requireActiveUser } from "../lib/active-user";
 import { readSession } from "../lib/session";
 import { writeEvent } from "../lib/analytics";
 import { fireWebhook } from "../lib/webhook";
@@ -69,8 +70,21 @@ reports.post("/:id/report", async (c) => {
 
 	// A banned user doesn't get to file reports: the queue is a moderator's
 	// inbox, and an unchecked ban leaves it usable for harassment.
+	//
+	// Both identities, because reporting takes either. Gating only the session
+	// left the anonymous half open — an operator bans an abusive anonymous
+	// author by banning their ghost row (provider='anon', provider_id=ip_hash),
+	// and that ip_hash could still file a report from the same browser by
+	// signing out or never signing in. `isBannedGhost` is the read-only lookup:
+	// this route deliberately never creates a ghost (reporter_user_id stays NULL
+	// and the dedup keys on the ip_hash), and a check has no business minting a
+	// user row on an unauthenticated path.
 	const session = await readSession(c);
-	if (session && !(await requireActiveUser(c.env.DB, session.user_id))) {
+	if (session) {
+		if (!(await requireActiveUser(c.env.DB, session.user_id))) {
+			return c.json({ error: t("err.banned") }, 403);
+		}
+	} else if (await isBannedGhost(c.env.DB, ipHash)) {
 		return c.json({ error: t("err.banned") }, 403);
 	}
 	const isNew = await insertReport(c.env.DB, {
