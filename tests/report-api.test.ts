@@ -247,6 +247,25 @@ describe("POST /api/v1/comments/:id/report", () => {
 		expect(fireWebhook).not.toHaveBeenCalled();
 	});
 
+	it("gives a banned reporter the same answer for a real and a bogus id", async () => {
+		// The ban gate used to run *after* the target lookup, which handed a banned
+		// caller exactly the enumeration oracle the {ok:true}-on-missing branch
+		// exists to deny: 403 meant the comment was real, {ok:true} meant it wasn't.
+		const id = await seedComment();
+		const ipHash = await hashIp(REPORTER_IP, IP_SECRET);
+		sqlite
+			.prepare(
+				"INSERT INTO users (id, provider, provider_id, name, is_banned, created_at) VALUES (?, 'anon', ?, 'Ghost', 1, ?)",
+			)
+			.run("01HGHOST0000000000000000GH", ipHash, 1_700_000_000_000);
+
+		const real = await report(mkEnv(), id);
+		const bogus = await report(mkEnv(), "01HNOSUCHCOMMENT00000000");
+		expect(real.status).toBe(403);
+		expect(bogus.status).toBe(real.status);
+		expect(await bogus.json()).toEqual(await real.json());
+	});
+
 	it("does not create a ghost row for an anonymous reporter", async () => {
 		// The ban check is read-only on purpose: reports store
 		// reporter_user_id = NULL, so minting a user row here would be a D1 write

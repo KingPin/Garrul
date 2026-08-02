@@ -60,14 +60,6 @@ reports.post("/:id/report", async (c) => {
 		return c.json({ error: t("err.ratelimit") }, 429);
 	}
 
-	// Resolve the target. A missing comment returns the same {ok:true} as a
-	// success so the endpoint can't be used to enumerate comment ids. An
-	// already-deleted comment is treated the same way: nothing to moderate, so
-	// don't let a crafted POST open a report on a dead comment (the widget
-	// already hides the button for deleted ones — this is the server guard).
-	const target = await getComment(c.env.DB, id);
-	if (!target || target.status === "deleted") return c.json({ ok: true });
-
 	// A banned user doesn't get to file reports: the queue is a moderator's
 	// inbox, and an unchecked ban leaves it usable for harassment.
 	//
@@ -79,6 +71,11 @@ reports.post("/:id/report", async (c) => {
 	// this route deliberately never creates a ghost (reporter_user_id stays NULL
 	// and the dedup keys on the ip_hash), and a check has no business minting a
 	// user row on an unauthenticated path.
+	//
+	// Ahead of the target lookup, not after it. The other order gave a banned
+	// caller the enumeration oracle the {ok:true} below exists to deny: 403 for a
+	// comment that exists, {ok:true} for one that doesn't. Refusing before
+	// anything is resolved makes the response identical either way.
 	const session = await readSession(c);
 	if (session) {
 		if (!(await requireActiveUser(c.env.DB, session.user_id))) {
@@ -87,6 +84,15 @@ reports.post("/:id/report", async (c) => {
 	} else if (await isBannedGhost(c.env.DB, ipHash)) {
 		return c.json({ error: t("err.banned") }, 403);
 	}
+
+	// Resolve the target. A missing comment returns the same {ok:true} as a
+	// success so the endpoint can't be used to enumerate comment ids. An
+	// already-deleted comment is treated the same way: nothing to moderate, so
+	// don't let a crafted POST open a report on a dead comment (the widget
+	// already hides the button for deleted ones — this is the server guard).
+	const target = await getComment(c.env.DB, id);
+	if (!target || target.status === "deleted") return c.json({ ok: true });
+
 	const isNew = await insertReport(c.env.DB, {
 		comment_id: id,
 		reporter_user_id: session?.user_id ?? null,
