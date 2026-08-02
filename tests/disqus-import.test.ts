@@ -173,7 +173,7 @@ describe("parseDisqusXml", () => {
 	});
 
 	it("rejects an oversized document", () => {
-		const huge = "<disqus>" + "x".repeat(51 * 1024 * 1024) + "</disqus>";
+		const huge = `<disqus>${"x".repeat(51 * 1024 * 1024)}</disqus>`;
 		expect(() => parseDisqusXml(huge)).toThrow(/too large/);
 	});
 

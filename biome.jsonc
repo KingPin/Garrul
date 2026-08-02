@@ -1,0 +1,70 @@
+{
+	"$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+	"vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
+	"files": {
+		"includes": [
+			"**",
+			"!dist",
+			"!.wrangler",
+			"!node_modules",
+			// Generated at build time (see .gitignore).
+			"!src/widget/embed.bundled.ts",
+			"!src/agents.bundled.ts",
+			"!src/lib/version.gen.ts",
+			// Host-site integration snippets. They are written to be pasted into
+			// arbitrary WordPress/Hugo/Jekyll templates, so `function` over arrow
+			// and `!important` in an override are deliberate, not oversights.
+			"!examples"
+		]
+	},
+	// Formatting is deliberately not enforced. The tree is tab-indented and
+	// consistent already; turning the formatter on would rewrite every file and
+	// bury real changes. Enable it in its own commit if that is ever wanted.
+	"formatter": { "enabled": false },
+	"linter": {
+		"enabled": true,
+		"rules": {
+			"preset": "recommended",
+			"style": {
+				// `noUncheckedIndexedAccess` is on, so every array index and regex
+				// capture group is `T | undefined`. In assertion-heavy test code `!`
+				// is the sanctioned narrowing; the alternative is `?.` chains that
+				// turn a missing element into a silent pass instead of a failure.
+				"noNonNullAssertion": "off"
+			},
+			"complexity": {
+				// Control-character classes are built with `new RegExp("[\\u0000-…]")`
+				// on purpose: the source stays printable. Inlining them as literals
+				// puts real control bytes in the file, which makes git treat it as
+				// binary and hides the diff from review.
+				"useRegexLiterals": "off",
+				// Every hit is a guard of the form `if (!x || !x.y) return …`, in
+				// webhook dispatch, permalink resolution, the admin erase confirm and
+				// the widget's auth postMessage handler. The explicit form names both
+				// failure modes and is the house idiom; rewriting ten guards in those
+				// paths for a style preference is not a trade worth making.
+				"useOptionalChain": "off"
+			},
+			"suspicious": {
+				// Same reason from the other direction: the sanitizers in
+				// post-title.ts, log.ts, feed.ts and api.comments.ts exist precisely
+				// to match control characters and strip them.
+				"noControlCharactersInRegex": "off"
+			}
+		}
+	},
+	"overrides": [
+		{
+			"includes": ["tests/**"],
+			"linter": {
+				"rules": {
+					"suspicious": {
+						// Test env stubs are cast bags of bindings; typing them fully
+						// would duplicate `Bindings` in 30 files to no benefit.
+						"noExplicitAny": "off"
+					}
+				}
+			}
+		}
+	]
+}

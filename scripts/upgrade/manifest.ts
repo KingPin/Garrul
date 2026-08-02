@@ -372,7 +372,7 @@ const validateBreakingChange = (raw: unknown, i: number): BreakingChange => {
 export const validateManifest = (raw: unknown): Manifest => {
 	if (!isObject(raw)) throw new ManifestError("manifest must be an object");
 
-	const renderer = raw["renderer"];
+	const renderer = raw.renderer;
 	if (!isObject(renderer)) {
 		throw new ManifestError("renderer must be an object");
 	}
@@ -396,7 +396,7 @@ export const validateManifest = (raw: unknown): Manifest => {
 		// secrets/vars split, so `upgrade` must still parse them to tell an
 		// operator on 1.19.x what changed.
 		vars:
-			raw["vars"] === undefined
+			raw.vars === undefined
 				? []
 				: requireArray(raw, "vars", "").map(validateVar),
 		kvNamespaces: requireArray(raw, "kvNamespaces", "").map(validateKv),

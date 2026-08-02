@@ -69,7 +69,7 @@ export const checkWorkersAi = async (
 	}
 
 	try {
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		// biome-ignore lint/suspicious/noExplicitAny: the Workers AI response shape varies by model and is probed defensively below.
 		const out: any = await cfg.ai.run(MODEL, {
 			messages: [
 				{ role: "system", content: "You are a spam classifier. Reply SPAM or HAM only." },

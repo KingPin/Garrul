@@ -40,7 +40,7 @@ type DigestEnv = {
 const DEBOUNCE_MS = 5 * 60 * 1000;
 const MAX_DIGESTS_PER_TICK = 50;
 
-const escape = (s: string | null | undefined): string => {
+const escapeHtml = (s: string | null | undefined): string => {
 	if (s == null) return "";
 	return s
 		.replace(/&/g, "&amp;")
@@ -56,14 +56,14 @@ export const renderConfirmEmailHtml = (params: {
 	return `<!doctype html><html><body style="font-family:system-ui,sans-serif;max-width:560px;margin:auto;padding:24px;color:#111827;">
 <h1 style="font-size:18px;margin:0 0 12px;">Confirm your subscription</h1>
 <p>You're being asked to confirm a subscription to reply notifications for
-<strong>${escape(params.postTitle)}</strong>.</p>
+<strong>${escapeHtml(params.postTitle)}</strong>.</p>
 <p>If this wasn't you, ignore this email — without the confirmation click
 below, no further messages will be sent to this address for this thread.</p>
 <p style="margin-top:20px;"><a href="${params.confirmUrl}"
    style="background:#111827;color:#fff;padding:10px 16px;border-radius:6px;
    text-decoration:none;display:inline-block;">Confirm subscription</a></p>
 <p style="margin-top:20px;font-size:12px;color:#6b7280;">Or paste this link
-into your browser:<br>${escape(params.confirmUrl)}</p>
+into your browser:<br>${escapeHtml(params.confirmUrl)}</p>
 </body></html>`;
 };
 
@@ -78,7 +78,7 @@ const renderDigestHtml = (params: {
 			(it) => `
 <tr><td style="padding:12px 0;border-bottom:1px solid #e5e7eb;">
   <div style="font-size:13px;color:#6b7280;">
-    ${escape(it.author)} · <a href="${params.publicBase}/c/${it.commentId}">permalink</a>
+    ${escapeHtml(it.author)} · <a href="${params.publicBase}/c/${it.commentId}">permalink</a>
   </div>
   <div style="margin-top:6px;font-size:14px;color:#111827;">${it.html}</div>
 </td></tr>`,
@@ -86,7 +86,7 @@ const renderDigestHtml = (params: {
 		.join("");
 	const count = params.items.length;
 	return `<!doctype html><html><body style="font-family:system-ui,sans-serif;max-width:560px;margin:auto;padding:24px;color:#111827;">
-<h1 style="font-size:18px;margin:0 0 12px;">${count} new comment${count === 1 ? "" : "s"} on "${escape(params.postTitle)}"</h1>
+<h1 style="font-size:18px;margin:0 0 12px;">${count} new comment${count === 1 ? "" : "s"} on "${escapeHtml(params.postTitle)}"</h1>
 <table style="width:100%;border-collapse:collapse;">${rows}</table>
 <p style="margin-top:24px;font-size:12px;color:#6b7280;">
   <a href="${params.unsubscribeUrl}" style="color:#6b7280;">Unsubscribe from this thread</a>

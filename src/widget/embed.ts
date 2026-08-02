@@ -2127,6 +2127,7 @@ const loadOnce = async (
 			siteKey = cfg.turnstile_site_key ?? null;
 			editWindowMinutes = cfg.edit_window_minutes ?? 15;
 			providers = (cfg.providers ?? []).filter((p): p is OAuthProvider =>
+				// biome-ignore lint/suspicious/noPrototypeBuiltins: the rule wants Object.hasOwn (ES2022); the widget builds for es2020 and esbuild will not polyfill it. This is already the safe `.call` form.
 				Object.prototype.hasOwnProperty.call(PROVIDER_LABELS, p),
 			);
 			brandingHidden = cfg.branding_hidden === true;

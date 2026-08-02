@@ -100,7 +100,7 @@ const makeMarked = (): Marked => {
 			// type "# Hi" still get visual emphasis but no <h1>-<h6> tags.
 			heading({ tokens }) {
 				// `this` is bound to the parser by marked at call time.
-				// eslint-disable-next-line @typescript-eslint/no-explicit-any
+				// biome-ignore lint/suspicious/noExplicitAny: marked types the renderer's `this` as void, so the parser it actually binds is only reachable through a cast.
 				const text = (this as any).parser.parseInline(tokens);
 				return `<p><strong>${text}</strong></p>\n`;
 			},
@@ -124,7 +124,7 @@ const makeMarked = (): Marked => {
 				return "<br>";
 			},
 			link({ href, title, tokens }) {
-				// eslint-disable-next-line @typescript-eslint/no-explicit-any
+				// biome-ignore lint/suspicious/noExplicitAny: same as `heading` above — marked binds the parser to `this` but does not type it.
 				const text: string = (this as any).parser.parseInline(tokens);
 				if (typeof href !== "string" || !URL_ALLOWLIST.test(href)) {
 					return text;

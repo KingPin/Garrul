@@ -14,7 +14,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { Hono } from "hono";
-import type { TestApp, TestEnv } from "./helpers/app";
+import type { TestApp, } from "./helpers/app";
 import { pageEngagement } from "../src/routes/api.page-engagement";
 
 type Reaction = { post_slug: string; user_id: string; kind: string };

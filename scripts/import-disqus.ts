@@ -83,7 +83,7 @@ const runWrangler = (sql: string): string =>
 
 const d1: D1Database = {
 	prepare(rawSql: string) {
-		let sql = rawSql;
+		const sql = rawSql;
 		const binds: unknown[] = [];
 		return {
 			bind(...args: unknown[]) {

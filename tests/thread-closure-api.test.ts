@@ -21,11 +21,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { comments } from "../src/routes/api.comments";
-import {
-	installMockCaches,
-	uninstallMockCaches,
-	type MockCache,
-} from "./helpers/mock-caches";
+import { installMockCaches, uninstallMockCaches } from "./helpers/mock-caches";
 import type { Bindings } from "../src/index";
 
 const MIGRATIONS_DIR = join(__dirname, "../src/db/migrations");
@@ -102,12 +98,13 @@ const makeKv = () => {
 	};
 };
 
-let mockCache: MockCache;
 let sqlite: DatabaseSync;
 let env: Bindings;
 
 beforeEach(() => {
-	mockCache = installMockCaches();
+	// Installed for the side effect: the routes under test reach for
+	// `caches.default`, which does not exist in the node pool.
+	installMockCaches();
 	const fresh = freshDb();
 	sqlite = fresh.sqlite;
 	// One signed-in, non-banned user to author comments.

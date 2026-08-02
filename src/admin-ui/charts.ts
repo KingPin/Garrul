@@ -57,7 +57,6 @@ export const barChartSvg = (points: TimelinePoint[]): string => {
 		.map((p, i) => {
 			const bh = (innerH * p.count) / max;
 			const x = i * (barW + gap);
-			const y = h - pad - bh;
 			// Keep a 1px stub for zero days so the baseline reads as data, not a gap.
 			const drawn = p.count > 0 ? Math.max(2, bh) : 1;
 			return `<rect x="${x.toFixed(1)}" y="${(h - pad - drawn).toFixed(1)}" width="${barW}" height="${drawn.toFixed(1)}" rx="1.5" fill="var(--accent)"${p.count === 0 ? ' opacity="0.25"' : ""}><title>${escapeHtml(p.day)} · ${p.count}</title></rect>`;

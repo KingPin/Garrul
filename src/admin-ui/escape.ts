@@ -26,6 +26,6 @@ export const jsLiteral = (s: string): string => escapeHtml(jsLiteralRaw(s));
 // decodes to the text `&quot;` instead of a quote and breaks the expression.
 export const jsLiteralRaw = (s: string): string =>
 	JSON.stringify(s).replace(
-		/[<>\/\u2028\u2029]/g,
+		/[<>/\u2028\u2029]/g,
 		(c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`,
 	);

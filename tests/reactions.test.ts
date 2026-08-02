@@ -12,7 +12,7 @@
  */
 import { describe, it, expect, afterEach } from "vitest";
 import { Hono } from "hono";
-import type { TestApp, TestEnv } from "./helpers/app";
+import type { TestApp, } from "./helpers/app";
 import { reactions } from "../src/routes/api.reactions";
 import { installMockCaches, uninstallMockCaches } from "./helpers/mock-caches";
 

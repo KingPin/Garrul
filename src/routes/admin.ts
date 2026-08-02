@@ -73,7 +73,6 @@ import {
 	type AdminAction,
 	type AuditTargetKind,
 	type CommentStatus,
-	type SavedReply,
 	type SavedReplyScope,
 	type User,
 	type UserRole,

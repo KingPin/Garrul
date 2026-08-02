@@ -200,7 +200,7 @@ subscriptions.get("/confirm/:token", async (c) => {
 	const postLabel = post?.title ?? sub.post_slug;
 	return c.html(
 		pageHtml(
-			`You're confirmed for comment notifications on "${escape(postLabel)}".`,
+			`You're confirmed for comment notifications on "${escapeHtml(postLabel)}".`,
 		),
 	);
 });
@@ -226,7 +226,7 @@ subscriptions.get("/unsubscribe/:token", async (c) => {
 	}
 
 	const post = await getPost(c.env.DB, sub.post_slug);
-	const postLabel = escape(post?.title ?? sub.post_slug);
+	const postLabel = escapeHtml(post?.title ?? sub.post_slug);
 
 	if (sub.unsubscribed_at != null) {
 		return c.html(
@@ -256,12 +256,12 @@ subscriptions.post("/unsubscribe/:token", async (c) => {
 	const postLabel = post?.title ?? sub.post_slug;
 	return c.html(
 		pageHtml(
-			`You're unsubscribed from comment notifications for "${escape(postLabel)}".`,
+			`You're unsubscribed from comment notifications for "${escapeHtml(postLabel)}".`,
 		),
 	);
 });
 
-const escape = (s: string): string =>
+const escapeHtml = (s: string): string =>
 	s
 		.replace(/&/g, "&amp;")
 		.replace(/</g, "&lt;")

@@ -25,7 +25,8 @@
     "size": "npm run build:embed && tsx scripts/check-bundle-size.ts",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.widget.json",
     "pretypecheck": "npm run build:assets",
-    "lint": "echo 'lint placeholder — wire up biome or eslint later' && exit 0",
+    "lint": "biome lint .",
+    "lint:fix": "biome lint --write .",
     "test": "vitest run",
     "test:watch": "vitest",
     "migrate": "tsx src/db/migrate.ts",
@@ -49,6 +50,7 @@
     "esbuild": "^0.28.1"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.5.6",
     "@cloudflare/vitest-pool-workers": "^0.19.0",
     "@cloudflare/workers-types": "^5.20260730.1",
     "@types/node": "^24.13.3",

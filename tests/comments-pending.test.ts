@@ -14,16 +14,13 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { Hono } from "hono";
 import { comments } from "../src/routes/api.comments";
-import {
-	installMockCaches,
-	uninstallMockCaches,
-	type MockCache,
-} from "./helpers/mock-caches";
+import { installMockCaches, uninstallMockCaches } from "./helpers/mock-caches";
 import type { Bindings } from "../src/index";
 
-let mockCache: MockCache;
+// Installed for the side effect: the routes under test reach for
+// `caches.default`, which does not exist in the node pool.
 beforeEach(() => {
-	mockCache = installMockCaches();
+	installMockCaches();
 });
 afterEach(() => uninstallMockCaches());
 
@@ -240,7 +237,7 @@ describe("GET /comments — the payload withholds author privilege flags", () =>
 		const approved = [mkRow("01HUADMINPOST000000000", ADMIN, "approved", 1000)];
 		const page = await get(mkEnv(approved, []));
 		const node = page.threads[0]!;
-		expect(node.author["name"]).toBe(ADMIN);
+		expect(node.author.name).toBe(ADMIN);
 		expect(node.author).not.toHaveProperty("is_admin");
 		expect(node.author).not.toHaveProperty("role");
 		expect(JSON.stringify(page)).not.toContain("is_admin");

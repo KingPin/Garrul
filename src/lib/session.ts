@@ -124,7 +124,6 @@ export const parseCookie = (
 			try {
 				return decodeURIComponent(raw);
 			} catch {
-				continue;
 			}
 		}
 	}

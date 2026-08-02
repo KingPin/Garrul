@@ -43,6 +43,10 @@ access, no Cloudflare account required.
    npm run typecheck
    npm test
    ```
+   `lint` is Biome (`biome.jsonc`), linter only — the formatter is off, so it
+   will never reformat your diff. `npm run lint:fix` applies the safe fixes.
+   Where a rule is disabled or suppressed, the config or the `biome-ignore`
+   comment says why; add the reason if you add a suppression.
 4. **PR description** should explain *why*, not just *what*. The diff
    shows what. Link the issue if there is one.
 5. **One PR per concern.** A 600-line PR that touches markdown, OAuth,

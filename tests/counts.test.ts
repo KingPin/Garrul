@@ -9,7 +9,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { Hono } from "hono";
-import type { TestApp, TestEnv } from "./helpers/app";
+import type { TestApp, } from "./helpers/app";
 import { counts } from "../src/routes/api.counts";
 import { corsAndCsrf } from "../src/lib/cors";
 import {

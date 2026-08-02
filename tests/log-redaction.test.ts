@@ -12,7 +12,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { Hono } from "hono";
 import { requestLogger, sanitizeLoggedPath } from "../src/lib/log";
 
-const TOKEN = "a3f".repeat(21) + "b"; // 64 hex chars, as randomToken() emits
+const TOKEN = `${"a3f".repeat(21)}b`; // 64 hex chars, as randomToken() emits
 const ULID = "01HC000000000000000000ABCD"; // 26 chars
 
 describe("sanitizeLoggedPath", () => {

@@ -14,7 +14,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { Hono } from "hono";
-import type { TestApp, TestEnv } from "./helpers/app";
+import type { TestApp, } from "./helpers/app";
 import { votes } from "../src/routes/api.votes";
 import { castVote } from "../src/db/queries";
 
