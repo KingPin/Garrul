@@ -31,6 +31,7 @@
  */
 
 import { loadErrorMessage } from "./load-error";
+import { watchForSignIn } from "./auth-recovery";
 
 // Mirrors lib/tree.ts's TreeAuthor. No `is_admin`: the API stopped sending it
 // (it let anyone enumerate privileged accounts) and nothing here rendered it.
@@ -1920,7 +1921,10 @@ const startOauth = (
 		} | null;
 		if (!data || data.type !== "garrul:auth") return;
 		window.removeEventListener("message", handler);
-		if (!data.ok) return;
+		if (!data.ok) {
+			stopRecovery();
+			return;
+		}
 		// The popup's Set-Cookie is in its own (api-origin) CHIPS partition and
 		// won't be visible to this top-level on cross-site embeds. Exchange the
 		// handoff token from THIS context so the Set-Cookie lands in our
@@ -1928,6 +1932,7 @@ const startOauth = (
 		// through to onSuccess (same-site embeds still see the popup cookie).
 		const handoff = typeof data.handoff === "string" ? data.handoff : "";
 		if (!handoff) {
+			stopRecovery();
 			onSuccess();
 			return;
 		}
@@ -1938,10 +1943,32 @@ const startOauth = (
 			body: JSON.stringify({ token: handoff }),
 		})
 			.then((res) => {
-				if (res.ok) onSuccess();
+				if (!res.ok) return;
+				stopRecovery();
+				onSuccess();
 			})
+			// Leave the recovery watcher armed on a failed exchange: the popup
+			// already minted a session, and on a same-site embed its cookie is
+			// readable from here, so /auth/me can still rescue this.
 			.catch(() => {});
 	};
+	// Second channel, for host pages that send `Cross-Origin-Opener-Policy:
+	// same-origin`. That header severs the popup's `window.opener`, so the
+	// `garrul:auth` message above is never sent and the handler never runs —
+	// silently, since the popup still reports success. See issue #58 and the
+	// module header in ./auth-recovery.
+	//
+	// Armed before the message listener so `handler` can never observe
+	// `stopRecovery` in its temporal dead zone.
+	const stopRecovery = watchForSignIn({
+		checkSignedIn: () => fetchMe(apiBase).then((me) => me != null),
+		onSignedIn: () => {
+			window.removeEventListener("message", handler);
+			onSuccess();
+		},
+		win: window,
+		doc: document,
+	});
 	window.addEventListener("message", handler);
 	if (!popup) {
 		// Popup blocked — fall back to top-level redirect. The browser will
