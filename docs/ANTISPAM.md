@@ -116,7 +116,9 @@ The rate limiter is a **cost-raiser, not a hard ceiling.** Treat the configured 
 | Vote / reaction / page vote | Idempotent toggle on a unique row — repeats flip a row, they don't accumulate |
 | Subscribe | `PENDING_PER_EMAIL_CAP` — at most 5 unconfirmed rows per address |
 
-Note also that for every IP-keyed bucket, #2 is **not the cheapest bypass available.** A limiter keyed on a hashed IP is already defeated outright by IPv6 address rotation — a single residential /64 supplies 2^64 identities — so closing the race would not change the achievable abuse rate on those endpoints. The race is the *only* bypass on the user-id-keyed buckets (signed-in comment POST, edit, delete) and the Telegram route, and those cost an attacker a real account, which you can ban.
+**What the race actually buys an attacker.** Every control in that table is unaffected by it, so what #2 loosens is a *rate*, not an action — it cannot buy a second report on the same comment, or a double-counted vote.
+
+On the IP-keyed buckets it is the cheapest bypass currently available. It used not to be: while Garrul hashed the full IPv6 address, one household supplied 2^64 distinct identities and per-IP limiting was unenforceable over IPv6 no matter what the race did. IP hashing now normalizes IPv6 to its /64, so a household is one identity — which closed the larger hole and left this one as the front edge. On the user-id-keyed buckets (signed-in comment POST, edit, delete) and the Telegram route the race is the *only* bypass, and those cost an attacker a real account, which you can ban.
 
 **What to do if this matters for your instance.** Put Cloudflare WAF rate-limiting rules in front of the Worker. They run before your code, count accurately, and can key on things Garrul can't see. Garrul's limiter is the floor that ships in the box, not the ceiling you should rely on under active attack.
 

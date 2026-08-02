@@ -7,9 +7,11 @@
  * The limiter necessarily writes on every *allowed* request, and a cold bucket
  * (the first hit from any unseen address) always passes and always writes. So
  * ~500 distinct source addresses used to exhaust the account's daily KV write
- * quota — and a single residential IPv6 /64 supplies 2^64 of them. That is an
- * unauthenticated, account-wide outage primitive sitting in front of every
- * public write endpoint, which is exactly backwards for a defense mechanism.
+ * quota. That is an unauthenticated, account-wide outage primitive sitting in
+ * front of every public write endpoint, which is exactly backwards for a
+ * defense mechanism. (Hashing the full IPv6 address made it worse still — one
+ * household could supply 2^64 of those addresses — but `ip-hash.ts` normalizes
+ * to /64 now, so the number above is what an attacker has to actually reach.)
  * The Cache API has no per-day write limit. See response-cache.ts for the same
  * reasoning applied to response caching.
  *
@@ -229,13 +231,21 @@ export const checkRateLimit = async (
 		//
 		// Accepted for now, and the reason is not "it's only a burst" — it isn't
 		// one. It is that the limiter is deliberately not the sole control on any
-		// endpoint taking an unauthenticated caller (Turnstile on anonymous
+		// endpoint taking an unauthenticated caller: Turnstile on anonymous
 		// comment POST, UNIQUE(comment_id, reporter_ip_hash) on reports,
 		// idempotent toggles on votes and reactions, PENDING_PER_EMAIL_CAP on
-		// subscribe), and that for every IP-keyed bucket this is not even the
-		// cheapest bypass — IPv6 rotation already defeats per-IP limiting
-		// outright, so closing the race would not lower the achievable abuse
-		// rate there. It IS the only bypass on the `user:`-keyed buckets and the
+		// subscribe. None of those is racy, so what this loosens is a *rate*, not
+		// an action — it cannot buy a second report on one comment or a
+		// double-counted vote.
+		//
+		// It is NOT excused by "IPv6 rotation defeats per-IP limiting anyway".
+		// That held while `ip-hash.ts` hashed the full address, and stopped
+		// holding in the same release this note ships in: IPv6 is now normalized
+		// to its /64, so a household is one identity rather than 2^64. The race
+		// is therefore the cheapest remaining bypass on the IP-keyed buckets,
+		// not a rounding error beside a larger one. That raises what #53 is
+		// worth; it does not change the fact that the Cache API cannot close it.
+		// It is also the only bypass on the `user:`-keyed buckets and the
 		// Telegram route, which cost an attacker a bannable account.
 		//
 		// This is an operator-visible property, not just an internal caveat:
