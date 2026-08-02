@@ -55,4 +55,5 @@ Not shipped. Read as intent, not as documentation of current behavior.
 | Doc | Covers |
 | --- | --- |
 | [`../CONTRIBUTING.md`](../CONTRIBUTING.md) | How to propose changes, run the test suite, and what CI enforces. |
+| [`../SECURITY.md`](../SECURITY.md) | How to report a vulnerability privately, what's in scope, and which versions get fixes. |
 | [`../CLAUDE.md`](../CLAUDE.md) | Project conventions — stack, layout, and the rules for API versioning, cookies, CSRF, markdown, migrations, logging, and commits. Read before writing code. |

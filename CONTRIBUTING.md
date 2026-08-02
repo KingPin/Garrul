@@ -91,5 +91,8 @@ By contributing, you agree your contributions are licensed under
 
 ## Reporting security issues
 
-Please don't open a public issue. Email the maintainer (address in the
-GitHub profile) with details and we'll coordinate disclosure.
+Please don't open a public issue. See [SECURITY.md](SECURITY.md) — use
+GitHub's private [Report a vulnerability](https://github.com/KingPin/Garrul/security/advisories/new)
+flow (or email the maintainer, address in the GitHub profile) and we'll
+coordinate disclosure. That file also covers what's in scope, what to
+expect, and which versions are supported.
