@@ -19,15 +19,10 @@
  */
 import { Hono } from "hono";
 import type { Bindings } from "../index";
-import {
-	castVote,
-	getComment,
-	getOrCreateGhost,
-	type VoteValue,
-} from "../db/queries";
-import { clientIp, hashIp } from "../lib/ip-hash";
+import { castVote, getComment, type VoteValue } from "../db/queries";
+import { resolveActor } from "../lib/active-user";
+import { requireIpHash } from "../lib/ip-hash";
 import { checkRateLimit } from "../lib/ratelimit";
-import { readSession } from "../lib/session";
 import { writeEvent } from "../lib/analytics";
 import { loadFlags } from "../lib/settings";
 import { t } from "../i18n";
@@ -73,12 +68,19 @@ votes.post("/", async (c) => {
 
 	const comment = await getComment(c.env.DB, comment_id);
 	if (!comment) return c.json({ error: t("err.not_found") }, 404);
-	if (comment.status === "deleted") {
+	// Only an approved comment is votable, and every other state answers 404
+	// exactly like a missing row. Accepting a vote on a `pending` or `spam`
+	// comment confirmed to anyone holding the id that a moderator had held it,
+	// and returned the live tallies for content no reader can see — so a
+	// scripted clicker could pre-load a score onto a comment before it was ever
+	// approved.
+	if (comment.status !== "approved") {
 		return c.json({ error: t("err.not_found") }, 404);
 	}
 
-	const ipHash = await hashIp(clientIp(c.req.raw), c.env.IP_HASH_SECRET);
-	const rl = await checkRateLimit(c.env, ipHash);
+	const ipHash = await requireIpHash(c);
+	if (ipHash instanceof Response) return ipHash;
+	const rl = await checkRateLimit(c.req.url, ipHash, { scope: "vote" });
 	if (!rl.ok) {
 		writeEvent(c.env.ANALYTICS, "ratelimit.hit", {
 			outcome: rl.reason ?? null,
@@ -87,14 +89,9 @@ votes.post("/", async (c) => {
 		return c.json({ error: t("err.ratelimit") }, 429);
 	}
 
-	const session = await readSession(c);
-	let userId: string;
-	if (session) {
-		userId = session.user_id;
-	} else {
-		const ghost = await getOrCreateGhost(c.env.DB, ipHash, "anon");
-		userId = ghost.id;
-	}
+	const actor = await resolveActor(c, ipHash);
+	if (!actor.ok) return c.json({ error: t("err.banned") }, 403);
+	const userId = actor.userId;
 
 	// Authors can't vote on their own comment. Works for both authenticated
 	// users (session user_id) and anonymous viewers (IP-hash ghost) because

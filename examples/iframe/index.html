@@ -31,6 +31,10 @@
 		The iframe needs the parent origin to safely postMessage height
 		updates (we don't broadcast to "*"). Easiest way: build the src
 		on the client and pass `parent_origin` as a query param.
+
+		This origin must be in the Worker's ALLOWED_ORIGINS: an origin
+		the operator hasn't allowlisted gets no postMessage, and the
+		page's CSP frame-ancestors won't let it frame /embed/* at all.
 	-->
 	<iframe
 		id="garrul-iframe"

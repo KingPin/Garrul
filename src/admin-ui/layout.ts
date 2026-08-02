@@ -1,6 +1,6 @@
 import type { User } from "../db/queries";
 import type { UpdateInfo } from "../lib/version-check";
-import { escapeHtml } from "./escape";
+import { escapeHtml, jsLiteral } from "./escape";
 import { icon } from "./icons";
 import { ADMIN_CSS, ALPINE_SRI, ALPINE_VERSION } from "./styles";
 
@@ -74,7 +74,7 @@ export const accessDeniedHtml = (
 </head>
 <body>
 <h1>${statusTitle(status)}</h1>
-<p>${message}</p>
+<p>${escapeHtml(message)}</p>
 <p class="muted">Sign in through the comments widget on any page first, then refresh.
   Admins are auto-promoted on sign-in if their email is in
   <code>ADMIN_EMAILS</code>.</p>
@@ -86,7 +86,11 @@ export const renderUpdateBanner = (info: UpdateInfo | null): string => {
 	const tag = escapeHtml(info.latest);
 	const url = escapeHtml(info.url);
 	const key = `garrul.dismissed.update.${info.latest}`;
-	const keyLit = escapeHtml(JSON.stringify(key));
+	// info.latest is a tag name fetched from the GitHub API, so this is the one
+	// value on the page that isn't operator-controlled. jsLiteral, not
+	// escapeHtml(JSON.stringify(…)): JSON.stringify leaves `<`, `>` and
+	// U+2028/U+2029 raw, all of which are unsafe inside executable JS.
+	const keyLit = jsLiteral(key);
 	return `
 <div x-data="{ shown: localStorage.getItem(${keyLit}) !== '1' }"
      x-show="shown"

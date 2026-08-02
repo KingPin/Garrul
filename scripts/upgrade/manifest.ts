@@ -12,6 +12,7 @@
  */
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import { plainText } from "./plain-text";
 
 export type SemVer = string; // "0.0.1" or "v0.0.1"
 
@@ -152,6 +153,32 @@ const optionalString = (
 	return v;
 };
 
+/**
+ * Free-text accessors — for the fields the operator *reads* rather than the
+ * ones the script *executes*.
+ *
+ * Names, bindings and dataset ids go through `requireMatch` below, which
+ * refuses anything outside a tight allowlist. Descriptions, breaking-change
+ * summaries and manual steps can't: they're prose, and prose is where an
+ * upgrade's actual warnings live. `plain-text.ts` owns the stripping and
+ * documents the window that makes printing that prose dangerous — the release
+ * body printed immediately above the plan goes through the same module.
+ */
+const requireText = (
+	parent: Record<string, unknown>,
+	key: string,
+	path: string,
+): string => plainText(requireString(parent, key, path));
+
+const optionalText = (
+	parent: Record<string, unknown>,
+	key: string,
+	path: string,
+): string | undefined => {
+	const s = optionalString(parent, key, path);
+	return s === undefined ? undefined : plainText(s);
+};
+
 const requireBool = (
 	parent: Record<string, unknown>,
 	key: string,
@@ -213,13 +240,51 @@ const optionalSemver = (
 	return s;
 };
 
+// The manifest is fetched over the network from a GitHub release, and its
+// strings are interpolated straight into the operator's wrangler.toml
+// (appendKvBlock / appendD1Block) and handed to wrangler as argv. A `"` plus a
+// newline inside a binding name injects an arbitrary TOML table — a
+// `[build]\ncommand = "..."` runs on the `wrangler deploy` that upgrade.ts
+// invokes moments later, with the operator's Cloudflare credentials loaded.
+// Constrain the shape here, in the one place every consumer already goes
+// through, rather than escaping at each append site and hoping the next one
+// remembers. Also closes the leading-`-` argv-injection case for
+// `wrangler d1 create` and `wrangler secret put`.
+const IDENTIFIER_RE = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
+const D1_NAME_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
+const DATASET_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+
+const requireMatch = (
+	parent: Record<string, unknown>,
+	key: string,
+	path: string,
+	re: RegExp,
+	expected: string,
+): string => {
+	const s = requireString(parent, key, path);
+	if (!re.test(s)) {
+		// JSON.stringify so a value carrying control or escape characters can't
+		// reshape the operator's terminal on its way out.
+		throw new ManifestError(
+			`${path}.${key} must be ${expected}: ${JSON.stringify(s)}`,
+		);
+	}
+	return s;
+};
+
 const validateSecret = (raw: unknown, i: number): SecretEntry => {
 	if (!isObject(raw)) throw new ManifestError(`secrets[${i}] must be object`);
 	const entry: SecretEntry = {
-		name: requireString(raw, "name", `secrets[${i}]`),
+		name: requireMatch(
+			raw,
+			"name",
+			`secrets[${i}]`,
+			IDENTIFIER_RE,
+			"an env-var name",
+		),
 		required: requireBool(raw, "required", `secrets[${i}]`),
 	};
-	const desc = optionalString(raw, "description", `secrets[${i}]`);
+	const desc = optionalText(raw, "description", `secrets[${i}]`);
 	if (desc !== undefined) entry.description = desc;
 	const addedIn = optionalSemver(raw, "addedIn", `secrets[${i}]`);
 	if (addedIn !== undefined) entry.addedIn = addedIn;
@@ -229,10 +294,10 @@ const validateSecret = (raw: unknown, i: number): SecretEntry => {
 const validateVar = (raw: unknown, i: number): VarEntry => {
 	if (!isObject(raw)) throw new ManifestError(`vars[${i}] must be object`);
 	const entry: VarEntry = {
-		name: requireString(raw, "name", `vars[${i}]`),
+		name: requireMatch(raw, "name", `vars[${i}]`, IDENTIFIER_RE, "an env-var name"),
 		required: requireBool(raw, "required", `vars[${i}]`),
 	};
-	const desc = optionalString(raw, "description", `vars[${i}]`);
+	const desc = optionalText(raw, "description", `vars[${i}]`);
 	if (desc !== undefined) entry.description = desc;
 	const addedIn = optionalSemver(raw, "addedIn", `vars[${i}]`);
 	if (addedIn !== undefined) entry.addedIn = addedIn;
@@ -243,10 +308,16 @@ const validateKv = (raw: unknown, i: number): KvEntry => {
 	if (!isObject(raw))
 		throw new ManifestError(`kvNamespaces[${i}] must be object`);
 	const entry: KvEntry = {
-		binding: requireString(raw, "binding", `kvNamespaces[${i}]`),
+		binding: requireMatch(
+			raw,
+			"binding",
+			`kvNamespaces[${i}]`,
+			IDENTIFIER_RE,
+			"a binding name",
+		),
 		required: requireBool(raw, "required", `kvNamespaces[${i}]`),
 	};
-	const desc = optionalString(raw, "description", `kvNamespaces[${i}]`);
+	const desc = optionalText(raw, "description", `kvNamespaces[${i}]`);
 	if (desc !== undefined) entry.description = desc;
 	const addedIn = optionalSemver(raw, "addedIn", `kvNamespaces[${i}]`);
 	if (addedIn !== undefined) entry.addedIn = addedIn;
@@ -257,11 +328,23 @@ const validateD1 = (raw: unknown, i: number): D1Entry => {
 	if (!isObject(raw))
 		throw new ManifestError(`d1Databases[${i}] must be object`);
 	const entry: D1Entry = {
-		binding: requireString(raw, "binding", `d1Databases[${i}]`),
-		databaseName: requireString(raw, "databaseName", `d1Databases[${i}]`),
+		binding: requireMatch(
+			raw,
+			"binding",
+			`d1Databases[${i}]`,
+			IDENTIFIER_RE,
+			"a binding name",
+		),
+		databaseName: requireMatch(
+			raw,
+			"databaseName",
+			`d1Databases[${i}]`,
+			D1_NAME_RE,
+			"a D1 database name",
+		),
 		required: requireBool(raw, "required", `d1Databases[${i}]`),
 	};
-	const desc = optionalString(raw, "description", `d1Databases[${i}]`);
+	const desc = optionalText(raw, "description", `d1Databases[${i}]`);
 	if (desc !== undefined) entry.description = desc;
 	const addedIn = optionalSemver(raw, "addedIn", `d1Databases[${i}]`);
 	if (addedIn !== undefined) entry.addedIn = addedIn;
@@ -272,11 +355,23 @@ const validateAnalytics = (raw: unknown, i: number): AnalyticsEntry => {
 	if (!isObject(raw))
 		throw new ManifestError(`analyticsDatasets[${i}] must be object`);
 	const entry: AnalyticsEntry = {
-		binding: requireString(raw, "binding", `analyticsDatasets[${i}]`),
-		dataset: requireString(raw, "dataset", `analyticsDatasets[${i}]`),
+		binding: requireMatch(
+			raw,
+			"binding",
+			`analyticsDatasets[${i}]`,
+			IDENTIFIER_RE,
+			"a binding name",
+		),
+		dataset: requireMatch(
+			raw,
+			"dataset",
+			`analyticsDatasets[${i}]`,
+			DATASET_RE,
+			"a dataset name",
+		),
 		required: requireBool(raw, "required", `analyticsDatasets[${i}]`),
 	};
-	const desc = optionalString(raw, "description", `analyticsDatasets[${i}]`);
+	const desc = optionalText(raw, "description", `analyticsDatasets[${i}]`);
 	if (desc !== undefined) entry.description = desc;
 	const addedIn = optionalSemver(raw, "addedIn", `analyticsDatasets[${i}]`);
 	if (addedIn !== undefined) entry.addedIn = addedIn;
@@ -295,16 +390,16 @@ const validateBreakingChange = (raw: unknown, i: number): BreakingChange => {
 		}
 	}
 	return {
-		id: requireString(raw, "id", `breakingChanges[${i}]`),
-		summary: requireString(raw, "summary", `breakingChanges[${i}]`),
-		manualSteps: steps as string[],
+		id: requireText(raw, "id", `breakingChanges[${i}]`),
+		summary: requireText(raw, "summary", `breakingChanges[${i}]`),
+		manualSteps: (steps as string[]).map(plainText),
 	};
 };
 
 export const validateManifest = (raw: unknown): Manifest => {
 	if (!isObject(raw)) throw new ManifestError("manifest must be an object");
 
-	const renderer = raw["renderer"];
+	const renderer = raw.renderer;
 	if (!isObject(renderer)) {
 		throw new ManifestError("renderer must be an object");
 	}
@@ -328,7 +423,7 @@ export const validateManifest = (raw: unknown): Manifest => {
 		// secrets/vars split, so `upgrade` must still parse them to tell an
 		// operator on 1.19.x what changed.
 		vars:
-			raw["vars"] === undefined
+			raw.vars === undefined
 				? []
 				: requireArray(raw, "vars", "").map(validateVar),
 		kvNamespaces: requireArray(raw, "kvNamespaces", "").map(validateKv),
@@ -351,6 +446,40 @@ export const loadLocal = (repoRoot: string): Manifest | null => {
 	const text = readFileSync(path, "utf8");
 	const parsed: unknown = JSON.parse(text);
 	return validateManifest(parsed);
+};
+
+/**
+ * Do two manifests describe the same release?
+ *
+ * Used to confirm, after `git checkout <tag>`, that the tree about to be
+ * deployed is the one the plan was computed from. `fetchRemote` reads the
+ * manifest over HTTPS from raw.githubusercontent at the tag; the checkout
+ * gets its copy over the git transport from the operator's own remote. Two
+ * transports, two moments in time, and everything the operator approved —
+ * pending migrations, new secrets, breaking changes — came from the first
+ * one while the code that runs comes from the second.
+ *
+ * Both sides are already `validateManifest` output, so field order is fixed
+ * by the validator rather than by JSON key order in the file, and a plain
+ * stringify is a stable comparison.
+ */
+export const manifestsEqual = (a: Manifest, b: Manifest): boolean =>
+	JSON.stringify(a) === JSON.stringify(b);
+
+/**
+ * Every field where two manifests for the same tag disagree.
+ *
+ * Only for the error message — `manifestsEqual` is the decision.
+ */
+export const manifestDiffKeys = (a: Manifest, b: Manifest): string[] => {
+	const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+	return [...keys]
+		.filter(
+			(k) =>
+				JSON.stringify((a as Record<string, unknown>)[k]) !==
+				JSON.stringify((b as Record<string, unknown>)[k]),
+		)
+		.sort();
 };
 
 export const fetchRemote = async (

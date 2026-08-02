@@ -1,0 +1,41 @@
+# Dependency updates.
+#
+# The github-actions ecosystem is the load-bearing half: every `uses:` line in
+# .github/workflows/ is pinned to a full commit SHA rather than a mutable tag
+# (see the note in ci.yml), and a pin with nothing watching it is a pin that
+# rots. Dependabot rewrites the SHA *and* the trailing `# vX.Y.Z` comment.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    # Action bumps don't change agent-facing behavior, and
+    # .github/workflows/agents-docs-sync.yml fails any PR touching watched
+    # source paths without an AGENTS.md update. Label them so that gate waives
+    # itself instead of blocking a security update.
+    labels:
+      - dependencies
+      - agents-docs-ok
+
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - agents-docs-ok
+    groups:
+      # One PR for the routine noise; majors still arrive individually so a
+      # breaking bump gets read on its own.
+      dev-minor-patch:
+        dependency-type: development
+        update-types:
+          - minor
+          - patch
+      prod-minor-patch:
+        dependency-type: production
+        update-types:
+          - minor
+          - patch

@@ -16,7 +16,7 @@
  * the UI honest.
  */
 import type { SavedReply, User } from "../../db/queries";
-import { escapeHtml } from "../escape";
+import { escapeHtml, jsLiteral } from "../escape";
 
 const formatTs = (ts: number): string =>
 	new Date(ts).toISOString().slice(0, 16).replace("T", " ");
@@ -90,8 +90,12 @@ export const renderSavedReplyForm = (opts: {
 	error: string | null;
 }): string => {
 	const e = opts.existing;
+	// Raw, not escapeHtml'd: its only use is inside a JS string literal in the
+	// x-data below, where jsLiteral does the escaping. escapeHtml is the wrong
+	// helper there — it turns `'` into `&#39;`, which the browser decodes back to
+	// a quote that closes the literal.
 	const action = e
-		? `/admin/api/saved-replies/${escapeHtml(e.id)}`
+		? `/admin/api/saved-replies/${e.id}`
 		: `/admin/api/saved-replies`;
 	const method = e ? "PATCH" : "POST";
 	const heading = e ? "Edit saved reply" : "New saved reply";
@@ -104,7 +108,7 @@ export const renderSavedReplyForm = (opts: {
 	const deleteButton = e
 		? `
 <button type="button" class="bad" :disabled="busy"
-        @click="del('${escapeHtml(e.id)}')">Delete saved reply</button>`
+        @click="del(${jsLiteral(e.id)})">Delete saved reply</button>`
 		: "";
 	return `
 ${errorBanner}
@@ -118,8 +122,8 @@ ${errorBanner}
         body_md: form.body_md.value,
         scope: form.scope.value,
       };
-      const r = await fetch('${action}', {
-        method: '${method}',
+      const r = await fetch(${jsLiteral(action)}, {
+        method: ${jsLiteral(method)},
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(body),
       });

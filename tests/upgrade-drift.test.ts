@@ -287,7 +287,7 @@ describe("hasMutations + blocksAutoApply", () => {
 		// The script sets secrets but never rewrites wrangler.toml [vars], so a
 		// required var it cannot supply has to stop an unattended apply.
 		const p = empty();
-		p.vars.missing.push(v("ALLOWED_ORIGINS", true));
+		p.vars.missing.push(v("ALLOWED_ORIGINS", "1.0.0", true));
 		expect(blocksAutoApply(p)).toHaveLength(1);
 	});
 

@@ -1,23 +1,35 @@
 /**
  * GET /api/v1/comments pagination tests.
  *
- * Covers the configurable page-size behavior added alongside the collapsible-
- * replies work:
+ * Covers:
  *
- *   1. `comments_per_page` (DB > env > default 25) drives the server-side
- *      top-level slice — the default, an env override, and a DB-row override.
+ *   1. `comments_per_page` (DB > env > default 25) drives the top-level slice —
+ *      the default, an env override, a DB-row override, and the hostile-value
+ *      clamp.
  *   2. `sort=new` walks pages via the ULID `before` cursor (id < cursor).
- *   3. `sort=top` now PAGINATES too (composite score:id cursor), so a small
- *      page size no longer hides top-voted threads past the first page.
+ *   3. `sort=top` paginates too (composite score:id cursor), so a small page
+ *      size can't hide top-voted threads past the first page.
  *   4. The first-page edge-cache key varies with the page size, so a size
  *      change can't serve a stale-sized slice.
+ *   5. Pagination happens IN SQL: the thread-refs query carries a LIMIT and the
+ *      subtree query only touches the page's threads. This suite used to run
+ *      against a D1 double that routed by SQL substring and returned every
+ *      seeded row regardless of LIMIT, cursor or ORDER BY — which is exactly
+ *      why an unbounded read path passed its own pagination tests.
+ *   6. Cursor pages ARE cached (they used to be a guaranteed cache bypass on an
+ *      unbounded query), under a cursor-stamped key — but an *empty* cursor page
+ *      is not, so a random-ULID loop can't mint unlimited cache entries.
  *
- * No Miniflare: a hand-rolled D1 stub routes by SQL substring (same style as
- * votes.test.ts), an in-memory KV double for TREE_CACHE/SESSIONS (settings +
- * session reads), and a mock `caches.default` for the first-page edge cache.
+ * Runs against REAL SQLite (all migrations applied) so LIMIT, the cursor
+ * predicates and the recursive-CTE subtree fetch are genuinely exercised, plus
+ * a mock `caches.default` for the first-page edge cache. Every `.all()` is
+ * recorded so the tests can assert what SQL actually asked for.
  */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { Hono } from "hono";
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { comments } from "../src/routes/api.comments";
 import { treeCacheKey } from "../src/lib/tree-cache";
 import {
@@ -27,15 +39,14 @@ import {
 } from "./helpers/mock-caches";
 import type { Bindings } from "../src/index";
 
-let mockCache: MockCache;
-beforeEach(() => {
-	mockCache = installMockCaches();
-});
-afterEach(() => uninstallMockCaches());
+const MIGRATIONS_DIR = join(__dirname, "../src/db/migrations");
 
 // Hono's app.request("/...") serves on http://localhost, so the route builds
 // its cache key on that origin; assertions must use the same origin.
 const REQ_URL = "http://localhost/";
+
+const SLUG = "hello";
+const USER = "01HU000000000000000000";
 
 const CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
@@ -53,45 +64,34 @@ const mkUlid = (n: number): string => {
 	return s.padStart(26, "0");
 };
 
-type CommentRow = {
-	id: string;
-	post_slug: string;
-	parent_id: string | null;
-	user_id: string;
-	body_md: string;
-	body_html: string;
-	renderer_version: number;
-	status: string;
-	edited_at: number | null;
-	deleted_at: number | null;
-	ip_hash: string | null;
-	user_agent: string | null;
-	created_at: number;
-	score_up: number;
-	score_down: number;
-};
+/** Every `.all()` the handler issued, with its binds and the row count back. */
+type Recorded = { sql: string; binds: unknown[]; rows: number };
+let queries: Recorded[];
 
-// Build N top-level comments, oldest first (created_at and id both ascending
-// with index). `scores[i]` optionally sets the net up-votes for the top-sort
-// tests; unset → 0.
-const makeComments = (n: number, scores: number[] = []): CommentRow[] =>
-	Array.from({ length: n }, (_, i) => ({
-		id: mkUlid(i + 1),
-		post_slug: "hello",
-		parent_id: null,
-		user_id: "01HU000000000000000000",
-		body_md: `c${i}`,
-		body_html: `<p>c${i}</p>`,
-		renderer_version: 1,
-		status: "approved",
-		edited_at: null,
-		deleted_at: null,
-		ip_hash: null,
-		user_agent: null,
-		created_at: 1000 + i,
-		score_up: scores[i] ?? 0,
-		score_down: 0,
-	}));
+const makeD1 = (db: DatabaseSync): any => ({
+	prepare(sql: string) {
+		const stmt = db.prepare(sql);
+		let bound: unknown[] = [];
+		return {
+			bind(...args: unknown[]) {
+				bound = args;
+				return this;
+			},
+			async run() {
+				const r = stmt.run(...(bound as never[]));
+				return { success: true, meta: { changes: r.changes } };
+			},
+			async first() {
+				return stmt.get(...(bound as never[])) ?? null;
+			},
+			async all() {
+				const results = stmt.all(...(bound as never[]));
+				queries.push({ sql, binds: bound, rows: results.length });
+				return { results };
+			},
+		};
+	},
+});
 
 const makeKv = () => {
 	const store = new Map<string, string>();
@@ -118,73 +118,96 @@ const makeKv = () => {
 	};
 };
 
-// D1 double routing by SQL substring. `settings` carries the numeric overrides
-// for loadNumbers(); the rest feed the GET list handler.
-const makeDb = (rows: CommentRow[], settings: Record<string, string> = {}) => {
-	const all = async (sql: string) => {
-		if (sql.includes("key, value FROM settings")) {
-			return {
-				results: Object.entries(settings).map(([key, value]) => ({
-					key,
-					value,
-				})),
-			};
-		}
-		if (sql.includes("FROM comments") && sql.includes("status NOT IN")) {
-			return { results: rows };
-		}
-		if (sql.includes("FROM users WHERE id IN")) {
-			return {
-				results: [
-					{
-						id: "01HU000000000000000000",
-						provider: "anon",
-						provider_id: null,
-						name: "anon",
-						email: null,
-						avatar_url: null,
-						is_admin: 0,
-						is_banned: 0,
-						role: "user",
-						created_at: 1_700_000_000_000,
-					},
-				],
-			};
-		}
-		if (sql.includes("FROM reactions")) {
-			return { results: [] };
-		}
-		return { results: [] };
-	};
-	const first = async (sql: string) => {
-		if (sql.includes("FROM posts WHERE slug")) {
-			return { slug: "hello", title: "Hello", url: null, created_at: 1 };
-		}
-		return null;
-	};
-	const chain = (sql: string) => ({
-		bind() {
-			return this;
-		},
-		all: () => all(sql),
-		first: () => first(sql),
-	});
-	return { prepare: (sql: string) => chain(sql) };
+let mockCache: MockCache;
+let sqlite: DatabaseSync;
+
+beforeEach(() => {
+	mockCache = installMockCaches();
+	queries = [];
+	sqlite = new DatabaseSync(":memory:");
+	for (const file of readdirSync(MIGRATIONS_DIR)
+		.filter((f) => f.endsWith(".sql"))
+		.sort()) {
+		sqlite.exec(readFileSync(join(MIGRATIONS_DIR, file), "utf8"));
+	}
+	sqlite
+		.prepare(
+			"INSERT INTO users (id, provider, provider_id, name, created_at) VALUES (?, ?, ?, ?, ?)",
+		)
+		.run(USER, "anon", null, "anon", 1_700_000_000_000);
+	sqlite
+		.prepare("INSERT INTO posts (slug, title, url, created_at) VALUES (?, ?, ?, ?)")
+		.run(SLUG, "Hello", null, 1);
+});
+afterEach(() => uninstallMockCaches());
+
+const INSERT_COMMENT = `INSERT INTO comments (id, post_slug, parent_id, user_id, body_md, body_html,
+	                       renderer_version, status, created_at, depth, score_up, score_down)
+	 VALUES (?, ?, ?, ?, ?, ?, 1, 'approved', ?, ?, ?, 0)`;
+
+/**
+ * `n` top-level threads, oldest first (created_at and id both ascending with
+ * index). `scores[i]` sets net up-votes for the top-sort tests; unset → 0.
+ */
+const seedThreads = (n: number, scores: number[] = []) => {
+	const stmt = sqlite.prepare(INSERT_COMMENT);
+	for (let i = 0; i < n; i++) {
+		stmt.run(
+			mkUlid(i + 1),
+			SLUG,
+			null,
+			USER,
+			`c${i}`,
+			`<p>c${i}</p>`,
+			1000 + i,
+			1,
+			scores[i] ?? 0,
+		);
+	}
 };
 
-const mkEnv = (rows: CommentRow[], settings: Record<string, string> = {}, envVars: Record<string, string> = {}) => {
-	const kv = makeKv();
-	const env = {
-		DB: makeDb(rows, settings),
-		TREE_CACHE: kv,
+/** `perThread` replies under each of the first `threadCount` threads. */
+const seedReplies = (threadCount: number, perThread: number) => {
+	const stmt = sqlite.prepare(INSERT_COMMENT);
+	let n = 100_000;
+	for (let t = 0; t < threadCount; t++) {
+		for (let r = 0; r < perThread; r++) {
+			stmt.run(
+				mkUlid(n++),
+				SLUG,
+				mkUlid(t + 1),
+				USER,
+				"r",
+				"<p>r</p>",
+				2000 + n,
+				2,
+				0,
+			);
+		}
+	}
+};
+
+const setSetting = (key: string, value: string) => {
+	sqlite
+		.prepare("INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)")
+		.run(key, value, 1);
+};
+
+const mkEnv = (envVars: Record<string, string> = {}) =>
+	({
+		DB: makeD1(sqlite),
+		TREE_CACHE: makeKv(),
 		SESSIONS: { get: async () => null },
 		...envVars,
-	} as unknown as Bindings;
-	return { env, kv };
-};
+	}) as unknown as Bindings;
 
 type ListResp = {
-	threads: { id: string; score_up: number; score_down: number }[];
+	threads: {
+		id: string;
+		score_up: number;
+		score_down: number;
+		replies: unknown[];
+	}[];
 	next_cursor: string | null;
 };
 
@@ -199,17 +222,24 @@ const get = async (env: Bindings, query: string): Promise<ListResp> => {
 	return (await res.json()) as ListResp;
 };
 
+/** The thread-refs query: top-level ids only, in the sort's own order. */
+const refsQuery = () =>
+	queries.find((q) => q.sql.includes("parent_id IS NULL") && q.sql.includes("LIMIT"));
+
+/** The recursive-CTE subtree fetch for the page's threads. */
+const subtreeQuery = () => queries.find((q) => q.sql.includes("WITH RECURSIVE thread"));
+
 describe("GET /comments — default page size", () => {
 	it("returns 25 threads + a cursor when there are more", async () => {
-		const { env } = mkEnv(makeComments(30));
-		const page = await get(env, "slug=hello");
+		seedThreads(30);
+		const page = await get(mkEnv(), `slug=${SLUG}`);
 		expect(page.threads).toHaveLength(25);
 		expect(page.next_cursor).not.toBeNull();
 	});
 
 	it("returns everything with a null cursor when under the page size", async () => {
-		const { env } = mkEnv(makeComments(5));
-		const page = await get(env, "slug=hello");
+		seedThreads(5);
+		const page = await get(mkEnv(), `slug=${SLUG}`);
 		expect(page.threads).toHaveLength(5);
 		expect(page.next_cursor).toBeNull();
 	});
@@ -217,38 +247,79 @@ describe("GET /comments — default page size", () => {
 
 describe("GET /comments — configurable page size", () => {
 	it("honors a DB-row comments_per_page override", async () => {
-		const { env } = mkEnv(makeComments(30), { comments_per_page: "10" });
-		const page = await get(env, "slug=hello");
+		seedThreads(30);
+		setSetting("comments_per_page", "10");
+		const page = await get(mkEnv(), `slug=${SLUG}`);
 		expect(page.threads).toHaveLength(10);
 		expect(page.next_cursor).not.toBeNull();
 	});
 
 	it("honors a COMMENTS_PER_PAGE env override", async () => {
-		const { env } = mkEnv(makeComments(30), {}, { COMMENTS_PER_PAGE: "5" });
-		const page = await get(env, "slug=hello");
+		seedThreads(30);
+		const page = await get(mkEnv({ COMMENTS_PER_PAGE: "5" }), `slug=${SLUG}`);
 		expect(page.threads).toHaveLength(5);
 	});
 
 	it("clamps a hostile DB value so the slice can't explode", async () => {
-		const { env } = mkEnv(makeComments(30), { comments_per_page: "1000000" });
-		const page = await get(env, "slug=hello");
+		seedThreads(30);
+		setSetting("comments_per_page", "1000000");
+		const page = await get(mkEnv(), `slug=${SLUG}`);
 		// Clamp max is 200; only 30 rows exist, so all 30 come back, no cursor.
 		expect(page.threads).toHaveLength(30);
 		expect(page.next_cursor).toBeNull();
+		// And the clamp reaches SQL, not just the response shape.
+		expect(refsQuery()!.binds.at(-1)).toBe(201);
+	});
+});
+
+describe("GET /comments — pagination is pushed into SQL", () => {
+	it("asks SQL for one page of threads, not every thread on the slug", async () => {
+		seedThreads(30);
+		setSetting("comments_per_page", "10");
+		await get(mkEnv(), `slug=${SLUG}`);
+
+		const refs = refsQuery()!;
+		// pageSize + 1: the extra row only answers "is there another page?".
+		expect(refs.binds.at(-1)).toBe(11);
+		expect(refs.rows).toBe(11);
+	});
+
+	it("fetches only the page's subtrees, not the whole slug", async () => {
+		// 30 threads × 2 replies = 90 comments on the slug.
+		seedThreads(30);
+		seedReplies(30, 2);
+		setSetting("comments_per_page", "10");
+		const page = await get(mkEnv(), `slug=${SLUG}`);
+
+		expect(page.threads).toHaveLength(10);
+		// 10 threads + their 20 replies. The pre-fix read path returned all 90.
+		expect(subtreeQuery()!.rows).toBe(30);
+		expect(page.threads.every((t) => t.replies.length === 2)).toBe(true);
+	});
+
+	it("never selects body_md, ip_hash or user_agent", async () => {
+		seedThreads(3);
+		await get(mkEnv(), `slug=${SLUG}`);
+		const sql = subtreeQuery()!.sql;
+		expect(sql).not.toMatch(/body_md/);
+		expect(sql).not.toMatch(/ip_hash/);
+		expect(sql).not.toMatch(/user_agent/);
 	});
 });
 
 describe("GET /comments — sort=new cursor walks pages", () => {
 	it("second page returns the remainder and a null cursor", async () => {
-		const { env } = mkEnv(makeComments(30), { comments_per_page: "10" });
-		const first = await get(env, "slug=hello");
+		seedThreads(30);
+		setSetting("comments_per_page", "10");
+		const env = mkEnv();
+		const first = await get(env, `slug=${SLUG}`);
 		expect(first.threads).toHaveLength(10);
 		// new-sort is newest-first: page 1 starts at the highest id (c29).
 		expect(first.threads[0]!.id).toBe(mkUlid(30));
 
-		const second = await get(env, `slug=hello&before=${first.next_cursor}`);
+		const second = await get(env, `slug=${SLUG}&before=${first.next_cursor}`);
 		expect(second.threads).toHaveLength(10);
-		const third = await get(env, `slug=hello&before=${second.next_cursor}`);
+		const third = await get(env, `slug=${SLUG}&before=${second.next_cursor}`);
 		expect(third.threads).toHaveLength(10);
 		expect(third.next_cursor).toBeNull();
 
@@ -260,36 +331,49 @@ describe("GET /comments — sort=new cursor walks pages", () => {
 		expect(ids[0]).toBe(mkUlid(30));
 		expect(ids[29]).toBe(mkUlid(1));
 	});
+
+	it("treats a malformed cursor as the first page", async () => {
+		seedThreads(5);
+		const page = await get(mkEnv(), `slug=${SLUG}&before=not-a-ulid`);
+		expect(page.threads).toHaveLength(5);
+		expect(page.threads[0]!.id).toBe(mkUlid(5));
+	});
 });
 
 describe("GET /comments — sort=top paginates (no hidden threads)", () => {
 	it("returns a page-sized slice ordered by score, with a cursor", async () => {
 		// 10 comments, ascending score 0..9 by index. Top sort should surface
 		// the 2 highest-scoring (c9=9, c8=8) on the first page of size 2.
-		const scores = Array.from({ length: 10 }, (_, i) => i);
-		const { env } = mkEnv(makeComments(10, scores), {
-			comments_per_page: "2",
-		});
-		const first = await get(env, "slug=hello&sort=top");
+		seedThreads(
+			10,
+			Array.from({ length: 10 }, (_, i) => i),
+		);
+		setSetting("comments_per_page", "2");
+		const env = mkEnv();
+		const first = await get(env, `slug=${SLUG}&sort=top`);
 		expect(first.threads).toHaveLength(2);
 		expect(first.threads.map((t) => t.score_up)).toEqual([9, 8]);
-		expect(first.next_cursor).not.toBeNull();
+		expect(first.next_cursor).toBe(`8:${mkUlid(9)}`);
 
 		// Walking the composite score:id cursor reaches the lower-scored
 		// threads that a single unpaginated page of size 2 would have hidden.
-		const second = await get(env, `slug=hello&sort=top&before=${first.next_cursor}`);
+		const second = await get(env, `slug=${SLUG}&sort=top&before=${first.next_cursor}`);
 		expect(second.threads.map((t) => t.score_up)).toEqual([7, 6]);
 	});
 
 	it("walks every thread across pages with no overlap", async () => {
-		const scores = Array.from({ length: 10 }, (_, i) => i);
-		const { env } = mkEnv(makeComments(10, scores), {
-			comments_per_page: "3",
-		});
+		seedThreads(
+			10,
+			Array.from({ length: 10 }, (_, i) => i),
+		);
+		setSetting("comments_per_page", "3");
+		const env = mkEnv();
 		const seen: string[] = [];
 		let cursor: string | null = null;
 		for (let i = 0; i < 10; i++) {
-			const q = cursor ? `slug=hello&sort=top&before=${cursor}` : "slug=hello&sort=top";
+			const q = cursor
+				? `slug=${SLUG}&sort=top&before=${cursor}`
+				: `slug=${SLUG}&sort=top`;
 			const page: ListResp = await get(env, q);
 			seen.push(...page.threads.map((t) => t.id));
 			cursor = page.next_cursor;
@@ -297,27 +381,48 @@ describe("GET /comments — sort=top paginates (no hidden threads)", () => {
 		}
 		expect(new Set(seen).size).toBe(10);
 	});
+
+	it("breaks score ties on id so a tied page can't repeat a thread", async () => {
+		// All ties: without the id tie-break the cursor would re-select rows it
+		// already returned and the walk would never terminate.
+		seedThreads(6, Array.from({ length: 6 }, () => 4));
+		setSetting("comments_per_page", "2");
+		const env = mkEnv();
+		const seen: string[] = [];
+		let cursor: string | null = null;
+		for (let i = 0; i < 5; i++) {
+			const q = cursor
+				? `slug=${SLUG}&sort=top&before=${cursor}`
+				: `slug=${SLUG}&sort=top`;
+			const page: ListResp = await get(env, q);
+			seen.push(...page.threads.map((t) => t.id));
+			cursor = page.next_cursor;
+			if (!cursor) break;
+		}
+		expect(seen).toHaveLength(6);
+		expect(new Set(seen).size).toBe(6);
+	});
 });
 
 describe("GET /comments — cache key varies with page size", () => {
 	it("caches the first page under a size-stamped edge-cache key", async () => {
-		const { env } = mkEnv(makeComments(30), { comments_per_page: "10" });
-		await get(env, "slug=hello");
-		expect(mockCache.store.has(treeCacheKey(REQ_URL, "hello", "new", 10).url)).toBe(true);
-		expect(mockCache.store.has(treeCacheKey(REQ_URL, "hello", "new", 25).url)).toBe(false);
+		seedThreads(30);
+		setSetting("comments_per_page", "10");
+		await get(mkEnv(), `slug=${SLUG}`);
+		expect(mockCache.store.has(treeCacheKey(REQ_URL, SLUG, "new", 10).url)).toBe(true);
+		expect(mockCache.store.has(treeCacheKey(REQ_URL, SLUG, "new", 25).url)).toBe(false);
 	});
 
 	it("a different size resolves to a different cache slot", async () => {
-		const { env: env10 } = mkEnv(makeComments(30), {
-			comments_per_page: "10",
-		});
-		await get(env10, "slug=hello");
+		seedThreads(30);
+		setSetting("comments_per_page", "10");
+		await get(mkEnv(), `slug=${SLUG}`);
 
-		const { env: env25 } = mkEnv(makeComments(30));
-		await get(env25, "slug=hello");
+		sqlite.prepare("DELETE FROM settings WHERE key = 'comments_per_page'").run();
+		await get(mkEnv(), `slug=${SLUG}`);
 
-		expect(mockCache.store.has(treeCacheKey(REQ_URL, "hello", "new", 10).url)).toBe(true);
-		expect(mockCache.store.has(treeCacheKey(REQ_URL, "hello", "new", 25).url)).toBe(true);
+		expect(mockCache.store.has(treeCacheKey(REQ_URL, SLUG, "new", 10).url)).toBe(true);
+		expect(mockCache.store.has(treeCacheKey(REQ_URL, SLUG, "new", 25).url)).toBe(true);
 	});
 });
 
@@ -325,28 +430,95 @@ describe("GET /comments — edge-cache hit/bypass", () => {
 	// app.request with no ExecutionContext makes the write-through inline (see
 	// tryWaitUntil), so the entry is present immediately after the first call.
 	it("serves a warm first page from the edge cache (not the DB)", async () => {
-		const rows = makeComments(5);
-		const { env } = mkEnv(rows);
+		seedThreads(5);
+		const env = mkEnv();
 		const app = new Hono<{ Bindings: Bindings }>().route("/", comments);
-		const first = await app.request("/?slug=hello", {}, env as unknown as Record<string, unknown>);
+		const first = await app.request(
+			`/?slug=${SLUG}`,
+			{},
+			env as unknown as Record<string, unknown>,
+		);
 		expect(first.status).toBe(200);
 		expect(((await first.json()) as ListResp).threads).toHaveLength(5);
-		expect(mockCache.store.has(treeCacheKey(REQ_URL, "hello", "new", 25).url)).toBe(true);
+		expect(mockCache.store.has(treeCacheKey(REQ_URL, SLUG, "new", 25).url)).toBe(true);
 
-		// Empty the DB; a true cache hit still returns the original 5 threads.
-		rows.length = 0;
-		const second = await app.request("/?slug=hello", {}, env as unknown as Record<string, unknown>);
+		// Empty the table; a true cache hit still returns the original 5 threads.
+		sqlite.prepare("DELETE FROM comments").run();
+		const second = await app.request(
+			`/?slug=${SLUG}`,
+			{},
+			env as unknown as Record<string, unknown>,
+		);
 		expect(((await second.json()) as ListResp).threads).toHaveLength(5);
 		// The anonymous first page must NOT be browser-cacheable (personalization
 		// safety: it would otherwise be reused for the same user after sign-in).
 		expect(second.headers.get("cache-control")).toBeNull();
 	});
 
-	it("does not cache a cursor (non-first) page", async () => {
-		const { env } = mkEnv(makeComments(30), { comments_per_page: "10" });
-		const first = await get(env, "slug=hello");
-		// Second page request carries a cursor → must bypass the cache entirely.
-		await get(env, `slug=hello&before=${first.next_cursor}`);
-		expect([...mockCache.store.keys()].length).toBe(1); // only the first page
+	it("caches a cursor page under a cursor-stamped key", async () => {
+		// This inverts the old expectation. Cursor pages used to bypass the cache
+		// entirely, and because the cursor was only shape-checked, ANY well-formed
+		// ULID in `?before=` was a guaranteed cache miss in front of an unbounded
+		// query — an unauthenticated read amplifier.
+		seedThreads(30);
+		setSetting("comments_per_page", "10");
+		const env = mkEnv();
+		const first = await get(env, `slug=${SLUG}`);
+		const cursor = first.next_cursor!;
+		await get(env, `slug=${SLUG}&before=${cursor}`);
+
+		expect(mockCache.store.has(treeCacheKey(REQ_URL, SLUG, "new", 10).url)).toBe(true);
+		expect(
+			mockCache.store.has(treeCacheKey(REQ_URL, SLUG, "new", 10, cursor).url),
+		).toBe(true);
+		expect(mockCache.store.size).toBe(2);
+	});
+
+	it("serves a warm cursor page from the cache", async () => {
+		seedThreads(30);
+		setSetting("comments_per_page", "10");
+		const env = mkEnv();
+		const first = await get(env, `slug=${SLUG}`);
+		const cursor = first.next_cursor!;
+		const warm = await get(env, `slug=${SLUG}&before=${cursor}`);
+
+		sqlite.prepare("DELETE FROM comments").run();
+		const hit = await get(env, `slug=${SLUG}&before=${cursor}`);
+		expect(hit.threads.map((t) => t.id)).toEqual(warm.threads.map((t) => t.id));
+	});
+
+	it("does not cache an empty cursor page", async () => {
+		// A cursor is never validated against the data — any well-formed ULID
+		// decodes fine and simply matches nothing. Caching those would let one
+		// client mint unlimited distinct entries from a random-ULID loop.
+		seedThreads(5);
+		const env = mkEnv();
+		await get(env, `slug=${SLUG}&before=${mkUlid(1)}`); // oldest id → no rows
+		expect(mockCache.store.size).toBe(0);
+
+		// Sanity: the same request shape with real rows behind it IS cached.
+		await get(env, `slug=${SLUG}&before=${mkUlid(3)}`);
+		expect(
+			mockCache.store.has(treeCacheKey(REQ_URL, SLUG, "new", 25, mkUlid(3)).url),
+		).toBe(true);
+	});
+
+	it("normalizes a top cursor before it reaches the cache key", async () => {
+		// `08:<ulid>` and `8:<ulid>` are the same position; only the canonical
+		// re-encoding is keyed, so cosmetic variants can't mint extra entries.
+		seedThreads(
+			10,
+			Array.from({ length: 10 }, (_, i) => i),
+		);
+		setSetting("comments_per_page", "2");
+		const env = mkEnv();
+		await get(env, `slug=${SLUG}&sort=top&before=8:${mkUlid(9)}`);
+		await get(env, `slug=${SLUG}&sort=top&before=08:${mkUlid(9)}`);
+		expect(mockCache.store.size).toBe(1);
+		expect(
+			mockCache.store.has(
+				treeCacheKey(REQ_URL, SLUG, "top", 2, `8:${mkUlid(9)}`).url,
+			),
+		).toBe(true);
 	});
 });

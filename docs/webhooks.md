@@ -40,6 +40,12 @@ Required for any endpoint that has a secret configured. Reject every
 unsigned delivery on an endpoint you configured *with* a secret —
 treating unsigned requests as valid defeats the point of having one.
 
+**Keep your own copy of the secret.** The admin UI stores it write-only:
+after you save an endpoint the form shows only whether a secret is set,
+plus buttons to rotate or remove it. It is never rendered back to the
+browser, so there is no way to look it up later. Rotating invalidates the
+old signature on the very next delivery — update the receiver first.
+
 The signed payload is `<ts>.<raw_body>` — the literal request body
 prefixed by the timestamp from the header. **Hash the raw bytes, not a
 re-serialized JSON object** — re-serializing reorders keys.
@@ -78,7 +84,11 @@ signature is accepted.
 ## Retries and auto-disable
 
 Failed deliveries (network error or non-2xx response) are retried via
-an exponential schedule:
+an exponential schedule. **Redirects count as failures** — a 3xx is
+logged as `redirect_refused` and never followed, because following it
+would replay the comment body and its signature to a host that was
+never checked against the SSRF guard. Point the endpoint at its final
+URL rather than a redirector.
 
 | Attempt | Delay from previous |
 |--------:|---------------------|

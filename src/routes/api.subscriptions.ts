@@ -4,9 +4,11 @@
  * GET  /api/v1/subscribe/unsubscribe/:token
  *
  * Subscription model:
- *   - One row per (post_slug, email). Re-subscribing the same address
- *     re-activates the row and rotates its unsubscribe token (the old
- *     unsubscribe link becomes inert).
+ *   - One row per (post_slug, email). This endpoint is unauthenticated and
+ *     takes an arbitrary address, so re-subscribing an existing address is
+ *     deliberately non-destructive: it keeps the row's unsubscribe token and
+ *     does not un-cancel it. See `upsertSubscription` for what each branch is
+ *     allowed to touch and why.
  *   - Tokens are 32 random bytes hex-encoded. We don't sign them with
  *     JWT_SECRET because storage + lookup is just as cheap and avoids
  *     a class of "I forgot to invalidate the secret" bugs.
@@ -31,14 +33,15 @@ import {
 	getPost,
 	getSubscriptionByConfirmToken,
 	getSubscriptionByToken,
-	getUser,
 	markSubscriptionUnsubscribed,
 	upsertSubscription,
 } from "../db/queries";
-import { clientIp, hashIp } from "../lib/ip-hash";
+import { requireActiveUser } from "../lib/active-user";
+import { requireIpHash } from "../lib/ip-hash";
 import { checkRateLimit } from "../lib/ratelimit";
 import { renderConfirmEmailHtml } from "../lib/digest";
 import { sendEmail } from "../lib/email";
+import { fillSubject, subjectTitle } from "../lib/post-title";
 import { readSession } from "../lib/session";
 import { t } from "../i18n";
 
@@ -58,8 +61,9 @@ subscriptions.post("/", async (c) => {
 	// Rate-limit before any DB work. Subscribing is otherwise free for
 	// anyone with a valid email shape and a post slug, so without this
 	// the endpoint is an enumeration / spam vector.
-	const ipHash = await hashIp(clientIp(c.req.raw), c.env.IP_HASH_SECRET);
-	const rl = await checkRateLimit(c.env, ipHash);
+	const ipHash = await requireIpHash(c);
+	if (ipHash instanceof Response) return ipHash;
+	const rl = await checkRateLimit(c.req.url, ipHash, { scope: "subscribe" });
 	if (!rl.ok) {
 		return c.json(
 			{ error: t("err.ratelimit"), reason: rl.reason ?? null },
@@ -87,9 +91,12 @@ subscriptions.post("/", async (c) => {
 	let autoConfirm = false;
 	const session = await readSession(c);
 	if (session) {
-		const user = await getUser(c.env.DB, session.user_id);
+		// requireActiveUser, not getUser: a banned user must not get the
+		// skip-the-confirmation-email fast path, and shouldn't be subscribing
+		// under their account at all.
+		const user = await requireActiveUser(c.env.DB, session.user_id);
+		if (!user) return c.json({ error: t("err.banned") }, 403);
 		if (
-			user &&
 			user.email &&
 			user.email.toLowerCase() === email &&
 			PROVIDER_VERIFIED.has(user.provider)
@@ -144,29 +151,34 @@ subscriptions.post("/", async (c) => {
 	) {
 		const post = await getPost(c.env.DB, post_slug);
 		const confirmUrl = `${publicBase}/api/v1/subscribe/confirm/${sub.confirm_token}`;
+		// Sanitized again here, not just on the write path: a database upgraded
+		// from an earlier version can still hold a title with a CR/LF in it, and
+		// a mail subject is a header value.
+		const title = subjectTitle(post?.title, post_slug);
 		const html = renderConfirmEmailHtml({
-			postTitle: post?.title ?? post_slug,
+			postTitle: title,
 			confirmUrl,
 		});
 		await sendEmail(c.env, {
 			to: email,
 			from,
-			subject: t("email.confirm.subject").replace(
-				"{title}",
-				post?.title ?? post_slug,
-			),
+			subject: fillSubject(t("email.confirm.subject"), title),
 			html,
 		});
 	}
 
+	// Constant unless *this* caller proved they own the inbox. Mirroring the
+	// stored `confirmed_at` made this a silent subscription oracle: a "confirmed"
+	// answer told an unauthenticated prober the address is already subscribed to
+	// this post, and that branch sends no mail, so the victim saw nothing.
+	// `subscription_id` is gone for the same reason — a ULID also leaks *when*
+	// they subscribed. Nothing consumes it: the widget ignores the body entirely.
 	return c.json({
 		ok: true,
-		subscription_id: sub.id,
-		status: sub.confirmed_at != null ? "confirmed" : "pending",
-		message:
-			sub.confirmed_at != null
-				? t("ui.subscribe.confirmed")
-				: t("ui.subscribe.pending"),
+		status: autoConfirm ? "confirmed" : "pending",
+		message: autoConfirm
+			? t("ui.subscribe.confirmed")
+			: t("ui.subscribe.pending"),
 	});
 });
 
@@ -179,20 +191,55 @@ subscriptions.get("/confirm/:token", async (c) => {
 		return c.html(pageHtml("Link expired or already used."));
 	}
 
-	if (sub.confirmed_at == null) {
-		await confirmSubscription(c.env.DB, sub.id);
-	}
+	// Idempotent by its WHERE clause, so no pre-read guard is needed: a mail
+	// client's prefetch may already have confirmed the row, and the human's later
+	// click still has to land on the success page.
+	await confirmSubscription(c.env.DB, sub.id);
 
 	const post = await getPost(c.env.DB, sub.post_slug);
 	const postLabel = post?.title ?? sub.post_slug;
 	return c.html(
 		pageHtml(
-			`You're confirmed for comment notifications on "${escape(postLabel)}".`,
+			`You're confirmed for comment notifications on "${escapeHtml(postLabel)}".`,
 		),
 	);
 });
 
+/**
+ * The GET only *offers* to unsubscribe. Mail clients, link scanners and
+ * corporate security gateways prefetch every URL in a message, so a GET that
+ * wrote silently unsubscribed people who never clicked — and the row is
+ * `unsubscribed_at`-stamped, so their next reply notification just never
+ * arrived. `confirmSubscription` has carried a note about exactly this hazard
+ * since it shipped; unsubscribe never got the same treatment.
+ *
+ * The POST below does the write. It is same-origin-checked (see
+ * SELF_ORIGIN_POST_PATHS in lib/cors.ts) and the token stays the capability.
+ */
 subscriptions.get("/unsubscribe/:token", async (c) => {
+	const token = c.req.param("token");
+	if (!token) return c.text("missing token", 400);
+
+	const sub = await getSubscriptionByToken(c.env.DB, token);
+	if (!sub) {
+		return c.html(pageHtml("Link expired or already used."));
+	}
+
+	const post = await getPost(c.env.DB, sub.post_slug);
+	const postLabel = escapeHtml(post?.title ?? sub.post_slug);
+
+	if (sub.unsubscribed_at != null) {
+		return c.html(
+			pageHtml(
+				`You're already unsubscribed from comment notifications for "${postLabel}".`,
+			),
+		);
+	}
+
+	return c.html(confirmPageHtml(postLabel));
+});
+
+subscriptions.post("/unsubscribe/:token", async (c) => {
 	const token = c.req.param("token");
 	if (!token) return c.text("missing token", 400);
 
@@ -209,12 +256,12 @@ subscriptions.get("/unsubscribe/:token", async (c) => {
 	const postLabel = post?.title ?? sub.post_slug;
 	return c.html(
 		pageHtml(
-			`You're unsubscribed from comment notifications for "${escape(postLabel)}".`,
+			`You're unsubscribed from comment notifications for "${escapeHtml(postLabel)}".`,
 		),
 	);
 });
 
-const escape = (s: string): string =>
+const escapeHtml = (s: string): string =>
 	s
 		.replace(/&/g, "&amp;")
 		.replace(/</g, "&lt;")
@@ -222,7 +269,7 @@ const escape = (s: string): string =>
 		.replace(/"/g, "&quot;")
 		.replace(/'/g, "&#39;");
 
-const pageHtml = (message: string): string => `
+const pageHtml = (message: string, extra = ""): string => `
 <!doctype html>
 <html lang="en">
 <head>
@@ -238,7 +285,28 @@ const pageHtml = (message: string): string => `
 <body>
 <h1>Garrul</h1>
 <p>${message}</p>
+${extra}
 </body>
 </html>`;
+
+/**
+ * The one-click confirmation. No `action` attribute: the form posts back to the
+ * current URL, so the token never has to be re-serialized (and can't be
+ * mangled) on the way out.
+ *
+ * `postLabel` arrives already escaped — it is interpolated as text here.
+ */
+const confirmPageHtml = (postLabel: string): string =>
+	pageHtml(
+		`Unsubscribe from comment notifications for "${postLabel}"?`,
+		`<form method="post">
+  <button type="submit" style="font:inherit;padding:0.5rem 1rem;cursor:pointer">
+    Yes, unsubscribe me
+  </button>
+</form>
+<p style="color:#6b7280;font-size:0.875rem">
+  Nothing has changed yet — you stay subscribed until you confirm.
+</p>`,
+	);
 
 export { subscriptions };

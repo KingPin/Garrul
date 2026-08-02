@@ -107,6 +107,28 @@ four always-needed secrets (`JWT_SECRET`, `IP_HASH_SECRET`,
 Uncommented, a deploy that would leave one unset fails rather than
 shipping a Worker that 500s on first request.
 
+**Two of those four are checked again at runtime.** `JWT_SECRET` and
+`IP_HASH_SECRET` are load-bearing for the whole Worker — the first signs the
+OAuth state payload, the second is the HMAC key behind every `ip_hash` — and
+neither has a "feature is off" mode. If either is unset or empty, the Worker
+refuses every request with `500 {"error":"server_misconfigured"}` and writes
+one line naming the missing secrets:
+
+```
+{"level":"error","msg":"config.missing_required_secrets","missing":["IP_HASH_SECRET"]}
+```
+
+The names are in the log, not in the response body — `wrangler tail` to see
+them. This replaces what used to happen: an empty HMAC key makes WebCrypto
+throw, so the instance served anonymous 500s with stack traces from eight
+different endpoints and nothing pointing at the cause.
+
+Turnstile deliberately isn't in that runtime check even though the deploy-time
+block lists it. An instance that only accepts OAuth-authenticated comments
+works fine without it, and anonymous posts already fail closed — hard-failing
+would take such a deployment offline on upgrade over configuration it never
+needed. Implementation: `src/lib/require-config.ts`.
+
 Uncomment it only in a config you never run `wrangler dev` against.
 Declaring a `[secrets]` table changes how wrangler reads `.dev.vars` for
 the whole file: only names in `required` (or already in `[vars]`) are
@@ -146,8 +168,8 @@ between the two is a build error, not a silent misclassification.
 | `CANONICAL_URL` | var | Optional. Override for the public URL used by the `/AGENTS.md` route when the inbound `Host` differs from the canonical address. | `https://comments.example.com` | `wrangler.toml` |
 | `OAUTH_CALLBACK_BASE` | var | Base URL for OAuth callbacks; must match the URI registered with each provider. Usually identical to `PUBLIC_BASE_URL`. | `https://comments.example.com` | `wrangler.toml` — **replace the shipped placeholder before deploying** |
 | `BRANDING_HIDDEN` | var | Optional. Set to `1`/`true` to suppress the "Powered by Garrul" attribution under the comment list. Unset = attribution shown. | `false` | `wrangler.toml` |
-| `JWT_SECRET` | secret | Cookie signing for anon-edit tokens. Reserved; current sessions are KV-backed. Set a random value or skip. | ``openssl rand -base64 32` output` | `wrangler secret put` / `.dev.vars` |
-| `IP_HASH_SECRET` | secret | HMAC-SHA-256 pepper for IP hashing (see `src/lib/ip-hash.ts`). Never log/store raw IPs. Rotating it invalidates existing rate-limit and dedupe buckets. | ``openssl rand -base64 32` output` | `wrangler secret put` / `.dev.vars` |
+| `JWT_SECRET` | secret | HMAC-SHA-256 key for the signed OAuth state cookie (`src/lib/oauth.ts`). Required for sign-in to work at all. Rotating it invalidates any OAuth flow already in progress — users retry and it works; no other effect, since sessions are KV-backed and not signed with this. | ``openssl rand -base64 32` output` | `wrangler secret put` / `.dev.vars` |
+| `IP_HASH_SECRET` | secret | HMAC-SHA-256 pepper for IP hashing (see `src/lib/ip-hash.ts`). Never log/store raw IPs. Tier-1 secret: with it, a D1 export discloses every commenter's IPv4 address, so guard it like `JWT_SECRET`. Rotating invalidates existing rate-limit and dedupe buckets, orphans anonymous ghost identities, and does **not** re-key hashes already stored — read `docs/ip-hashing.md` before rotating. | ``openssl rand -base64 32` output` | `wrangler secret put` / `.dev.vars` |
 | `TURNSTILE_SITE_KEY` | secret | Cloudflare Turnstile site key. Required for anonymous commenting. Note this value is *public* — it ships in the widget HTML. It is stored as a secret for historical reasons and because doing so is harmless. | `0x4AAAAAAA...` | `wrangler secret put` / `.dev.vars` |
 | `TURNSTILE_SECRET` | secret | Turnstile secret. Server-side token verification. | `0x4AAAAAAA...` | `wrangler secret put` / `.dev.vars` |
 | `GH_CLIENT_ID` | secret | GitHub OAuth client ID. Required for GitHub sign-in. | `Iv1.abcdef...` | `wrangler secret put` / `.dev.vars` |
@@ -212,11 +234,20 @@ DB settings row  >  env var  >  hardcoded default
 Operators flip them at runtime from the **admin Settings page** (`/admin`
 → Settings), which writes a row to the `settings` D1 table — no redeploy,
 no `wrangler` round-trip. "Reset to defaults" deletes the rows so the env
-var / default applies again. The resolved set is KV-cached briefly and
-busted on save, so a toggle takes effect within seconds across the widget
-(`/api/v1/config`) and the server-side gates. Leaving a flag untouched in
-the admin UI writes no row, so existing installs that only set env vars are
-unaffected. Implementation: `src/lib/settings.ts`.
+var / default applies again. The resolved set is KV-cached and busted on save,
+so a toggle takes effect within seconds across the widget (`/api/v1/config`)
+and the server-side gates. Leaving a flag untouched in the admin UI writes no
+row, so existing installs that only set env vars are unaffected.
+Implementation: `src/lib/settings.ts`.
+
+**Changing one of these by env var instead takes up to an hour.** The cache TTL
+is 1 hour (raised from 5 minutes: it's a fixed pair of KV keys that
+re-populate once per TTL window *per edge colo*, against a free-tier cap of 1000
+KV writes/day **account-wide** — at 5 minutes a handful of colos was spending
+most of that budget re-deriving settings that hadn't changed). Only the admin
+save path busts the cache; a `wrangler deploy` does not, so an edited
+`wrangler.toml` var can be masked by a warm entry for up to an hour. Use the
+Settings page for anything you want to take effect now, or accept the wait.
 
 ### Display & pagination: numeric settings (since v1.11.0)
 
@@ -494,9 +525,17 @@ Operators who don't want digests can leave both unset and remove the
 `[triggers]` block to avoid registering the cron at all.
 
 Triggers (events that produce a send): a subscriber to a thread sees a
-new reply land (digest email); an unsubscribe-link click (clears the
-subscription, no send). No transactional sends per comment; everything
-flows through the debounced cron.
+new reply land (digest email); an unsubscribe-link click (opens a
+confirmation page, no send). No transactional sends per comment;
+everything flows through the debounced cron.
+
+The unsubscribe link is a two-step flow: the `GET` from the email only
+renders a "Yes, unsubscribe me" button, and the `POST` behind that
+button does the write. Mail clients, link scanners and corporate
+security gateways prefetch every URL in a message, so a `GET` that
+wrote would silently unsubscribe recipients who never clicked. Expect
+support questions from operators who remember one click; the extra
+click is deliberate.
 
 ## 10. Operating the instance
 
@@ -522,12 +561,38 @@ tracked by the `_migrations` table. Current set:
 - `0012_deleted_by.sql` — records who deleted a comment
 - `0013_thread_lifecycle_reports.sql` — per-post close/`published_at` + reader `reports` table
 - `0014_telegram.sql` — `telegram_links` (operator account ↔ Telegram identity, + digest opt-in)
+- `0015_comment_depth.sql` — `comments.depth`, backfilled from `parent_id`; enforces the reply-depth cap at insert
+- `0016_user_erasure.sql` — `users.erased_at`, for the admin erase-personal-data path
+- `0017_subscriptions_email_index.sql` — `subscriptions(email, confirmed_at)`; the per-email pending cap was a full table scan on every subscribe
 
 Run with `npm run migrate` (local Miniflare) or
 `npm run migrate -- --remote` (production D1). Idempotent. Never edit a
 migration after it's applied to prod — add new behavior as a new
 numbered file. When upgrading an existing install, re-running
 `npm run migrate -- --remote` applies whatever the new release added.
+
+**Request size limit.** Every request body is capped at **64 KB** before
+anything parses it; over that the response is `413 {"error":"too_large"}`. The
+cap exists because all the per-field limits (comment length, name length, bulk
+action id count) are applied *after* `c.req.json()` has already deserialized the
+whole body, so without it a multi-megabyte payload costs a full parse against the
+Worker's 10 ms CPU budget before any of them get a say. 64 KB is far above every
+legitimate payload — the largest is a comment at the 10,000-character body limit.
+The one exemption is `POST /admin/api/ops/import-disqus`, which takes a raw
+Disqus XML export up to 50 MB and enforces its own limit. Implementation:
+`src/lib/body-limit.ts`.
+
+**Client IP is required, not guessed.** Every endpoint that meters or dedupes
+by IP — comments, votes, reactions, reports, page engagement, subscribe,
+preview — reads Cloudflare's `cf-connecting-ip` header. The edge sets it on
+every request that reaches a Worker, so its absence means the Worker was
+reached some other way; those requests now get `400 {"error":"no_client_ip"}`.
+Previously they were all folded into a literal `0.0.0.0`, which is worse than
+no answer: a *shared* identity means one rate-limit bucket, one anonymous
+ghost user, and one row against the per-comment report and vote uniqueness
+constraints for every such caller at once. Under `ENV=dev` the Worker
+substitutes `127.0.0.1` so local development still exercises the path.
+Implementation: `src/lib/ip-hash.ts`.
 
 **Roles.** Since v1.8.0 there are three permission tiers
 (`0005_user_roles.sql`):
@@ -554,7 +619,7 @@ Pages (top nav):
 | `/admin/queue` | Moderation queue. Status tabs (incl. a **Reported** tab — comments with open reader reports, with a count badge) + filter bar (body search, post slug, date range, scoped-by-user). Per-row + bulk actions (Approve/Spam/Delete/Restore). When filtered to a single post slug, a **Close / Open comments for this post** toggle appears. Rows also offer one-click **Ban author**. Each row shows author identity (avatar + provider + admin/banned pills) and the latest audit footer. |
 | `/admin/comments/:id` | Single-comment view: parent + replies, raw markdown, spam-verdicts per source, full audit history for that comment, author block with their last 5 comments. |
 | `/admin/users` | User search + ban toggle. |
-| `/admin/users/:id` | User detail: all their comments paginated, reactions received, audit history affecting them, Ban/Unban. |
+| `/admin/users/:id` | User detail: all their comments paginated, reactions received, audit history affecting them, Ban/Unban, role controls, and a folded-away **Erase personal data** panel (admin-only; see below). |
 | `/admin/audit` | Audit log with filter form (admin, action, target kind/id, date range). |
 | `/admin/subscriptions` | Email subscription list. Filter by email/post/confirmed/unsubscribed. Actions: manual unsubscribe, resend confirmation. |
 | `/admin/operator` | Batch operations: rerender stale comments (POSTs `/admin/api/ops/rerender` in 50-row chunks until done), seed-demo (idempotent; gated to `ENV != "production"`), and the Disqus import upload (see below). |
@@ -573,9 +638,47 @@ responding):
 - `POST /admin/api/comments/:id/reports/resolve` — clears open reader reports on a comment (audited `report.resolve`)
 - `POST /admin/api/posts/close` — `{slug, closed: boolean}` (per-post close/open; audited `post.close` / `post.open`; busts the cached first page)
 - `POST /admin/api/users/:id` — `{banned: boolean, reason?, from_comment?}` (one-click ban-author records the originating comment in audit meta; admin-only)
+- `POST /admin/api/users/:id/role` — `{role: user|mod|admin, reason?}` (admin-only; refuses self-change and the last-admin demotion)
+- `POST /admin/api/users/:id/erase` — `{confirm: "ERASE", redact_bodies: boolean, reason?}` (admin-only, irreversible; see below)
 - `POST /admin/api/subscriptions/:id` — `{action: unsubscribe|resend, reason?}`
 - `POST /admin/api/ops/rerender` — `{batch?: number, cursor?}` → `{processed, next_cursor}`
 - `POST /admin/api/ops/seed-demo` — disabled when `ENV=production`
+
+**Erasing a user's personal data.** `/admin/users/<id>` → **Erase
+personal data**. Admin-only, audit-logged, and irreversible — the button
+stays disabled until you type `ERASE`, and the API requires the same
+string in the body so a stray request can't trigger it.
+
+It anonymizes in place rather than deleting. `comments.user_id` is a
+`NOT NULL` foreign key and threads are `parent_id` chains, so dropping
+the row would orphan every reply written under it. What it clears:
+
+- The account's `name` (→ `[deleted]`), `email`, `avatar_url` and
+  `provider_id`. That last one is the handle their next login is matched
+  on — so a later sign-in creates a **fresh** account instead of
+  resurrecting this one. For an anonymous ghost author, `provider_id`
+  *is* the `ip_hash`.
+- `ip_hash` and `user_agent` on every comment they wrote, and
+  `reporter_ip_hash` on every report they filed.
+- Their email subscriptions (plus any queued digest rows) and their
+  linked Telegram account.
+- Their live sessions, revoked.
+
+Comment **bodies are kept by default**: the author becomes anonymous and
+the thread others replied to stays readable. Tick *"also blank their
+comment bodies"* when the comment text itself holds the personal data —
+that blanks `body_md`/`body_html` and marks the comments deleted. Votes,
+reactions and page-engagement rows are left alone; removing them would
+silently restate scores the thread has been showing.
+
+Two guards: you cannot erase **yourself**, and you cannot erase another
+**admin** (demote them first — otherwise clearing `provider_id` locks
+that person out of the instance for good). The `user.erase` audit row
+records **counts only**, never the removed values: writing the name or
+address into `audit_log.meta` would relocate the data rather than erase
+it. Everything else you might want here — a retention window, key
+epoching, a bulk purge — is still missing; see
+[`../docs/ip-hashing.md`](../docs/ip-hashing.md).
 
 **Reader reporting & thread moderation.** Readers can flag a comment
 from the widget (anonymous allowed, no Turnstile — rate-limited by
@@ -634,16 +737,39 @@ Disqus comment ID, tracked in `0009_import_tracking.sql`; re-running
 the same export inserts zero rows):
 
 - CLI (preferred for big exports):
-  `npm run import-disqus -- ./export.xml --dry-run`, then without
-  `--dry-run` to commit.
+  `IP_HASH_SECRET=... npm run import-disqus -- ./export.xml --dry-run`,
+  then without `--dry-run` to commit.
 - Admin upload on `/admin/operator` — capped at 50 MB, with dry-run /
   include-deleted / include-spam toggles.
 
 Imported HTML is stripped and re-rendered through the standard
-markdown allowlist. Imported authors become `provider='anon'` ghost
+markdown allowlist. Thread titles and links go through the same
+guards the comment write path applies — control characters stripped
+and the title capped (it reaches mail subject lines), and a link that
+isn't `http(s):` is stored as no URL rather than becoming a permalink
+redirect target. Imported authors become `provider='anon'` ghost
 users whose `provider_id` is an HMAC (keyed by `IP_HASH_SECRET`) of
 the Disqus author identity, keeping their display names without
 storing emails.
+
+**`IP_HASH_SECRET` is required for the CLI, and must be the same
+secret the Worker uses.** It keys the ghost-identity HMAC above, so a
+different value imports the same person as a different user — and the
+same person commenting live afterwards becomes a third. The script
+used to fall back to a hard-coded literal when the variable was
+unset; it now refuses to run. Read the value from `.dev.vars` for a
+local import, or from wherever you stored it for `--remote`. The
+admin upload path takes it from the Worker's own binding, so it is
+unaffected.
+
+The CLI drives D1 through `wrangler d1 execute`, which accepts only
+`--command` — there is no parameter-binding flag, so that shim
+assembles SQL by substitution (the Worker path binds normally). It
+refuses any value it can't inline exactly rather than emitting
+approximately-right SQL, and aborts the import if wrangler's output
+can't be read — previously an unreadable envelope was treated as "row
+already exists", which made the whole CLI import a silent no-op that
+still printed `DONE`.
 
 **Custom domains.** Strongly recommended. Set in `wrangler.toml`:
 
@@ -660,11 +786,12 @@ third-party-cookie blocking in Safari/Brave breaks sign-in.
 
 ## 11. Backups and data export
 
-D1 is the only durable store. KV holds rate-limit counters, OAuth state
-(short TTL), sessions (30-day TTL), and rebuildable caches (resolved
-settings, version check). The comment first-page and counts caches live in
-the edge Cache API (`caches.default`), not KV — so they never count against
-the KV write budget.
+D1 is the only durable store. KV holds sessions (30-day TTL), widget
+OAuth handoff tokens (60-second TTL), and rebuildable caches (resolved
+settings, version check, optional Workers-AI spam verdicts). Rate-limit
+counters and the comment first-page and counts caches live in the edge
+Cache API (`caches.default`), not KV — so they never count against the
+KV write budget.
 
 **D1 export.** `npm run db:export` wraps `bash scripts/db-export.sh`,
 writing a `.sql` dump locally. Cloudflare also keeps point-in-time
@@ -672,9 +799,41 @@ backups of D1 in the dashboard — the local export is for the operator's
 own archive (e.g. nightly cron on their workstation). For programmatic
 exports beyond `.sql`, use `wrangler d1 export <db>`.
 
-**KV considerations.** Don't bother backing up KV: `RATE_LIMITS` is
-ephemeral; `OAUTH_STATE` has a 10-minute TTL; `SESSIONS` loss just
-forces re-sign-in; `TREE_CACHE` rebuilds on next read.
+The output filename must match `garrul-backup-*.sql`; the script
+exits 2 on anything else. That is the pattern `.gitignore` covers, and
+the dump holds every comment body, every subscriber email address and
+every `ip_hash` in the database — so a name like `backup.sql` in a
+clone of this repo is one `git add -A` away from committing all of it.
+A directory prefix is fine (`../backups/garrul-backup-nightly.sql`);
+only the basename is checked. `npm run db:export` with no argument
+picks a conforming name for you.
+
+**KV considerations.** Don't bother backing up KV: `RATE_LIMITS` only
+holds the optional Workers-AI spam verdict cache (rate limiting itself
+runs on the Cache API); `OAUTH_STATE` holds 60-second widget handoff
+tokens (OAuth state is a signed cookie, not a KV row); `SESSIONS` loss
+just forces re-sign-in; `TREE_CACHE` rebuilds on next read.
+
+### Hashed IPs in an export
+
+A `.sql` dump carries every `ip_hash` the instance has ever written, and
+those values are permanent — there is no TTL, no purge job, and no
+retention window. They land in three places: `comments.ip_hash` (kept
+even after a soft delete), `comment_reports.reporter_ip_hash` (kept after
+the flags are resolved), and `users.provider_id` for `provider='anon'`
+ghost rows, which is the anonymous identity itself.
+
+The hash is a pseudonym only against someone who *doesn't* have
+`IP_HASH_SECRET`. The construction is unsalted and IPv4 is a 2^32 input
+space, so anyone holding both an export and the secret can rebuild every
+address in it — treat the pair as an IP disclosure and store exports
+accordingly. Rotating the secret re-keys future writes only; it does not
+touch rows already written, and there is no key-version column to tell
+the two apart afterwards. Key epoching is tracked as an enhancement, not
+shipped.
+
+Full posture, including what rotation breaks and what a deletion request
+costs today: [`docs/ip-hashing.md`](docs/ip-hashing.md).
 
 ## 12. Upgrades
 
@@ -697,7 +856,9 @@ The 12 steps (each prints `→ name… OK`):
 4. **Drift detection** (read-only): secrets via `wrangler secret list`; `[vars]`, KV and D1 by parsing `wrangler.toml`; migrations via `SELECT name FROM _migrations`; renderer via `CURRENT_RENDERER_VERSION` vs `target.renderer.version`
 5. **Print plan** grouped as config drift / migrations / breaking changes
 6. **Confirm** (`Proceed? [y/N]`) unless `--yes`
-7. **Checkout** the target tag
+7. **Checkout** the target tag, then verify the `release-manifest.json` in
+   the checked-out tree is byte-for-byte the one step 3 fetched — see
+   *What the upgrade trusts* below
 8. **`npm ci`**
 9. **Apply infra drift** — create missing KV/D1 and append blocks to `wrangler.toml`; prompt for missing secrets via `wrangler secret put NAME`. Missing required `[vars]` block auto-apply: they must be added to `wrangler.toml` by hand
 10. **Migrate** (`npm run migrate -- --remote`) — idempotent, forward-only
@@ -741,16 +902,79 @@ operator's file and is never rewritten in place. It also lists
 `[vars]` a new release introduced that you haven't set — all optional,
 all defaulted, shown so a new flag isn't invisible.
 
+### What the upgrade trusts
+
+An upgrade ends in migrations against your production D1 and a
+`wrangler deploy` with your Cloudflare credentials loaded. Worth knowing
+exactly what has to be honest for that to be safe.
+
+Three fetches, three different trust anchors:
+
+| Fetch | Source | What it decides |
+| --- | --- | --- |
+| Target tag + release notes | `api.github.com` (HTTPS) | Which version you're going to |
+| `release-manifest.json` | `raw.githubusercontent.com` at that tag (HTTPS) | The plan: which secrets are prompted for, which KV/D1 get created, which migrations are expected, whether a rerender runs |
+| The code itself | the git transport (`git fetch` + `git checkout <tag>`) | Everything that actually gets deployed |
+
+**Git is the anchor for what runs.** `npm run upgrade` never downloads a
+release asset. It checks out the tag and builds from source, so the
+Worker you deploy is whatever the git tag contains — the release page's
+`embed.js` is not in that path at all.
+
+**The plan and the code arrive over different transports**, which is the
+gap the post-checkout check closes. Step 7 re-reads
+`release-manifest.json` from the checked-out tree and compares it to the
+one fetched in step 3. A mismatch aborts *before* the first migration —
+the last cheap point to stop, since migrations are forward-only. The
+error names the differing fields.
+
+What that catches: a tag moved between the fetch and the checkout; a
+stale or poisoned CDN response for the raw manifest; a fork whose tag
+doesn't carry the upstream tree; a manifest that was simply never
+regenerated for the release.
+
+What it does **not** catch, and don't read it as more than it is: it is
+**not a signature**. Whoever can rewrite the tag rewrites both copies and
+they agree. Garrul does not ship signed tags today. Your real defenses
+against a rewritten tag are the SHA-pinned actions in the release
+workflow and reading the diff between your current tag and the target
+before you say yes.
+
+**Verifying a release asset by hand.** If you take `embed.js` from the
+release page rather than building it, each release attaches `SHA256SUMS`
+covering `embed.js`, `embed.js.map` and `release-manifest.json`:
+
+```bash
+# in a directory holding the downloaded assets and SHA256SUMS
+sha256sum -c SHA256SUMS
+```
+
+That file is uploaded by the same publishing step that uploads the
+artifacts, so on its own it proves only internal consistency. The
+digests are *also* printed into the release workflow's job log (the
+`SHA256SUMS` group), which is public, immutable, and written **before**
+the publishing step runs. Compare against the job log, not just the
+attached file, if you care about the difference.
+
 ### Failure modes
 
 - **Steps 1–9 fail** → nothing committed, exit 1.
+- **Manifest mismatch at step 7** → exit 1, before any migration or
+  deploy. Re-run `npm run upgrade`; if it repeats, compare the tag
+  against the repository before continuing.
 - **Migrate succeeds, deploy fails** → exit code **2**. Migrations are
   forward-only and already applied; the previous Worker is still
   serving traffic. Fix the deploy and re-run `npm run deploy`, or
   `wrangler rollback` to the prior deployment. Do **not** hand-revert
   the schema — Garrul migrations are additive.
-- **Deploy succeeds, rerender fails** → warn only; the renderer is
-  lazy-on-read, so stored comments still resolve correctly.
+- **Deploy succeeds, rerender fails** → warn only; the instance keeps
+  serving and new comments render with the new sanitizer. But it is **not**
+  self-healing: `body_html` is rendered once at write time and served
+  verbatim, with no re-render on read, so every pre-existing comment keeps
+  its old markup until the rerender actually completes. Re-run
+  `npm run rerender -- --remote`, or use `/admin/operator` → Rerender.
+  Treat it as required, not cosmetic, when the bump was made for a
+  sanitizer change — see the renderer-version note below.
 
 **Migration ordering.** Always migrate **before** deploying new Worker
 code. The orchestrator enforces this. If you step through manually:
@@ -772,6 +996,27 @@ npm run rerender -- --remote   # only if the renderer version bumped
 ```
 
 Back up first — see §11.
+
+### Renderer version
+
+`release-manifest.json` carries `renderer.version` (mirroring
+`CURRENT_RENDERER_VERSION` in `src/lib/markdown.ts`) and
+`renderer.eagerRerender`. A bump means the markdown sanitizer's output
+changed. Because `body_html` is written once and served verbatim, the change
+reaches **new** comments immediately and **existing** ones only when you
+re-render; `eagerRerender: true` tells the upgrade orchestrator to run it
+without asking. It is safe to re-run and resumable — it pages through
+comments whose `renderer_version` is below the target.
+
+Bumps so far:
+
+- **1 → 2** — GFM task-list checkboxes stopped emitting
+  `<input type="checkbox">` (a disabled form control in user-generated
+  content, outside the tag allowlist) and now render as literal `[ ]` / `[x]`
+  text; the `class="language-…"` on fenced code is dropped unless the info
+  string looks like a language label. Nothing else in the output changed, and
+  no comment text is altered — `body_md` is the source of truth and is
+  re-rendered from, not edited.
 
 ### Update notifications
 
@@ -829,7 +1074,15 @@ in `wrangler.toml` (section 5).
 **Email digests never arrive.** Check, in order: `EMAIL_PROVIDER` is
 `resend`; `RESEND_API_KEY` is set; `EMAIL_FROM` uses a Resend-verified
 domain; `wrangler.toml` has the `[triggers]` block; `wrangler tail`
-shows `email.send_failed` with the underlying Resend error.
+shows `email.send_failed` with the HTTP status and Resend's error *code*
+(`validation_error`, `rate_limit_exceeded`, …).
+
+That line carries the code and nothing else on purpose. Resend's error
+bodies interpolate the offending field into a free-text `message`, so a
+422 for a bad address quotes the address — and the digest path's
+recipients are your subscribers. Log lines are not a safe place for
+that. If the code alone isn't enough to diagnose a delivery problem, the
+Resend dashboard has the full message against the specific send.
 
 **`*.workers.dev` in production.** Works just enough to be tempting,
 then breaks sign-in for Safari/Brave users. Map a custom subdomain

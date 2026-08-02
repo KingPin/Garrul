@@ -25,6 +25,13 @@ type AkismetConfig = {
 	siteUrl: string;
 };
 
+// Akismet's API contract puts the key in the *hostname*, so the secret is part
+// of every request URL — and some runtimes echo the URL back in fetch error
+// strings and error bodies. Strip the exact secret before anything reaches the
+// logs. Same defense, same reason as scrubToken in src/lib/webhook.ts.
+const scrubKey = (s: string, apiKey: string): string =>
+	apiKey ? s.split(apiKey).join("***") : s;
+
 export const checkAkismet = async (
 	cfg: AkismetConfig,
 	input: SpamCheckInput,
@@ -66,7 +73,7 @@ export const checkAkismet = async (
 			log.warn("spam.adapter.error", {
 				provider: "akismet",
 				status: res.status,
-				body: body.slice(0, 200),
+				body: scrubKey(body.slice(0, 200), cfg.apiKey),
 			});
 			return null;
 		}
@@ -82,13 +89,13 @@ export const checkAkismet = async (
 		if (text === "false") return { spam: false, raw: { response: text } };
 		log.warn("spam.adapter.error", {
 			provider: "akismet",
-			unexpected_body: text.slice(0, 60),
+			unexpected_body: scrubKey(text.slice(0, 60), cfg.apiKey),
 		});
 		return null;
 	} catch (err) {
 		log.warn("spam.adapter.error", {
 			provider: "akismet",
-			error: String(err),
+			error: scrubKey(String(err), cfg.apiKey),
 		});
 		return null;
 	}

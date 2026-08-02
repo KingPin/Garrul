@@ -8,7 +8,7 @@ const ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 let lastMs = -1;
 let lastRandom = new Uint8Array(10);
 
-const encodeBase32 = (bytes: Uint8Array, len: number, value: bigint): string => {
+const encodeBase32 = (len: number, value: bigint): string => {
 	let v = value;
 	let out = "";
 	for (let i = 0; i < len; i++) {
@@ -40,10 +40,10 @@ export const ulid = (): string => {
 		fillRandom(lastRandom);
 	}
 
-	const timePart = encodeBase32(new Uint8Array(0), 10, BigInt(now));
+	const timePart = encodeBase32(10, BigInt(now));
 	let randomValue = 0n;
 	for (const byte of lastRandom) randomValue = (randomValue << 8n) | BigInt(byte);
-	const randomPart = encodeBase32(new Uint8Array(0), 16, randomValue);
+	const randomPart = encodeBase32(16, randomValue);
 
 	return timePart + randomPart;
 };

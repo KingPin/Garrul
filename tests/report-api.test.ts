@@ -15,16 +15,26 @@
  * fireWebhook is mocked so we can assert it's called exactly when a NEW report
  * lands (and not on a duplicate) without standing up a real delivery pipeline.
  */
-import { describe, it, expect, beforeEach, vi, type Mock } from "vitest";
+import {
+	describe,
+	it,
+	expect,
+	beforeEach,
+	afterEach,
+	vi,
+	type Mock,
+} from "vitest";
 import { Hono } from "hono";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { installMockCaches, uninstallMockCaches } from "./helpers/mock-caches";
 
 vi.mock("../src/lib/webhook", () => ({ fireWebhook: vi.fn() }));
 
 import { reports } from "../src/routes/api.reports";
 import { insertComment } from "../src/db/queries";
+import { hashIp } from "../src/lib/ip-hash";
 import { fireWebhook } from "../src/lib/webhook";
 import type { Bindings } from "../src/index";
 
@@ -63,27 +73,16 @@ const freshDb = () => {
 	return { sqlite, db: makeD1(sqlite) };
 };
 
-// Counting KV: records request stamps, so the rate-limit actually triggers on
-// the second rapid call (short bucket default = 1 / 10s).
-const countingKv = () => {
-	const store = new Map<string, string>();
-	return {
-		async get(key: string, type?: "json") {
-			const raw = store.get(key);
-			if (raw == null) return null;
-			return type === "json" ? JSON.parse(raw) : raw;
-		},
-		async put(key: string, value: string) {
-			store.set(key, value);
-		},
-		async delete(key: string) {
-			store.delete(key);
-		},
-	};
-};
+// The rate limiter stores its buckets in the Cache API, not KV, so these tests
+// control it by whether a mock `caches.default` is installed:
+//   installed → stamps persist, the short bucket (default 1 / 10s) trips on the
+//               second rapid call;
+//   absent    → the limiter's documented fail-open path allows everything,
+//               which isolates the DB-level dedup from the rate limit.
+// Default is absent; enforceRateLimits() opts a test in.
+const enforceRateLimits = () => installMockCaches();
 
-// Always-empty KV: rate-limit reads see no prior requests, so every call is
-// allowed. Used to isolate the DB-level dedup from the rate-limit.
+// Always-empty KV, still needed for the TREE_CACHE binding.
 const openKv = () => ({
 	async get() {
 		return null;
@@ -100,14 +99,13 @@ const execCtx = {
 let sqlite: DatabaseSync;
 let db: any;
 
-const mkEnv = (rateLimits: unknown): Bindings =>
+const mkEnv = (): Bindings =>
 	({
 		DB: db,
-		RATE_LIMITS: rateLimits,
 		TREE_CACHE: openKv(),
 		SESSIONS: { async get() { return null; }, async put() {}, async delete() {} },
 		ANALYTICS: { writeDataPoint() {} },
-		IP_HASH_SECRET: "test-secret",
+		IP_HASH_SECRET: IP_SECRET,
 		ENV: "dev",
 	}) as unknown as Bindings;
 
@@ -122,18 +120,22 @@ const seedComment = async (): Promise<string> => {
 		status: "approved",
 		ip_hash: null,
 		user_agent: null,
+		depth: 1,
 	});
 	return c.id;
 };
 
 const app = () => new Hono<{ Bindings: Bindings }>().route("/", reports);
 
+const REPORTER_IP = "203.0.113.7";
+const IP_SECRET = "test-secret";
+
 const report = (env: Bindings, id: string, body: unknown = {}) =>
 	app().request(
 		`/${id}/report`,
 		{
 			method: "POST",
-			headers: { "content-type": "application/json", "cf-connecting-ip": "203.0.113.7" },
+			headers: { "content-type": "application/json", "cf-connecting-ip": REPORTER_IP },
 			body: JSON.stringify(body),
 		},
 		env as unknown as Record<string, unknown>,
@@ -163,15 +165,19 @@ beforeEach(() => {
 	(fireWebhook as Mock).mockClear();
 });
 
+afterEach(() => {
+	uninstallMockCaches();
+});
+
 describe("POST /api/v1/comments/:id/report", () => {
 	it("records a fresh report and fires the comment.reported webhook", async () => {
 		const id = await seedComment();
-		const res = await report(mkEnv(openKv()), id, { reason: "spam link" });
+		const res = await report(mkEnv(), id, { reason: "spam link" });
 		expect(res.status).toBe(200);
 		expect(await res.json()).toEqual({ ok: true });
 		expect(reportRowCount(id)).toBe(1);
 		expect(fireWebhook).toHaveBeenCalledTimes(1);
-		expect((fireWebhook as Mock).mock.calls[0][2]).toMatchObject({
+		expect((fireWebhook as Mock).mock.calls[0]![2]).toMatchObject({
 			event: "comment.reported",
 			comment_id: id,
 			post_slug: "hello",
@@ -180,9 +186,10 @@ describe("POST /api/v1/comments/:id/report", () => {
 
 	it("dedupes a second report from the same network (no new row, no webhook)", async () => {
 		const id = await seedComment();
-		// openKv → rate-limit never blocks, so both calls reach insertReport and
-		// the UNIQUE(comment_id, ip_hash) is what makes the second a no-op.
-		const env = mkEnv(openKv());
+		// No mock cache installed → the rate limit never blocks, so both calls
+		// reach insertReport and UNIQUE(comment_id, ip_hash) is what makes the
+		// second a no-op.
+		const env = mkEnv();
 		await report(env, id, { reason: "first" });
 		(fireWebhook as Mock).mockClear();
 		const res = await report(env, id, { reason: "second" });
@@ -193,8 +200,9 @@ describe("POST /api/v1/comments/:id/report", () => {
 	});
 
 	it("rate-limits rapid repeats from the same IP with 429", async () => {
+		enforceRateLimits();
 		const id = await seedComment();
-		const env = mkEnv(countingKv());
+		const env = mkEnv();
 		const first = await report(env, id);
 		expect(first.status).toBe(200);
 		const second = await report(env, id);
@@ -204,7 +212,7 @@ describe("POST /api/v1/comments/:id/report", () => {
 	});
 
 	it("returns ok for a non-existent comment without inserting (no enumeration)", async () => {
-		const res = await report(mkEnv(openKv()), "01HNOPE0000000000000000000");
+		const res = await report(mkEnv(), "01HNOPE0000000000000000000");
 		expect(res.status).toBe(200);
 		expect(await res.json()).toEqual({ ok: true });
 		expect(fireWebhook).not.toHaveBeenCalled();
@@ -213,16 +221,69 @@ describe("POST /api/v1/comments/:id/report", () => {
 	it("returns ok for a deleted comment without opening a report", async () => {
 		const id = await seedComment();
 		sqlite.prepare("UPDATE comments SET status = 'deleted' WHERE id = ?").run(id);
-		const res = await report(mkEnv(openKv()), id);
+		const res = await report(mkEnv(), id);
 		expect(res.status).toBe(200);
 		expect(await res.json()).toEqual({ ok: true });
 		expect(reportRowCount(id)).toBe(0);
 		expect(fireWebhook).not.toHaveBeenCalled();
 	});
 
+	it("rejects an anonymous reporter whose ip_hash ghost is banned", async () => {
+		// Banning an abusive anonymous author bans their ghost row. The gate used
+		// to run only when a session existed, so that same browser could keep
+		// filing reports — a moderator's inbox left usable for harassment by the
+		// person the ban was for.
+		const id = await seedComment();
+		const ipHash = await hashIp(REPORTER_IP, IP_SECRET);
+		sqlite
+			.prepare(
+				"INSERT INTO users (id, provider, provider_id, name, is_banned, created_at) VALUES (?, 'anon', ?, 'Ghost', 1, ?)",
+			)
+			.run("01HGHOST0000000000000000GH", ipHash, 1_700_000_000_000);
+
+		const res = await report(mkEnv(), id, { reason: "harassment" });
+		expect(res.status).toBe(403);
+		expect(reportRowCount(id)).toBe(0);
+		expect(fireWebhook).not.toHaveBeenCalled();
+	});
+
+	it("gives a banned reporter the same answer for a real and a bogus id", async () => {
+		// The ban gate used to run *after* the target lookup, which handed a banned
+		// caller exactly the enumeration oracle the {ok:true}-on-missing branch
+		// exists to deny: 403 meant the comment was real, {ok:true} meant it wasn't.
+		const id = await seedComment();
+		const ipHash = await hashIp(REPORTER_IP, IP_SECRET);
+		sqlite
+			.prepare(
+				"INSERT INTO users (id, provider, provider_id, name, is_banned, created_at) VALUES (?, 'anon', ?, 'Ghost', 1, ?)",
+			)
+			.run("01HGHOST0000000000000000GH", ipHash, 1_700_000_000_000);
+
+		const real = await report(mkEnv(), id);
+		const bogus = await report(mkEnv(), "01HNOSUCHCOMMENT00000000");
+		expect(real.status).toBe(403);
+		expect(bogus.status).toBe(real.status);
+		expect(await bogus.json()).toEqual(await real.json());
+	});
+
+	it("does not create a ghost row for an anonymous reporter", async () => {
+		// The ban check is read-only on purpose: reports store
+		// reporter_user_id = NULL, so minting a user row here would be a D1 write
+		// on an unauthenticated path for an identity nothing ever reads.
+		const id = await seedComment();
+		const before = (
+			sqlite.prepare("SELECT COUNT(*) AS n FROM users").get() as { n: number }
+		).n;
+		expect((await report(mkEnv(), id)).status).toBe(200);
+		expect(
+			(sqlite.prepare("SELECT COUNT(*) AS n FROM users").get() as { n: number })
+				.n,
+		).toBe(before);
+	});
+
 	it("caps an over-long reason instead of rejecting", async () => {
 		const id = await seedComment();
-		const res = await report(mkEnv(openKv()), id, { reason: "x".repeat(5000) });
+		const res = await report(mkEnv(), id, { reason: "x".repeat(5000) });
 		expect(res.status).toBe(200);
 		const row = sqlite
 			.prepare("SELECT reason FROM reports WHERE comment_id = ?")

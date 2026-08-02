@@ -14,11 +14,10 @@
  * Like comment votes, a successful write does NOT bust any cache — the widget
  * patches the DOM from the returned totals.
  */
-import { Hono, type Context } from "hono";
+import { Hono } from "hono";
 import type { Bindings } from "../index";
 import {
 	castPageVote,
-	getOrCreateGhost,
 	getPageVote,
 	listPageReactions,
 	listUserPageReactions,
@@ -26,7 +25,8 @@ import {
 	upsertPost,
 	type VoteValue,
 } from "../db/queries";
-import { clientIp, hashIp } from "../lib/ip-hash";
+import { resolveActor } from "../lib/active-user";
+import { requireIpHash } from "../lib/ip-hash";
 import { checkRateLimit } from "../lib/ratelimit";
 import { readSession } from "../lib/session";
 import { writeEvent } from "../lib/analytics";
@@ -52,17 +52,6 @@ const validateSlug = (raw: string): string | null => {
 	const slug = raw.trim();
 	if (!slug || !SLUG_RE.test(slug)) return null;
 	return slug;
-};
-
-// Resolve the acting identity: session user, else the ip_hash ghost.
-const resolveUserId = async (
-	c: Context<{ Bindings: Bindings }>,
-	ipHash: string,
-): Promise<string> => {
-	const session = await readSession(c);
-	if (session) return session.user_id;
-	const ghost = await getOrCreateGhost(c.env.DB, ipHash, "anon");
-	return ghost.id;
 };
 
 const reactionTotals = (
@@ -123,8 +112,11 @@ pageEngagement.post("/reactions", async (c) => {
 	const kind = (body.kind ?? "").trim();
 	if (!ALLOWED_KINDS.has(kind)) return c.json({ error: "invalid_kind" }, 400);
 
-	const ipHash = await hashIp(clientIp(c.req.raw), c.env.IP_HASH_SECRET);
-	const rl = await checkRateLimit(c.env, ipHash);
+	const ipHash = await requireIpHash(c);
+	if (ipHash instanceof Response) return ipHash;
+	const rl = await checkRateLimit(c.req.url, ipHash, {
+		scope: "page-reaction",
+	});
 	if (!rl.ok) {
 		writeEvent(c.env.ANALYTICS, "ratelimit.hit", {
 			outcome: rl.reason ?? null,
@@ -136,8 +128,9 @@ pageEngagement.post("/reactions", async (c) => {
 	// The post row must exist (FK). Create it lazily — a reader may react
 	// before anyone has commented.
 	await upsertPost(c.env.DB, slug, null, null);
-	const userId = await resolveUserId(c, ipHash);
-	const result = await togglePageReaction(c.env.DB, slug, userId, kind);
+	const actor = await resolveActor(c, ipHash);
+	if (!actor.ok) return c.json({ error: t("err.banned") }, 403);
+	const result = await togglePageReaction(c.env.DB, slug, actor.userId, kind);
 	const totals = reactionTotals(await listPageReactions(c.env.DB, slug));
 
 	writeEvent(c.env.ANALYTICS, "page_reaction.toggled", {
@@ -172,8 +165,9 @@ pageEngagement.post("/votes", async (c) => {
 		return c.json({ error: "downvotes_disabled" }, 403);
 	}
 
-	const ipHash = await hashIp(clientIp(c.req.raw), c.env.IP_HASH_SECRET);
-	const rl = await checkRateLimit(c.env, ipHash);
+	const ipHash = await requireIpHash(c);
+	if (ipHash instanceof Response) return ipHash;
+	const rl = await checkRateLimit(c.req.url, ipHash, { scope: "page-vote" });
 	if (!rl.ok) {
 		writeEvent(c.env.ANALYTICS, "ratelimit.hit", {
 			outcome: rl.reason ?? null,
@@ -183,8 +177,9 @@ pageEngagement.post("/votes", async (c) => {
 	}
 
 	await upsertPost(c.env.DB, slug, null, null);
-	const userId = await resolveUserId(c, ipHash);
-	const result = await castPageVote(c.env.DB, slug, userId, value);
+	const actor = await resolveActor(c, ipHash);
+	if (!actor.ok) return c.json({ error: t("err.banned") }, 403);
+	const result = await castPageVote(c.env.DB, slug, actor.userId, value);
 
 	writeEvent(c.env.ANALYTICS, "page_vote.cast", {
 		post_slug: slug,

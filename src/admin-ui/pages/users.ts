@@ -1,5 +1,5 @@
 import type { User } from "../../db/queries";
-import { escapeHtml } from "../escape";
+import { escapeHtml, jsLiteral } from "../escape";
 
 export const renderUsers = (
 	rows: User[],
@@ -25,10 +25,10 @@ export const renderUsers = (
   <td class="muted">${new Date(u.created_at).toISOString().slice(0, 10)}</td>
   <td class="actions">
     <template x-if="!banned">
-      <button :disabled="busy" class="bad" @click="busy=true; setBanned('${u.id}', true).then(()=>{banned=true}).finally(()=>busy=false)">Ban</button>
+      <button :disabled="busy" class="bad" @click="busy=true; setBanned(${jsLiteral(u.id)}, true).then(()=>{banned=true}).finally(()=>busy=false)">Ban</button>
     </template>
     <template x-if="banned">
-      <button :disabled="busy" @click="busy=true; setBanned('${u.id}', false).then(()=>{banned=false}).finally(()=>busy=false)">Unban</button>
+      <button :disabled="busy" @click="busy=true; setBanned(${jsLiteral(u.id)}, false).then(()=>{banned=false}).finally(()=>busy=false)">Unban</button>
     </template>
   </td>
 </tr>`,

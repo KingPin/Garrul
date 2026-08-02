@@ -33,9 +33,12 @@ import {
 	fetchRemote,
 	compareSemver,
 	isNewer,
+	manifestDiffKeys,
+	manifestsEqual,
 	parseSemver,
 	type Manifest,
 } from "./upgrade/manifest";
+import { plainText, releaseNotesLines } from "./upgrade/plain-text";
 import {
 	diffSecrets,
 	diffVars,
@@ -120,12 +123,16 @@ const parseReleaseResponse = (
 		typeof rawNotes === "string" && rawNotes.trim().length > 0
 			? rawNotes
 			: null;
+	// `tag` and `html_url` are printed too, so they get the same stripping as the
+	// body. The fallback URL interpolates `tag`, which is why it is cleaned here
+	// at the boundary rather than at each print site.
 	return {
-		tag,
-		url:
+		tag: plainText(tag),
+		url: plainText(
 			typeof (body as { html_url?: unknown }).html_url === "string"
-				? ((body as { html_url: string }).html_url)
+				? (body as { html_url: string }).html_url
 				: `https://github.com/${owner}/${repo}/releases/tag/${tag}`,
+		),
 		notes,
 	};
 };
@@ -177,8 +184,21 @@ const printReleaseNotes = (info: ReleaseInfo | null, tag: string): void => {
 		return;
 	}
 	console.log("");
-	for (const line of info.notes.replace(/\r\n/g, "\n").split("\n")) {
+	// The release body is attacker-controlled free text on exactly the same
+	// terms as the manifest descriptions below, and it prints FIRST — so a
+	// cursor-movement sequence here can rewrite the "Breaking changes — manual
+	// steps required" block that appears further down, before the operator ever
+	// reaches `confirm("Proceed?")`. plain-text.ts strips the escapes and caps
+	// the volume so the body can't scroll the plan out of the terminal either.
+	const { lines, truncated } = releaseNotesLines(info.notes);
+	for (const line of lines) {
 		console.log(`  ${line}`);
+	}
+	if (truncated > 0) {
+		console.log("");
+		console.log(
+			`  … ${truncated} more line(s) not shown — read the full notes at ${info.url}`,
+		);
 	}
 };
 
@@ -310,6 +330,7 @@ const applyPlan = async (
 	git: typeof gitModule,
 	fromVersion: string,
 	targetTag: string,
+	readLocal: typeof loadLocal,
 ): Promise<{ migratedNames: string[] }> => {
 	for (const k of plan.kv.missing) {
 		step(`Creating KV namespace ${k.binding}…`);
@@ -341,6 +362,46 @@ const applyPlan = async (
 	git.fetchTags(REPO_ROOT);
 	git.checkout(targetTag, REPO_ROOT);
 	stepOk(targetTag);
+
+	// The plan the operator just approved — pending migrations, new secrets,
+	// breaking changes, the renderer bump — was computed from the manifest
+	// fetched over HTTPS from raw.githubusercontent at this tag. The code about
+	// to be deployed arrived separately, over the git transport from their own
+	// remote. Nothing until now checked that the two agree.
+	//
+	// This is the last point where that's cheap to check and still means
+	// something: after this line come migrations against the production
+	// database and a deploy. Both are hard to walk back, and a migration that
+	// wasn't in the plan is the worst version of the surprise.
+	//
+	// It is not a signature, and it doesn't claim to be — an attacker who can
+	// rewrite the tag rewrites both copies. What it does catch: a tag moved
+	// between the fetch and the checkout, a stale or poisoned raw.git CDN
+	// response, a fork whose tag doesn't carry the upstream tree, and the
+	// ordinary case of a manifest that was never regenerated for the release.
+	step("Verifying checkout matches the fetched manifest…");
+	const checkedOut = readLocal(REPO_ROOT);
+	if (checkedOut === null) {
+		stepFail("no release-manifest.json in the checked-out tag");
+		throw new Error(
+			`${targetTag} has no release-manifest.json; refusing to migrate or deploy`,
+		);
+	}
+	if (!manifestsEqual(checkedOut, target)) {
+		const keys = manifestDiffKeys(checkedOut, target);
+		stepFail(`checkout disagrees with the fetched manifest (${keys.join(", ")})`);
+		console.error("");
+		console.error(
+			"!! The release-manifest.json in the checked-out tag is not the one\n" +
+				"!! this upgrade plan was built from, so the plan you approved may not\n" +
+				`!! describe what would be deployed. Differing fields: ${keys.join(", ")}\n` +
+				"!! No migrations have run and nothing has been deployed.\n" +
+				"!! Re-run `npm run upgrade`. If it persists, compare the tag against\n" +
+				"!! the repository before continuing.",
+		);
+		throw new Error("manifest mismatch between fetched plan and checkout");
+	}
+	stepOk();
 
 	step("Installing dependencies (npm ci)…");
 	wrangler.npmCi(REPO_ROOT);
@@ -527,7 +588,16 @@ export const main = async (
 		}
 	}
 
-	await applyPlan(plan, target, flags, wrangler, git, local.version, targetTag);
+	await applyPlan(
+		plan,
+		target,
+		flags,
+		wrangler,
+		git,
+		local.version,
+		targetTag,
+		readLocal,
+	);
 
 	console.log(`[upgrade] Upgraded ${local.version} → ${target.version}`);
 };

@@ -13,6 +13,7 @@ import {
 	issueSession,
 	readSession,
 	revokeSession,
+	revokeUserSessions,
 } from "../src/lib/session";
 
 class StubKV {
@@ -26,11 +27,15 @@ class StubKV {
 		}
 		return row.value;
 	}
+	// Counted so a test can prove readSession did *not* re-write the record —
+	// the sliding TTL is the reason a ban needs a revocation stamp at all.
+	puts = 0;
 	async put(
 		key: string,
 		value: string,
 		opts?: { expirationTtl?: number },
 	): Promise<void> {
+		this.puts++;
 		const ttl = opts?.expirationTtl ?? 60 * 60;
 		this.store.set(key, { value, expiresAt: Date.now() + ttl * 1000 });
 	}
@@ -82,12 +87,16 @@ describe("session cookie roundtrip", () => {
 	it("issueSession → readSession round-trips the user_id", async () => {
 		const { ctx: issueCtx, kv, setCookies } = makeCtx({});
 		await issueSession(issueCtx, userId);
-		expect(setCookies).toHaveLength(1);
+		// Two headers in production: the session cookie, then an expiry for the
+		// pre-`__Host-` name so upgraded installs don't keep a dead cookie around.
+		expect(setCookies).toHaveLength(2);
+		expect(setCookies[0]).toContain("__Host-garrul_sess=");
+		expect(setCookies[1]).toMatch(/^garrul_sess=; .*Max-Age=0/);
 		const sidValue = extractCookieValue(setCookies[0]!);
 		expect(sidValue).toMatch(/^[0-9a-f]{64}$/);
 
 		const { ctx: readCtx } = makeCtxWithSameKv(kv, {
-			cookieHeader: `garrul_sess=${sidValue}`,
+			cookieHeader: `__Host-garrul_sess=${sidValue}`,
 		});
 		const session = await readSession(readCtx);
 		expect(session?.user_id).toBe(userId);
@@ -101,7 +110,7 @@ describe("session cookie roundtrip", () => {
 
 	it("malformed percent-encoding in the cookie is treated as no session", async () => {
 		const { ctx, setCookies } = makeCtx({
-			cookieHeader: "garrul_sess=%E0%A4%A",
+			cookieHeader: "__Host-garrul_sess=%E0%A4%A",
 		});
 		expect(await readSession(ctx)).toBeNull();
 		// destroySession must not throw either — it still expires the cookie.
@@ -116,7 +125,7 @@ describe("session cookie roundtrip", () => {
 
 		// A garbage first occurrence must not stop us reaching the real sid.
 		const { ctx } = makeCtxWithSameKv(kv, {
-			cookieHeader: `garrul_sess=%E0%A4%A; garrul_sess=${sidValue}`,
+			cookieHeader: `__Host-garrul_sess=%E0%A4%A; __Host-garrul_sess=${sidValue}`,
 		});
 		await destroySession(ctx);
 		expect(kv.store.has(`sess:${sidValue}`)).toBe(false);
@@ -126,7 +135,7 @@ describe("session cookie roundtrip", () => {
 		// >512-byte KV keys throw; a too-long sid must be rejected before the
 		// delete so a corrupted cookie can't make signout un-completable.
 		const { ctx, setCookies } = makeCtx({
-			cookieHeader: `garrul_sess=${"a".repeat(600)}`,
+			cookieHeader: `__Host-garrul_sess=${"a".repeat(600)}`,
 		});
 		await destroySession(ctx);
 		expect(setCookies[0]).toMatch(/Max-Age=0/);
@@ -134,7 +143,7 @@ describe("session cookie roundtrip", () => {
 
 	it("readSession returns null for an unknown cookie value", async () => {
 		const { ctx } = makeCtx({
-			cookieHeader: "garrul_sess=deadbeef".padEnd(72, "0"),
+			cookieHeader: "__Host-garrul_sess=deadbeef".padEnd(72, "0"),
 		});
 		expect(await readSession(ctx)).toBeNull();
 	});
@@ -142,8 +151,9 @@ describe("session cookie roundtrip", () => {
 	it("destroySession emits an expiring Set-Cookie", async () => {
 		const { ctx, setCookies } = makeCtx({});
 		await destroySession(ctx);
-		expect(setCookies).toHaveLength(1);
-		expect(setCookies[0]).toMatch(/Max-Age=0/);
+		expect(setCookies).toHaveLength(2);
+		expect(setCookies[0]).toMatch(/^__Host-garrul_sess=; .*Max-Age=0/);
+		expect(setCookies[1]).toMatch(/^garrul_sess=; .*Max-Age=0/);
 	});
 
 	it("destroySession deletes the KV record so the sid cannot be replayed", async () => {
@@ -153,14 +163,14 @@ describe("session cookie roundtrip", () => {
 		expect(kv.store.has(`sess:${sidValue}`)).toBe(true);
 
 		const { ctx: signoutCtx } = makeCtxWithSameKv(kv, {
-			cookieHeader: `garrul_sess=${sidValue}`,
+			cookieHeader: `__Host-garrul_sess=${sidValue}`,
 		});
 		await destroySession(signoutCtx);
 		expect(kv.store.has(`sess:${sidValue}`)).toBe(false);
 
 		// A retained copy of the cookie is now inert server-side.
 		const { ctx: replayCtx } = makeCtxWithSameKv(kv, {
-			cookieHeader: `garrul_sess=${sidValue}`,
+			cookieHeader: `__Host-garrul_sess=${sidValue}`,
 		});
 		expect(await readSession(replayCtx)).toBeNull();
 	});
@@ -171,7 +181,7 @@ describe("session cookie roundtrip", () => {
 		const sidValue = extractCookieValue(setCookies[0]!);
 
 		const { ctx, setCookies: revokeCookies } = makeCtxWithSameKv(kv, {
-			cookieHeader: `garrul_sess=${sidValue}`,
+			cookieHeader: `__Host-garrul_sess=${sidValue}`,
 		});
 		await revokeSession(ctx);
 		expect(kv.store.has(`sess:${sidValue}`)).toBe(false);
@@ -187,7 +197,7 @@ describe("session cookie roundtrip", () => {
 		const before = kv.store.get(`sess:${sidValue}`)!.value;
 
 		const { ctx } = makeCtxWithSameKv(kv, {
-			cookieHeader: `garrul_sess=${sidValue}`,
+			cookieHeader: `__Host-garrul_sess=${sidValue}`,
 		});
 		expect((await readSession(ctx))?.user_id).toBe(userId);
 		// Fresh record is well within the refresh interval → no wasted KV write.
@@ -210,7 +220,7 @@ describe("session cookie roundtrip", () => {
 		});
 
 		const { ctx } = makeCtxWithSameKv(kv, {
-			cookieHeader: `garrul_sess=${sidValue}`,
+			cookieHeader: `__Host-garrul_sess=${sidValue}`,
 		});
 		expect((await readSession(ctx))?.user_id).toBe(userId);
 		const refreshed = JSON.parse(kv.store.get(key)!.value) as {
@@ -236,7 +246,7 @@ describe("session cookie roundtrip", () => {
 		});
 
 		const { ctx: readCtx } = makeCtxWithSameKv(kv, {
-			cookieHeader: `garrul_sess=${sidValue}`,
+			cookieHeader: `__Host-garrul_sess=${sidValue}`,
 		});
 		expect(await readSession(readCtx)).toBeNull();
 		// And the KV row is gone (so the stale cookie is inert next time too).
@@ -254,7 +264,7 @@ describe("session cookie roundtrip", () => {
 		});
 
 		const { ctx: readCtx } = makeCtxWithSameKv(kv, {
-			cookieHeader: `garrul_sess=${sidValue}`,
+			cookieHeader: `__Host-garrul_sess=${sidValue}`,
 		});
 		expect(await readSession(readCtx)).toBeNull();
 		expect(kv.store.has(key)).toBe(false);
@@ -277,6 +287,204 @@ describe("session cookie roundtrip", () => {
 		expect(sc).toMatch(/SameSite=Lax/);
 		expect(sc).not.toMatch(/Secure/);
 		expect(sc).not.toMatch(/Partitioned/);
+	});
+
+	/**
+	 * `__Host-` is what makes the browser refuse a same-name cookie set by a
+	 * sibling subdomain with a `Domain=` attribute. Without it, script on any
+	 * host under the operator's eTLD+1 can plant a session id of its choosing and
+	 * parseCookie may return that one instead — session fixation against the
+	 * documented `comments.<yourdomain>` layout.
+	 */
+	describe("__Host- prefix", () => {
+		it("prefixes the cookie in production, with the attributes the prefix requires", async () => {
+			const { ctx, setCookies } = makeCtx({ env: "prod" });
+			await issueSession(ctx, userId);
+			const sc = setCookies[0]!;
+			expect(sc.startsWith("__Host-garrul_sess=")).toBe(true);
+			expect(sc).toMatch(/Path=\//);
+			expect(sc).toMatch(/Secure/);
+			expect(sc).not.toMatch(/Domain=/);
+		});
+
+		it("drops the prefix in dev, where Secure is unavailable over plain HTTP", async () => {
+			const { ctx, setCookies } = makeCtx({ env: "dev" });
+			await issueSession(ctx, userId);
+			expect(setCookies[0]!.startsWith("garrul_sess=")).toBe(true);
+			// No legacy expiry either — dev never renamed anything.
+			expect(setCookies).toHaveLength(1);
+		});
+
+		it("ignores an unprefixed cookie in production", async () => {
+			const { ctx: issueCtx, kv, setCookies } = makeCtx({ env: "prod" });
+			await issueSession(issueCtx, userId);
+			const sidValue = extractCookieValue(setCookies[0]!);
+
+			// Exactly the shape a sibling subdomain can plant. Accepting it as a
+			// fallback would keep the fixation path open, so it must not resolve
+			// even though the sid itself is real.
+			const { ctx } = makeCtxWithSameKv(kv, {
+				cookieHeader: `garrul_sess=${sidValue}`,
+			});
+			expect(await readSession(ctx)).toBeNull();
+		});
+
+		it("still resolves the prefixed cookie when an unprefixed one is also present", async () => {
+			const { ctx: issueCtx, kv, setCookies } = makeCtx({ env: "prod" });
+			await issueSession(issueCtx, userId);
+			const sidValue = extractCookieValue(setCookies[0]!);
+
+			const { ctx } = makeCtxWithSameKv(kv, {
+				cookieHeader: `garrul_sess=deadbeef; __Host-garrul_sess=${sidValue}`,
+			});
+			expect((await readSession(ctx))?.user_id).toBe(userId);
+		});
+	});
+});
+
+/**
+ * Session revocation on ban. There is no reverse index from user to sessions, so
+ * a ban stamps a per-user epoch and readSession compares it to the session's
+ * immutable `issued_at`.
+ */
+describe("session revocation epoch", () => {
+	const userId = "01HXXXXXXXXXXXXXXXXXXXXXXX";
+
+	// Rewrite the stored record's issued_at so the before/after relationship to a
+	// revocation stamp is deterministic — a real ban and a real login can land in
+	// the same millisecond.
+	const setIssuedAt = (kv: StubKV, sid: string, issuedAt: number): void => {
+		const key = `sess:${sid}`;
+		const row = kv.store.get(key)!;
+		const record = JSON.parse(row.value) as Record<string, unknown>;
+		record.issued_at = issuedAt;
+		kv.store.set(key, {
+			value: JSON.stringify(record),
+			expiresAt: row.expiresAt,
+		});
+	};
+
+	const issue = async (): Promise<{ kv: StubKV; sid: string }> => {
+		const { ctx, kv, setCookies } = makeCtx({});
+		await issueSession(ctx, userId);
+		return { kv, sid: extractCookieValue(setCookies[0]!) };
+	};
+
+	it("issueSession stamps an issued_at that never moves", async () => {
+		const { kv, sid } = await issue();
+		const record = JSON.parse(kv.store.get(`sess:${sid}`)!.value) as {
+			issued_at: number;
+			expires_at: number;
+		};
+		expect(record.issued_at).toBeGreaterThan(0);
+		expect(record.expires_at).toBeGreaterThan(record.issued_at);
+	});
+
+	it("rejects a session issued before the ban and deletes its record", async () => {
+		const { kv, sid } = await issue();
+		setIssuedAt(kv, sid, Date.now() - 5_000);
+		await revokeUserSessions({ SESSIONS: kv as unknown as KVNamespace }, userId);
+
+		const { ctx } = makeCtxWithSameKv(kv, {
+			cookieHeader: `__Host-garrul_sess=${sid}`,
+		});
+		expect(await readSession(ctx)).toBeNull();
+		// Purged, so the cookie is inert without paying the extra read next time.
+		expect(kv.store.has(`sess:${sid}`)).toBe(false);
+	});
+
+	it("keeps a session issued after the ban (re-login after unban)", async () => {
+		const { ctx: issueCtx, kv, setCookies } = makeCtx({});
+		// Stamp first, dated in the past, then log in.
+		await kv.put(`sessrev:${userId}`, String(Date.now() - 5_000));
+		await issueSession(issueCtx, userId);
+		const sid = extractCookieValue(setCookies[0]!);
+
+		const { ctx } = makeCtxWithSameKv(kv, {
+			cookieHeader: `__Host-garrul_sess=${sid}`,
+		});
+		expect((await readSession(ctx))?.user_id).toBe(userId);
+		expect(kv.store.has(`sess:${sid}`)).toBe(true);
+	});
+
+	it("kills a legacy record that predates issued_at", async () => {
+		const { kv, sid } = await issue();
+		const key = `sess:${sid}`;
+		const row = kv.store.get(key)!;
+		// Exactly the shape written before this field existed.
+		kv.store.set(key, {
+			value: JSON.stringify({
+				user_id: userId,
+				expires_at: Date.now() + 29 * 24 * 60 * 60 * 1000,
+			}),
+			expiresAt: row.expiresAt,
+		});
+		await revokeUserSessions({ SESSIONS: kv as unknown as KVNamespace }, userId);
+
+		const { ctx } = makeCtxWithSameKv(kv, {
+			cookieHeader: `__Host-garrul_sess=${sid}`,
+		});
+		expect(await readSession(ctx)).toBeNull();
+		expect(kv.store.has(key)).toBe(false);
+	});
+
+	it("fails closed on an unparseable stamp", async () => {
+		const { kv, sid } = await issue();
+		await kv.put(`sessrev:${userId}`, "not-a-timestamp");
+
+		const { ctx } = makeCtxWithSameKv(kv, {
+			cookieHeader: `__Host-garrul_sess=${sid}`,
+		});
+		expect(await readSession(ctx)).toBeNull();
+		expect(kv.store.has(`sess:${sid}`)).toBe(false);
+	});
+
+	it("does not slide the TTL of a session it is about to revoke", async () => {
+		const { kv, sid } = await issue();
+		const key = `sess:${sid}`;
+		const row = kv.store.get(key)!;
+		// Age it past the refresh interval so an unrevoked read *would* re-write.
+		kv.store.set(key, {
+			value: JSON.stringify({
+				user_id: userId,
+				issued_at: Date.now() - 2 * 24 * 60 * 60 * 1000,
+				expires_at: Date.now() + (30 - 2) * 24 * 60 * 60 * 1000,
+			}),
+			expiresAt: row.expiresAt,
+		});
+		await revokeUserSessions({ SESSIONS: kv as unknown as KVNamespace }, userId);
+		const putsBefore = kv.puts;
+
+		const { ctx } = makeCtxWithSameKv(kv, {
+			cookieHeader: `__Host-garrul_sess=${sid}`,
+		});
+		expect(await readSession(ctx)).toBeNull();
+		// A revoked session must never cost a KV write on its way out.
+		expect(kv.puts).toBe(putsBefore);
+	});
+
+	it("a stamp for another user leaves this session alone", async () => {
+		const { kv, sid } = await issue();
+		setIssuedAt(kv, sid, Date.now() - 5_000);
+		await revokeUserSessions(
+			{ SESSIONS: kv as unknown as KVNamespace },
+			"01HOTHERUSER00000000000000",
+		);
+
+		const { ctx } = makeCtxWithSameKv(kv, {
+			cookieHeader: `__Host-garrul_sess=${sid}`,
+		});
+		expect((await readSession(ctx))?.user_id).toBe(userId);
+	});
+
+	it("the stamp expires with the longest possible session", async () => {
+		const { kv } = await issue();
+		await revokeUserSessions({ SESSIONS: kv as unknown as KVNamespace }, userId);
+		const row = kv.store.get(`sessrev:${userId}`)!;
+		// 30 days — a stamp outliving every session it could revoke is dead weight.
+		expect(row.expiresAt).toBeGreaterThan(
+			Date.now() + 29 * 24 * 60 * 60 * 1000,
+		);
 	});
 });
 

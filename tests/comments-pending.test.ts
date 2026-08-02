@@ -14,16 +14,13 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { Hono } from "hono";
 import { comments } from "../src/routes/api.comments";
-import {
-	installMockCaches,
-	uninstallMockCaches,
-	type MockCache,
-} from "./helpers/mock-caches";
+import { installMockCaches, uninstallMockCaches } from "./helpers/mock-caches";
 import type { Bindings } from "../src/index";
 
-let mockCache: MockCache;
+// Installed for the side effect: the routes under test reach for
+// `caches.default`, which does not exist in the node pool.
 beforeEach(() => {
-	mockCache = installMockCaches();
+	installMockCaches();
 });
 afterEach(() => uninstallMockCaches());
 
@@ -71,6 +68,10 @@ const mkRow = (id: string, user_id: string, status: string, at: number): Row => 
 	score_down: 0,
 });
 
+// ADMIN exists so a test can prove the *stored* privilege flags never reach the
+// public payload — the row says admin, the JSON must not.
+const ADMIN = "01HU000000000000000002";
+
 const userRow = (id: string) => ({
 	id,
 	provider: "anon",
@@ -78,9 +79,9 @@ const userRow = (id: string) => ({
 	name: id,
 	email: null,
 	avatar_url: null,
-	is_admin: 0,
+	is_admin: id === ADMIN ? 1 : 0,
 	is_banned: 0,
-	role: "user",
+	role: id === ADMIN ? "admin" : "user",
 	created_at: 1_700_000_000_000,
 });
 
@@ -178,7 +179,13 @@ const mkEnv = (approved: Row[], pending: Row[]) =>
 		SESSIONS: makeSessions(),
 	}) as unknown as Bindings;
 
-type ListResp = { threads: { id: string; status: string }[] };
+type ListResp = {
+	threads: {
+		id: string;
+		status: string;
+		author: Record<string, unknown>;
+	}[];
+};
 
 const get = async (env: Bindings, cookie?: string): Promise<ListResp> => {
 	const app = new Hono<{ Bindings: Bindings }>().route("/", comments);
@@ -198,7 +205,7 @@ describe("GET /comments — own pending visibility", () => {
 
 	it("shows the author their own pending comment", async () => {
 		const env = mkEnv(approved, pending);
-		const page = await get(env, `garrul_sess=${SID_AUTHOR}`);
+		const page = await get(env, `__Host-garrul_sess=${SID_AUTHOR}`);
 		const ids = page.threads.map((t) => t.id);
 		expect(ids).toContain("01HUPENDING00000000000");
 		const node = page.threads.find((t) => t.id === "01HUPENDING00000000000");
@@ -207,7 +214,7 @@ describe("GET /comments — own pending visibility", () => {
 
 	it("does NOT show a pending comment to a different signed-in user", async () => {
 		const env = mkEnv(approved, pending);
-		const page = await get(env, `garrul_sess=${SID_OTHER}`);
+		const page = await get(env, `__Host-garrul_sess=${SID_OTHER}`);
 		const ids = page.threads.map((t) => t.id);
 		expect(ids).not.toContain("01HUPENDING00000000000");
 	});
@@ -218,5 +225,21 @@ describe("GET /comments — own pending visibility", () => {
 		const ids = page.threads.map((t) => t.id);
 		expect(ids).not.toContain("01HUPENDING00000000000");
 		expect(ids).toContain("01HUAPPROVED0000000000");
+	});
+});
+
+describe("GET /comments — the payload withholds author privilege flags", () => {
+	// `role` was always withheld; `is_admin` was the same fact under an older
+	// name and shipped to every anonymous reader, which is a free map of which
+	// accounts are worth attacking. Assert on the serialized JSON rather than the
+	// top-level object so a nested reply can't reintroduce it unnoticed.
+	it("omits is_admin even when the stored row has it set", async () => {
+		const approved = [mkRow("01HUADMINPOST000000000", ADMIN, "approved", 1000)];
+		const page = await get(mkEnv(approved, []));
+		const node = page.threads[0]!;
+		expect(node.author.name).toBe(ADMIN);
+		expect(node.author).not.toHaveProperty("is_admin");
+		expect(node.author).not.toHaveProperty("role");
+		expect(JSON.stringify(page)).not.toContain("is_admin");
 	});
 });

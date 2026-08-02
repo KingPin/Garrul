@@ -206,7 +206,18 @@ const CACHE_KEY_NUMBERS = "settings:numbers";
 // cuts that steady-state KV write rate; it's safe because the admin save path
 // busts the key (bustFlagsCache/bustNumbersCache), so a real change still takes
 // effect promptly rather than waiting out the TTL.
-const CACHE_TTL_SEC = 300;
+//
+// The arithmetic behind the value: KV free tier is 1000 writes/day *account
+// wide*. At 300s these two keys re-populate 288 times/day per colo, so a
+// modest three-colo footprint was already spending ~576 of that budget doing
+// nothing but re-deriving settings that hadn't changed. At 3600s that's 24
+// per key per colo — ~48 for the same three colos.
+//
+// The only cost is staleness on a path that *doesn't* bust: an operator
+// editing an env var and redeploying. A deploy doesn't clear KV, so the old
+// value can survive up to an hour. That's documented in AGENTS-OPERATE.md;
+// changing a setting through the admin UI is unaffected.
+const CACHE_TTL_SEC = 3600;
 
 // Defaults-on/off boolish parse: present + falsy → false; anything else
 // non-empty → true. Mirrors api.votes.ts / api.config.ts semantics so the

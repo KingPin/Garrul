@@ -17,15 +17,13 @@ import {
 	buildAuthorizeUrl,
 	callbackUrl,
 	computeCodeChallenge,
-	constantTimeEqual,
 	consumeHandoff,
-	consumeState,
 	exchangeCodeForToken,
 	genCodeVerifier,
 	isProvider,
 	issueHandoff,
 	issueState,
-	randomHex,
+	verifyState,
 } from "../lib/oauth";
 import { upsertOauthUser } from "../db/queries";
 import {
@@ -40,14 +38,24 @@ import {
 import { writeEvent } from "../lib/analytics";
 import { log } from "../lib/log";
 
-// Per-flow cookie naming: the suffix is the first 8 hex chars of the
-// (48-hex-char) state token, which gives 32 bits of disambiguation
-// between concurrent OAuth flows in the same browser. Without this,
-// two tabs would clobber a single global cookie and only the most-
-// recently-started flow could complete; the other tab's /callback
-// would always fail with "invalid state".
+// Per-flow cookie: holds the whole signed state payload (lib/oauth issueState).
+// The name's suffix is the first 8 hex chars of the (48-hex-char) state token,
+// which gives 32 bits of disambiguation between concurrent OAuth flows in the
+// same browser. Without this, two tabs would clobber a single global cookie and
+// only the most-recently-started flow could complete; the other tab's /callback
+// would always fail with "invalid state". The full state is compared inside the
+// signed payload, so the truncated name is only a bucket, never the check.
 const OAUTH_BIND_COOKIE_PREFIX = "garrul_oauth_b_";
 const OAUTH_BIND_TTL_SECONDS = 600;
+
+// `state` is always 48 lowercase hex chars (randomState in lib/oauth). Check
+// that on the way back in, *before* the value reaches bindCookieName: the first
+// 8 chars land in a Set-Cookie **name**, where a `;` or `=` would let an
+// unauthenticated caller append attributes to that header (a cookie-planting
+// primitive), a control character would make the runtime reject the header
+// outright, and an over-long value would just be a logged 500. verifyState
+// catches a wrong state, but only after it has already been interpolated.
+const STATE_RE = /^[0-9a-f]{48}$/;
 
 const bindCookieName = (state: string): string =>
 	`${OAUTH_BIND_COOKIE_PREFIX}${state.slice(0, 8)}`;
@@ -106,25 +114,25 @@ auth.get("/:provider/start", async (c) => {
 		// rawReturn was malformed; leave return_origin empty.
 	}
 
-	// Double-submit cookie binds the OAuth flow to this browser. /callback
-	// requires the cookie value to equal the payload value; without it an
-	// attacker can mint state+code in their own session and trick a victim's
-	// browser into completing the callback, planting the attacker's
-	// session on the victim (RFC 6749 §10.12 login-CSRF).
-	const browser_token = randomHex(16);
-	// PKCE: providers that require it (X/Twitter) get a per-flow verifier
-	// stashed server-side in the state payload and an S256 challenge in the
-	// authorize redirect. Non-PKCE providers (GitHub/Google/Facebook/Discord)
-	// skip this entirely.
+	// PKCE: providers that require it (X/Twitter) get a per-flow verifier and
+	// an S256 challenge in the authorize redirect. Non-PKCE providers
+	// (GitHub/Google/Facebook/Discord) skip this entirely.
 	const code_verifier = cfg.pkce ? genCodeVerifier() : undefined;
 	const code_challenge = code_verifier
 		? await computeCodeChallenge(code_verifier)
 		: undefined;
-	const state = await issueState(c.env.OAUTH_STATE, {
+
+	// The flow's entire state is a signed payload in a per-flow cookie — no
+	// server-side write, which is what stops this unauthenticated route from
+	// being an account-wide KV-quota exhaustion primitive (see issueState).
+	// The cookie is also what binds the flow to THIS browser: an attacker can
+	// mint state+code in their own session but cannot plant the matching
+	// cookie in a victim's browser, so they can't trick the victim into
+	// completing the callback and landing on the attacker's session
+	// (RFC 6749 §10.12 login-CSRF).
+	const { state, token } = await issueState(c.env.JWT_SECRET, {
 		provider,
 		return_origin,
-		created_at: Date.now(),
-		browser_token,
 		...(code_verifier ? { code_verifier } : {}),
 	});
 
@@ -132,7 +140,7 @@ auth.get("/:provider/start", async (c) => {
 		"Set-Cookie",
 		buildShortCookie(
 			bindCookieName(state),
-			browser_token,
+			token,
 			OAUTH_BIND_TTL_SECONDS,
 			c.env,
 		),
@@ -208,36 +216,31 @@ auth.get("/:provider/callback", async (c) => {
 	const code = c.req.query("code");
 	const state = c.req.query("state");
 	if (!code || !state) return c.text("missing code/state", 400);
+	// Same generic message verifyState failures get — a malformed state is not
+	// worth a distinguishable answer.
+	if (!STATE_RE.test(state)) return c.text("invalid state", 400);
 
+	// The signed payload lives in this flow's cookie. verifyState checks the
+	// signature, the 10-minute age bound, the provider, and — in constant
+	// time — that the payload is bound to the `state` the provider echoed
+	// back. One generic error for every failure: don't tell the attacker
+	// which check tripped.
 	const cookieName = bindCookieName(state);
-	const payload = await consumeState(c.env.OAUTH_STATE, state);
-	if (!payload || payload.provider !== provider) {
+	const stateToken = parseCookie(c.req.header("cookie"), cookieName);
+	const payload = stateToken
+		? await verifyState(c.env.JWT_SECRET, stateToken, { provider, state })
+		: null;
+	if (!payload) {
 		c.header("Set-Cookie", clearShortCookie(cookieName, c.env), {
 			append: true,
 		});
 		return c.text("invalid state", 400);
 	}
 
-	// Double-submit binding: the cookie set at /start must match the value
-	// stored in the consumed state payload. Same generic error message as
-	// above — don't tell the attacker which check failed. Compare in
-	// constant time to avoid leaking the token byte-by-byte through
-	// response-time differences.
-	const browserToken = parseCookie(c.req.header("cookie"), cookieName);
-	if (
-		!payload.browser_token ||
-		!browserToken ||
-		!constantTimeEqual(browserToken, payload.browser_token)
-	) {
-		c.header("Set-Cookie", clearShortCookie(cookieName, c.env), {
-			append: true,
-		});
-		return c.text("invalid state", 400);
-	}
-
-	// Clear this flow's binding cookie on every path past this point. Other
-	// concurrent flows' cookies are scoped to their own state suffix and
-	// remain intact.
+	// Clear this flow's cookie on every path past this point — that clear is
+	// what makes the state single-use now that nothing is consumed from
+	// storage. Other concurrent flows' cookies are scoped to their own state
+	// suffix and remain intact.
 	c.header("Set-Cookie", clearShortCookie(cookieName, c.env), {
 		append: true,
 	});
@@ -333,6 +336,11 @@ auth.post("/session/exchange", async (c) => {
 	}
 	const userId = await consumeHandoff(c.env.OAUTH_STATE, token);
 	if (!userId) return c.json({ error: "err.token.invalid" }, 400);
+	// Same reason /callback does it two functions up: without this, the sid this
+	// browser already holds stays live and replayable in KV for its full 30 days,
+	// so "sign out everywhere by signing in again" silently failed for every
+	// widget user — which is the only path that reaches this route.
+	await revokeSession(c);
 	await issueSession(c, userId);
 	return c.json({ ok: true });
 });

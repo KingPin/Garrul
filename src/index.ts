@@ -22,10 +22,18 @@ import { runTelegramDigest } from "./lib/telegram-digest";
 import { runWebhookRetries } from "./lib/webhook";
 import { log, requestLogger } from "./lib/log";
 import { corsAndCsrf } from "./lib/cors";
+import { jsonBodyLimit } from "./lib/body-limit";
+import { requireConfig } from "./lib/require-config";
 import { sessionMiddleware } from "./lib/session";
 
 export type Bindings = {
 	DB: D1Database;
+	// Named for its original use; the rate limiter moved to the Cache API
+	// (see lib/ratelimit.ts) because KV's 1000 writes/day is account-wide and
+	// the limiter writes on every allowed request. Today this namespace only
+	// holds the optional Workers-AI spam verdict cache. Kept bound so existing
+	// deployments need no binding change — same historical reason TREE_CACHE
+	// still exists after the response cache moved to the Cache API.
 	RATE_LIMITS: KVNamespace;
 	OAUTH_STATE: KVNamespace;
 	SESSIONS: KVNamespace;
@@ -182,6 +190,12 @@ app.use("*", async (c, next) => {
 	await next();
 });
 
+// Refuse to serve a deployment that's missing a secret nothing works without.
+// Placed here so it fires before any route, cache lookup or D1 query. See
+// src/lib/require-config.ts for which secrets qualify and why Turnstile isn't
+// one of them.
+app.use("*", requireConfig());
+
 // Global security headers. Cheap to set and shrinks the attack surface
 // independent of which route serves the response. Admin's stricter CSP
 // in src/routes/admin.ts is set after this and is not affected.
@@ -195,6 +209,12 @@ app.use("*", async (c, next) => {
 //     iframe surface host sites legitimately frame. /embed.js (the
 //     script bundle) lives at the root, not under /embed/, so it
 //     correctly gets DENY (scripts aren't framable anyway).
+//     The skip cannot be narrowed further: XFO has no allowlist form
+//     (ALLOW-FROM is dead in every current browser), so DENY here would
+//     break the feature outright. Those routes instead emit their own
+//     CSP frame-ancestors built from ALLOWED_ORIGINS — see
+//     src/routes/embed-iframe.ts. Setting both would be worse than
+//     setting one: browsers disagree on which wins.
 app.use("*", async (c, next) => {
 	await next();
 	c.header("strict-transport-security", "max-age=63072000; includeSubDomains; preload");
@@ -208,6 +228,12 @@ app.use("*", async (c, next) => {
 		c.header("x-frame-options", "DENY");
 	}
 });
+
+// Body size cap, ahead of every route that parses one. Registered globally
+// rather than per-surface so a new route can't be added without it; requests
+// with no body fall straight through. See src/lib/body-limit.ts for the
+// import-disqus exemption and why it's keyed on path, not content-type.
+app.use("*", jsonBodyLimit());
 
 app.use("/api/*", corsAndCsrf());
 app.use("/api/*", sessionMiddleware());

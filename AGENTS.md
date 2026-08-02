@@ -285,9 +285,19 @@ see AGENTS-OPERATE.md §5) control the volume:
   **3**) start folded so a hot deep thread doesn't shove the page down. `0` =
   never auto-collapse.
 
-Reply collapsing is **purely client-side** — all replies still arrive in the
-single list response; the widget folds them. There is no `data-*` per-page
-override; these are instance-wide. The new affordances inherit the existing
+- **Reply depth cap.** A reply nested more than **8** levels deep is rejected
+  server-side with HTTP 400 and `err.parent.too_deep`. The widget already hides
+  the reply button below the flatten threshold, so this is invisible in normal
+  use — it exists because an unbounded chain made the whole thread
+  un-renderable. Existing deeper rows (from a Disqus import, say) still render;
+  they just can't be replied to.
+
+Reply collapsing is **purely client-side** — the replies arrive in the single
+list response and the widget folds them. There is no `data-*` per-page
+override; these are instance-wide. One backstop applies to that response: a
+single page of the tree pulls at most 2000 rows out of the database, and a
+thread past that is truncated (and logged) rather than allowed to time the
+request out. Real threads don't reach it. The new affordances inherit the existing
 theming variables — the collapse toggle from `--garrul-muted`, the
 "Show N more replies" / "Load older comments" buttons from `--garrul-link`
 (see `docs/THEMING.md`).
@@ -382,8 +392,12 @@ route and listen for height messages:
 
 Route: `{{INSTANCE_URL}}/embed/:slug`. Pass `parent_origin` so the
 Worker `postMessage`s height updates to a known target instead of `"*"`.
-The iframe variant gives up host-page CSS-variable theming (the iframe
-is a separate document) but inherits everything else.
+**The origin you pass must be listed in the Worker's `ALLOWED_ORIGINS`**
+— anything else gets no `postMessage` at all, and there is no
+`document.referrer` fallback. That same list is what the page's CSP
+`frame-ancestors` permits, so an unlisted host can't frame `/embed/*`
+either. The iframe variant gives up host-page CSS-variable theming (the
+iframe is a separate document) but inherits everything else.
 
 ## 7. Authentication flow
 
@@ -417,10 +431,14 @@ top-level navigation. The callback then redirects the user back to
 `ALLOWED_ORIGINS` allowlist). This is expected behavior — don't try to
 "fix" it by removing the popup or the redirect fallback.
 
-**Session cookie**: `garrul_sess`, 32 random bytes, `HttpOnly; Secure;
-SameSite=None; Partitioned`. KV-backed lookup, 30-day TTL refreshed on
-use. No JWT. The `Partitioned` flag is required for cross-site embeds
-to work in Chrome's 3PC phase-out and Safari ITP — don't strip it.
+**Session cookie**: `__Host-garrul_sess`, 32 random bytes, `HttpOnly;
+Secure; SameSite=None; Partitioned; Path=/`. KV-backed lookup, 30-day TTL
+refreshed on use. No JWT. The `Partitioned` flag is required for
+cross-site embeds to work in Chrome's 3PC phase-out and Safari ITP —
+don't strip it. The `__Host-` prefix binds the cookie to the exact host
+that set it, so a sibling subdomain can't plant a session id; it needs
+`Secure` and `Path=/`, which is why a `wrangler dev` instance over plain
+HTTP uses the unprefixed `garrul_sess` instead.
 
 **Endpoints integrators may call client-side**: `GET /api/v1/auth/me`
 returns the current session user (or `{user:null}`); `POST
@@ -489,8 +507,8 @@ email + avatar + provider ID.
 
 Cookies set by Garrul:
 
-- `garrul_sess` — session lookup ID. `HttpOnly; Secure;
-  SameSite=None; Partitioned`. No tracking cookies are set.
+- `__Host-garrul_sess` — session lookup ID. `HttpOnly; Secure;
+  SameSite=None; Partitioned; Path=/`. No tracking cookies are set.
 
 For the operator-facing privacy posture (retention policy, deletion
 flow, Cloudflare/Resend subprocessor disclosure, GDPR/COPPA notes),
@@ -534,6 +552,14 @@ If the host site sets a CSP, allow the Worker origin in:
 - `img-src` and `style-src` are fine as-is; the widget uses its
   Shadow DOM stylesheet and renders avatars inline as SVG or via the
   OAuth provider's CDN (covered by `img-src https:` or similar).
+
+The Worker enforces the mirror image of that last bullet: both `/embed/*`
+pages send their own CSP `frame-ancestors` built from `ALLOWED_ORIGINS`,
+so **a host site must be in `ALLOWED_ORIGINS` to frame them at all** —
+in either mode, since the script-tag embed also mounts the Turnstile
+frame. A missing entry shows up as a browser console refusal to frame,
+not an HTTP error. (Under `ENV=dev` framing is unrestricted, matching the
+CORS gate.)
 
 ### Comment counts on listing pages
 

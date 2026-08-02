@@ -27,16 +27,35 @@ export const TREE_CACHE_TTL = 60; // seconds
 export type CommentSort = "new" | "top";
 
 /**
- * Cache-key Request for a first-page response. `reqUrl` is the handling
+ * Cache-key Request for one page of a comment tree. `reqUrl` is the handling
  * request's URL (`c.req.url`); only its origin is used, so the key lands on the
  * Worker's own in-zone host (see response-cache.ts/cacheKey).
+ *
+ * `cursor` is the CANONICALLY re-encoded cursor for the page, or null for the
+ * first page. Passing the raw query value would let cosmetic variations mint
+ * distinct entries for the same page.
+ *
+ * Cursor pages were previously uncacheable, which turned `?before=<any valid
+ * ULID>` into a guaranteed cache bypass on an unbounded query. They are cached
+ * now, and `bustTreeCache` below cannot reach them — the Cache API can't be
+ * listed, so only the enumerable first-page keys are dropped on a mutation and
+ * deeper pages rely on TREE_CACHE_TTL. That is the right trade: a new comment
+ * lands on page one for `new` sort, and staleness on page four for up to a
+ * minute is invisible next to sending every such request to D1.
  */
 export const treeCacheKey = (
 	reqUrl: string,
 	slug: string,
 	sort: CommentSort,
 	pageSize: number,
-): Request => cacheKey(reqUrl, "tree-first", { slug, sort, n: pageSize });
+	cursor: string | null = null,
+): Request =>
+	cacheKey(reqUrl, "tree-first", {
+		slug,
+		sort,
+		n: pageSize,
+		...(cursor ? { cursor } : {}),
+	});
 
 /**
  * Drop a slug's cached first pages (both sorts, current page size) in the

@@ -188,14 +188,6 @@ const isError = <T>(v: T | { __error: string }): v is { __error: string } =>
 
 // -- Workers requests --------------------------------------------------------
 
-type WorkersResult = {
-	viewer: {
-		accounts: {
-			workersInvocationsAdaptive: { sum: { requests: number } }[];
-		}[];
-	};
-};
-
 const fetchWorkers = async (
 	token: string,
 	accountId: string,

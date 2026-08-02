@@ -73,7 +73,6 @@ import {
 	type AdminAction,
 	type AuditTargetKind,
 	type CommentStatus,
-	type SavedReply,
 	type SavedReplyScope,
 	type User,
 	type UserRole,
@@ -84,6 +83,7 @@ import { fireWebhook, type WebhookEvent } from "../lib/webhook";
 import {
 	banUser,
 	type CommentAction,
+	eraseUser,
 	moderateComment,
 	resolveReports,
 } from "../lib/moderation";
@@ -121,6 +121,7 @@ import {
 	numberBounds,
 } from "../lib/settings";
 import { bustTreeCache } from "../lib/tree-cache";
+import { MAX_REPLY_DEPTH } from "../lib/tree";
 import {
 	renderWebhookForm,
 	renderWebhooksList,
@@ -146,6 +147,7 @@ import { rerenderBatch, rerenderStats } from "../db/rerender";
 import { runSeedDemo } from "../db/seed-demo";
 import { renderConfirmEmailHtml } from "../lib/digest";
 import { sendEmail } from "../lib/email";
+import { fillSubject, subjectTitle } from "../lib/post-title";
 import { t } from "../i18n";
 
 const admin = new Hono<{ Bindings: Bindings }>();
@@ -220,6 +222,11 @@ admin.use("*", async (c, next) => {
 	c.header("x-content-type-options", "nosniff");
 	c.header("referrer-policy", "no-referrer");
 	c.header("x-frame-options", "DENY");
+	// Every admin response is per-moderator data: queue contents, user emails,
+	// audit trails, webhook secrets. Without this it lands in the browser's disk
+	// cache and bfcache, so it survives sign-out and is readable by the next
+	// person on the machine. `no-store` also keeps it out of any intermediary.
+	c.header("cache-control", "no-store, max-age=0");
 
 	// Same-origin CSRF defense for admin POSTs. The Origin header on
 	// admin actions must match the request URL's origin — there is no
@@ -951,7 +958,12 @@ type WebhookBody = {
 
 type WebhookFields = {
 	url: string;
-	secret: string | null;
+	// Three-state, and the distinction matters: absent = leave whatever is
+	// stored alone, null = clear the secret, string = set it. The edit form no
+	// longer prefills the stored value (it's write-only), so a two-state
+	// `string | null` would silently unsign every endpoint on the next save.
+	// updateWebhookEndpoint already skips keys that are undefined.
+	secret?: string | null | undefined;
 	events: string[] | null;
 	adapter: WebhookAdapter;
 	enabled: boolean;
@@ -1004,8 +1016,13 @@ const parseWebhookBody = (
 		if (!safe.ok) return { ok: false, error: `url:${safe.reason}` };
 	}
 
-	let secret: string | null = null;
-	if (body.secret !== undefined && body.secret !== null && body.secret !== "") {
+	// undefined stays undefined all the way to the UPDATE, which is what keeps a
+	// blank field on the edit form from wiping a secret the form can no longer
+	// show. An explicit null (the "remove signing" button) still clears it.
+	let secret: string | null | undefined;
+	if (body.secret === null) {
+		secret = null;
+	} else if (body.secret !== undefined && body.secret !== "") {
 		if (typeof body.secret !== "string") {
 			return { ok: false, error: "secret_invalid" };
 		}
@@ -1049,7 +1066,11 @@ admin.post("/api/webhooks", async (c) => {
 	if (!body) return c.json({ error: "invalid_body" }, 400);
 	const parsed = parseWebhookBody(body, c.env);
 	if (!parsed.ok) return c.json({ error: parsed.error }, 400);
-	const created = await createWebhookEndpoint(c.env.DB, parsed.fields);
+	// On create there is nothing to preserve, so "absent" collapses to "unsigned".
+	const created = await createWebhookEndpoint(c.env.DB, {
+		...parsed.fields,
+		secret: parsed.fields.secret ?? null,
+	});
 	await adminInsertAudit(c.env.DB, {
 		admin_id: user.id,
 		action: "webhook.create",
@@ -1087,8 +1108,15 @@ admin.patch("/api/webhooks/:id", async (c) => {
 			url: parsed.fields.url,
 			adapter: parsed.fields.adapter,
 			enabled: parsed.fields.enabled,
-			has_secret: parsed.fields.secret != null,
-			secret_rotated: parsed.fields.secret !== existing.secret,
+			// An absent secret leaves the stored one in place, so report the
+			// effective state rather than what the request happened to carry.
+			has_secret:
+				(parsed.fields.secret === undefined
+					? existing.secret
+					: parsed.fields.secret) != null,
+			secret_rotated:
+				parsed.fields.secret !== undefined &&
+				parsed.fields.secret !== existing.secret,
 			events: parsed.fields.events,
 		},
 	});
@@ -1414,6 +1442,12 @@ admin.post("/api/saved-replies/:id/post", async (c) => {
 	if (rawBody.length > SAVED_REPLY_BODY_MAX) {
 		return c.json({ error: "body_too_long" }, 400);
 	}
+	// The nesting cap applies to moderators too: the O(N^2) tree-assembly cost
+	// it guards doesn't care who created the chain. Reply higher up instead.
+	const depth = target.depth + 1;
+	if (depth > MAX_REPLY_DEPTH) {
+		return c.json({ error: "thread_too_deep" }, 400);
+	}
 	const body_html = renderMarkdown(rawBody);
 	const inserted = await insertComment(c.env.DB, {
 		post_slug: target.post_slug,
@@ -1425,6 +1459,7 @@ admin.post("/api/saved-replies/:id/post", async (c) => {
 		status: "approved",
 		ip_hash: null,
 		user_agent: null,
+		depth,
 	});
 	await adminInsertAudit(c.env.DB, {
 		admin_id: user.id,
@@ -1629,6 +1664,38 @@ admin.post("/api/users/:id", async (c) => {
 	return c.json({ ok: true, id: result.id, banned: result.banned });
 });
 
+/**
+ * Erase a user's personal data. Irreversible, so the body has to carry an
+ * explicit `confirm: "ERASE"` alongside the flag — a bare POST to this URL does
+ * nothing. Guards on self / other-admins live in `eraseUser`.
+ */
+admin.post("/api/users/:id/erase", async (c) => {
+	const user = await requireAdmin(c);
+	if (user instanceof Response) return user;
+	const id = c.req.param("id");
+	const body = await c.req
+		.json<{ confirm?: unknown; redact_bodies?: unknown; reason?: string }>()
+		.catch(() => null);
+	if (!body || body.confirm !== "ERASE") {
+		return c.json({ error: "confirmation_required" }, 400);
+	}
+	if (typeof body.redact_bodies !== "boolean") {
+		return c.json({ error: "invalid_body" }, 400);
+	}
+	const result = await eraseUser({
+		env: c.env,
+		reqUrl: c.req.url,
+		adminId: user.id,
+		userId: id,
+		redactBodies: body.redact_bodies,
+		reason: body.reason ?? null,
+	});
+	if (!result.ok) {
+		return c.json({ error: result.error }, result.error === "not_found" ? 404 : 400);
+	}
+	return c.json({ ok: true, id: result.id, counts: result.counts });
+});
+
 export const roleAuditAction = (
 	from: UserRole,
 	to: UserRole,
@@ -1746,17 +1813,18 @@ admin.post("/api/subscriptions/:id", async (c) => {
 	const newToken = randomToken();
 	const post = await getPost(c.env.DB, sub.post_slug);
 	const confirmUrl = `${publicBase}/api/v1/subscribe/confirm/${newToken}`;
+	// Sanitized again here, not just on the write path: a database upgraded from
+	// an earlier version can still hold a title with a CR/LF in it, and a mail
+	// subject is a header value.
+	const title = subjectTitle(post?.title, sub.post_slug);
 	const html = renderConfirmEmailHtml({
-		postTitle: post?.title ?? sub.post_slug,
+		postTitle: title,
 		confirmUrl,
 	});
 	const sent = await sendEmail(c.env, {
 		to: sub.email,
 		from,
-		subject: t("email.confirm.subject").replace(
-			"{title}",
-			post?.title ?? sub.post_slug,
-		),
+		subject: fillSubject(t("email.confirm.subject"), title),
 		html,
 	});
 	if (!sent) {

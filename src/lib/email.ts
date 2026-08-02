@@ -25,6 +25,36 @@ type EmailEnv = {
 	RESEND_API_KEY?: string;
 };
 
+// A Resend error name is a fixed enum (`validation_error`, `rate_limit_exceeded`,
+// …). Clamping to that shape keeps an unexpected body from putting arbitrary
+// remote text into a log line.
+const RESEND_ERROR_NAME_RE = /^[a-z][a-z0-9_]{0,63}$/;
+
+/**
+ * The error *code* from a Resend failure, and nothing else.
+ *
+ * Resend's error bodies look like
+ *
+ *     { "statusCode": 422, "name": "validation_error",
+ *       "message": "Invalid `to` field. …someone@example.com…" }
+ *
+ * The free-text `message` interpolates the offending field, so on the digest
+ * and confirmation paths it echoes a subscriber's address straight into the
+ * log — and "no PII in logs" is a project rule, not a preference (CLAUDE.md,
+ * Logging). The `name` is an enum with no caller data in it, which is all an
+ * operator needs to tell a bad address from a throttle from a bad key.
+ */
+const resendErrorCode = async (res: Response): Promise<string> => {
+	try {
+		const body = (await res.json()) as { name?: unknown };
+		return typeof body.name === "string" && RESEND_ERROR_NAME_RE.test(body.name)
+			? body.name
+			: "unknown";
+	} catch {
+		return "unparsed";
+	}
+};
+
 export const sendEmail = async (
 	env: EmailEnv,
 	input: SendEmailInput,
@@ -48,10 +78,9 @@ export const sendEmail = async (
 			}),
 		});
 		if (!res.ok) {
-			const body = await res.text().catch(() => "");
 			log.warn("email.send_failed", {
 				status: res.status,
-				body: body.slice(0, 200),
+				code: await resendErrorCode(res),
 			});
 			return false;
 		}

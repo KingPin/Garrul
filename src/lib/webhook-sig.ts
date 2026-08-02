@@ -13,39 +13,14 @@
  * scenarios; consumers in other languages implement the same algorithm
  * (see docs/webhooks.md for the recipe).
  */
-import { constantTimeEqual } from "./oauth";
-
-const encoder = new TextEncoder();
-
-const importHmacKey = async (secret: string): Promise<CryptoKey> =>
-	crypto.subtle.importKey(
-		"raw",
-		encoder.encode(secret),
-		{ name: "HMAC", hash: "SHA-256" },
-		false,
-		["sign", "verify"],
-	);
-
-const hexEncode = (buf: ArrayBuffer): string => {
-	const bytes = new Uint8Array(buf);
-	let out = "";
-	for (let i = 0; i < bytes.length; i++) {
-		const b = bytes[i];
-		if (b === undefined) continue;
-		out += b.toString(16).padStart(2, "0");
-	}
-	return out;
-};
+import { constantTimeEqual, hmacHex } from "./hmac";
 
 export const signWebhookBody = async (
 	secret: string,
 	body: string,
 	tsMs: number = Date.now(),
 ): Promise<{ header: string; ts: number; signature: string }> => {
-	const key = await importHmacKey(secret);
-	const signed = `${tsMs}.${body}`;
-	const sig = await crypto.subtle.sign("HMAC", key, encoder.encode(signed));
-	const signature = hexEncode(sig);
+	const signature = await hmacHex(secret, `${tsMs}.${body}`);
 	return {
 		header: `t=${tsMs},v1=${signature}`,
 		ts: tsMs,

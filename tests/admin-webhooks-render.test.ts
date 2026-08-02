@@ -113,8 +113,11 @@ describe("renderWebhookForm", () => {
 	it("uses the create action and POST when endpoint is null", () => {
 		const html = renderWebhookForm({ endpoint: null, error: null });
 		expect(html).toContain(">Add webhook endpoint<");
-		// x-data attribute is HTML-escaped, so literal quotes become &quot;.
-		expect(html).toContain("&quot;/admin/api/webhooks&quot;");
+		// x-data attribute is HTML-escaped, so literal quotes become &quot;, and
+		// jsLiteralRaw unicode-escapes each `/` before that.
+		expect(html).toContain(
+			"&quot;\\u002fadmin\\u002fapi\\u002fwebhooks&quot;",
+		);
 		expect(html).toContain("&quot;POST&quot;");
 		expect(html).toContain(">Create endpoint<");
 	});
@@ -123,19 +126,46 @@ describe("renderWebhookForm", () => {
 		const e = makeEndpoint();
 		const html = renderWebhookForm({ endpoint: e, error: null });
 		expect(html).toContain(">Edit webhook endpoint<");
-		expect(html).toContain(`/admin/api/webhooks/${e.id}`);
+		// The "back to webhooks" link and Edit href keep the plain path; the
+		// fetch target inside x-data is a JS literal, so its slashes are escaped.
+		expect(html).toContain(
+			`&quot;\\u002fadmin\\u002fapi\\u002fwebhooks\\u002f${e.id}&quot;`,
+		);
 		expect(html).toContain("&quot;PATCH&quot;");
 		expect(html).toContain(">Save changes<");
 	});
 
-	it("prefills the URL and secret in edit mode", () => {
-		const e = makeEndpoint({
-			url: "https://example.org/h",
-			secret: "whsec_abcdef0123456789",
-		});
+	it("prefills the URL in edit mode", () => {
+		const e = makeEndpoint({ url: "https://example.org/h" });
 		const html = renderWebhookForm({ endpoint: e, error: null });
 		expect(html).toContain('value="https://example.org/h"');
-		expect(html).toContain('value="whsec_abcdef0123456789"');
+	});
+
+	it("never renders the stored secret back to the browser", () => {
+		const e = makeEndpoint({ secret: "whsec_abcdef0123456789" });
+		const html = renderWebhookForm({ endpoint: e, error: null });
+		expect(html).not.toContain("whsec_abcdef0123456789");
+		// It reports *that* one is set, and offers rotate / remove instead.
+		expect(html).toContain("HMAC secret:");
+		expect(html).toContain('name="clear_secret"');
+		expect(html).toContain('x-show="rotate"');
+	});
+
+	it("offers a plain write-only secret field with no secret stored", () => {
+		const html = renderWebhookForm({
+			endpoint: makeEndpoint({ secret: null }),
+			error: null,
+		});
+		expect(html).toContain('type="password" name="secret"');
+		expect(html).not.toContain('name="clear_secret"');
+	});
+
+	it("omits secret from the body when the field is left blank", () => {
+		// The submit handler must distinguish blank (keep) from cleared (remove);
+		// a `secret: form.get('secret') || null` would unsign on every edit.
+		const html = renderWebhookForm({ endpoint: makeEndpoint(), error: null });
+		expect(html).not.toMatch(/secret: form.get\(&#39;secret&#39;\) \|\| null/);
+		expect(html).toContain("if (form.get(&#39;clear_secret&#39;)) body.secret = null;");
 	});
 
 	it("renders all known events as checkboxes", () => {

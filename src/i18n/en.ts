@@ -6,6 +6,8 @@ export const en = {
 	"err.post.invalid": "Invalid post identifier.",
 	"err.parent.not_found": "Parent comment not found.",
 	"err.parent.different_post": "Parent comment belongs to a different post.",
+	"err.parent.too_deep":
+		"This thread is nested too deeply. Reply further up the thread instead.",
 	"err.name.required": "A display name is required.",
 	"err.name.too_long": "Display name is too long (max {max} characters).",
 	"err.email.invalid": "Email address is not valid.",

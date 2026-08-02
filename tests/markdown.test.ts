@@ -5,6 +5,7 @@
  * suite lean and obvious.
  */
 import { describe, it, expect } from "vitest";
+import { Marked } from "marked";
 import {
 	CURRENT_RENDERER_VERSION,
 	renderMarkdown,
@@ -115,6 +116,137 @@ describe("renderMarkdown — output safety", () => {
 	it("ignores inline event handlers in raw HTML", () => {
 		const out = renderMarkdown('<a href="x" onclick="alert(1)">x</a>');
 		expect(out).not.toMatch(/onclick/i);
+	});
+});
+
+// The allowlist in src/lib/markdown.ts's docblock is a promise. These assert it
+// against the *actual* output rather than against the overrides, so a tag that
+// arrives via a marked upgrade (rather than via an edit to this repo) is caught.
+describe("renderMarkdown — allowlist contract", () => {
+	const ALLOWED = new Set([
+		"p", "br", "em", "strong", "del", "code", "pre", "a",
+		"blockquote", "ul", "ol", "li",
+	]);
+
+	const tagsIn = (html: string): string[] => [
+		...new Set(
+			[...html.matchAll(/<\/?([a-zA-Z][a-zA-Z0-9]*)/g)].map((m) =>
+				m[1]!.toLowerCase(),
+			),
+		),
+	];
+
+	it("emits no tag outside the allowlist across the whole feature surface", () => {
+		// One document exercising every construct marked's gfm mode can produce.
+		const kitchenSink = [
+			"# heading",
+			"## another",
+			"para with **bold** _em_ `code` ~~struck~~ and ~single~",
+			"[link](https://a.example) and <https://b.example>",
+			"![img](https://c.example/x.png)",
+			"---",
+			"> quote",
+			"- bullet",
+			"- [ ] todo",
+			"- [x] done",
+			"1. ordered",
+			"| a | b |",
+			"| - | - |",
+			"| 1 | 2 |",
+			"```js",
+			"code",
+			"```",
+			"    indented code",
+			"term[^1]",
+			"",
+			"[^1]: footnote",
+			"<div onclick='x'>raw</div>",
+			"<script>alert(1)</script>",
+		].join("\n\n");
+		const out = renderMarkdown(kitchenSink);
+		const unexpected = tagsIn(out).filter((t) => !ALLOWED.has(t));
+		expect(unexpected).toEqual([]);
+	});
+
+	it("renders GFM strikethrough as <del> (deliberately allowed)", () => {
+		expect(renderMarkdown("~~gone~~")).toBe("<p><del>gone</del></p>");
+	});
+
+	it("renders task-list checkboxes as text, not <input>", () => {
+		const out = renderMarkdown("- [ ] todo\n- [x] done");
+		expect(out).not.toContain("<input");
+		expect(out).toContain("<li>[ ] todo</li>");
+		expect(out).toContain("<li>[x] done</li>");
+	});
+
+	it("keeps a real language label on fenced code", () => {
+		expect(renderMarkdown("```js\nx\n```")).toBe(
+			'<pre><code class="language-js">x\n</code></pre>',
+		);
+		// Punctuated labels are real: c++, c#, objective-c, .net.
+		expect(renderMarkdown("```c++\nx\n```")).toContain(
+			'class="language-c++"',
+		);
+	});
+
+	it("drops a fence info string that isn't a language label", () => {
+		// marked escapes this into the class attribute rather than letting it
+		// break out — but an attribute whose safety rests on an escape staying
+		// correct forever is one we'd rather not populate from UGC at all.
+		for (const label of [
+			'js"onmouseover="alert(1)',
+			"<script>",
+			"a'b",
+			"x".repeat(64),
+		]) {
+			const out = renderMarkdown(`\`\`\`${label}\nx\n\`\`\``);
+			expect(out).toBe("<pre><code>x\n</code></pre>");
+		}
+	});
+
+	it("still escapes code block contents", () => {
+		const out = renderMarkdown("```\n<script>alert(1)</script>\n```");
+		expect(out).not.toContain("<script");
+		expect(out).toContain("&lt;script&gt;");
+	});
+});
+
+// Canary on a marked internal the sanitizer's core defense rests on.
+//
+// marked's `use()` wraps each renderer override as roughly
+//   `let c = override(...); if (c === false) c = builtin(...); return c || ""`
+// so `false` — and only `false` — falls through to the built-in renderer, whose
+// `html()` returns the author's raw markup verbatim. Our `html()` returns `""`,
+// which is falsy but not `false`, so it wins.
+//
+// If a future marked relaxed that identity check to a truthiness test, `""`
+// would start falling through and every comment would become a raw-HTML
+// injection. That change would not touch this repo, so nothing else here would
+// notice. This does.
+describe("marked renderer-override semantics (dependency canary)", () => {
+	it("treats an override returning false as 'use the built-in'", () => {
+		const m = new Marked({ gfm: true });
+		m.use({ renderer: { paragraph: () => false } });
+		// Fell through to the built-in paragraph renderer.
+		expect(m.parse("hi", { async: false })).toContain("<p>hi</p>");
+	});
+
+	it("treats an override returning an empty string as 'emit nothing'", () => {
+		const m = new Marked({ gfm: true });
+		m.use({ renderer: { paragraph: () => "" } });
+		// If this ever starts containing <p>, the html() override in
+		// src/lib/markdown.ts has stopped dropping raw HTML.
+		expect(m.parse("hi", { async: false })).toBe("");
+	});
+
+	it("rejects an override for a method the renderer doesn't have", () => {
+		// Our overrides are only load-bearing if a rename in marked fails loudly
+		// rather than silently leaving the built-in in place. It throws.
+		const m = new Marked();
+		expect(() =>
+			// @ts-expect-error deliberately not a renderer method
+			m.use({ renderer: { nonexistentMethod: () => "" } }),
+		).toThrow();
 	});
 });
 

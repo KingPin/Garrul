@@ -9,12 +9,18 @@ import worker from "../src/index";
 type Env = Partial<{
 	TURNSTILE_SITE_KEY: string;
 	ALLOWED_ORIGINS: string;
+	IP_HASH_SECRET: string;
+	JWT_SECRET: string;
 }>;
 
-const fetchFrame = (path: string, env: Env = {}): Promise<Response> => {
+const fetchFrame = async (path: string, env: Env = {}): Promise<Response> => {
 	const merged: Env = {
 		TURNSTILE_SITE_KEY: "0x4AAAAAAA_test_key",
 		ALLOWED_ORIGINS: "https://blog.example.com",
+		// src/lib/require-config.ts refuses to serve *any* route without these,
+		// so a harness that drives the real app has to supply them.
+		IP_HASH_SECRET: "test-ip-hash-secret",
+		JWT_SECRET: "test-jwt-secret",
 		...env,
 	};
 	return worker.fetch(
@@ -54,12 +60,45 @@ describe("GET /embed/turnstile-frame", () => {
 	});
 
 	it("drops parent_origin when it isn't a clean origin", async () => {
-		// path component → not a bare origin → fall back to "" (referrer-derived).
+		// A path component means it isn't a bare origin, so it can never equal
+		// the `e.origin` the browser reports — reject rather than normalize.
 		const res = await fetchFrame(
 			"/embed/turnstile-frame?parent_origin=https%3A%2F%2Fevil.example%2Fpath",
 		);
 		const body = await res.text();
 		expect(body).not.toContain("evil.example");
+	});
+
+	it("drops a well-formed parent_origin that isn't allowlisted", async () => {
+		// The bypass this closes: any site could frame this page with its own
+		// origin and collect a Turnstile token minted against the operator's site
+		// key — a harvestable anti-spam bypass for that instance.
+		const res = await fetchFrame(
+			"/embed/turnstile-frame?parent_origin=https%3A%2F%2Fevil.example",
+		);
+		const body = await res.text();
+		expect(body).not.toContain("evil.example");
+		// With no target the script bails before rendering the widget at all.
+		expect(body).toContain('var parentOrigin = "";');
+	});
+
+	it("accepts the Worker's own origin as parent_origin", async () => {
+		// Load-bearing: the widget inside /embed/:slug builds this frame with
+		// `parent_origin = window.location.origin`, which there is this Worker,
+		// and operators don't list their own instance in ALLOWED_ORIGINS.
+		const res = await fetchFrame(
+			"/embed/turnstile-frame?parent_origin=https%3A%2F%2Fcomments.test.example",
+		);
+		const body = await res.text();
+		expect(body).toContain('"https://comments.test.example"');
+	});
+
+	it("does not fall back to document.referrer", async () => {
+		// The referrer fallback was the same bypass without needing the query
+		// param: the framing page's origin, unallowlisted, used as the target.
+		const res = await fetchFrame("/embed/turnstile-frame");
+		const body = await res.text();
+		expect(body).not.toContain("document.referrer");
 	});
 
 	it("clamps theme to the allowed set", async () => {
@@ -80,11 +119,30 @@ describe("GET /embed/turnstile-frame", () => {
 		const csp = res.headers.get("content-security-policy") ?? "";
 		expect(csp).toContain("default-src 'none'");
 		expect(csp).toContain("https://challenges.cloudflare.com");
-		// frame-ancestors is intentionally not pinned — operators choose where
-		// this frame gets embedded — but the directive should still be absent
-		// (omit means same as default-src, which would be 'none'). We rely on
-		// the global X-Frame-Options skip for /embed/* (see src/index.ts).
-		expect(csp).not.toContain("frame-ancestors");
+	});
+
+	it("pins frame-ancestors to ALLOWED_ORIGINS plus its own origin", async () => {
+		// frame-ancestors has no fallback to default-src, so omitting it — as
+		// this route used to — left the page framable by anyone regardless of
+		// `default-src 'none'`.
+		const res = await fetchFrame("/embed/turnstile-frame");
+		const directive = (res.headers.get("content-security-policy") ?? "")
+			.split(";")
+			.map((d) => d.trim())
+			.find((d) => d.startsWith("frame-ancestors"));
+		expect(directive).toBeDefined();
+		expect(directive).toContain("https://blog.example.com");
+		expect(directive).toContain("https://comments.test.example");
+		expect(directive).not.toContain("*");
+	});
+
+	it("keeps every configured origin in frame-ancestors", async () => {
+		const res = await fetchFrame("/embed/turnstile-frame", {
+			ALLOWED_ORIGINS: "https://a.example, https://b.example",
+		});
+		const csp = res.headers.get("content-security-policy") ?? "";
+		expect(csp).toContain("https://a.example");
+		expect(csp).toContain("https://b.example");
 	});
 
 	it("allows 'self' in connect-src for Turnstile clearance redemption", async () => {
@@ -105,7 +163,10 @@ describe("GET /embed/turnstile-frame", () => {
 
 	it("does not set X-Frame-Options DENY (so it can be embedded)", async () => {
 		const res = await fetchFrame("/embed/turnstile-frame");
-		// Global header middleware skips X-Frame-Options for /embed/*.
+		// Global header middleware skips X-Frame-Options for /embed/*. It has to:
+		// XFO has no allowlist form, so DENY would break the feature outright.
+		// The allowlist lives in frame-ancestors instead, asserted above, and
+		// setting both is worse than one — browsers disagree on which wins.
 		expect(res.headers.get("x-frame-options")).toBeNull();
 	});
 });

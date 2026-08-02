@@ -1,9 +1,9 @@
 {
-  "version": "1.22.1",
+  "version": "2.0.0",
   "minPreviousVersion": "1.0.0",
   "renderer": {
-    "version": 1,
-    "eagerRerender": false
+    "version": 2,
+    "eagerRerender": true
   },
   "secrets": [
     {
@@ -326,7 +326,10 @@
     "0011_page_engagement.sql",
     "0012_deleted_by.sql",
     "0013_thread_lifecycle_reports.sql",
-    "0014_telegram.sql"
+    "0014_telegram.sql",
+    "0015_comment_depth.sql",
+    "0016_user_erasure.sql",
+    "0017_subscriptions_email_index.sql"
   ],
   "breakingChanges": [
     {
@@ -336,6 +339,74 @@
         "Upgrade your build/deploy host to Node.js 24 (`nvm install 24 && nvm use 24` — the repo's .nvmrc now reads 24).",
         "Re-run `npm ci` after switching; a stale node_modules built on Node 22 can carry incompatible native binaries.",
         "Rollback is just redeploying the prior tag: the Node floor added no D1 migrations and no required secrets."
+      ]
+    },
+    {
+      "id": "host-session-cookie",
+      "summary": "The session cookie is renamed to `__Host-garrul_sess`. Everyone signed in to your instance is signed out once, on deploy. No data is lost and nothing is left to clean up — the next sign-in issues the new cookie.",
+      "manualSteps": [
+        "Nothing to run. Expect a burst of re-logins right after the deploy, and tell moderators so they don't read it as an outage.",
+        "The `__Host-` prefix requires Secure, Path=/ and no Domain attribute, all of which already held. If you terminate TLS in front of the Worker, confirm it still reaches browsers over HTTPS or the cookie will be rejected outright.",
+        "Rolling back to the prior tag signs everyone out a second time."
+      ]
+    },
+    {
+      "id": "ipv6-hash-64",
+      "summary": "IPv6 addresses are normalized to their /64 prefix before hashing. Every `ip_hash` derived from an IPv6 client changes once, so vote and report dedup rows written before the upgrade stop matching those clients. IPv4 is unaffected.",
+      "manualSteps": [
+        "Nothing to run. A returning anonymous IPv6 visitor gets a new ghost identity once, and could vote or report a second time on something they already acted on.",
+        "This is the fix for one household being able to mint 2^64 distinct hashes — before it, rate limiting, vote dedup and report dedup were all unenforceable over IPv6."
+      ]
+    },
+    {
+      "id": "reply-depth-cap",
+      "summary": "Replies nested deeper than 8 are rejected with HTTP 400 and `err.parent.too_deep`. Existing deeper threads still render and can still be read, edited and moderated — only new replies under them are refused.",
+      "manualSteps": [
+        "Nothing to run. The widget already hides the reply button below depth 4, so normal use never reaches the cap; imported Disqus threads are the realistic source of deep chains.",
+        "The cap exists because an unbounded chain made the tree build O(N^2) and blow the Workers CPU limit, which returned Error 1102 to every reader of that page permanently."
+      ]
+    },
+    {
+      "id": "iframe-parent-origin-allowlist",
+      "summary": "The iframe embed only posts messages to an origin listed in `ALLOWED_ORIGINS`, and the `document.referrer` fallback is gone. An iframe embed on a host that is not in the allowlist will stop auto-resizing and stop receiving auth handoffs.",
+      "manualSteps": [
+        "Add every site that iframe-embeds your instance to `ALLOWED_ORIGINS` in wrangler.toml, scheme and host, comma-separated (e.g. `https://blog.example.com,https://example.com`), then redeploy.",
+        "The script-tag embed is unaffected; this only changes `/embed/*`.",
+        "Check the browser console on a host page after upgrading: a blocked postMessage is the symptom."
+      ]
+    },
+    {
+      "id": "required-secrets-enforced",
+      "summary": "If `IP_HASH_SECRET` or `JWT_SECRET` is unset, the Worker answers every route with 500 `server_misconfigured` and logs `config.missing_required_secrets`, instead of failing later as scattered anonymous 500s. `JWT_SECRET` is no longer reserved-for-future-use: the OAuth login flow signs its state with it.",
+      "manualSteps": [
+        "Confirm both secrets are set: `wrangler secret list`. `npm run upgrade` also reports them as missing before it deploys.",
+        "Set anything missing with `wrangler secret put IP_HASH_SECRET` / `wrangler secret put JWT_SECRET` (32+ random bytes each; `setup.sh` generates them).",
+        "Do not rotate `IP_HASH_SECRET` on an existing instance — it re-keys future writes only and silently breaks dedup against every stored hash. See issue #50."
+      ]
+    },
+    {
+      "id": "client-ip-required",
+      "summary": "Outside `ENV=dev`, the write endpoints that identify a caller by IP — comment, vote, reaction, report, subscribe, preview and page-engagement — refuse a request with no `cf-connecting-ip` header, returning HTTP 400 `no_client_ip` rather than folding it into a shared bucket. Requests through Cloudflare always carry the header; direct-to-Worker traffic does not. Reads are unaffected.",
+      "manualSteps": [
+        "Nothing to run if your instance is reached through Cloudflare, which is the documented setup.",
+        "If you probe the Worker directly (health checks, synthetic monitors), point them at `/api/v1/health` — it is a GET and does not require the header."
+      ]
+    },
+    {
+      "id": "operator-script-guards",
+      "summary": "Two operator scripts got stricter. `npm run import-disqus` exits 2 if `IP_HASH_SECRET` is unset instead of using a hard-coded fallback, and `npm run db:export` requires the output filename to match `garrul-backup-*.sql`.",
+      "manualSteps": [
+        "Export `IP_HASH_SECRET` in the shell before running `npm run import-disqus` — the same value the deployed Worker uses, or imported comments get hashes that never match live traffic.",
+        "Pass a `garrul-backup-*.sql` name to `npm run db:export`; that glob is what .gitignore covers, so a full dump of every email and comment can't land in a commit.",
+        "Also note: the CLI Disqus importer silently did nothing before this release — it reported DONE with zero counters. If a past import looked like a no-op, it was; re-run it."
+      ]
+    },
+    {
+      "id": "renderer-2-rerender",
+      "summary": "The markdown sanitizer's emitted HTML changed, so `CURRENT_RENDERER_VERSION` is 2. `body_html` is rendered once at write and served verbatim, so existing comments keep their old HTML until they are re-rendered.",
+      "manualSteps": [
+        "Run `npm run rerender` after deploying, or use Rerender on /admin/operator.",
+        "Safe to defer — old comments render as before in the meantime — but they will not pick up the sanitizer hardening until you do."
       ]
     }
   ]

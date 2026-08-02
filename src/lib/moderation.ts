@@ -13,13 +13,18 @@
 import {
 	adminInsertAudit,
 	type CommentStatus,
+	eraseUserData,
 	getComment,
 	getUser,
+	listPostSlugsForUser,
 	resolveReportsForComment,
 	setUserBanned,
 	updateCommentStatus,
+	type UserErasureCounts,
 } from "../db/queries";
+import { t } from "../i18n";
 import type { Bindings } from "../index";
+import { revokeUserSessions } from "./session";
 import { bustTreeCache } from "./tree-cache";
 import { fireWebhook, type WebhookEvent } from "./webhook";
 
@@ -129,6 +134,10 @@ export const banUser = async (args: {
 	const target = await getUser(env.DB, userId);
 	if (!target) return { ok: false, error: "not_found" };
 	await setUserBanned(env.DB, userId, banned);
+	// A ban has to take their live sessions with it. `is_banned` alone doesn't:
+	// readSession slides the 30-day TTL, so an active banned user's cookie stays
+	// valid indefinitely. Not undone on unban — see revocationKey in session.ts.
+	if (banned) await revokeUserSessions(env, userId);
 	const fromComment =
 		typeof args.fromComment === "string" && args.fromComment.length > 0
 			? args.fromComment
@@ -144,4 +153,72 @@ export const banUser = async (args: {
 			: { target_name: target.name },
 	});
 	return { ok: true, id: userId, banned };
+};
+
+/**
+ * Erase a user's personal data. Irreversible, admin-only, audit-logged.
+ *
+ * Authorization is the caller's job as everywhere else in this module, but two
+ * guards live here rather than in the route because they hold no matter who
+ * calls in:
+ *
+ *   - **Not yourself.** Same reasoning as the role endpoint: it's a misclick
+ *     away from an admin blanking their own account, and there is no undo.
+ *   - **Not another admin.** Demote them first. An erasure clears
+ *     `provider_id`, which is what their next login is matched on, so erasing a
+ *     live admin locks that person out of the instance permanently and can strand
+ *     an instance with zero reachable admins.
+ *
+ * The audit row deliberately records **counts, not values** — no name, no email,
+ * no address. Writing the erased name into `audit_log.meta` would move the
+ * personal data rather than remove it, and audit rows are the one thing an
+ * operator is least likely to think to prune.
+ */
+export const eraseUser = async (args: {
+	env: Bindings;
+	reqUrl: string;
+	adminId: string;
+	userId: string;
+	/** Also blank their comment bodies and mark them deleted. */
+	redactBodies: boolean;
+	reason?: string | null;
+}): Promise<
+	| { ok: true; id: string; counts: UserErasureCounts }
+	| { ok: false; error: "not_found" | "cannot_erase_self" | "target_is_admin" }
+> => {
+	const { env, userId } = args;
+	if (userId === args.adminId) return { ok: false, error: "cannot_erase_self" };
+	const target = await getUser(env.DB, userId);
+	if (!target) return { ok: false, error: "not_found" };
+	if (target.role === "admin") return { ok: false, error: "target_is_admin" };
+
+	// Slugs first: after the erasure `redactBodies` may have moved every comment
+	// to `deleted`, and the rows are still there either way, but reading before
+	// keeps this independent of what the erasure does to them.
+	const slugs = await listPostSlugsForUser(env.DB, userId);
+	const counts = await eraseUserData(env.DB, {
+		id: userId,
+		email: target.email,
+		placeholderName: t("ui.deleted"),
+		redactBodies: args.redactBodies,
+		now: Date.now(),
+	});
+	// Their sessions carry a user_id that now resolves to an emptied identity.
+	// Revoke so nothing keeps acting as them, and so an open admin tab can't
+	// re-populate anything.
+	await revokeUserSessions(env, userId);
+	await adminInsertAudit(env.DB, {
+		admin_id: args.adminId,
+		action: "user.erase",
+		target_kind: "user",
+		target_id: userId,
+		reason: args.reason ?? null,
+		meta: { redact_bodies: args.redactBodies, ...counts },
+	});
+	// The author name — and the bodies, if redacted — just changed on every
+	// thread they appear in, and those first pages are served from the edge.
+	for (const slug of slugs) {
+		await bustTreeCache(env, args.reqUrl, slug);
+	}
+	return { ok: true, id: userId, counts };
 };

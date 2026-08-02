@@ -34,6 +34,21 @@ const CARVE_OUT_PATHS: readonly RegExp[] = [
 	/^\/api\/v1\/subscribe\/unsubscribe\/[^/]+\/?$/,
 ];
 
+/**
+ * Paths where a POST may satisfy the gate with this Worker's *own* origin
+ * instead of an entry in ALLOWED_ORIGINS.
+ *
+ * The unsubscribe confirmation form is served by this Worker, so the browser
+ * sends the Worker's own host as Origin — which an operator has no reason to
+ * list as an embed origin. This is still a real check, not a carve-out: a
+ * cross-site forgery attempt carries the attacker's Origin and is rejected. The
+ * unguessable token in the URL remains the actual capability; the POST exists
+ * to stop mail-client prefetchers from unsubscribing people who never clicked.
+ */
+const SELF_ORIGIN_POST_PATHS: readonly RegExp[] = [
+	/^\/api\/v1\/subscribe\/unsubscribe\/[^/]+\/?$/,
+];
+
 const parseAllowed = (raw: string | undefined): Set<string> => {
 	if (!raw) return new Set();
 	return new Set(
@@ -50,6 +65,17 @@ const matches = (origin: string, allowed: Set<string>): boolean => {
 
 const isCarveOut = (method: string, path: string): boolean =>
 	method === "GET" && CARVE_OUT_PATHS.some((re) => re.test(path));
+
+const isSelfOriginPost = (
+	method: string,
+	path: string,
+	origin: string | undefined,
+	requestUrl: string,
+): boolean => {
+	if (method !== "POST" || !origin) return false;
+	if (!SELF_ORIGIN_POST_PATHS.some((re) => re.test(path))) return false;
+	return origin === new URL(requestUrl).origin;
+};
 
 export const corsAndCsrf = (): MiddlewareHandler => {
 	return async (c, next) => {
@@ -85,7 +111,13 @@ export const corsAndCsrf = (): MiddlewareHandler => {
 		// carve-out path must NOT silently bypass the gate. Dev mode
 		// bypasses entirely so curl + local clients work without juggling
 		// Origin headers.
-		if (!isCarveOut(c.req.method, path) && !isDev) {
+		const selfOriginPost = isSelfOriginPost(
+			c.req.method,
+			path,
+			origin,
+			c.req.url,
+		);
+		if (!isCarveOut(c.req.method, path) && !selfOriginPost && !isDev) {
 			if (!origin || !matches(origin, allowed)) {
 				return c.json({ error: "err.origin.forbidden" }, 403);
 			}

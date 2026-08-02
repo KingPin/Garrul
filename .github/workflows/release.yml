@@ -18,8 +18,13 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      # Actions are pinned to full commit SHAs, not tags. A tag is mutable and
+      # can be repointed by whoever controls the action repo — the
+      # tj-actions/changed-files compromise (CVE-2025-30066) was exactly that.
+      # Dependabot keeps these fresh (.github/dependabot.yml); update the
+      # trailing version comment whenever the SHA moves.
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version-file: .nvmrc
           cache: npm
@@ -39,7 +44,37 @@ jobs:
       - run: npm run manifest:check
       - run: npm run build
       - run: npm run size
-      - uses: softprops/action-gh-release@v3
+      # Checksums over exactly what gets attached below, computed in this job
+      # before the publishing step runs.
+      #
+      # Note what this is and isn't. The upgrade path does not consume these
+      # assets at all — `npm run upgrade` checks out the git tag and builds
+      # from source — so this is not a link in that chain. It's for anyone
+      # who takes embed.js from the release page instead of building it, and
+      # for after-the-fact verification.
+      #
+      # The `cat` matters as much as the file. A job log is public and
+      # immutable, and it is written before the third-party publishing action
+      # runs; the SHA256SUMS asset is uploaded by that action and could be
+      # replaced by whoever controls it, along with the artifacts. Comparing
+      # an asset against the digest printed here is therefore a check the
+      # publishing step cannot forge — which is the whole point, since that
+      # step is the one with contents: write.
+      - name: Generate SHA256SUMS
+        run: |
+          # Basenames, so the entries match the asset filenames on the release
+          # page and `sha256sum -c SHA256SUMS` works in a directory of
+          # downloaded assets.
+          ( cd dist && sha256sum embed.js embed.js.map ) > SHA256SUMS
+          sha256sum release-manifest.json >> SHA256SUMS
+          echo "::group::SHA256SUMS (compare release assets against this)"
+          cat SHA256SUMS
+          echo "::endgroup::"
+      # The one third-party action in the one job with contents: write, holding
+      # GITHUB_TOKEN and the built artifacts. A repointed tag here could publish
+      # an arbitrary release-manifest.json and embed.js that every self-hoster's
+      # `npm run upgrade` trusts, so the SHA pin matters most on this line.
+      - uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           generate_release_notes: true
           # release-manifest.json is the upgrade contract for self-hosters.
@@ -49,3 +84,4 @@ jobs:
             dist/embed.js
             dist/embed.js.map
             release-manifest.json
+            SHA256SUMS

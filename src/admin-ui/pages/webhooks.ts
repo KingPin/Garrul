@@ -1,5 +1,5 @@
 import type { WebhookEndpoint } from "../../db/queries";
-import { escapeHtml } from "../escape";
+import { escapeHtml, jsLiteral, jsLiteralRaw } from "../escape";
 
 const formatTs = (ts: number | null): string =>
 	ts == null ? "—" : new Date(ts).toISOString().slice(0, 16).replace("T", " ");
@@ -44,7 +44,7 @@ const endpointRow = (e: WebhookEndpoint): string => {
   <td class="muted">${formatTs(e.created_at)}</td>
   <td class="actions">
     <a href="/admin/webhooks/${escapeHtml(e.id)}" class="btn">Edit</a>
-    <button :disabled="busy" class="bad" @click="busy=true; del('${escapeHtml(e.id)}').finally(()=>busy=false)">Delete</button>
+    <button :disabled="busy" class="bad" @click="busy=true; del(${jsLiteral(e.id)}).finally(()=>busy=false)">Delete</button>
   </td>
 </tr>`;
 };
@@ -127,13 +127,20 @@ export const renderWebhookForm = (data: WebhookFormData): string => {
 	const isNew = e == null;
 	const selectedEvents = new Set<string>(e?.events ?? ALL_EVENTS);
 	const url = e?.url ?? "";
-	const secret = e?.secret ?? "";
+	// The stored secret is deliberately never rendered back. It is an HMAC key:
+	// once set, the admin UI has no reason to read it, and a prefilled input put
+	// it in the page source, the browser's form-restore state, and (before the
+	// no-store header on /admin/*) the disk cache. Rotate or remove instead.
+	const hasSecret = e?.secret != null && e.secret !== "";
 	const adapter = e?.adapter ?? "generic";
 	const enabled = e?.enabled ?? true;
 	const heading = isNew ? "Add webhook endpoint" : "Edit webhook endpoint";
+	// Raw id: this only ever lands in a JS string literal inside the x-data
+	// blob below, where jsLiteralRaw escapes it and the surrounding escapeHtml
+	// handles the attribute. escapeHtml here as well would double-encode.
 	const action = isNew
 		? "/admin/api/webhooks"
-		: `/admin/api/webhooks/${escapeHtml(e.id)}`;
+		: `/admin/api/webhooks/${e.id}`;
 	const errorBlock = data.error
 		? `<p style="color:var(--bad)">${escapeHtml(data.error)}</p>`
 		: "";
@@ -142,7 +149,8 @@ export const renderWebhookForm = (data: WebhookFormData): string => {
 <a href="/admin/webhooks" class="muted">← back to webhooks</a>
 <div class="card" x-data="${escapeHtml(`{
   busy: false,
-  error: ${JSON.stringify(data.error)},
+  rotate: false,
+  error: ${data.error == null ? "null" : jsLiteralRaw(data.error)},
   async submit(e) {
     e.preventDefault();
     if (this.busy) return;
@@ -151,14 +159,19 @@ export const renderWebhookForm = (data: WebhookFormData): string => {
     const events = ${JSON.stringify(ALL_EVENTS)}.filter(ev => form.get('event_' + ev));
     const body = {
       url: form.get('url'),
-      secret: form.get('secret') || null,
       events: events.length === ${ALL_EVENTS.length} ? null : events,
       adapter: form.get('adapter'),
       enabled: form.get('enabled') === 'on',
     };
+    // Three states, and 'omitted' is the default: the form can't show the
+    // stored secret, so sending null on a blank field would unsign the
+    // endpoint every time an admin edited its URL.
+    const typed = form.get('secret');
+    if (form.get('clear_secret')) body.secret = null;
+    else if (typed) body.secret = typed;
     try {
-      const r = await fetch(${JSON.stringify(action)}, {
-        method: ${JSON.stringify(isNew ? "POST" : "PATCH")},
+      const r = await fetch(${jsLiteralRaw(action)}, {
+        method: ${jsLiteralRaw(isNew ? "POST" : "PATCH")},
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(body),
       });
@@ -190,18 +203,40 @@ export const renderWebhookForm = (data: WebhookFormData): string => {
         <code>TELEGRAM_BOT_TOKEN</code> secret.
       </span>
     </p>
-    <p>
+    ${
+			hasSecret
+				? `<div style="margin:1rem 0">
+      HMAC secret: <span class="pill approved">set</span>
+      <button type="button" class="btn" @click="rotate = !rotate"
+        x-text="rotate ? 'cancel rotation' : 'rotate…'"></button>
+      <label style="margin-left:0.75rem;font-weight:normal">
+        <input type="checkbox" name="clear_secret"> remove signing
+      </label>
+      <div x-show="rotate" x-cloak style="margin-top:0.4rem">
+        <input type="password" name="secret" autocomplete="new-password"
+          placeholder="new secret, 16–256 characters"
+          style="width:100%;max-width:560px">
+      </div>
+      <span class="muted" style="display:block;font-size:0.8rem">
+        The stored secret is write-only — it is never rendered back to the
+        browser. Leave this alone to keep it. Rotating invalidates the old
+        signature immediately, so coordinate with the receiver before changing
+        it on a live endpoint.
+      </span>
+    </div>`
+				: `<p>
       <label>HMAC secret (recommended)<br>
-        <input type="text" name="secret" value="${escapeHtml(secret)}"
-          placeholder="whsec_…"
+        <input type="password" name="secret" autocomplete="new-password"
+          placeholder="whsec_… (16–256 characters)"
           style="width:100%;max-width:560px">
       </label>
       <span class="muted" style="display:block;font-size:0.8rem">
-        Leave blank to send unsigned. Rotating the secret invalidates the
-        old signature immediately — coordinate with the receiver before
-        changing this on a live endpoint.
+        Leave blank to send unsigned. Once saved the secret is write-only: the
+        form will offer to rotate or remove it, but never show it again — keep
+        your own copy for the receiving end.
       </span>
-    </p>
+    </p>`
+		}
     <p>
       <label>Adapter<br>
         <select name="adapter">${adapterSelect(adapter)}</select>

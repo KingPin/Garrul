@@ -135,6 +135,7 @@ const seedComment = async (): Promise<string> => {
 		status: "approved",
 		ip_hash: null,
 		user_agent: null,
+		depth: 1,
 	});
 	return c.id;
 };
@@ -193,7 +194,7 @@ const resolve = (
 ) => {
 	const { cookie = true, origin = "http://localhost" } = opts;
 	const headers: Record<string, string> = { "content-type": "application/json" };
-	if (cookie) headers.cookie = `garrul_sess=${SID}`;
+	if (cookie) headers.cookie = `__Host-garrul_sess=${SID}`;
 	if (origin) headers.origin = origin;
 	return app().request(
 		`/admin/api/comments/${id}/reports/resolve`,

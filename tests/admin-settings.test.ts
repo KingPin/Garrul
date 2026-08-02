@@ -128,7 +128,7 @@ const postSettings = (
 	const { cookie = true, origin = "http://localhost" } = opts;
 	const app = new Hono<{ Bindings: Bindings }>().route("/admin", admin);
 	const headers: Record<string, string> = { "content-type": "application/json" };
-	if (cookie) headers.cookie = `garrul_sess=${SID}`;
+	if (cookie) headers.cookie = `__Host-garrul_sess=${SID}`;
 	if (origin) headers.origin = origin;
 	return app.request(
 		"/admin/settings",

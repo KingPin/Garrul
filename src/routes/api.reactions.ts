@@ -9,10 +9,10 @@
  */
 import { Hono } from "hono";
 import type { Bindings } from "../index";
-import { getComment, getOrCreateGhost, toggleReaction } from "../db/queries";
-import { clientIp, hashIp } from "../lib/ip-hash";
+import { getComment, toggleReaction } from "../db/queries";
+import { resolveActor } from "../lib/active-user";
+import { requireIpHash } from "../lib/ip-hash";
 import { checkRateLimit } from "../lib/ratelimit";
-import { readSession } from "../lib/session";
 import { writeEvent } from "../lib/analytics";
 import { loadFlags } from "../lib/settings";
 import { bustTreeCache } from "../lib/tree-cache";
@@ -45,12 +45,16 @@ reactions.post("/", async (c) => {
 
 	const comment = await getComment(c.env.DB, comment_id);
 	if (!comment) return c.json({ error: t("err.not_found") }, 404);
-	if (comment.status === "deleted") {
+	// Same gate as votes: anything not `approved` is indistinguishable from a
+	// missing row here. A 200 on a held comment both confirmed the moderation
+	// decision and let reaction rows accumulate on content no reader can see.
+	if (comment.status !== "approved") {
 		return c.json({ error: t("err.not_found") }, 404);
 	}
 
-	const ipHash = await hashIp(clientIp(c.req.raw), c.env.IP_HASH_SECRET);
-	const rl = await checkRateLimit(c.env, ipHash);
+	const ipHash = await requireIpHash(c);
+	if (ipHash instanceof Response) return ipHash;
+	const rl = await checkRateLimit(c.req.url, ipHash, { scope: "reaction" });
 	if (!rl.ok) {
 		writeEvent(c.env.ANALYTICS, "ratelimit.hit", {
 			outcome: rl.reason ?? null,
@@ -59,16 +63,11 @@ reactions.post("/", async (c) => {
 		return c.json({ error: t("err.ratelimit") }, 429);
 	}
 
-	const session = await readSession(c);
-	let userId: string;
-	if (session) {
-		userId = session.user_id;
-	} else {
-		// Anonymous reactor: reuse the ghost user keyed on ip_hash so
-		// repeated clicks from the same browser/IP toggle the same row.
-		const ghost = await getOrCreateGhost(c.env.DB, ipHash, "anon");
-		userId = ghost.id;
-	}
+	// Anonymous reactors fall back to the ghost user keyed on ip_hash so
+	// repeated clicks from the same browser/IP toggle the same row.
+	const actor = await resolveActor(c, ipHash);
+	if (!actor.ok) return c.json({ error: t("err.banned") }, 403);
+	const userId = actor.userId;
 
 	const result = await toggleReaction(c.env.DB, comment_id, userId, kind);
 

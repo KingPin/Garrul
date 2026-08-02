@@ -7,8 +7,8 @@ Garrul defends against spam in layers. The base protections below are **always o
 These don't need configuration; they ship with every Garrul instance:
 
 - **Turnstile** — Cloudflare's CAPTCHA-alternative. Required for anonymous POSTs whenever `TURNSTILE_SITE_KEY` is set.
-- **Rate-limit** — KV-backed sliding window keyed on the hashed client IP. 1 comment per 10s and 5 per 10 min by default.
-- **Markdown sanitizer** — strict allowlist; only `https:`/`http:`/`mailto:` links survive, raw HTML and `<img>` are dropped, every link gets `rel="nofollow ugc"`.
+- **Rate-limit** — sliding window on the edge Cache API (not KV), keyed on the hashed client IP for anonymous callers and on the user id for signed-in ones. 1 anonymous comment per 10s and 5 per 10 min by default; signed-in authors get 3 per 10s and 60 per 10 min. Every caller is also held under one shared per-identity envelope across all endpoints. **Read [Rate-limit accuracy](#rate-limit-accuracy-known-limitations) before you rely on these numbers as a hard ceiling** — they are not one.
+- **Markdown sanitizer** — strict allowlist; only `https:`/`http:`/`mailto:` links survive, raw HTML and `<img>` are dropped, every link gets `rel="nofollow ugc noopener" target="_blank"`.
 - **Field honeypot** — a hidden `website` input in the embed form. If a bot fills it, the POST is rejected with HTTP 400.
 
 ## Optional layers
@@ -98,6 +98,29 @@ Tradeoff vs. Akismet: slower per check, generally pricier per inference, less sp
 ### Combining
 
 Layers stack. With everything on, a comment is flagged if **any** signal trips. The classifier is only called when no heuristic has already flagged (saves cost/latency).
+
+## Rate-limit accuracy (known limitations)
+
+The rate limiter is a **cost-raiser, not a hard ceiling.** Treat the configured numbers as the rate a normal client sees, not the maximum a determined one can achieve. Two things loosen it, both inherent to running the counters on the edge Cache API:
+
+**1. Counters are per-datacenter.** The Cache API is colo-local, so each Cloudflare datacenter keeps its own copy of a bucket. An attacker whose traffic spreads across colos gets roughly the configured limit *per colo* they reach.
+
+**2. Concurrent requests from one identity are undercounted.** Reading a bucket, deciding, and writing it back is not atomic, and the write replaces the entry rather than appending to it. So N requests held in flight at once all read the same pre-state, all pass the gate, and all write back a bucket grown by exactly one entry — the N-1 losers leave no trace. The effect is a sustained multiplier, not a one-off burst: a client keeping N requests in flight holds roughly N× the configured rate for as long as it likes. The shared envelope races the same way, so it multiplies rather than backstopping.
+
+**Why this is accepted rather than fixed.** The Cache API has no compare-and-swap, so #2 cannot be closed on this backend; a [Durable Object backend](https://github.com/KingPin/Garrul/issues/53) would close both and is tracked for a later release. It is not the front line in the meantime, because the limiter is deliberately not the only control on any endpoint that accepts an unauthenticated caller:
+
+| Endpoint | Second, non-racy control |
+| --- | --- |
+| Anonymous comment POST | Turnstile — a fresh single-use token per comment |
+| Report | `UNIQUE(comment_id, reporter_ip_hash)` — one report per comment per network, full stop |
+| Vote / reaction / page vote | Idempotent toggle on a unique row — repeats flip a row, they don't accumulate |
+| Subscribe | `PENDING_PER_EMAIL_CAP` — at most 5 unconfirmed rows per address |
+
+**What the race actually buys an attacker.** Every control in that table is unaffected by it, so what #2 loosens is a *rate*, not an action — it cannot buy a second report on the same comment, or a double-counted vote.
+
+On the IP-keyed buckets it is the cheapest bypass currently available. It used not to be: while Garrul hashed the full IPv6 address, one household supplied 2^64 distinct identities and per-IP limiting was unenforceable over IPv6 no matter what the race did. IP hashing now normalizes IPv6 to its /64, so a household is one identity — which closed the larger hole and left this one as the front edge. On the user-id-keyed buckets (signed-in comment POST, edit, delete) and the Telegram route the race is the *only* bypass, and those cost an attacker a real account, which you can ban.
+
+**What to do if this matters for your instance.** Put Cloudflare WAF rate-limiting rules in front of the Worker. They run before your code, count accurately, and can key on things Garrul can't see. Garrul's limiter is the floor that ships in the box, not the ceiling you should rely on under active attack.
 
 ## What's still possible (deferred)
 

@@ -5,7 +5,8 @@
  *
  * Low-friction by design: anonymous reports are allowed and there is NO
  * Turnstile challenge (a challenge on a one-tap "report" is overkill and
- * hurts adoption). Abuse is bounded three ways instead:
+ * hurts adoption). Abuse is bounded four ways instead:
+ *   - a banned identity — session user *or* ip_hash ghost — is refused 403;
  *   - the shared per-IP-hash rate-limit bucket (same as commenting);
  *   - a UNIQUE(comment_id, reporter_ip_hash) dedup — a second report from the
  *     same network is a silent no-op (INSERT OR IGNORE in insertReport);
@@ -22,8 +23,9 @@
 import { Hono } from "hono";
 import type { Bindings } from "../index";
 import { getComment, insertReport } from "../db/queries";
-import { clientIp, hashIp } from "../lib/ip-hash";
+import { requireIpHash } from "../lib/ip-hash";
 import { checkRateLimit } from "../lib/ratelimit";
+import { isInactiveGhost, requireActiveUser } from "../lib/active-user";
 import { readSession } from "../lib/session";
 import { writeEvent } from "../lib/analytics";
 import { fireWebhook } from "../lib/webhook";
@@ -47,14 +49,40 @@ reports.post("/:id/report", async (c) => {
 		reason = trimmed.length > 0 ? trimmed : null;
 	}
 
-	const ipHash = await hashIp(clientIp(c.req.raw), c.env.IP_HASH_SECRET);
-	const rl = await checkRateLimit(c.env, ipHash);
+	const ipHash = await requireIpHash(c);
+	if (ipHash instanceof Response) return ipHash;
+	const rl = await checkRateLimit(c.req.url, ipHash, { scope: "report" });
 	if (!rl.ok) {
 		writeEvent(c.env.ANALYTICS, "ratelimit.hit", {
 			outcome: rl.reason ?? null,
 			post_slug: null,
 		});
 		return c.json({ error: t("err.ratelimit") }, 429);
+	}
+
+	// A banned user doesn't get to file reports: the queue is a moderator's
+	// inbox, and an unchecked ban leaves it usable for harassment.
+	//
+	// Both identities, because reporting takes either. Gating only the session
+	// left the anonymous half open — an operator bans an abusive anonymous
+	// author by banning their ghost row (provider='anon', provider_id=ip_hash),
+	// and that ip_hash could still file a report from the same browser by
+	// signing out or never signing in. `isInactiveGhost` is the read-only lookup:
+	// this route deliberately never creates a ghost (reporter_user_id stays NULL
+	// and the dedup keys on the ip_hash), and a check has no business minting a
+	// user row on an unauthenticated path.
+	//
+	// Ahead of the target lookup, not after it. The other order gave a banned
+	// caller the enumeration oracle the {ok:true} below exists to deny: 403 for a
+	// comment that exists, {ok:true} for one that doesn't. Refusing before
+	// anything is resolved makes the response identical either way.
+	const session = await readSession(c);
+	if (session) {
+		if (!(await requireActiveUser(c.env.DB, session.user_id))) {
+			return c.json({ error: t("err.banned") }, 403);
+		}
+	} else if (await isInactiveGhost(c.env.DB, ipHash)) {
+		return c.json({ error: t("err.banned") }, 403);
 	}
 
 	// Resolve the target. A missing comment returns the same {ok:true} as a
@@ -65,7 +93,6 @@ reports.post("/:id/report", async (c) => {
 	const target = await getComment(c.env.DB, id);
 	if (!target || target.status === "deleted") return c.json({ ok: true });
 
-	const session = await readSession(c);
 	const isNew = await insertReport(c.env.DB, {
 		comment_id: id,
 		reporter_user_id: session?.user_id ?? null,

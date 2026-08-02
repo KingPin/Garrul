@@ -32,11 +32,12 @@
 
 import { loadErrorMessage } from "./load-error";
 
+// Mirrors lib/tree.ts's TreeAuthor. No `is_admin`: the API stopped sending it
+// (it let anyone enumerate privileged accounts) and nothing here rendered it.
 type TreeAuthor = {
 	id: string;
 	name: string;
 	provider: string;
-	is_admin: boolean;
 	avatar_svg: string | null;
 	avatar_url: string | null;
 };
@@ -2126,6 +2127,7 @@ const loadOnce = async (
 			siteKey = cfg.turnstile_site_key ?? null;
 			editWindowMinutes = cfg.edit_window_minutes ?? 15;
 			providers = (cfg.providers ?? []).filter((p): p is OAuthProvider =>
+				// biome-ignore lint/suspicious/noPrototypeBuiltins: the rule wants Object.hasOwn (ES2022); the widget builds for es2020 and esbuild will not polyfill it. This is already the safe `.call` form.
 				Object.prototype.hasOwnProperty.call(PROVIDER_LABELS, p),
 			);
 			brandingHidden = cfg.branding_hidden === true;

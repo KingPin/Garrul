@@ -134,7 +134,7 @@ const ban = (
 ) => {
 	const { sid = ADMIN_SID, origin = "http://localhost" } = opts;
 	const headers: Record<string, string> = { "content-type": "application/json" };
-	if (sid) headers.cookie = `garrul_sess=${sid}`;
+	if (sid) headers.cookie = `__Host-garrul_sess=${sid}`;
 	if (origin) headers.origin = origin;
 	return app().request(
 		`/admin/api/users/${TARGET_ID}`,
@@ -200,7 +200,7 @@ describe("POST /admin/api/users/:id (one-click ban author)", () => {
 				method: "POST",
 				headers: {
 					"content-type": "application/json",
-					cookie: `garrul_sess=${ADMIN_SID}`,
+					cookie: `__Host-garrul_sess=${ADMIN_SID}`,
 					origin: "http://localhost",
 				},
 				body: JSON.stringify({ banned: true }),

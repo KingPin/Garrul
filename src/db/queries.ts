@@ -60,6 +60,10 @@ export type User = {
 	is_banned: boolean;
 	role: UserRole;
 	created_at: number;
+	/** When an admin erased this identity's personal data, epoch ms; NULL for a
+	 *  normal account. Records only *that* it happened — see migration 0016 and
+	 *  `eraseUserData` for what the action clears. */
+	erased_at: number | null;
 };
 
 export type CommentStatus = "approved" | "pending" | "spam" | "deleted";
@@ -81,9 +85,35 @@ export type Comment = {
 	ip_hash: string | null;
 	user_agent: string | null;
 	created_at: number;
+	/** 1-based nesting depth: a top-level comment is 1, a direct reply 2.
+	 *  Set on insert as parent.depth + 1 and capped at MAX_REPLY_DEPTH.
+	 *  Distinct from TreeNode.depth in src/lib/tree.ts, which is the 0-based
+	 *  *render* depth after flattening at MAX_DEPTH. */
+	depth: number;
 	score_up: number;
 	score_down: number;
 };
+
+/**
+ * A comment as the public read path sees it. `body_md`, `ip_hash` and
+ * `user_agent` are deliberately absent: none of them is ever emitted by
+ * src/lib/tree.ts, and selecting them meant every cache miss on a busy slug
+ * dragged the full markdown source plus two pieces of pseudonymous PII out of
+ * D1 for nothing. Editing round-trips fetch `body_md` for one comment through
+ * GET /:id/source, which is author-gated.
+ */
+export type TreeComment = Omit<Comment, "body_md" | "ip_hash" | "user_agent">;
+
+/** Column list backing `TreeComment`. Keep the two in sync. */
+const TREE_COLUMNS = `id, post_slug, parent_id, user_id, body_html,
+	        renderer_version, status, edited_at, deleted_at, deleted_by,
+	        created_at, depth, score_up, score_down`;
+
+// Every users SELECT that feeds `toUser` goes through this list. It used to be
+// spelled out at six call sites, which meant a new column silently arrived as
+// `undefined` on five of them — TypeScript can't see inside a SQL string.
+const USER_COLS = `id, provider, provider_id, name, email, avatar_url,
+	        is_admin, is_banned, role, created_at, erased_at`;
 
 type UserRow = Omit<User, "is_admin" | "is_banned" | "role"> & {
 	is_admin: number;
@@ -106,19 +136,23 @@ export const upsertPost = async (
 	publishedAt: number | null = null,
 ): Promise<Post> => {
 	const now = Date.now();
-	// title/url: COALESCE(excluded, existing) so the host can refresh them on a
-	// later comment, but an omitted value never clobbers what's stored.
-	// published_at: COALESCE(existing, excluded) — write-once / first-writer-wins.
-	// It anchors age-based auto-close, so once set it must be immutable; otherwise
-	// an untrusted client could overwrite an established thread's close-anchor with
-	// a bogus date to force it closed. closed is operator-controlled, never set here.
+	// Every column here is write-once / first-writer-wins: COALESCE(existing,
+	// excluded). title and url arrive on an unauthenticated POST /api/v1/comments
+	// at the same trust level as the comment body, and this upsert runs *before*
+	// spam evaluation, so a last-writer-wins update let anyone who could post a
+	// (even quarantined) comment repoint an established thread's title and
+	// canonical URL — which fan out into mail subjects, the Atom feed and webhook
+	// payloads. published_at anchors age-based auto-close, so once set it must be
+	// immutable or a bogus date could force a thread closed. The cost is that a
+	// genuinely renamed page keeps its original title; there is no admin edit path
+	// for it yet. closed is operator-controlled and never set here.
 	await db
 		.prepare(
 			`INSERT INTO posts (slug, title, url, created_at, published_at)
 			 VALUES (?, ?, ?, ?, ?)
 			 ON CONFLICT(slug) DO UPDATE SET
-			   title        = COALESCE(excluded.title, posts.title),
-			   url          = COALESCE(excluded.url,   posts.url),
+			   title        = COALESCE(posts.title, excluded.title),
+			   url          = COALESCE(posts.url,   excluded.url),
 			   published_at = COALESCE(posts.published_at, excluded.published_at)`,
 		)
 		.bind(slug, title, url, now, publishedAt)
@@ -262,6 +296,30 @@ export const resolveReportsForComment = async (
 };
 
 /**
+ * The ghost user for this ip_hash if one already exists, else null.
+ *
+ * The read half of `getOrCreateGhost`, for callers that want to know whether an
+ * anonymous visitor has an identity *without* minting one — a route that only
+ * needs to answer "is this ip_hash banned?" has no business creating a user row
+ * as a side effect of the check.
+ *
+ * Hits the same (provider, provider_id) UNIQUE index the create path keys on.
+ */
+export const getGhostByIpHash = async (
+	db: D1Database,
+	ipHash: string,
+): Promise<User | null> => {
+	const row = await db
+		.prepare(
+			`SELECT ${USER_COLS}
+			 FROM users WHERE provider = 'anon' AND provider_id = ?`,
+		)
+		.bind(ipHash)
+		.first<UserRow>();
+	return row ? toUser(row) : null;
+};
+
+/**
  * Returns the existing ghost user for this ip_hash, or creates one.
  *
  * Ghost users are the per-IP anonymous identity used for anonymous comments.
@@ -274,15 +332,8 @@ export const getOrCreateGhost = async (
 	ipHash: string,
 	displayName: string,
 ): Promise<User> => {
-	const existing = await db
-		.prepare(
-			`SELECT id, provider, provider_id, name, email, avatar_url,
-			        is_admin, is_banned, role, created_at
-			 FROM users WHERE provider = 'anon' AND provider_id = ?`,
-		)
-		.bind(ipHash)
-		.first<UserRow>();
-	if (existing) return toUser(existing);
+	const existing = await getGhostByIpHash(db, ipHash);
+	if (existing) return existing;
 
 	const id = ulid();
 	const now = Date.now();
@@ -306,6 +357,7 @@ export const getOrCreateGhost = async (
 		is_banned: false,
 		role: "user",
 		created_at: now,
+		erased_at: null,
 	};
 };
 
@@ -337,8 +389,7 @@ export const upsertOauthUser = async (
 ): Promise<User> => {
 	const existing = await db
 		.prepare(
-			`SELECT id, provider, provider_id, name, email, avatar_url,
-			        is_admin, is_banned, role, created_at
+			`SELECT ${USER_COLS}
 			 FROM users WHERE provider = ? AND provider_id = ?`,
 		)
 		.bind(provider, provider_id)
@@ -384,6 +435,7 @@ export const upsertOauthUser = async (
 		is_banned: false,
 		role,
 		created_at: now,
+		erased_at: null,
 	};
 };
 
@@ -393,8 +445,7 @@ export const getUser = async (
 ): Promise<User | null> => {
 	const row = await db
 		.prepare(
-			`SELECT id, provider, provider_id, name, email, avatar_url,
-			        is_admin, is_banned, role, created_at
+			`SELECT ${USER_COLS}
 			 FROM users WHERE id = ?`,
 		)
 		.bind(id)
@@ -412,6 +463,11 @@ type InsertCommentInput = {
 	status?: CommentStatus;
 	ip_hash: string | null;
 	user_agent: string | null;
+	/** 1-based; callers pass parent.depth + 1 (or 1 for a top-level comment).
+	 *  Required, not defaulted: the caller has already loaded the parent to
+	 *  validate it, and a silent default would let an unbounded reply chain
+	 *  through the MAX_REPLY_DEPTH check that reads this column. */
+	depth: number;
 };
 
 export const insertComment = async (
@@ -426,8 +482,8 @@ export const insertComment = async (
 			`INSERT INTO comments (
 			   id, post_slug, parent_id, user_id, body_md, body_html,
 			   renderer_version, status, edited_at, deleted_at, deleted_by,
-			   ip_hash, user_agent, created_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?)`,
+			   ip_hash, user_agent, created_at, depth)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?)`,
 		)
 		.bind(
 			id,
@@ -441,6 +497,7 @@ export const insertComment = async (
 			input.ip_hash,
 			input.user_agent,
 			now,
+			input.depth,
 		)
 		.run();
 	return {
@@ -458,6 +515,7 @@ export const insertComment = async (
 		ip_hash: input.ip_hash,
 		user_agent: input.user_agent,
 		created_at: now,
+		depth: input.depth,
 		score_up: 0,
 		score_down: 0,
 	};
@@ -471,7 +529,7 @@ export const getComment = async (
 		.prepare(
 			`SELECT id, post_slug, parent_id, user_id, body_md, body_html,
 			        renderer_version, status, edited_at, deleted_at, deleted_by,
-			        ip_hash, user_agent, created_at, score_up, score_down
+			        ip_hash, user_agent, created_at, depth, score_up, score_down
 			 FROM comments WHERE id = ?`,
 		)
 		.bind(id)
@@ -492,7 +550,7 @@ export const getCommentsByIds = async (
 		.prepare(
 			`SELECT id, post_slug, parent_id, user_id, body_md, body_html,
 			        renderer_version, status, edited_at, deleted_at, deleted_by,
-			        ip_hash, user_agent, created_at, score_up, score_down
+			        ip_hash, user_agent, created_at, depth, score_up, score_down
 			   FROM comments WHERE id IN (${placeholders})`,
 		)
 		.bind(...ids)
@@ -513,8 +571,7 @@ export const getUsersByIds = async (
 	const placeholders = ids.map(() => "?").join(",");
 	const result = await db
 		.prepare(
-			`SELECT id, provider, provider_id, name, email, avatar_url,
-			        is_admin, is_banned, role, created_at
+			`SELECT ${USER_COLS}
 			   FROM users WHERE id IN (${placeholders})`,
 		)
 		.bind(...ids)
@@ -525,54 +582,155 @@ export const getUsersByIds = async (
 };
 
 /**
- * Fetch publicly visible comments for a post. Excludes `spam` and
- * `pending` — both are stored in D1 and visible in the admin queue,
- * but never leak via the public tree. Returned `deleted` comments are
- * kept so the tree builder can preserve chain ancestry; their body_html
- * is blanked at render time.
+ * Visibility predicate for the public read path. Excludes `spam` and `pending`
+ * — both are stored in D1 and visible in the admin queue, but never leak via
+ * the public tree. `deleted` rows ARE returned so the tree builder can preserve
+ * chain ancestry; their body_html is blanked at render time.
+ *
+ * When `viewer_id` is set, that one viewer additionally sees their OWN pending
+ * comments, so posting into a moderated thread gives visible confirmation the
+ * comment landed. Signed-in responses bypass the anonymous edge cache, so these
+ * rows can never end up in a shared cached copy.
  */
-export const listCommentsForPost = async (
+const visiblePredicate = (
+	viewer_id: string | null,
+	alias = "",
+): { sql: string; binds: string[] } => {
+	const col = alias ? `${alias}.status` : "status";
+	const user = alias ? `${alias}.user_id` : "user_id";
+	if (!viewer_id) {
+		return { sql: `${col} NOT IN ('spam', 'pending')`, binds: [] };
+	}
+	return {
+		sql: `(${col} NOT IN ('spam', 'pending')
+		       OR (${col} = 'pending' AND ${user} = ?))`,
+		binds: [viewer_id],
+	};
+};
+
+/**
+ * Hard backstop on how many comment rows one page of a tree may pull out of D1.
+ *
+ * Pagination below is thread-scoped, so the normal cost of a page is "the
+ * threads on it plus their replies". This bound exists for the pathological
+ * shape that bounding alone doesn't cover: a single top-level comment with tens
+ * of thousands of direct replies. D1's free tier allows 5M rows read per DAY
+ * account-wide, so an unbounded read on one popular slug is an account-wide
+ * outage primitive; truncating a freakishly large thread is strictly better,
+ * and the caller logs when it happens so the operator isn't guessing.
+ */
+export const TREE_ROW_LIMIT = 2000;
+
+export type ThreadRef = { id: string; score: number };
+
+/**
+ * One page of top-level thread ids in the requested sort order, plus their net
+ * score (the `top` cursor needs it).
+ *
+ * `limit` should be pageSize + 1: the caller uses the extra row purely to learn
+ * whether another page exists, and must not fetch its subtree.
+ *
+ * Both sorts page on a total order so no thread can be skipped or repeated:
+ *   - new: (created_at DESC, id DESC), cursor `id < ?` — ULIDs are
+ *     time-prefixed and unique, so id order tracks created_at order and breaks
+ *     same-millisecond ties.
+ *   - top: (score DESC, id DESC), cursor "ranked strictly after (score, id)".
+ */
+export const listThreadRefsForPost = async (
 	db: D1Database,
 	post_slug: string,
-): Promise<Comment[]> => {
+	opts: {
+		sort: "new" | "top";
+		limit: number;
+		cursor?: { score?: number; id: string } | null;
+		viewer_id?: string | null;
+	},
+): Promise<ThreadRef[]> => {
+	const visible = visiblePredicate(opts.viewer_id ?? null);
+	const binds: unknown[] = [post_slug, ...visible.binds];
+	let cursorSql = "";
+	if (opts.cursor && opts.sort === "top" && opts.cursor.score !== undefined) {
+		cursorSql = `AND ((score_up - score_down) < ?
+		              OR ((score_up - score_down) = ? AND id < ?))`;
+		binds.push(opts.cursor.score, opts.cursor.score, opts.cursor.id);
+	} else if (opts.cursor) {
+		cursorSql = "AND id < ?";
+		binds.push(opts.cursor.id);
+	}
+	const order =
+		opts.sort === "top"
+			? "(score_up - score_down) DESC, id DESC"
+			: "created_at DESC, id DESC";
+	binds.push(opts.limit);
+
 	const result = await db
 		.prepare(
-			`SELECT id, post_slug, parent_id, user_id, body_md, body_html,
-			        renderer_version, status, edited_at, deleted_at, deleted_by,
-			        ip_hash, user_agent, created_at, score_up, score_down
+			`SELECT id, (score_up - score_down) AS score
 			 FROM comments
-			 WHERE post_slug = ? AND status NOT IN ('spam', 'pending')
-			 ORDER BY created_at ASC, id ASC`,
+			 WHERE post_slug = ? AND parent_id IS NULL AND ${visible.sql}
+			   ${cursorSql}
+			 ORDER BY ${order}
+			 LIMIT ?`,
 		)
-		.bind(post_slug)
-		.all<Comment>();
+		.bind(...binds)
+		.all<ThreadRef>();
 	return result.results ?? [];
 };
 
 /**
- * Fetch a single viewer's own `pending` comments for a post. Merged into
- * the public tree only for the authenticated author so they can see their
- * comment is queued for moderation — never exposed to other viewers (the
- * caller scopes this to `session.user_id`). Signed-in list responses bypass
- * the edge cache, so these rows never leak into the anonymous cached copy.
+ * Every visible comment belonging to the given top-level threads.
+ *
+ * Replaces a query that selected EVERY comment on the slug with no LIMIT at
+ * all: ~5,000 rows on a busy post, multiplied by the four-to-five queries this
+ * endpoint runs, put D1's 5M daily row-read cap within reach of about a
+ * thousand unauthenticated requests.
+ *
+ * The recursive CTE applies the visibility predicate to the recursive step as
+ * well as the seed, so an unreachable subtree (children of a spam comment) is
+ * never read. Those rows were previously fetched and then silently dropped by
+ * the tree builder, which couldn't reach them either — same output, fewer rows.
+ *
+ * `truncated` reports that TREE_ROW_LIMIT clipped the result; the caller logs
+ * it. Rows come back created_at ASC so the builder's sibling ordering is a
+ * no-op scan.
  */
-export const listOwnPendingForPost = async (
+export const listCommentsForThreads = async (
 	db: D1Database,
-	post_slug: string,
-	user_id: string,
-): Promise<Comment[]> => {
+	threadIds: string[],
+	viewer_id: string | null = null,
+): Promise<{ rows: TreeComment[]; truncated: boolean }> => {
+	if (threadIds.length === 0) return { rows: [], truncated: false };
+	const seed = visiblePredicate(viewer_id, "s");
+	const step = visiblePredicate(viewer_id, "c");
+	const placeholders = threadIds.map(() => "?").join(",");
 	const result = await db
 		.prepare(
-			`SELECT id, post_slug, parent_id, user_id, body_md, body_html,
-			        renderer_version, status, edited_at, deleted_at, deleted_by,
-			        ip_hash, user_agent, created_at, score_up, score_down
+			`WITH RECURSIVE thread(id) AS (
+			 	SELECT s.id FROM comments s
+			 	 WHERE s.id IN (${placeholders}) AND ${seed.sql}
+			 	UNION
+			 	SELECT c.id FROM comments c
+			 	 JOIN thread t ON c.parent_id = t.id
+			 	 WHERE ${step.sql}
+			 )
+			 SELECT ${TREE_COLUMNS}
 			 FROM comments
-			 WHERE post_slug = ? AND user_id = ? AND status = 'pending'
-			 ORDER BY created_at ASC, id ASC`,
+			 WHERE id IN (SELECT id FROM thread)
+			 ORDER BY created_at ASC, id ASC
+			 LIMIT ?`,
 		)
-		.bind(post_slug, user_id)
-		.all<Comment>();
-	return result.results ?? [];
+		.bind(
+			...threadIds,
+			...seed.binds,
+			...step.binds,
+			TREE_ROW_LIMIT + 1,
+		)
+		.all<TreeComment>();
+	const rows = result.results ?? [];
+	if (rows.length > TREE_ROW_LIMIT) {
+		return { rows: rows.slice(0, TREE_ROW_LIMIT), truncated: true };
+	}
+	return { rows, truncated: false };
 };
 
 /**
@@ -588,7 +746,7 @@ export const listLatestApprovedComments = async (
 		.prepare(
 			`SELECT c.id, c.post_slug, c.parent_id, c.user_id, c.body_md, c.body_html,
 			        c.renderer_version, c.status, c.edited_at, c.deleted_at, c.deleted_by,
-			        c.ip_hash, c.user_agent, c.created_at, c.score_up, c.score_down,
+			        c.ip_hash, c.user_agent, c.created_at, c.depth, c.score_up, c.score_down,
 			        u.name AS author_name
 			   FROM comments c
 			   JOIN users u ON u.id = c.user_id
@@ -697,23 +855,42 @@ export const deleteSettings = async (
 		.run();
 };
 
+/**
+ * Rewrite a comment's body, optionally re-routing its moderation status in the
+ * same statement.
+ *
+ * `status` is passed when the edit's spam re-evaluation quarantines it. Folding
+ * it into this one UPDATE keeps an edit at a single D1 row-write, and leaves the
+ * common case (no status change) byte-identical to before.
+ */
 export const updateCommentBody = async (
 	db: D1Database,
 	id: string,
 	body_md: string,
 	body_html: string,
 	renderer_version: number,
+	status?: CommentStatus,
 ): Promise<void> => {
 	const now = Date.now();
-	await db
-		.prepare(
-			`UPDATE comments
-			    SET body_md = ?, body_html = ?, renderer_version = ?,
-			        edited_at = ?
-			  WHERE id = ?`,
-		)
-		.bind(body_md, body_html, renderer_version, now, id)
-		.run();
+	const stmt =
+		status === undefined
+			? db
+					.prepare(
+						`UPDATE comments
+						    SET body_md = ?, body_html = ?, renderer_version = ?,
+						        edited_at = ?
+						  WHERE id = ?`,
+					)
+					.bind(body_md, body_html, renderer_version, now, id)
+			: db
+					.prepare(
+						`UPDATE comments
+						    SET body_md = ?, body_html = ?, renderer_version = ?,
+						        edited_at = ?, status = ?
+						  WHERE id = ?`,
+					)
+					.bind(body_md, body_html, renderer_version, now, status, id);
+	await stmt.run();
 };
 
 /**
@@ -1108,7 +1285,7 @@ export const adminListComments = async (
 	const sql = `
 		SELECT c.id, c.post_slug, c.parent_id, c.user_id, c.body_md, c.body_html,
 		       c.renderer_version, c.status, c.edited_at, c.deleted_at, c.deleted_by,
-		       c.ip_hash, c.user_agent, c.created_at, c.score_up, c.score_down,
+		       c.ip_hash, c.user_agent, c.created_at, c.depth, c.score_up, c.score_down,
 		       u.name       AS author_name,
 		       u.email      AS author_email,
 		       u.avatar_url AS author_avatar_url,
@@ -1180,14 +1357,12 @@ export const adminListUsers = async (
 		? "AND (LOWER(name) LIKE ? ESCAPE '\\' OR LOWER(email) LIKE ? ESCAPE '\\')"
 		: "";
 	const sql = cursorCreatedAt != null && cursorId != null
-		? `SELECT id, provider, provider_id, name, email, avatar_url,
-		          is_admin, is_banned, role, created_at
+		? `SELECT ${USER_COLS}
 		     FROM users
 		    WHERE (created_at, id) < (?, ?) ${filter}
 		    ORDER BY created_at DESC, id DESC
 		    LIMIT ?`
-		: `SELECT id, provider, provider_id, name, email, avatar_url,
-		          is_admin, is_banned, role, created_at
+		: `SELECT ${USER_COLS}
 		     FROM users
 		    WHERE 1=1 ${filter}
 		    ORDER BY created_at DESC, id DESC
@@ -1228,6 +1403,166 @@ export const setUserRole = async (
 		.prepare(`UPDATE users SET role = ?, is_admin = ? WHERE id = ?`)
 		.bind(role, is_admin, id)
 		.run();
+};
+
+/** What an erasure touched. Counts only — never the values removed. */
+export type UserErasureCounts = {
+	/** Comments whose ip_hash + user_agent were cleared. */
+	comments_scrubbed: number;
+	/** Comments whose body was blanked and status forced to `deleted`. */
+	bodies_redacted: number;
+	subscriptions_deleted: number;
+	reports_scrubbed: number;
+	telegram_links_deleted: number;
+};
+
+/**
+ * Erase one user's personal data, in place.
+ *
+ * Anonymize rather than DELETE — see migration 0016 for why the row has to
+ * survive. What this clears, and why each one is personal data:
+ *
+ *   - `users.name` → `placeholderName`, `email`/`avatar_url` → NULL.
+ *   - `users.provider_id` → NULL. For an OAuth account that's the provider's
+ *     user id; for an anonymous ghost it is *the ip_hash itself*, so leaving it
+ *     would defeat the whole action.
+ *   - `comments.ip_hash` + `comments.user_agent` → NULL on every comment they
+ *     wrote. A soft delete never cleared these, so they outlived the comment
+ *     indefinitely and landed in every `db-export.sh` dump.
+ *   - `reports.reporter_ip_hash` → NULL on reports they filed. The UNIQUE
+ *     (comment_id, reporter_ip_hash) still holds: SQLite counts NULLs distinct,
+ *     so this releases the dedup slot rather than colliding.
+ *   - `subscriptions` rows for their address are deleted outright. The email
+ *     *is* the row's identity here; there is nothing left to anonymize.
+ *   - `telegram_links` rows are deleted — they carry an external chat id.
+ *
+ * `redactBodies` is the caller's decision, not ours. Anonymizing the author is
+ * enough when the erasure is about identity, and it leaves a thread others
+ * replied to intact. It is *not* enough when the person's name, address or
+ * employer is written in the comment text, which no amount of author-level
+ * scrubbing reaches. So the admin says which one they mean.
+ *
+ * Votes, reactions and page-engagement rows are left alone: they hold nothing
+ * but a link to the now-anonymous user, and removing them would silently
+ * restate every score the thread has been showing.
+ *
+ * Runs as one `db.batch`, which D1 wraps in a transaction — a half-erased user
+ * is worse than an un-erased one.
+ */
+export const eraseUserData = async (
+	db: D1Database,
+	args: {
+		id: string;
+		/** The address to clear subscriptions for. Read before the identity
+		 *  update, since that is what clears it from the users row. */
+		email: string | null;
+		placeholderName: string;
+		redactBodies: boolean;
+		now: number;
+	},
+): Promise<UserErasureCounts> => {
+	const { id, email, placeholderName, redactBodies, now } = args;
+	// Two statements are conditional, so each one's position in the batch is
+	// captured as it's queued rather than counted out afterwards — the row counts
+	// below have to survive someone inserting a statement in the middle.
+	const statements: D1PreparedStatement[] = [];
+	const queue = (stmt: D1PreparedStatement): number =>
+		statements.push(stmt) - 1;
+
+	queue(
+		db
+			.prepare(
+				`UPDATE users
+				    SET name = ?, email = NULL, avatar_url = NULL,
+				        provider_id = NULL, erased_at = ?
+				  WHERE id = ?`,
+			)
+			.bind(placeholderName, now, id),
+	);
+	const atComments = queue(
+		db
+			.prepare(
+				`UPDATE comments SET ip_hash = NULL, user_agent = NULL
+				  WHERE user_id = ?`,
+			)
+			.bind(id),
+	);
+	const atReports = queue(
+		db
+			.prepare(
+				`UPDATE reports SET reporter_ip_hash = NULL
+				  WHERE reporter_user_id = ?`,
+			)
+			.bind(id),
+	);
+	const atTelegram = queue(
+		db.prepare(`DELETE FROM telegram_links WHERE user_id = ?`).bind(id),
+	);
+	// Blank both renderings, and force the comment to `deleted` so the tree
+	// serves its placeholder instead of an empty bubble. deleted_at is COALESCEd:
+	// an already-deleted comment keeps the timestamp of the original deletion.
+	const atBodies = redactBodies
+		? queue(
+				db
+					.prepare(
+						`UPDATE comments
+						    SET body_md = '', body_html = '',
+						        status = 'deleted',
+						        deleted_at = COALESCE(deleted_at, ?),
+						        deleted_by = 'moderator'
+						  WHERE user_id = ?`,
+					)
+					.bind(now, id),
+			)
+		: null;
+	// Queued notifications have to go first: notifications.subscription_id is a
+	// foreign key, so deleting the subscription out from under an unsent digest
+	// row aborts the constraint and takes the whole transaction with it.
+	let atSubs: number | null = null;
+	if (email) {
+		queue(
+			db
+				.prepare(
+					`DELETE FROM notifications
+					  WHERE subscription_id IN
+					        (SELECT id FROM subscriptions WHERE email = ?)`,
+				)
+				.bind(email),
+		);
+		atSubs = queue(
+			db.prepare(`DELETE FROM subscriptions WHERE email = ?`).bind(email),
+		);
+	}
+
+	const results = await db.batch(statements);
+	const changes = (i: number | null): number => {
+		if (i == null) return 0;
+		const meta = results[i]?.meta as { changes?: number } | undefined;
+		return meta?.changes ?? 0;
+	};
+	return {
+		comments_scrubbed: changes(atComments),
+		bodies_redacted: changes(atBodies),
+		subscriptions_deleted: changes(atSubs),
+		reports_scrubbed: changes(atReports),
+		telegram_links_deleted: changes(atTelegram),
+	};
+};
+
+/**
+ * Distinct post slugs a user has commented on. Used to bust the cached first
+ * page of each affected thread after an erasure — the author name (and possibly
+ * the bodies) just changed on pages that are served from the edge cache.
+ */
+export const listPostSlugsForUser = async (
+	db: D1Database,
+	userId: string,
+): Promise<string[]> => {
+	const result = await db
+		.prepare(`SELECT DISTINCT post_slug FROM comments WHERE user_id = ?`)
+		.bind(userId)
+		.all<{ post_slug: string }>();
+	return (result.results ?? []).map((r) => r.post_slug);
 };
 
 // Used by the role-change endpoint to refuse a demotion that would leave
@@ -1306,14 +1641,27 @@ export type Subscription = {
  *
  * `auto_confirm` is passed by the route only when the caller is a logged-in
  * user submitting their own provider-verified email — that path skips the
- * email-loop because the user has already proved control of the inbox.
+ * email-loop because the user has already proved control of the inbox. It is
+ * therefore the *only* unattended signal that whoever is POSTing owns the
+ * address, and every destructive branch below hangs off it.
  *
- * Re-subscribing the same address:
- *   - rotates the unsubscribe `token` and clears `unsubscribed_at` so the
- *     row is live again,
- *   - leaves `confirmed_at` alone if it was already set (you don't have to
- *     re-confirm an already-confirmed address — but you DO have to confirm
- *     a never-confirmed re-attempt; we rotate `confirm_token` for that case).
+ * POST /subscribe is unauthenticated and takes an arbitrary email, so an
+ * existing row must survive a stranger naming it. This used to run
+ * `token = excluded.token` and `unsubscribed_at = NULL` unconditionally, which
+ * meant anyone could (a) invalidate every unsubscribe link already sitting in a
+ * victim's mailbox, and (b) resurrect a subscription they had cancelled — with
+ * `confirmed_at` preserved, so no confirmation mail fired and the victim was
+ * never told.
+ *
+ * Re-subscribing the same address now:
+ *   - keeps the existing unsubscribe `token`, unless `auto_confirm` proves the
+ *     requester owns the inbox;
+ *   - leaves `unsubscribed_at` set. A cancelled row comes back only through the
+ *     confirm link (see `confirmSubscription`), or immediately on
+ *     `auto_confirm`. Its `confirmed_at` is reset so that link is required;
+ *   - refreshes `confirm_token` while the row is unconfirmed, so a legitimate
+ *     "resend me the link" works;
+ *   - is a complete no-op on a live confirmed row.
  */
 export const upsertSubscription = async (
 	db: D1Database,
@@ -1334,15 +1682,31 @@ export const upsertSubscription = async (
 			    confirm_token, confirmed_at)
 			 VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?)
 			 ON CONFLICT(post_slug, email) DO UPDATE SET
-			   token = excluded.token,
-			   unsubscribed_at = NULL,
-			   -- only refresh confirm_token if the row is still unconfirmed;
-			   -- if already confirmed we don't reset it (preserves one-shot).
-			   confirm_token = CASE WHEN subscriptions.confirmed_at IS NULL
+			   -- excluded.confirmed_at is non-NULL only on the auto_confirm path,
+			   -- i.e. only when the requester has proved they own this inbox. That
+			   -- is the one case allowed to rotate the token an unsubscribe link
+			   -- already depends on, or to revive a cancelled row.
+			   token = CASE WHEN excluded.confirmed_at IS NOT NULL
+			                THEN excluded.token
+			                ELSE subscriptions.token END,
+			   unsubscribed_at = CASE WHEN excluded.confirmed_at IS NOT NULL
+			                          THEN NULL
+			                          ELSE subscriptions.unsubscribed_at END,
+			   -- Refresh the link while the row can't receive digests anyway
+			   -- (never confirmed, or cancelled). On a live confirmed row we keep
+			   -- the existing value so re-subscribing is inert.
+			   confirm_token = CASE WHEN excluded.confirmed_at IS NOT NULL
+			                        THEN NULL
+			                        WHEN subscriptions.confirmed_at IS NULL
+			                          OR subscriptions.unsubscribed_at IS NOT NULL
 			                        THEN excluded.confirm_token
 			                        ELSE subscriptions.confirm_token END,
 			   confirmed_at  = CASE WHEN excluded.confirmed_at IS NOT NULL
 			                        THEN excluded.confirmed_at
+			                        -- Coming back from an unsubscribe is a fresh
+			                        -- opt-in, not a restore.
+			                        WHEN subscriptions.unsubscribed_at IS NOT NULL
+			                        THEN NULL
 			                        ELSE subscriptions.confirmed_at END`,
 		)
 		.bind(
@@ -1399,28 +1763,41 @@ export const getSubscriptionByConfirmToken = async (
 		.first<Subscription>();
 };
 
-// We deliberately do NOT clear `confirm_token` here. Mail clients
-// (Gmail, Outlook, corporate link-scanners) routinely prefetch every
-// URL in an inbound email — if the first GET nulled the token, the
-// human's later click would land on a 404 "link expired" page even
-// though the address was already confirmed by the bot's prefetch.
-// Leaving the token alive makes the GET handler idempotent: the
-// re-click finds the row, sees confirmed_at is set, and renders the
-// success page again. The token never grants more than the same
-// (already-exercised) confirm capability, so leaving it valid is safe.
+/**
+ * Confirm a pending subscription. Returns whether *this* call was the one that
+ * confirmed it, so a caller can tell a real confirmation from a replay.
+ *
+ * `confirmed_at IS NULL` is load-bearing, not just an optimisation. It is what
+ * makes the call idempotent, and — since confirming also clears
+ * `unsubscribed_at` — what stops a confirm link from resurrecting a
+ * subscription the recipient later cancelled. A cancelled row keeps its
+ * `confirmed_at`, so it is not eligible; re-subscribing resets that field and
+ * issues a fresh token, which retires the old link.
+ *
+ * We deliberately do NOT clear `confirm_token` here. Mail clients
+ * (Gmail, Outlook, corporate link-scanners) routinely prefetch every
+ * URL in an inbound email — if the first GET nulled the token, the
+ * human's later click would land on a 404 "link expired" page even
+ * though the address was already confirmed by the bot's prefetch.
+ * Leaving the token alive makes the GET handler idempotent: the
+ * re-click finds the row, sees confirmed_at is set, and renders the
+ * success page again. The token never grants more than the same
+ * (already-exercised) confirm capability, so leaving it valid is safe.
+ */
 export const confirmSubscription = async (
 	db: D1Database,
 	id: string,
-): Promise<void> => {
+): Promise<boolean> => {
 	const now = Date.now();
-	await db
+	const res = await db
 		.prepare(
 			`UPDATE subscriptions
-			    SET confirmed_at = ?
+			    SET confirmed_at = ?, unsubscribed_at = NULL
 			  WHERE id = ? AND confirmed_at IS NULL`,
 		)
 		.bind(now, id)
 		.run();
+	return (res.meta?.changes ?? 0) > 0;
 };
 
 export const countPendingSubscriptionsForEmail = async (
@@ -1637,6 +2014,7 @@ export const ADMIN_ACTIONS = [
 	"edit",
 	"ban",
 	"unban",
+	"user.erase",
 	"rerender",
 	"seed-demo",
 	"sub.unsubscribe",
@@ -2139,7 +2517,7 @@ export const adminGetCommentDetail = async (
 		.prepare(
 			`SELECT c.id, c.post_slug, c.parent_id, c.user_id, c.body_md, c.body_html,
 			        c.renderer_version, c.status, c.edited_at, c.deleted_at, c.deleted_by,
-			        c.ip_hash, c.user_agent, c.created_at,
+			        c.ip_hash, c.user_agent, c.created_at, c.depth,
 			        u.name       AS author_name,
 			        u.email      AS author_email,
 			        u.avatar_url AS author_avatar_url,
@@ -2162,7 +2540,7 @@ export const adminGetCommentDetail = async (
 				.prepare(
 					`SELECT c.id, c.post_slug, c.parent_id, c.user_id, c.body_md, c.body_html,
 					        c.renderer_version, c.status, c.edited_at, c.deleted_at, c.deleted_by,
-					        c.ip_hash, c.user_agent, c.created_at,
+					        c.ip_hash, c.user_agent, c.created_at, c.depth,
 					        u.name       AS author_name,
 					        u.email      AS author_email,
 					        u.avatar_url AS author_avatar_url,
@@ -2182,7 +2560,7 @@ export const adminGetCommentDetail = async (
 		.prepare(
 			`SELECT c.id, c.post_slug, c.parent_id, c.user_id, c.body_md, c.body_html,
 			        c.renderer_version, c.status, c.edited_at, c.deleted_at, c.deleted_by,
-			        c.ip_hash, c.user_agent, c.created_at,
+			        c.ip_hash, c.user_agent, c.created_at, c.depth,
 			        u.name       AS author_name,
 			        u.email      AS author_email,
 			        u.avatar_url AS author_avatar_url,
@@ -2206,7 +2584,7 @@ export const adminGetCommentDetail = async (
 				.prepare(
 					`SELECT c.id, c.post_slug, c.parent_id, c.user_id, c.body_md, c.body_html,
 					        c.renderer_version, c.status, c.edited_at, c.deleted_at, c.deleted_by,
-					        c.ip_hash, c.user_agent, c.created_at,
+					        c.ip_hash, c.user_agent, c.created_at, c.depth,
 					        u.name       AS author_name,
 					        u.email      AS author_email,
 					        u.avatar_url AS author_avatar_url,
@@ -2228,7 +2606,7 @@ export const adminGetCommentDetail = async (
 		.prepare(
 			`SELECT c.id, c.post_slug, c.parent_id, c.user_id, c.body_md, c.body_html,
 			        c.renderer_version, c.status, c.edited_at, c.deleted_at, c.deleted_by,
-			        c.ip_hash, c.user_agent, c.created_at,
+			        c.ip_hash, c.user_agent, c.created_at, c.depth,
 			        u.name       AS author_name,
 			        u.email      AS author_email,
 			        u.avatar_url AS author_avatar_url,
@@ -2542,6 +2920,17 @@ export type WebhookEndpointInput = {
 	enabled: boolean;
 };
 
+/**
+ * A patch for updateWebhookEndpoint. Not `Partial<WebhookEndpointInput>`:
+ * under exactOptionalPropertyTypes that type forbids an *explicit* undefined,
+ * and callers rely on passing one — the admin webhook form sends
+ * `secret: undefined` to mean "keep the stored secret" (it is write-only and
+ * can't round-trip the value) versus `null` for "remove signing".
+ */
+export type WebhookEndpointPatch = {
+	[K in keyof WebhookEndpointInput]?: WebhookEndpointInput[K] | undefined;
+};
+
 const serializeEvents = (events: string[] | null): string | null =>
 	events == null || events.length === 0 ? null : events.join(",");
 
@@ -2577,7 +2966,7 @@ export const createWebhookEndpoint = async (
 export const updateWebhookEndpoint = async (
 	db: D1Database,
 	id: string,
-	input: Partial<WebhookEndpointInput>,
+	input: WebhookEndpointPatch,
 ): Promise<void> => {
 	// Build the SET clause dynamically so callers can patch one field
 	// (e.g. just enabled, just secret) without overwriting siblings.

@@ -14,6 +14,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { Hono } from "hono";
+import type { TestApp, } from "./helpers/app";
 import { votes } from "../src/routes/api.votes";
 import { castVote } from "../src/db/queries";
 
@@ -58,6 +59,10 @@ const makeDb = (config: {
 						is_admin: 0,
 						is_banned: 0,
 						created_at: 1_700_000_000_000,
+						// `USER_COLS` selects erased_at, so real D1 returns null.
+						// Dropping it leaves `undefined`, which the active-user gate
+						// reads as erased and refuses.
+						erased_at: null,
 					};
 				}
 				return null;
@@ -155,6 +160,7 @@ const mkRouteApp = (
 		DOWNVOTES_ENABLED: string;
 	}> = {},
 	commentAuthorId: string = COMMENT_AUTHOR_ID,
+	status: string = "approved",
 ) => {
 	const app = new Hono<{ Bindings: Record<string, unknown> }>();
 	const { db } = makeDb({
@@ -166,7 +172,7 @@ const mkRouteApp = (
 			body_md: "x",
 			body_html: "<p>x</p>",
 			renderer_version: 1,
-			status: "approved",
+			status,
 			edited_at: null,
 			deleted_at: null,
 			ip_hash: null,
@@ -201,7 +207,7 @@ const mkRouteApp = (
 };
 
 const post = async (
-	app: Hono,
+	app: TestApp,
 	env: Record<string, unknown>,
 	body: unknown,
 ) =>
@@ -209,7 +215,12 @@ const post = async (
 		"/v",
 		{
 			method: "POST",
-			headers: { "content-type": "application/json" },
+			// Cloudflare's edge sets this on every real request; requireIpHash
+			// refuses the route without it outside dev.
+			headers: {
+				"content-type": "application/json",
+				"cf-connecting-ip": "203.0.113.7",
+			},
 			body: JSON.stringify(body),
 		},
 		env,
@@ -242,7 +253,12 @@ describe("POST /votes — input validation", () => {
 			"/v",
 			{
 				method: "POST",
-				headers: { "content-type": "application/json" },
+				// Cloudflare's edge sets this on every real request;
+				// requireIpHash refuses the route without it outside dev.
+				headers: {
+					"content-type": "application/json",
+					"cf-connecting-ip": "203.0.113.7",
+				},
 				body: "{not json",
 			},
 			env,
@@ -310,5 +326,29 @@ describe("POST /votes — self-vote forbidden", () => {
 		const { app, env } = mkRouteApp({}, GHOST_ID);
 		const res = await post(app, env, { comment_id: ULID_OK, value: 0 });
 		expect(res.status).toBe(403);
+	});
+});
+
+describe("POST /votes — only approved comments are votable", () => {
+	// Previously only `deleted` was rejected, so a vote on a held comment
+	// returned 200 plus the live tallies. That confirmed the moderator's
+	// decision to anyone holding the id and let a score be built up on content
+	// no reader can see yet. Every non-approved state must be
+	// indistinguishable from a missing row.
+	for (const status of ["pending", "spam", "deleted"]) {
+		it(`404s a vote on a ${status} comment`, async () => {
+			const { app, env } = mkRouteApp({}, COMMENT_AUTHOR_ID, status);
+			const res = await post(app, env, { comment_id: ULID_OK, value: 1 });
+			expect(res.status).toBe(404);
+			// Same body as a missing row — no separate error code to key off.
+			const body = (await res.json()) as { error: string };
+			expect(body.error).toBe("Not found.");
+		});
+	}
+
+	it("still accepts a vote on an approved comment", async () => {
+		const { app, env } = mkRouteApp({}, COMMENT_AUTHOR_ID, "approved");
+		const res = await post(app, env, { comment_id: ULID_OK, value: 1 });
+		expect(res.status).toBe(200);
 	});
 });

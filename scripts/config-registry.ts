@@ -240,9 +240,9 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
 		kind: "secret",
 		required: true,
 		group: "Generated secrets",
-		hint: "auto-generated 32-byte secret; reserved for future JWT use",
+		hint: "auto-generated 32-byte HMAC key for signed OAuth state",
 		description:
-			"Cookie signing for anon-edit tokens. Reserved; current sessions are KV-backed. Set a random value or skip.",
+			"HMAC-SHA-256 key for the signed OAuth state cookie (`src/lib/oauth.ts`). Required for sign-in to work at all. Rotating it invalidates any OAuth flow already in progress — users retry and it works; no other effect, since sessions are KV-backed and not signed with this.",
 		example: "`openssl rand -base64 32` output",
 		generate: "random32",
 		devPlaceholder: "dev-jwt-secret-change-me",
@@ -255,7 +255,7 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
 		group: "Generated secrets",
 		hint: "auto-generated HMAC pepper — generate once and keep it",
 		description:
-			"HMAC-SHA-256 pepper for IP hashing (see `src/lib/ip-hash.ts`). Never log/store raw IPs. Rotating it invalidates existing rate-limit and dedupe buckets.",
+			"HMAC-SHA-256 pepper for IP hashing (see `src/lib/ip-hash.ts`). Never log/store raw IPs. Tier-1 secret: with it, a D1 export discloses every commenter's IPv4 address, so guard it like `JWT_SECRET`. Rotating invalidates existing rate-limit and dedupe buckets, orphans anonymous ghost identities, and does **not** re-key hashes already stored — read `docs/ip-hashing.md` before rotating.",
 		example: "`openssl rand -base64 32` output",
 		generate: "random32",
 		devPlaceholder: "dev-ip-hash-pepper-change-me",

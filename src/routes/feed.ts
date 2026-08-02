@@ -18,14 +18,56 @@ import { getPost, listLatestApprovedComments } from "../db/queries";
 
 const feed = new Hono<{ Bindings: Bindings }>();
 
+// XML 1.0 cannot represent most C0 controls at all — not even as a numeric
+// character reference — so one of them anywhere in the document is a *fatal*
+// well-formedness error and every conforming reader rejects the entire feed,
+// cached 5 minutes at the edge. One comment whose author name ends in a
+// U+0001 was enough. Tab, LF and CR are the three C0 chars XML allows.
+//
+// Strip at the serialization boundary rather than only on the write paths:
+// OAuth display names come from the provider, and a database upgraded from an
+// earlier version can already hold rows written before any sanitizer existed.
+const XML_ILLEGAL = new RegExp(
+	"[\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f]",
+	"g",
+);
+
 const xmlEscape = (s: string | null | undefined): string => {
 	if (s == null) return "";
 	return s
+		.replace(XML_ILLEGAL, "")
 		.replace(/&/g, "&amp;")
 		.replace(/</g, "&lt;")
 		.replace(/>/g, "&gt;")
 		.replace(/"/g, "&quot;")
 		.replace(/'/g, "&apos;");
+};
+
+// CDATA is not an escaping mechanism, it's a delimiter: the one sequence it
+// can't carry is its own terminator. Splitting the section around `]]>` keeps
+// the payload byte-identical to a reader while making the document well-formed.
+// The markdown renderer emits `&gt;` for a literal `>`, so this should be
+// unreachable — it costs one string op to stop being load-bearing on that.
+const cdata = (html: string): string =>
+	`<![CDATA[${html
+		.replace(XML_ILLEGAL, "")
+		.split("]]>")
+		.join("]]]]><![CDATA[>")}]]>`;
+
+// The feed's own links. `post.url` came from the widget's data-url attribute, so
+// re-check the scheme here the way permalink.ts does — an http(s) fallback keeps
+// a `javascript:` row from becoming a clickable link inside a feed reader.
+const safeLink = (url: string | null | undefined, fallback: string): string => {
+	if (!url) return fallback;
+	try {
+		const parsed = new URL(url);
+		if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+			return fallback;
+		}
+	} catch {
+		return fallback;
+	}
+	return url;
 };
 
 feed.get("/:slug", async (c) => {
@@ -37,7 +79,7 @@ feed.get("/:slug", async (c) => {
 
 	const reqUrl = new URL(c.req.url);
 	const feedSelf = `${reqUrl.protocol}//${reqUrl.host}/feed/${encodeURIComponent(slug)}`;
-	const postLink = post?.url ?? feedSelf;
+	const postLink = safeLink(post?.url, feedSelf);
 	const title = post?.title
 		? `Comments on ${post.title}`
 		: `Comments on ${slug}`;
@@ -57,7 +99,7 @@ feed.get("/:slug", async (c) => {
   <published>${new Date(row.created_at).toISOString()}</published>
   <updated>${new Date(row.edited_at ?? row.created_at).toISOString()}</updated>
   <link rel="alternate" type="text/html" href="${xmlEscape(permalink)}"/>
-  <content type="html"><![CDATA[${row.body_html}]]></content>
+  <content type="html">${cdata(row.body_html)}</content>
 </entry>`;
 		})
 		.join("\n");
