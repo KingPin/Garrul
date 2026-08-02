@@ -44,9 +44,20 @@ export const requireActiveUser = async (
 	userId: string,
 ): Promise<User | null> => {
 	const user = await getUser(db, userId);
-	if (!user || user.is_banned || user.erased_at !== null) return null;
+	if (!user || !isActiveUser(user)) return null;
 	return user;
 };
+
+/**
+ * Whether an already-loaded row may act — the predicate behind
+ * `requireActiveUser`, split out for the one caller that can't use the async
+ * wrapper: comment POST distinguishes "this session points at a row that no
+ * longer exists" (401, refresh and sign in again) from "this user is refused"
+ * (403), which a single null return can't express. It reads the same two
+ * columns so the two paths can't drift.
+ */
+export const isActiveUser = (user: User): boolean =>
+	!user.is_banned && user.erased_at === null;
 
 /**
  * Resolve the identity to attribute a state-changing request to: the session

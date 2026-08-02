@@ -26,6 +26,7 @@ import {
 	getOrCreateGhost,
 	getComment,
 	getPost,
+	getUser,
 	getUserVotesOnPost,
 	insertComment,
 	isUserRole,
@@ -49,7 +50,7 @@ import { sanitizePostTitle } from "../lib/post-title";
 import { clientIp, requireIpHash } from "../lib/ip-hash";
 import { CURRENT_RENDERER_VERSION, renderMarkdown, validateBody } from "../lib/markdown";
 import { checkRateLimit } from "../lib/ratelimit";
-import { requireActiveUser } from "../lib/active-user";
+import { isActiveUser, requireActiveUser } from "../lib/active-user";
 import { readSession } from "../lib/session";
 import { verifyTurnstile } from "../lib/turnstile";
 import { writeEvent } from "../lib/analytics";
@@ -497,17 +498,19 @@ comments.post("/", async (c) => {
 		const denied = await enforceWriteBudget();
 		if (denied) return denied;
 
-		const u = await c.env.DB
-			.prepare(
-				`SELECT id, provider, provider_id, name, email, avatar_url,
-				        is_admin, is_banned, role, created_at
-				 FROM users WHERE id = ?`,
-			)
-			.bind(session.user_id)
-			.first<UserRow>();
+		// The shared active-user gate, split so a session pointing at a row that
+		// is simply gone still reports "session expired" rather than a ban
+		// notice. This used to be an inline SELECT that listed its own columns
+		// and only checked `is_banned` — it omitted `erased_at`, so an erased
+		// user could keep posting for the up-to-a-minute it takes the session
+		// revocation stamp to reach every colo, attributing new comments to an
+		// identity whose name is now a placeholder. `getUser` selects the full
+		// column set, and `isActiveUser` is the same predicate PATCH and DELETE
+		// reach through `requireActiveUser`.
+		const u = await getUser(c.env.DB, session.user_id);
 		if (!u) return c.json({ error: t("err.session.expired") }, 401);
-		author = rowToUser(u);
-		if (author.is_banned) return c.json({ error: t("err.banned") }, 403);
+		if (!isActiveUser(u)) return c.json({ error: t("err.banned") }, 403);
+		author = u;
 	}
 
 	// Make sure the post row exists so the FK on comments resolves.
