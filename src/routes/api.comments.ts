@@ -700,8 +700,14 @@ const loadAuthors = async (
 		const placeholders = batch.map(() => "?").join(",");
 		const result = await db
 			.prepare(
+				// erased_at is selected because `.all<UserRow>()` is an unchecked
+				// cast and UserRow declares it: omitting the column hands
+				// `rowToUser` an undefined and produces a User that lies about its
+				// own type. Nothing here reads it — TreeAuthor takes four fields —
+				// but the next caller to reuse this row would get a value the
+				// active-user gate reads as erased.
 				`SELECT id, provider, provider_id, name, email, avatar_url,
-				        is_admin, is_banned, role, created_at
+				        is_admin, is_banned, role, created_at, erased_at
 				 FROM users WHERE id IN (${placeholders})`,
 			)
 			.bind(...batch)
