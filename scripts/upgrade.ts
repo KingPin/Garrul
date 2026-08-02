@@ -38,6 +38,7 @@ import {
 	parseSemver,
 	type Manifest,
 } from "./upgrade/manifest";
+import { plainText, releaseNotesLines } from "./upgrade/plain-text";
 import {
 	diffSecrets,
 	diffVars,
@@ -122,12 +123,16 @@ const parseReleaseResponse = (
 		typeof rawNotes === "string" && rawNotes.trim().length > 0
 			? rawNotes
 			: null;
+	// `tag` and `html_url` are printed too, so they get the same stripping as the
+	// body. The fallback URL interpolates `tag`, which is why it is cleaned here
+	// at the boundary rather than at each print site.
 	return {
-		tag,
-		url:
+		tag: plainText(tag),
+		url: plainText(
 			typeof (body as { html_url?: unknown }).html_url === "string"
-				? ((body as { html_url: string }).html_url)
+				? (body as { html_url: string }).html_url
 				: `https://github.com/${owner}/${repo}/releases/tag/${tag}`,
+		),
 		notes,
 	};
 };
@@ -179,8 +184,21 @@ const printReleaseNotes = (info: ReleaseInfo | null, tag: string): void => {
 		return;
 	}
 	console.log("");
-	for (const line of info.notes.replace(/\r\n/g, "\n").split("\n")) {
+	// The release body is attacker-controlled free text on exactly the same
+	// terms as the manifest descriptions below, and it prints FIRST — so a
+	// cursor-movement sequence here can rewrite the "Breaking changes — manual
+	// steps required" block that appears further down, before the operator ever
+	// reaches `confirm("Proceed?")`. plain-text.ts strips the escapes and caps
+	// the volume so the body can't scroll the plan out of the terminal either.
+	const { lines, truncated } = releaseNotesLines(info.notes);
+	for (const line of lines) {
 		console.log(`  ${line}`);
+	}
+	if (truncated > 0) {
+		console.log("");
+		console.log(
+			`  … ${truncated} more line(s) not shown — read the full notes at ${info.url}`,
+		);
 	}
 };
 

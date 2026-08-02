@@ -12,6 +12,7 @@
  */
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import { plainText } from "./plain-text";
 
 export type SemVer = string; // "0.0.1" or "v0.0.1"
 
@@ -159,25 +160,10 @@ const optionalString = (
  * Names, bindings and dataset ids go through `requireMatch` below, which
  * refuses anything outside a tight allowlist. Descriptions, breaking-change
  * summaries and manual steps can't: they're prose, and prose is where an
- * upgrade's actual warnings live. But `printPlan` console.logs them verbatim,
- * and it does so *before* `applyPlan` cross-checks the fetched manifest
- * against the git tag — so at the moment the operator reads the plan and
- * decides whether to type "yes", this text is nothing but a network response.
- *
- * A `\r`, a newline, or a CSI cursor-movement sequence in a summary is enough
- * to overwrite a real "manual steps required" line with a fake "nothing to do"
- * one. Strip C0, DEL and C1 — that covers ESC (0x1B, every ANSI sequence),
- * the 8-bit CSI (0x9B), `\r` and `\n`. These fields are single-line by
- * construction; nothing legitimate in them needs a control character.
- *
- * Deliberately NOT folded into `requireString`/`optionalString`: `requireMatch`
- * and `optionalSemver` build on those, and silently cleaning their input would
- * turn a value that should be rejected into one that passes the pattern.
+ * upgrade's actual warnings live. `plain-text.ts` owns the stripping and
+ * documents the window that makes printing that prose dangerous — the release
+ * body printed immediately above the plan goes through the same module.
  */
-const CONTROL_RE = /[\u0000-\u001F\u007F-\u009F]/g;
-
-const plainText = (s: string): string => s.replace(CONTROL_RE, "");
-
 const requireText = (
 	parent: Record<string, unknown>,
 	key: string,
