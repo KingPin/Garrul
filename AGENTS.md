@@ -431,6 +431,18 @@ top-level navigation. The callback then redirects the user back to
 `ALLOWED_ORIGINS` allowlist). This is expected behavior — don't try to
 "fix" it by removing the popup or the redirect fallback.
 
+**COOP on the host page:** if the embedding page sends
+`Cross-Origin-Opener-Policy: same-origin`, the browser puts the
+cross-origin popup in its own browsing context group, `window.opener` is
+`null` there, and step 5 never happens. The popup still says "Signed
+in" — it has no way to detect the severed opener — so the failure is
+silent. The widget covers for it by re-checking `/api/v1/auth/me` when
+the reader returns to the page, but that only works when the host and
+the Worker share a registered domain (same cookie partition). Advise the
+integrator to serve `same-origin-allow-popups` instead: it keeps the
+opener for popups the page itself opens. Not needed if the host sends no
+COOP header at all.
+
 **Session cookie**: `__Host-garrul_sess`, 32 random bytes, `HttpOnly;
 Secure; SameSite=None; Partitioned; Path=/`. KV-backed lookup, 30-day TTL
 refreshed on use. No JWT. The `Partitioned` flag is required for
@@ -534,6 +546,15 @@ Prevention the popup may be blocked, in which case the widget falls
 back to a top-level redirect (see §7). The user lands at the callback
 page, which closes — they may need to navigate back manually. Expected
 behavior.
+
+### Signed in, but the widget doesn't notice until reload
+
+Almost always `Cross-Origin-Opener-Policy: same-origin` on the host page
+severing the popup's opener (see §7). Check it with
+`curl -sI <host page> | grep -i cross-origin-opener` and switch the value
+to `same-origin-allow-popups`. The other candidate is a host origin
+missing from `ALLOWED_ORIGINS`, which leaves the Worker without a safe
+`postMessage` target.
 
 ### Content Security Policy
 

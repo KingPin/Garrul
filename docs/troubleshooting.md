@@ -116,6 +116,61 @@ Fix sequence:
 If that still fails, the widget falls back to a top-level redirect
 when popup is blocked. The user navigates manually back to the blog.
 
+### Popup says "Signed in" but the widget stays signed out until reload
+
+Different failure from the one above: sign-in genuinely worked, and
+reloading the page shows the user signed in. The widget just never
+found out.
+
+The usual cause is a security header on **your host page**:
+
+```
+Cross-Origin-Opener-Policy: same-origin
+```
+
+Under COOP, a page with `same-origin` that opens a *cross-origin* popup
+puts it in a separate browsing context group. `window.opener` is `null`
+inside the popup, so the callback page cannot post `garrul:auth` back —
+and it has no way to tell, so it prints "Signed in. You can close this
+window." either way. This header ships in most static-host security
+presets, so you may have it without having chosen it.
+
+Check with:
+
+```bash
+curl -sI https://yourblog.example.com | grep -i cross-origin-opener
+```
+
+Fix it on the host page:
+
+```
+Cross-Origin-Opener-Policy: same-origin-allow-popups
+```
+
+That variant keeps the opener relationship for popups *you* open while
+still preventing other origins from getting a handle on your window. It
+is the standard value for any site running an OAuth popup.
+
+The widget also re-checks `/api/v1/auth/me` when you return to the host
+page, so it recovers on its own within a second or two. That recovery
+only works when the host page and the Worker share a registered
+domain (`blog.example.com` + `comments.example.com`), because the popup's
+cookie has to be in the same partition. On a genuinely cross-site embed
+(`example.com` + `comments.otherdomain.com`) under COOP there is no way
+back in — fix the header.
+
+A second, rarer cause: `?return=` didn't match `ALLOWED_ORIGINS`, so the
+Worker had no safe `postMessage` target and served the static callback
+page instead. Confirm your host origin is listed, scheme and `www.`
+included:
+
+```bash
+curl -sI https://comments.<yourdomain>/api/v1/health \
+  -H "Origin: https://yourblog.example.com" | grep -i access-control-allow-origin
+```
+
+No header back means that origin isn't allow-listed.
+
 ### "redirect_uri_mismatch" (any provider)
 
 The redirect URI registered in your OAuth app must exactly match

@@ -171,6 +171,9 @@ const finishHtml = (
 	// `targetOrigin="*"` which leaks the auth-completion message to whatever
 	// happens to be the opener. Render a static page instead — the popup
 	// closes itself and the parent infers state via /auth/me on focus.
+	// That inference lives in src/widget/auth-recovery.ts; it was described
+	// here for a while before it actually existed (issue #58), so keep the
+	// two in step if either moves.
 	if (!return_origin) {
 		return `<!doctype html>
 <html><head><meta charset="utf-8"><title>Garrul</title></head>
