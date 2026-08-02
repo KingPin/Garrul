@@ -152,6 +152,47 @@ const optionalString = (
 	return v;
 };
 
+/**
+ * Free-text accessors — for the fields the operator *reads* rather than the
+ * ones the script *executes*.
+ *
+ * Names, bindings and dataset ids go through `requireMatch` below, which
+ * refuses anything outside a tight allowlist. Descriptions, breaking-change
+ * summaries and manual steps can't: they're prose, and prose is where an
+ * upgrade's actual warnings live. But `printPlan` console.logs them verbatim,
+ * and it does so *before* `applyPlan` cross-checks the fetched manifest
+ * against the git tag — so at the moment the operator reads the plan and
+ * decides whether to type "yes", this text is nothing but a network response.
+ *
+ * A `\r`, a newline, or a CSI cursor-movement sequence in a summary is enough
+ * to overwrite a real "manual steps required" line with a fake "nothing to do"
+ * one. Strip C0, DEL and C1 — that covers ESC (0x1B, every ANSI sequence),
+ * the 8-bit CSI (0x9B), `\r` and `\n`. These fields are single-line by
+ * construction; nothing legitimate in them needs a control character.
+ *
+ * Deliberately NOT folded into `requireString`/`optionalString`: `requireMatch`
+ * and `optionalSemver` build on those, and silently cleaning their input would
+ * turn a value that should be rejected into one that passes the pattern.
+ */
+const CONTROL_RE = /[\u0000-\u001F\u007F-\u009F]/g;
+
+const plainText = (s: string): string => s.replace(CONTROL_RE, "");
+
+const requireText = (
+	parent: Record<string, unknown>,
+	key: string,
+	path: string,
+): string => plainText(requireString(parent, key, path));
+
+const optionalText = (
+	parent: Record<string, unknown>,
+	key: string,
+	path: string,
+): string | undefined => {
+	const s = optionalString(parent, key, path);
+	return s === undefined ? undefined : plainText(s);
+};
+
 const requireBool = (
 	parent: Record<string, unknown>,
 	key: string,
@@ -257,7 +298,7 @@ const validateSecret = (raw: unknown, i: number): SecretEntry => {
 		),
 		required: requireBool(raw, "required", `secrets[${i}]`),
 	};
-	const desc = optionalString(raw, "description", `secrets[${i}]`);
+	const desc = optionalText(raw, "description", `secrets[${i}]`);
 	if (desc !== undefined) entry.description = desc;
 	const addedIn = optionalSemver(raw, "addedIn", `secrets[${i}]`);
 	if (addedIn !== undefined) entry.addedIn = addedIn;
@@ -270,7 +311,7 @@ const validateVar = (raw: unknown, i: number): VarEntry => {
 		name: requireMatch(raw, "name", `vars[${i}]`, IDENTIFIER_RE, "an env-var name"),
 		required: requireBool(raw, "required", `vars[${i}]`),
 	};
-	const desc = optionalString(raw, "description", `vars[${i}]`);
+	const desc = optionalText(raw, "description", `vars[${i}]`);
 	if (desc !== undefined) entry.description = desc;
 	const addedIn = optionalSemver(raw, "addedIn", `vars[${i}]`);
 	if (addedIn !== undefined) entry.addedIn = addedIn;
@@ -290,7 +331,7 @@ const validateKv = (raw: unknown, i: number): KvEntry => {
 		),
 		required: requireBool(raw, "required", `kvNamespaces[${i}]`),
 	};
-	const desc = optionalString(raw, "description", `kvNamespaces[${i}]`);
+	const desc = optionalText(raw, "description", `kvNamespaces[${i}]`);
 	if (desc !== undefined) entry.description = desc;
 	const addedIn = optionalSemver(raw, "addedIn", `kvNamespaces[${i}]`);
 	if (addedIn !== undefined) entry.addedIn = addedIn;
@@ -317,7 +358,7 @@ const validateD1 = (raw: unknown, i: number): D1Entry => {
 		),
 		required: requireBool(raw, "required", `d1Databases[${i}]`),
 	};
-	const desc = optionalString(raw, "description", `d1Databases[${i}]`);
+	const desc = optionalText(raw, "description", `d1Databases[${i}]`);
 	if (desc !== undefined) entry.description = desc;
 	const addedIn = optionalSemver(raw, "addedIn", `d1Databases[${i}]`);
 	if (addedIn !== undefined) entry.addedIn = addedIn;
@@ -344,7 +385,7 @@ const validateAnalytics = (raw: unknown, i: number): AnalyticsEntry => {
 		),
 		required: requireBool(raw, "required", `analyticsDatasets[${i}]`),
 	};
-	const desc = optionalString(raw, "description", `analyticsDatasets[${i}]`);
+	const desc = optionalText(raw, "description", `analyticsDatasets[${i}]`);
 	if (desc !== undefined) entry.description = desc;
 	const addedIn = optionalSemver(raw, "addedIn", `analyticsDatasets[${i}]`);
 	if (addedIn !== undefined) entry.addedIn = addedIn;
@@ -363,9 +404,9 @@ const validateBreakingChange = (raw: unknown, i: number): BreakingChange => {
 		}
 	}
 	return {
-		id: requireString(raw, "id", `breakingChanges[${i}]`),
-		summary: requireString(raw, "summary", `breakingChanges[${i}]`),
-		manualSteps: steps as string[],
+		id: requireText(raw, "id", `breakingChanges[${i}]`),
+		summary: requireText(raw, "summary", `breakingChanges[${i}]`),
+		manualSteps: (steps as string[]).map(plainText),
 	};
 };
 

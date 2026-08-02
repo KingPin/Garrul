@@ -331,3 +331,68 @@ describe("manifestsEqual", () => {
 		expect(manifestDiffKeys(clone(validRaw), clone(validRaw))).toEqual([]);
 	});
 });
+
+describe("free-text sanitization", () => {
+	// printPlan console.logs these fields verbatim, and it runs BEFORE applyPlan
+	// cross-checks the fetched manifest against the git tag — so when the
+	// operator reads the plan and decides whether to type "yes", this text is
+	// still nothing but a network response. A CSI sequence or a bare \r in a
+	// summary can overwrite the real "manual steps required" line with a fake
+	// "nothing to do" one.
+	const ESC = "\u001B";
+	const CSI8 = "\u009B";
+	const CONTROL = /[\u0000-\u001F\u007F-\u009F]/;
+
+	it("strips ANSI escapes and newlines from a breaking change", () => {
+		const m = validateManifest({
+			...JSON.parse(JSON.stringify(validRaw)),
+			breakingChanges: [
+				{
+					id: `bc-1${ESC}[2K`,
+					summary: "real warning\r  - nothing to do here",
+					manualSteps: [`step one${CSI8}[1A`, "step two"],
+				},
+			],
+		});
+		const bc = m.breakingChanges[0] as {
+			id: string;
+			summary: string;
+			manualSteps: string[];
+		};
+		expect(bc.id).toBe("bc-1[2K");
+		expect(bc.summary).toBe("real warning  - nothing to do here");
+		expect(bc.manualSteps).toEqual(["step one[1A", "step two"]);
+		// Inert on a terminal now: no ESC, no 8-bit CSI, no CR/LF.
+		expect(CONTROL.test([bc.id, bc.summary, ...bc.manualSteps].join(""))).toBe(
+			false,
+		);
+	});
+
+	it("strips control characters from every description field", () => {
+		const m = validateManifest({
+			...JSON.parse(JSON.stringify(validRaw)),
+			secrets: [
+				{ name: "JWT_SECRET", required: true, description: `a${ESC}[31mb` },
+			],
+			vars: [{ name: "SOME_FLAG", required: false, description: "c\nd" }],
+			kvNamespaces: [
+				{ binding: "RATE_LIMITS", required: true, description: "e\rf" },
+			],
+		});
+		expect((m.secrets[0] as { description: string }).description).toBe("a[31mb");
+		expect((m.vars[0] as { description: string }).description).toBe("cd");
+		expect((m.kvNamespaces[0] as { description: string }).description).toBe("ef");
+	});
+
+	it("still rejects a control character in a structural field", () => {
+		// The sanitizer must stay out of requireString: a binding name with a
+		// newline has to fail the allowlist, not get quietly cleaned into one
+		// that passes it.
+		expect(() =>
+			validateManifest({
+				...JSON.parse(JSON.stringify(validRaw)),
+				kvNamespaces: [{ binding: "RATE\nLIMITS", required: true }],
+			}),
+		).toThrow(ManifestError);
+	});
+});
