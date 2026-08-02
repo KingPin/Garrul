@@ -51,6 +51,12 @@ export const requireActiveUser = async (
  * A banned session is rejected rather than quietly downgraded to its ghost —
  * falling back would hand them the anonymous budget and let the ban be shrugged
  * off by signing out.
+ *
+ * The ghost itself is checked for the mirror-image reason. `is_banned` is a
+ * column on `users` and a ghost *is* a user row, so an operator banning an
+ * abusive anonymous author from the admin queue expects that to stick; without
+ * this the ban only reached comment POST (which checks the row it creates) and
+ * votes, reactions and page engagement stayed open to them.
  */
 export const resolveActor = async (
 	c: ActorCtx,
@@ -62,5 +68,6 @@ export const resolveActor = async (
 		return user ? { ok: true, userId: user.id } : { ok: false };
 	}
 	const ghost = await getOrCreateGhost(c.env.DB, ipHash, "anon");
+	if (ghost.is_banned) return { ok: false };
 	return { ok: true, userId: ghost.id };
 };

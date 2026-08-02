@@ -188,6 +188,18 @@ describe("resolveActor", () => {
 		expect(second).toEqual(first);
 	});
 
+	it("rejects an anonymous caller whose ip_hash ghost is banned", async () => {
+		// An operator banning an abusive anonymous author from the queue bans a
+		// ghost row. Without the check the ban reached comment POST and nothing
+		// else, so votes/reactions/page engagement stayed open to them.
+		const first = await resolveActor(makeCtx(null), IP_HASH);
+		expect(first.ok).toBe(true);
+		sqlite
+			.prepare("UPDATE users SET is_banned = 1 WHERE provider_id = ?")
+			.run(IP_HASH);
+		expect((await resolveActor(makeCtx(null), IP_HASH)).ok).toBe(false);
+	});
+
 	it("treats an unknown cookie as anonymous", async () => {
 		const actor = await resolveActor(makeCtx("c".repeat(64)), IP_HASH);
 		expect(actor.ok).toBe(true);
