@@ -32,6 +32,7 @@
 
 import { loadErrorMessage } from "./load-error";
 import { watchForSignIn } from "./auth-recovery";
+import { autoSizeTextarea } from "./autosize";
 
 // Mirrors lib/tree.ts's TreeAuthor. No `is_admin`: the API stopped sending it
 // (it let anyone enumerate privileged accounts) and nothing here rendered it.
@@ -431,7 +432,11 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
 }
 .gr-sort select:hover { border-color: var(--gr-accent); }
 .gr-reply-form { margin-top: 0.5rem; display: flex; flex-direction: column; gap: 0.4rem; }
-.gr-reply-form textarea { min-height: 4em; }
+/* 4em is the floor for an *empty* reply box; prefilled edit boxes grow past it
+   via autoSize(). resize:vertical matches .gr-form textarea — the grip has to
+   stay (autoSize yields to it), and the UA default "both" would let a drag push
+   the box wider than the thread. */
+.gr-reply-form textarea { min-height: 4em; resize: vertical; }
 .gr-reply-form .gr-reply-actions { display: flex; gap: 0.5rem; }
 .gr-reply-form .gr-reply-actions button {
 	font: inherit;
@@ -543,6 +548,10 @@ const parseTrustedHtml = (html: string): DocumentFragment => {
 	return range.createContextualFragment(html);
 };
 
+/** Grow a composer to fit its content, capped against the live viewport. */
+const autoSize = (ta: HTMLTextAreaElement): void =>
+	autoSizeTextarea(ta, window.innerHeight);
+
 // ── Draft autosave ──────────────────────────────────────────────────────────
 // A long comment shouldn't vanish on an accidental reload or a failed submit.
 // Drafts live ONLY in the visitor's own browser (localStorage), keyed by slug
@@ -576,7 +585,14 @@ const attachDraft = (ta: HTMLTextAreaElement, key: string): string => {
 		const saved = localStorage.getItem(key);
 		// Only restore into an empty field so we never clobber a server-provided
 		// or already-typed value.
-		if (saved && !ta.value) ta.value = saved;
+		if (saved && !ta.value) {
+			ta.value = saved;
+			// Same shape as the edit prefill: content arrives before the form is in
+			// the DOM (buildForm builds, the caller mounts), and an unmounted
+			// textarea can't be measured. Defer to just after the mount — the same
+			// microtask trick buildReplyForm uses to observe its own parent.
+			queueMicrotask(() => autoSize(ta));
+		}
 	} catch {
 		// Storage unavailable — skip restore.
 	}
@@ -692,6 +708,10 @@ const buildWritePreview = (
 	tabs.append(writeTab, previewTab);
 
 	const toolbar = buildToolbar(textarea);
+	// Every composer in the widget (top-level, reply, edit) is wrapped here, so
+	// this is the one place that has to grow the box while the author types.
+	// applyMarkdown re-fires `input`, so toolbar insertions size too.
+	textarea.addEventListener("input", () => autoSize(textarea));
 	const hint = el("span", "gr-md-hint", "Styling with Markdown is supported");
 	const pane = el("div", "gr-preview");
 	pane.hidden = true;
@@ -1401,6 +1421,9 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 			ta.disabled = false;
 			save.disabled = false;
 			ta.placeholder = "Edit your comment…";
+			// The whole point of issue #52: the box opens showing the comment, not
+			// a 3-line window onto it. Has to run here, after the prefill lands.
+			autoSize(ta);
 			ta.focus();
 		});
 	wrap.append(buildWritePreview(ta, ctx.apiBase, true), actions);
