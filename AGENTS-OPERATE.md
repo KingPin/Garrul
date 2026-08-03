@@ -865,7 +865,8 @@ npm run db:export -- garrul-backup-pre-purge.sql
 
 # 2. Purge. --remote hits production; drop it to rehearse against local.
 npx wrangler d1 execute garrul-db --remote --command \
-  "UPDATE comments SET ip_hash = NULL, user_agent = NULL WHERE ip_hash IS NOT NULL;"
+  "UPDATE comments SET ip_hash = NULL, user_agent = NULL
+   WHERE (ip_hash IS NOT NULL OR user_agent IS NOT NULL);"
 
 npx wrangler d1 execute garrul-db --remote --command \
   "UPDATE reports SET reporter_ip_hash = NULL WHERE reporter_ip_hash IS NOT NULL;"
@@ -879,7 +880,8 @@ npx wrangler secret put IP_HASH_SECRET
 
 # 5. Confirm nothing survived.
 npx wrangler d1 execute garrul-db --remote --command \
-  "SELECT (SELECT COUNT(*) FROM comments WHERE ip_hash IS NOT NULL) AS comments,
+  "SELECT (SELECT COUNT(*) FROM comments
+             WHERE (ip_hash IS NOT NULL OR user_agent IS NOT NULL)) AS comments,
           (SELECT COUNT(*) FROM reports WHERE reporter_ip_hash IS NOT NULL) AS reports,
           (SELECT COUNT(*) FROM users WHERE provider = 'anon' AND provider_id IS NOT NULL) AS ghosts;"
 ```
