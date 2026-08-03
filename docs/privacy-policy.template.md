@@ -58,21 +58,21 @@ comment-id, reaction-kind)** tuple.
   without signing in. It is removed if you ask us to erase your data
   (see below).
 
-  <!-- Keep the sentence that matches your instance. Garrul's
-       IP_HASH_RETENTION_DAYS setting is OFF by default: if you haven't set
-       it, the first sentence is the true one. If you have, use the second
-       and fill in your window — and note that it deliberately says
-       "comments and abuse reports", not "everything". The anonymous
-       identity is never expired on a timer, because for a signed-out
-       visitor that hash *is* the account. Claiming otherwise would be
-       false. See docs/ip-hashing.md. -->
-
   There is no automatic expiry.
+
+  <!-- The sentence above matches a default Garrul instance, where
+       IP_HASH_RETENTION_DAYS is OFF. If you have set it, delete that
+       sentence and use this paragraph instead, filling in your window:
 
   We automatically erase the hashed IP stored against comments and abuse
   reports after **[90] days**. The anonymous identity derived from it is
   kept for as long as the account exists, because it is what lets you be
   recognised as the same commenter when you return.
+
+       Note it deliberately says "comments and abuse reports", not
+       "everything". The anonymous identity is never expired on a timer,
+       because for a signed-out visitor that hash *is* the account.
+       Claiming otherwise would be false. See docs/ip-hashing.md. -->
 - **OAuth account data**: until you ask us to remove it.
 - **Subscriptions**: until you click the unsubscribe link in any
   notification email.
