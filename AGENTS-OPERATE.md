@@ -816,12 +816,11 @@ just forces re-sign-in; `TREE_CACHE` rebuilds on next read.
 
 ### Hashed IPs in an export
 
-A `.sql` dump carries every `ip_hash` the instance has ever written, and
-those values are permanent — there is no TTL, no purge job, and no
-retention window. They land in three places: `comments.ip_hash` (kept
-even after a soft delete), `comment_reports.reporter_ip_hash` (kept after
-the flags are resolved), and `users.provider_id` for `provider='anon'`
-ghost rows, which is the anonymous identity itself.
+A `.sql` dump carries every `ip_hash` the instance still holds. They land
+in three places: `comments.ip_hash` (kept even after a soft delete),
+`reports.reporter_ip_hash` (kept after the flags are resolved), and
+`users.provider_id` for `provider='anon'` ghost rows, which is the
+anonymous identity itself.
 
 The hash is a pseudonym only against someone who *doesn't* have
 `IP_HASH_SECRET`. The construction is unsalted and IPv4 is a 2^32 input
@@ -834,6 +833,73 @@ shipped.
 
 Full posture, including what rotation breaks and what a deletion request
 costs today: [`docs/ip-hashing.md`](docs/ip-hashing.md).
+
+### Emergency purge: `IP_HASH_SECRET` leaked
+
+If the secret is exposed — committed, pasted into a chat, or leaked
+alongside a dump — rotating it does **nothing** for rows already written.
+Those stay crackable with the leaked key forever. The only real fix is to
+clear the stored values. Run this first, then rotate.
+
+Order matters: purge before rotating. Rotation doesn't break the purge,
+but it does mint new-key hashes for anyone who comments in between, and
+you want the blast radius frozen while you work.
+
+```bash
+# 1. Snapshot first — this is irreversible and takes moderation history
+#    with it. Keep the backup encrypted and off shared storage.
+npm run db:export -- garrul-backup-pre-purge.sql
+
+# 2. Purge. --remote hits production; drop it to rehearse against local.
+npx wrangler d1 execute garrul-db --remote --command \
+  "UPDATE comments SET ip_hash = NULL, user_agent = NULL WHERE ip_hash IS NOT NULL;"
+
+npx wrangler d1 execute garrul-db --remote --command \
+  "UPDATE reports SET reporter_ip_hash = NULL WHERE reporter_ip_hash IS NOT NULL;"
+
+# 3. Anonymous ghost identities. See the warning below BEFORE running this.
+npx wrangler d1 execute garrul-db --remote --command \
+  "UPDATE users SET provider_id = NULL WHERE provider = 'anon' AND provider_id IS NOT NULL;"
+
+# 4. Rotate the secret.
+npx wrangler secret put IP_HASH_SECRET
+
+# 5. Confirm nothing survived.
+npx wrangler d1 execute garrul-db --remote --command \
+  "SELECT (SELECT COUNT(*) FROM comments WHERE ip_hash IS NOT NULL) AS comments,
+          (SELECT COUNT(*) FROM reports WHERE reporter_ip_hash IS NOT NULL) AS reports,
+          (SELECT COUNT(*) FROM users WHERE provider = 'anon' AND provider_id IS NOT NULL) AS ghosts;"
+```
+
+Substitute your own `database_name` from `wrangler.toml` for `garrul-db`.
+
+**Step 3 is the destructive one.** Clearing a ghost's `provider_id`
+deletes the anonymous identity, not just a hash. Consequences, all
+permanent:
+
+- Every ghost-author **ban stops applying** to that network. Re-ban from
+  a fresh comment if you need it to hold.
+- **Vote, reaction and page-engagement dedup resets** for anonymous
+  visitors — one identity per network becomes one identity per network
+  *per future visit*.
+- Returning anonymous commenters get **new ghost rows**; their old
+  comments still render and still belong to the old rows.
+
+Steps 1–2 are the ones that matter for the leak: they cover the bulk of
+the exposure and cost you only the admin "other comments from this
+network" panel on old comments. Step 3 closes the remaining gap and is
+the right call if the export is genuinely in someone else's hands.
+Skipping it is defensible if it isn't.
+
+SQLite counts NULLs as distinct in a UNIQUE index, so
+`UNIQUE (comment_id, reporter_ip_hash)` on `reports` and
+`UNIQUE (provider, provider_id)` on `users` both survive the purge no
+matter how many rows collapse to NULL. Nothing else in the schema keys on
+these columns, so there are no orphans to clean up afterwards.
+
+For a single person's data rather than the whole table, use **Erase
+personal data** on `/admin/users/<id>` instead — admin-only,
+audit-logged, and scoped to that user's rows.
 
 ## 12. Upgrades
 
