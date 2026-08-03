@@ -182,7 +182,15 @@ const STYLE_CSS = `
 * { box-sizing: border-box; }
 .gr-root { display: flex; flex-direction: column; gap: 1rem; }
 .gr-form { display: flex; flex-direction: column; gap: 0.5rem; }
-.gr-form input, .gr-form textarea {
+/* Every text field in the widget, whichever form it belongs to. Reply and edit
+   composers are .gr-reply-form, not .gr-form, so they have to be named here
+   explicitly. Left out, they fall through to the UA defaults — 13px monospace,
+   square grey border, 2px padding — next to a themed 15px composer, and ignore
+   the public --garrul-font/-input-bg/-border/-radius contract. That reads as
+   harmless in the light theme only because a UA textarea is white and so is the
+   default --garrul-input-bg; in dark mode it was a white box with black text. */
+.gr-form input, .gr-form textarea,
+.gr-reply-form input, .gr-reply-form textarea {
 	font: inherit; color: inherit;
 	background: var(--gr-input-bg);
 	border: 1px solid var(--gr-border);
@@ -432,11 +440,14 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
 }
 .gr-sort select:hover { border-color: var(--gr-accent); }
 .gr-reply-form { margin-top: 0.5rem; display: flex; flex-direction: column; gap: 0.4rem; }
-/* 4em is the floor for an *empty* reply box; prefilled edit boxes grow past it
-   via autoSize(). resize:vertical matches .gr-form textarea — the grip has to
-   stay (autoSize yields to it), and the UA default "both" would let a drag push
-   the box wider than the thread. */
-.gr-reply-form textarea { min-height: 4em; resize: vertical; }
+/* 5em is the floor for an *empty* reply box — shorter than the top-level
+   composer's 6em, because a reply is nested inside a thread and shouldn't shove
+   the conversation down, but above the ~63px a bare 2-row textarea comes to at
+   the inherited 15px font, or the floor would be dead code. Prefilled edit
+   boxes grow past it via autoSize(). resize:vertical matches .gr-form textarea
+   — the grip has to stay (autoSize yields to it), and the UA default "both"
+   would let a drag push the box wider than the thread. */
+.gr-reply-form textarea { min-height: 5em; resize: vertical; }
 .gr-reply-form .gr-reply-actions { display: flex; gap: 0.5rem; }
 .gr-reply-form .gr-reply-actions button {
 	font: inherit;
