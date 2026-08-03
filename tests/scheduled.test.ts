@@ -1,10 +1,10 @@
 /**
- * Cron-pass isolation (issue #16). The scheduled handler runs three
+ * Cron-pass isolation (issue #16). The scheduled handler runs four
  * independent passes per tick — email digest + webhook retries +
- * Telegram digest — each under its own waitUntil with its own catch.
- * These tests pin that a throw in any pass (a) never skips the others
- * and (b) is caught and logged rather than surfacing as an unhandled
- * rejection.
+ * Telegram digest + IP-hash retention — each under its own waitUntil with
+ * its own catch. These tests pin that a throw in any pass (a) never skips
+ * the others and (b) is caught and logged rather than surfacing as an
+ * unhandled rejection.
  *
  * The run* functions are mocked at the module boundary; everything
  * else in src/index.ts loads for real.
@@ -23,8 +23,13 @@ vi.mock("../src/lib/telegram-digest", async (importOriginal) => ({
 	...(await importOriginal<typeof import("../src/lib/telegram-digest")>()),
 	runTelegramDigest: vi.fn(),
 }));
+vi.mock("../src/db/ip-retention", async (importOriginal) => ({
+	...(await importOriginal<typeof import("../src/db/ip-retention")>()),
+	runIpRetention: vi.fn(),
+}));
 
 import worker from "../src/index";
+import { runIpRetention } from "../src/db/ip-retention";
 import { runDigest } from "../src/lib/digest";
 import { log } from "../src/lib/log";
 import { runTelegramDigest } from "../src/lib/telegram-digest";
@@ -57,6 +62,7 @@ describe("scheduled handler pass isolation", () => {
 		vi.mocked(runDigest).mockReset().mockResolvedValue(undefined);
 		vi.mocked(runWebhookRetries).mockReset().mockResolvedValue(undefined);
 		vi.mocked(runTelegramDigest).mockReset().mockResolvedValue(undefined);
+		vi.mocked(runIpRetention).mockReset().mockResolvedValue(undefined);
 		errSpy = vi.spyOn(log, "error").mockImplementation(() => {});
 	});
 
@@ -67,11 +73,12 @@ describe("scheduled handler pass isolation", () => {
 	it("runs all passes under separate waitUntil calls", async () => {
 		const { ctx, tracked } = makeCtx();
 		await scheduled(ctx);
-		expect(tracked).toHaveLength(3);
+		expect(tracked).toHaveLength(4);
 		await Promise.all(tracked);
 		expect(runDigest).toHaveBeenCalledTimes(1);
 		expect(runWebhookRetries).toHaveBeenCalledTimes(1);
 		expect(runTelegramDigest).toHaveBeenCalledTimes(1);
+		expect(runIpRetention).toHaveBeenCalledTimes(1);
 		expect(errSpy).not.toHaveBeenCalled();
 	});
 
@@ -114,6 +121,22 @@ describe("scheduled handler pass isolation", () => {
 		expect(errSpy).toHaveBeenCalledWith(
 			"scheduled.telegram_digest",
 			expect.objectContaining({ error: expect.stringContaining("tg boom") }),
+		);
+	});
+
+	it("an ip-retention failure doesn't skip the other passes and is caught + logged", async () => {
+		vi.mocked(runIpRetention).mockRejectedValue(new Error("retention boom"));
+		const { ctx, tracked } = makeCtx();
+		await scheduled(ctx);
+		await expect(Promise.all(tracked)).resolves.toBeDefined();
+		expect(runDigest).toHaveBeenCalledTimes(1);
+		expect(runWebhookRetries).toHaveBeenCalledTimes(1);
+		expect(runTelegramDigest).toHaveBeenCalledTimes(1);
+		expect(errSpy).toHaveBeenCalledWith(
+			"scheduled.ip_retention",
+			expect.objectContaining({
+				error: expect.stringContaining("retention boom"),
+			}),
 		);
 	});
 });
