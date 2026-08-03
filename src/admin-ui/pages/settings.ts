@@ -117,6 +117,24 @@ const MOD_NUMBER_META: { key: NumberKey; label: string; help: string }[] = [
 	},
 ];
 
+// Privacy retention. Lives on the Moderation tab because that's what the stored
+// hashes are *for* — the dial trades moderation depth (spotting a ban evader on
+// the same network, deduping reports) for a smaller blast radius if the database
+// or the hashing secret ever leaks.
+//
+// The only setting here whose effect can't be undone by setting it back, so the
+// help text has to say so: the cron nulls the columns, and nothing rebuilds
+// them. The 7-day floor is not expressible in the stepper's min (that has to
+// stay 0 so "off" remains reachable), so the sweep enforces it by refusing —
+// see MIN_RETENTION_DAYS in src/db/ip-retention.ts.
+const PRIVACY_NUMBER_META: { key: NumberKey; label: string; help: string }[] = [
+	{
+		key: "ip_hash_retention_days",
+		label: "Clear stored IP hashes after (days)",
+		help: "Erase the hashed IP and user-agent on comments and reports once they're this old. 0 = keep them for the life of the row (the default). Values from 1 to 6 are ignored — the sweep refuses anything under 7 days so a typo can't wipe nearly everything. Irreversible: a cleared hash is gone, and with it the ability to spot a ban evader on that network. Anonymous ghost accounts are never swept — their hash is the identity itself.",
+	},
+];
+
 // Anti-spam heuristic dials. The classifier provider and its credentials stay
 // deploy-time (see the Configuration tab) — these three are the ones worth
 // retuning while watching the queue fill up.
@@ -194,6 +212,7 @@ export const renderSettings = (
 	const numberInputs = NUMBER_META.map(stepper).join("");
 	const modNumberInputs = MOD_NUMBER_META.map(stepper).join("");
 	const spamNumberInputs = SPAM_NUMBER_META.map(stepper).join("");
+	const privacyNumberInputs = PRIVACY_NUMBER_META.map(stepper).join("");
 	const modToggles = MOD_FLAG_META.map((f) =>
 		renderSwitch({
 			name: f.key,
@@ -344,6 +363,21 @@ export const renderSettings = (
       <code>SPAM_FORM_TS_SECRET</code> to sign the form timestamp — without it an
       unsigned time is trivially forged, so the check is skipped. Set the secret
       with <code>wrangler secret put SPAM_FORM_TS_SECRET</code> and redeploy.</p>
+    </div>
+
+    <div class="card" x-show="tab === 'moderation'" x-cloak>
+      <h2>Privacy retention</h2>
+      <p class="muted">Garrul stores a keyed hash of the commenter's IP (never
+      the address itself) so you can spot a ban evader on the same network and
+      dedupe abuse reports. Retention puts an expiry on that: past the window,
+      the cron erases the hash and user-agent from comments and reports, so a
+      database export carries a bounded slice of history instead of everything
+      the instance has ever seen. Off by default.</p>
+      ${privacyNumberInputs}
+      <p class="muted"><strong>This one can't be undone.</strong> Setting the
+      window back to 0 stops future sweeps; it does not restore what a sweep
+      already erased. Watch it run, and drain a backlog on demand, from
+      <a href="/admin/operator">Operator</a>.</p>
     </div>
 
     <p class="settings-actions" x-show="tab !== 'config'">

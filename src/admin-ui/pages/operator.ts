@@ -1,8 +1,11 @@
 import type { RerenderStats } from "../../db/rerender";
+import type { RetentionStats } from "../../db/ip-retention";
+import { MIN_RETENTION_DAYS } from "../../db/ip-retention";
 import { MAX_XML_BYTES } from "../../lib/disqus-import";
 
 export type OperatorData = {
 	rerender: RerenderStats;
+	retention: RetentionStats;
 	seed_demo_allowed: boolean;
 };
 
@@ -10,8 +13,97 @@ export type OperatorData = {
 // error message. Whole MB by construction (MAX_XML_BYTES is N * 1024²).
 const MAX_XML_MB = Math.floor(MAX_XML_BYTES / (1024 * 1024));
 
+// Always-shown tail of the retention card. The ghost count is the honest part:
+// retention covers two of the three places an ip_hash lands, and an operator
+// reading "IP retention: 90 days" would otherwise reasonably assume an export
+// carries no hashes older than that. It does — for anonymous identities, which
+// are never expired on a timer because that column *is* the identity.
+const ghostNote = (ghosts: number): string => `
+  <p class="muted">Anonymous ghost identities: <strong>${ghosts}</strong>.
+    These are <em>never</em> swept — for a signed-out visitor the hashed IP
+    <em>is</em> the account (it's how a returning visitor finds their own
+    comments, and how a ghost ban keeps applying), so expiring it would delete
+    accounts rather than hashes. Clear them per-person from a user's page
+    ("Erase personal data"), or all at once with the purge runbook in
+    <code>AGENTS-OPERATE.md</code> §11 if the hashing secret ever leaks.</p>`;
+
+const retentionCard = (r: RetentionStats): string => {
+	if (!r.enabled) {
+		const reason =
+			r.retention_days === 0
+				? `Off. Stored hashes are kept for the life of the row.`
+				: `Set to <code>${r.retention_days}</code> day(s), which is below the
+	     ${MIN_RETENTION_DAYS}-day floor — the sweep refuses to run rather than
+	     purge nearly everything on a typo. Raise it to ${MIN_RETENTION_DAYS} or
+	     more, or set it to 0 to turn retention off deliberately.`;
+		return `
+<div class="card">
+  <h3>IP-hash retention</h3>
+  <p class="muted">${reason}
+    Change it on <a href="/admin/settings">Settings</a> (or via
+    <code>IP_HASH_RETENTION_DAYS</code>).</p>
+  <p class="muted">Comments currently holding a hashed IP:
+    <strong>${r.comments_total}</strong>.</p>
+  ${ghostNote(r.ghosts_total)}
+</div>`;
+	}
+
+	const pending = r.comments_pending + r.reports_pending;
+	return `
+<div class="card" x-data="{
+  busy: false,
+  comments: 0,
+  reports: 0,
+  done: false,
+  error: null,
+  step(first) {
+    if (this.busy) return;
+    if (first &amp;&amp; !confirm('Clear stored IP hashes older than ${r.retention_days} days? This cannot be undone.')) return;
+    this.busy = true; this.error = null;
+    return fetch('/admin/api/ops/ip-retention', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    }).then(async r => {
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'failed');
+      this.comments += j.comments;
+      this.reports += j.reports;
+      this.busy = false;
+      if (j.more) return this.step(false);
+      this.done = true;
+    }).catch(e => { this.error = e.message; this.busy = false; });
+  }
+}">
+  <h3>IP-hash retention</h3>
+  <p class="muted">Window: <strong>${r.retention_days}</strong> days. The cron
+    sweeps automatically; this button just drains the backlog now instead of
+    over the next few ticks. <strong>Irreversible</strong> — nothing
+    reconstructs a cleared hash.</p>
+  <p class="muted">Past the window right now — comments:
+    <strong>${r.comments_pending}</strong> · reports:
+    <strong>${r.reports_pending}</strong>.</p>
+  ${
+		pending > 0
+			? `<button :disabled="busy" @click="step(true)">
+    <span x-show="!busy &amp;&amp; !done">Sweep now</span>
+    <span x-show="busy">Sweeping…</span>
+    <span x-show="!busy &amp;&amp; done">Done</span>
+  </button>
+  <div class="muted" style="margin-top:0.5rem" x-show="comments || reports">
+    Cleared <span x-text="comments"></span> comment(s) ·
+    <span x-text="reports"></span> report(s)
+  </div>
+  <p style="color:var(--bad)" x-show="error" x-text="error"></p>`
+			: `<p class="muted">Nothing to do — the cron has already swept everything
+    past the window.</p>`
+	}
+  ${ghostNote(r.ghosts_total)}
+</div>`;
+};
+
 export const renderOperator = (data: OperatorData): string => {
-	const { rerender, seed_demo_allowed } = data;
+	const { rerender, retention, seed_demo_allowed } = data;
 	const seedCard = seed_demo_allowed
 		? `
 <div class="card" x-data="{
@@ -101,6 +193,8 @@ export const renderOperator = (data: OperatorData): string => {
 			: `<p class="muted">Nothing to do — all comments are at the current version.</p>`
 	}
 </div>
+
+${retentionCard(retention)}
 
 ${seedCard}
 
