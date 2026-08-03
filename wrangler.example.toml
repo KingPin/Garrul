@@ -78,6 +78,13 @@ OAUTH_CALLBACK_BASE = "https://comments.example.com"
 # COMMUNITY_MIN_VOTES = "5"
 # Percent of downvotes/total that triggers collapse (0 = off, range 0-100):
 # COMMUNITY_COLLAPSE_RATIO = "0"
+#
+# Privacy retention — clear comments.ip_hash + user_agent and
+# reports.reporter_ip_hash once a row is N days old (swept by the cron above).
+# 0 = off (default): hashes are kept for the life of the row. IRREVERSIBLE, and
+# the sweep refuses to run below 7 days. Anonymous ghost users.provider_id is
+# never swept — that column IS the identity. See docs/ip-hashing.md.
+# IP_HASH_RETENTION_DAYS = "0"
 # Optional: Cloudflare account ID — paired with the CF_API_TOKEN secret to
 # enable the /admin/usage analytics page.
 # CF_ACCOUNT_ID = "0123abcd..."

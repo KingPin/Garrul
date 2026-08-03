@@ -46,7 +46,8 @@ export type NumberKey =
 	| "community_collapse_ratio"
 	| "edit_window_minutes"
 	| "spam_link_threshold"
-	| "spam_honeypot_min_ms";
+	| "spam_honeypot_min_ms"
+	| "ip_hash_retention_days";
 
 export type ResolvedNumbers = Record<NumberKey, number>;
 
@@ -185,6 +186,33 @@ const NUMBERS: Record<
 		default: 0,
 		min: 0,
 		max: 60_000,
+	},
+	// Clear `comments.ip_hash` / `user_agent` and `reports.reporter_ip_hash`
+	// once the row is this many days old. 0 = disabled (the default, so an
+	// upgrade never starts deleting data an operator didn't ask it to).
+	//
+	// Unlike every other dial here, the effect is IRREVERSIBLE — the sweep
+	// nulls columns, and nothing reconstructs them. Two consequences for the
+	// shape of this entry:
+	//
+	//   - The default has to be 0. A shipped non-zero default would purge
+	//     history on the first cron tick after an upgrade, before the operator
+	//     had any chance to read the release notes.
+	//   - The clamp cannot make the dangerous direction reachable by accident.
+	//     min is 0 rather than a floor like 7 precisely because parseIntSetting
+	//     clamps into [min, max]: a floor would rewrite an operator's explicit
+	//     0 ("off") into 7 ("purge everything older than a week"), turning the
+	//     safe value into the destructive one. The floor lives in the sweep
+	//     instead (MIN_RETENTION_DAYS in src/db/ip-retention.ts), which refuses
+	//     to run below it rather than silently substituting.
+	//
+	// Max is 3650 (10 years), matching auto_close_days — the other lifecycle
+	// timer measured in days.
+	ip_hash_retention_days: {
+		env: "IP_HASH_RETENTION_DAYS",
+		default: 0,
+		min: 0,
+		max: 3650,
 	},
 };
 

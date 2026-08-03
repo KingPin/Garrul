@@ -148,6 +148,14 @@ export type Bindings = {
 	//                              (expandable). Gated on DOWNVOTES_ENABLED.
 	COMMUNITY_MIN_VOTES?: string;
 	COMMUNITY_COLLAPSE_RATIO?: string;
+	// Privacy retention. Env-var *default*; a `settings` row overrides at runtime
+	// (see src/lib/settings.ts). 0 = disabled.
+	//   IP_HASH_RETENTION_DAYS — clear comments.ip_hash / user_agent and
+	//                            reports.reporter_ip_hash once the row is this
+	//                            many days old. Swept by the cron; irreversible.
+	//                            Does NOT touch anonymous ghost provider_id —
+	//                            that column *is* the identity.
+	IP_HASH_RETENTION_DAYS?: string;
 };
 
 const app = new Hono<{ Bindings: Bindings }>();

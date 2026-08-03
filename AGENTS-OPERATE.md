@@ -213,6 +213,7 @@ between the two is a build error, not a silent misclassification.
 | `AUTO_CLOSE_AT` | var | Hard sunset — close **all** threads at/after this epoch-ms timestamp. Defaults **0** (disabled). The admin Settings page writes this via a date picker. | `0` | `wrangler.toml` |
 | `COMMUNITY_MIN_VOTES` | var | Minimum total votes before `COMMUNITY_COLLAPSE_RATIO` applies — the brigading floor. Defaults **5**. | `5` | `wrangler.toml` |
 | `COMMUNITY_COLLAPSE_RATIO` | var | Percent of downvotes/total that collapses a comment in the widget. Cosmetic and reversible — the reader can expand it. `0` = off, range `[0, 100]`. Requires `DOWNVOTES_ENABLED`. | `0` | `wrangler.toml` |
+| `IP_HASH_RETENTION_DAYS` | var | Clear `comments.ip_hash` + `comments.user_agent` and `reports.reporter_ip_hash` once the row is this many days old, swept by the cron. `0` = off (the default — an upgrade never starts deleting data on its own). Range `[0, 3650]`, and the sweep refuses to run below **7** days so a fat-fingered `1` can't purge nearly everything. **Irreversible**: nothing reconstructs a cleared hash. Does *not* touch anonymous ghost `users.provider_id` — that column is the identity itself, so expiring it would delete the account rather than a hash. See `docs/ip-hashing.md`. | `0` | `wrangler.toml` |
 <!-- END:config-table -->
 
 Bindings (D1, KV, Analytics) live in `wrangler.toml` outside `[vars]`
