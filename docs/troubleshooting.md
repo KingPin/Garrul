@@ -151,13 +151,17 @@ That variant keeps the opener relationship for popups *you* open while
 still preventing other origins from getting a handle on your window. It
 is the standard value for any site running an OAuth popup.
 
-The widget also re-checks `/api/v1/auth/me` when you return to the host
-page, so it recovers on its own within a second or two. That recovery
-only works when the host page and the Worker share a registered
-domain (`blog.example.com` + `comments.example.com`), because the popup's
-cookie has to be in the same partition. On a genuinely cross-site embed
-(`example.com` + `comments.otherdomain.com`) under COOP there is no way
-back in — fix the header.
+The widget also recovers on its own, usually within a second of the
+popup closing. COOP severs the popup's view of its opener, but not the
+opener's handle on the popup — so the widget watches for that window to
+close and re-checks `/api/v1/auth/me` when it does (returning focus to
+the page triggers the same check).
+
+That recovery only works when the host page and the Worker share a
+registered domain (`blog.example.com` + `comments.example.com`), because
+the popup's cookie has to be in the same partition. On a genuinely
+cross-site embed (`example.com` + `comments.otherdomain.com`) under COOP
+there is no way back in — fix the header.
 
 A second, rarer cause: `?return=` didn't match `ALLOWED_ORIGINS`, so the
 Worker had no safe `postMessage` target and served the static callback

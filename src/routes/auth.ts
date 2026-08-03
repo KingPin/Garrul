@@ -170,8 +170,8 @@ const finishHtml = (
 	// have no safe target to postMessage to. Previously we fell back to
 	// `targetOrigin="*"` which leaks the auth-completion message to whatever
 	// happens to be the opener. Render a static page instead — the popup
-	// closes itself and the parent infers state via /auth/me on focus.
-	// That inference lives in src/widget/auth-recovery.ts; it was described
+	// closes itself and the parent notices that close and infers state via
+	// /auth/me. That inference lives in src/widget/auth-recovery.ts; it was described
 	// here for a while before it actually existed (issue #58), so keep the
 	// two in step if either moves.
 	if (!return_origin) {

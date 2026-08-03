@@ -436,9 +436,11 @@ top-level navigation. The callback then redirects the user back to
 cross-origin popup in its own browsing context group, `window.opener` is
 `null` there, and step 5 never happens. The popup still says "Signed
 in" — it has no way to detect the severed opener — so the failure is
-silent. The widget covers for it by re-checking `/api/v1/auth/me` when
-the reader returns to the page, but that only works when the host and
-the Worker share a registered domain (same cookie partition). Advise the
+silent. The widget covers for it by watching its own handle on the popup
+and re-checking `/api/v1/auth/me` once that window closes (COOP severs
+the popup's `opener`, not the opener's `popup.closed`), but that only
+works when the host and the Worker share a registered domain (same
+cookie partition). Advise the
 integrator to serve `same-origin-allow-popups` instead: it keeps the
 opener for popups the page itself opens. Not needed if the host sends no
 COOP header at all.
