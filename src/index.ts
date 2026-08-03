@@ -20,6 +20,7 @@ import { subscriptions } from "./routes/api.subscriptions";
 import { runDigest } from "./lib/digest";
 import { runTelegramDigest } from "./lib/telegram-digest";
 import { runWebhookRetries } from "./lib/webhook";
+import { runIpRetention } from "./db/ip-retention";
 import { log, requestLogger } from "./lib/log";
 import { corsAndCsrf } from "./lib/cors";
 import { jsonBodyLimit } from "./lib/body-limit";
@@ -312,6 +313,14 @@ export default {
 		ctx.waitUntil(
 			runTelegramDigest(env).catch((err) => {
 				log.error("scheduled.telegram_digest", { error: String(err) });
+			}),
+		);
+		// Privacy retention. No-ops unless IP_HASH_RETENTION_DAYS (or its
+		// settings row) is set — off by default, so this costs one cached
+		// settings read per tick on an instance that hasn't opted in.
+		ctx.waitUntil(
+			runIpRetention(env).catch((err) => {
+				log.error("scheduled.ip_retention", { error: String(err) });
 			}),
 		);
 	},
