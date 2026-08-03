@@ -471,12 +471,22 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
 .gr-collapse { color: var(--gr-muted); }
 .gr-collapse:hover { color: var(--gr-link); }
 .gr-showmore { color: var(--gr-link); margin-top: 0.25rem; }
+/* The sign-in row is a direct child of .gr-root, so what sits behind it is
+   --gr-bg — which defaults to transparent, i.e. the host page. We cannot know
+   that colour, so the buttons must not lean on their fill to read as pressable:
+   the label drops to --gr-muted/0.9em (matching .gr-signed below) and the
+   buttons re-raise to full --gr-fg at weight 600. The border borrows --gr-muted
+   because that token is contractually a *readable text* colour on the widget
+   background, so it guarantees a visible edge on any host palette — unlike
+   --gr-border, which is tuned for input fields sitting on --gr-input-bg. */
 .gr-signin { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+.gr-signin .gr-signin-label { color: var(--gr-muted); font-size: 0.9em; }
 .gr-signin button {
 	font: inherit;
+	font-weight: 600;
 	background: var(--gr-input-bg);
 	color: var(--gr-fg);
-	border: 1px solid var(--gr-border);
+	border: 1px solid var(--gr-muted);
 	border-radius: var(--gr-radius);
 	padding: 0.4rem 0.8rem;
 	cursor: pointer;
@@ -1796,7 +1806,9 @@ const buildAuthBlock = (
 	if (providers.length === 0) return null;
 
 	const wrap = el("div", "gr-signin");
-	wrap.appendChild(el("span", undefined, "Sign in to get a verified badge:"));
+	wrap.appendChild(
+		el("span", "gr-signin-label", "Sign in to get a verified badge:"),
+	);
 	for (const p of providers) {
 		const btn = el("button", undefined, PROVIDER_LABELS[p]);
 		btn.type = "button";
