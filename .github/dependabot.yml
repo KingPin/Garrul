@@ -26,6 +26,14 @@ updates:
     labels:
       - dependencies
       - agents-docs-ok
+    ignore:
+      # @types/node tracks the *runtime* major, not the newest release. Types a
+      # major ahead of `engines: >=24` make tsc accept Node 26 APIs that Node 24
+      # doesn't ship — a green build that fails at runtime. Already reverted
+      # once (e9d9355). Raise this by hand together with engines and .nvmrc.
+      - dependency-name: "@types/node"
+        update-types:
+          - version-update:semver-major
     groups:
       # One PR for the routine noise; majors still arrive individually so a
       # breaking bump gets read on its own.
