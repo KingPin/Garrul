@@ -93,6 +93,24 @@ stylesheet above (or any subset of it) keeps working unchanged, layering
 on top of whichever base theme is active. Override only the variables you
 care about; the rest fall back to the active theme's defaults.
 
+## Layout you control from the host page
+
+Two things are deliberately *not* `--garrul-*` variables, because the host
+page already owns them:
+
+**Width.** The widget has no `max-width` of its own — it is a full-width
+flex column that fills whatever the mount element gives it. To make
+comments narrower or wider, size the mount element:
+
+```css
+#garrul { max-width: 1100px; margin: 0 auto; }
+```
+
+**Composer height.** Composers open at a sensible minimum and grow to fit
+their content as you type, capped at 60% of the viewport so the
+Save/Cancel row stays on screen. Drag the resize grip and the widget stops
+auto-sizing that box — your height sticks.
+
 ## Stability
 
 Any addition to this list is non-breaking. Any rename, removal, or

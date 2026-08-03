@@ -264,6 +264,21 @@ what you preview is byte-identical to what gets posted, with no
 client-side markdown library and no XSS divergence. The endpoint is
 public but rate-limited; no auth required.
 
+### Composer sizing (since v2.0.3)
+
+Composers open at a minimum height and **grow to fit their content** —
+while you type, when a saved draft is restored, and when the edit box
+finishes loading the comment you're editing. Growth is capped at 60% of
+the viewport so the Save/Cancel row never leaves the screen; past the cap
+the box scrolls. Dragging the resize grip pins that box at your height and
+turns auto-sizing off for it.
+
+Before v2.0.3 the edit box opened at ~3 lines regardless of how long the
+comment was, because the prefill (`GET /api/v1/comments/:id/source`) lands
+after mount and CSS `min-height` had already decided the height (#52).
+Widget width is unchanged and still host-controlled — set `max-width` on
+the mount element; see docs/THEMING.md.
+
 ### Pagination and reply collapsing (since v1.11.0)
 
 The thread no longer dumps every comment into the page at once. Three
