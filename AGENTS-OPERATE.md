@@ -823,6 +823,18 @@ in three places: `comments.ip_hash` (kept even after a soft delete),
 `users.provider_id` for `provider='anon'` ghost rows, which is the
 anonymous identity itself.
 
+**How much history that is depends on `IP_HASH_RETENTION_DAYS`** (§5, or
+Settings → Moderation). Off by default, in which case a dump carries every
+hash the instance has ever written. Set to N days, a cron pass clears the
+first two columns past that age, so a dump carries a bounded slice
+instead. The third column is never swept on a timer — the ghost hash *is*
+the account, so expiring it would delete anonymous identities rather than
+hashes. Plan for an export to always contain the full ghost set.
+
+Watch it work, and drain a backlog on demand, from `/admin/operator`.
+Clearing a hash is irreversible, and it costs you the ability to spot a
+ban evader on that network past the window.
+
 The hash is a pseudonym only against someone who *doesn't* have
 `IP_HASH_SECRET`. The construction is unsalted and IPv4 is a 2^32 input
 space, so anyone holding both an export and the secret can rebuild every
@@ -901,6 +913,11 @@ these columns, so there are no orphans to clean up afterwards.
 For a single person's data rather than the whole table, use **Erase
 personal data** on `/admin/users/<id>` instead — admin-only,
 audit-logged, and scoped to that user's rows.
+
+`IP_HASH_RETENTION_DAYS` is not a substitute for any of this. It bounds
+how much history a future leak exposes; it does nothing about hashes a
+leaked key can already crack today. Setting it now is worth doing anyway —
+it shrinks the next incident.
 
 ## 12. Upgrades
 
