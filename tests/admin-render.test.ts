@@ -15,6 +15,7 @@ import {
 	type SubscriptionsFilters,
 } from "../src/admin-ui/pages/subscriptions";
 import { renderOperator } from "../src/admin-ui/pages/operator";
+import type { RetentionStats } from "../src/db/ip-retention";
 import { renderSettings } from "../src/admin-ui/pages/settings";
 import { MAX_XML_BYTES } from "../src/lib/disqus-import";
 import { renderDashboard } from "../src/admin-ui/pages/dashboard";
@@ -446,10 +447,23 @@ describe("renderSubscriptions", () => {
 	});
 });
 
+// Retention off — the default, and the shape the pre-existing operator-card
+// assertions were written against. Tests that care about retention build their
+// own.
+const retentionOff: RetentionStats = {
+	retention_days: 0,
+	enabled: false,
+	comments_pending: 0,
+	reports_pending: 0,
+	comments_total: 0,
+	ghosts_total: 0,
+};
+
 describe("renderOperator", () => {
 	it("hides the seed card and explains the gate when seed_demo_allowed=false", () => {
 		const html = renderOperator({
 			rerender: { current_version: 1, up_to_date: 10, stale: 0, oldest_version: null },
+			retention: retentionOff,
 			seed_demo_allowed: false,
 		});
 		expect(html).toContain("Disabled in production");
@@ -459,6 +473,7 @@ describe("renderOperator", () => {
 	it("shows a no-op message when stale=0 and an action button when stale>0", () => {
 		const noop = renderOperator({
 			rerender: { current_version: 2, up_to_date: 100, stale: 0, oldest_version: null },
+			retention: retentionOff,
 			seed_demo_allowed: true,
 		});
 		expect(noop).toContain("all comments are at the current version");
@@ -466,6 +481,7 @@ describe("renderOperator", () => {
 
 		const work = renderOperator({
 			rerender: { current_version: 2, up_to_date: 100, stale: 7, oldest_version: 1 },
+			retention: retentionOff,
 			seed_demo_allowed: true,
 		});
 		expect(work).toContain(">Run rerender<");
@@ -475,6 +491,7 @@ describe("renderOperator", () => {
 	it("derives the import size check and UI hint from MAX_XML_BYTES (issue #15)", () => {
 		const html = renderOperator({
 			rerender: { current_version: 1, up_to_date: 10, stale: 0, oldest_version: null },
+			retention: retentionOff,
 			seed_demo_allowed: false,
 		});
 		const mb = Math.floor(MAX_XML_BYTES / (1024 * 1024));

@@ -144,6 +144,12 @@ import {
 import { CURRENT_RENDERER_VERSION, renderMarkdown } from "../lib/markdown";
 import { MAX_XML_BYTES, runDisqusImport } from "../lib/disqus-import";
 import { rerenderBatch, rerenderStats } from "../db/rerender";
+import {
+	MIN_RETENTION_DAYS,
+	isRetentionEnabled,
+	retentionStats,
+	sweepExpiredIpHashes,
+} from "../db/ip-retention";
 import { runSeedDemo } from "../db/seed-demo";
 import { renderConfirmEmailHtml } from "../lib/digest";
 import { sendEmail } from "../lib/email";
@@ -671,12 +677,19 @@ admin.get("/operator", async (c) => {
 	const user = await requireAdmin(c);
 	if (user instanceof Response) return user;
 	const stats = await rerenderStats(c.env.DB);
+	const { ip_hash_retention_days } = await loadNumbers(c.env);
+	const retention = await retentionStats(
+		c.env.DB,
+		ip_hash_retention_days,
+		Date.now(),
+	);
 	const updateInfo = await peekCachedLatestVersion(c.env);
 	return c.html(
-		renderPage(c, 
+		renderPage(c,
 			"Operator",
 			renderOperator({
 				rerender: stats,
+				retention,
 				seed_demo_allowed: isSeedDemoAllowed(c.env),
 			}),
 			user,
@@ -1886,6 +1899,49 @@ admin.post("/api/ops/rerender", async (c) => {
 		processed: result.processed,
 		next_cursor: result.next_cursor,
 	});
+});
+
+// --- IP-hash retention -----------------------------------------------------
+//
+// Runs the same sweep as the cron, one batch per call, so an operator who just
+// turned retention on doesn't have to wait out a backlog 15 minutes at a time.
+// The window itself is not settable here — it's a Settings dial — and the
+// endpoint refuses when the resolved value is off or below the floor, rather
+// than picking a window of its own. Audited: this destroys data irreversibly,
+// so "who drained the hashes" has to be answerable.
+
+admin.post("/api/ops/ip-retention", async (c) => {
+	const user = await requireAdmin(c);
+	if (user instanceof Response) return user;
+
+	const { ip_hash_retention_days: days } = await loadNumbers(c.env);
+	if (!isRetentionEnabled(days)) {
+		return c.json(
+			{
+				error: "retention_disabled",
+				retention_days: days,
+				min_days: MIN_RETENTION_DAYS,
+			},
+			400,
+		);
+	}
+
+	const result = await sweepExpiredIpHashes(c.env.DB, days, Date.now());
+	if (result.comments > 0 || result.reports > 0) {
+		await adminInsertAudit(c.env.DB, {
+			admin_id: user.id,
+			action: "ip_retention.sweep",
+			target_kind: "system",
+			target_id: null,
+			reason: null,
+			meta: {
+				retention_days: days,
+				comments: result.comments,
+				reports: result.reports,
+			},
+		});
+	}
+	return c.json({ ok: true, ...result });
 });
 
 // ---------------------------- Disqus import --------------------------------
