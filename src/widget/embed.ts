@@ -1890,6 +1890,14 @@ const buildForm = (
 	return form;
 };
 
+/**
+ * Teardown for the in-flight sign-in attempt's recovery watcher, if any. A
+ * reader who opens the GitHub popup, abandons it and clicks Google would
+ * otherwise leave the first watcher armed: both would see the Google session
+ * and each would fire a full widget reload.
+ */
+let stopPreviousRecovery: (() => void) | null = null;
+
 const startOauth = (
 	provider: OAuthProvider,
 	apiBase: string,
@@ -1960,6 +1968,7 @@ const startOauth = (
 	//
 	// Armed before the message listener so `handler` can never observe
 	// `stopRecovery` in its temporal dead zone.
+	stopPreviousRecovery?.();
 	const stopRecovery = watchForSignIn({
 		checkSignedIn: () => fetchMe(apiBase).then((me) => me != null),
 		onSignedIn: () => {
@@ -1968,7 +1977,12 @@ const startOauth = (
 		},
 		win: window,
 		doc: document,
+		// Survives COOP: the header nulls `opener` inside the popup, but this
+		// side of the handle keeps reporting `closed` accurately. Spread rather
+		// than passing undefined — exactOptionalPropertyTypes is on.
+		...(popup ? { popupClosed: () => popup.closed } : {}),
 	});
+	stopPreviousRecovery = stopRecovery;
 	window.addEventListener("message", handler);
 	if (!popup) {
 		// Popup blocked — fall back to top-level redirect. The browser will
