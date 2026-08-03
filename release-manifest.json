@@ -272,6 +272,11 @@
       "name": "COMMUNITY_COLLAPSE_RATIO",
       "required": false,
       "addedIn": "1.17.0"
+    },
+    {
+      "name": "IP_HASH_RETENTION_DAYS",
+      "required": false,
+      "addedIn": "2.1.0"
     }
   ],
   "kvNamespaces": [

@@ -763,6 +763,17 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
 		example: "0",
 		addedIn: "1.17.0",
 	},
+	{
+		name: "IP_HASH_RETENTION_DAYS",
+		kind: "var",
+		required: false,
+		group: "Privacy",
+		hint: "clear stored ip_hash after N days (0 = keep forever)",
+		description:
+			"Clear `comments.ip_hash` + `comments.user_agent` and `reports.reporter_ip_hash` once the row is this many days old, swept by the cron. `0` = off (the default — an upgrade never starts deleting data on its own). Range `[0, 3650]`, and the sweep refuses to run below **7** days so a fat-fingered `1` can't purge nearly everything. **Irreversible**: nothing reconstructs a cleared hash. Does *not* touch anonymous ghost `users.provider_id` — that column is the identity itself, so expiring it would delete the account rather than a hash. See `docs/ip-hashing.md`.",
+		example: "0",
+		addedIn: "2.1.0",
+	},
 ];
 
 /** Secrets, in registry order. */
