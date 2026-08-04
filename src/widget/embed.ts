@@ -33,6 +33,7 @@
 import { loadErrorMessage } from "./load-error";
 import { watchForSignIn } from "./auth-recovery";
 import { autoSizeTextarea } from "./autosize";
+import { createTurnstileGate, type TurnstileGate } from "./turnstile-gate";
 
 // Mirrors lib/tree.ts's TreeAuthor. No `is_admin`: the API stopped sending it
 // (it let anyone enumerate privileged accounts) and nothing here rendered it.
@@ -279,6 +280,13 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
 .gr-form .gr-notify { display: flex; align-items: center; gap: 0.4rem; font-size: 0.9em; cursor: pointer; }
 .gr-form .gr-notify .gr-notify-cb { width: auto; }
 .gr-form .gr-email-input[hidden] { display: none; }
+/* The slot sits empty until the visitor focuses the composer and the frame
+   mounts. As a flex child of .gr-form (gap: 0.5rem) an empty div still
+   contributes its share of the gap, so collapse it while it has no children.
+   No min-height reservation is needed: .gr-turnstile-frame below carries
+   explicit dimensions and an iframe is a replaced element, so its box is
+   reserved at appendChild rather than at load. */
+.gr-turnstile:empty { display: none; }
 .gr-turnstile-frame {
 	border: 0;
 	width: 300px;
@@ -918,6 +926,8 @@ const getFormToken = (apiBase: string): Promise<string> => {
  */
 let topComposerTurnstile: {
 	form: HTMLFormElement;
+	gate: TurnstileGate;
+	/** No-op until the gate arms and the frame actually mounts. */
 	reset: () => void;
 	destroy: () => void;
 } | null = null;
@@ -1985,9 +1995,15 @@ const buildForm = (
 	}
 
 	// Turnstile only renders for anonymous posts. Signed-in posts skip it
-	// server-side, so don't include the widget either. The real iframe mount
-	// happens in loadOnce after the form is in the DOM; this just reserves
-	// the slot in the right spot relative to siblings.
+	// server-side, so don't include the widget either. This just reserves the
+	// slot in the right spot relative to siblings; loadOnce wires the gate that
+	// fills it on the visitor's first composer focus.
+	//
+	// Keep this immediately before the submit button. The mount grows the slot
+	// from 0 to ~78px synchronously, so anything focusable *below* it would move
+	// out from under the cursor between mousedown and mouseup and lose the
+	// click. The focusin trigger excludes the submit button for exactly that
+	// reason — moving the slot means revisiting that exclusion.
 	if (siteKey && !signedIn) {
 		form.appendChild(el("div", "gr-turnstile"));
 	}
@@ -2474,30 +2490,71 @@ const loadOnce = async (
 		}
 	}
 
-	if (siteKey && acceptingComments) {
-		const tsBox = form.querySelector(".gr-turnstile") as HTMLElement | null;
-		if (tsBox) {
-			const handle = mountTurnstileFrame(tsBox, apiBase, {
-				onError: () => {
-					tsBox.hidden = true;
-					const submitBtn = form.querySelector(
-						"button[type=submit]",
-					) as HTMLButtonElement | null;
-					if (submitBtn) submitBtn.disabled = true;
-					const errEl = form.querySelector(".gr-error") as HTMLElement | null;
-					if (errEl) {
-						errEl.textContent =
-							"Anti-spam check failed to load. Reload the page; if it keeps failing the site owner should check that https://challenges.cloudflare.com is reachable.";
-						errEl.hidden = false;
-					}
-				},
-			});
-			topComposerTurnstile = {
-				form,
-				reset: handle.reset,
-				destroy: handle.destroy,
-			};
-		}
+	// Turnstile mounts on the visitor's first composer focus, not here. api.js
+	// plus the challenge platform it pulls in is larger than this entire widget,
+	// and almost nobody who loads a page comments — so a reader who never
+	// touches the composer never pays for it (#49). The cost is that a submit
+	// can now outrun the token; `submit()` waits for one.
+	const tsBox = form.querySelector(".gr-turnstile") as HTMLElement | null;
+	// Slot presence already encodes `siteKey && !signedIn` (see buildForm), so
+	// only the accepting-comments condition is left to check.
+	if (tsBox && acceptingComments) {
+		const submitBtn = form.querySelector(
+			"button[type=submit]",
+		) as HTMLButtonElement | null;
+		let handle: TurnstileFrameHandle | null = null;
+
+		const gate = createTurnstileGate({
+			mount: () => {
+				handle = mountTurnstileFrame(tsBox, apiBase, {
+					onToken: (token) => gate.token(token),
+					onExpired: () => gate.signal("expired"),
+					onError: () => gate.signal("error"),
+					onReady: () => gate.signal("ready"),
+					onInteractive: () => gate.signal("interactive"),
+				});
+			},
+			// Turnstile's own verdict, and the only thing that disables the
+			// composer for good. The cap expiring in the gate is a guess and
+			// deliberately does not come through here.
+			onFailed: () => {
+				tsBox.hidden = true;
+				if (submitBtn) submitBtn.disabled = true;
+				const errEl = form.querySelector(".gr-error") as HTMLElement | null;
+				if (errEl) {
+					errEl.textContent =
+						"Anti-spam check failed to load. Reload the page; if it keeps failing the site owner should check that https://challenges.cloudflare.com is reachable.";
+					errEl.hidden = false;
+				}
+			},
+		});
+
+		// Listen on the form, not the textarea: the textarea is a grandchild
+		// (buildWritePreview wraps it in div.gr-compose), and focusin covers the
+		// name field, email field, notify checkbox and toolbar too.
+		const onFocusIn = (e: Event): void => {
+			// Never mount from the submit button. It sits directly below the
+			// slot, so growing the slot on mousedown-focus would slide the button
+			// out from under the cursor and swallow the click — the visitor sees
+			// a captcha appear and nothing happen. submit() arms the gate itself
+			// on that path. A plain listener rather than `{ once: true }`,
+			// because an ignored button focus would otherwise consume it; arm()
+			// is idempotent.
+			if (e.target === submitBtn) return;
+			gate.arm();
+		};
+		form.addEventListener("focusin", onFocusIn);
+
+		topComposerTurnstile = {
+			form,
+			gate,
+			reset: () => handle?.reset(),
+			destroy: () => {
+				form.removeEventListener("focusin", onFocusIn);
+				gate.dispose();
+				handle?.destroy();
+			},
+		};
 	}
 
 	form.addEventListener("submit", (e) => {
@@ -2514,6 +2571,7 @@ const submit = async (
 	host: HTMLElement,
 ) => {
 	const errEl = form.querySelector(".gr-error") as HTMLElement | null;
+	const ts = turnstileFor(form);
 	if (errEl) {
 		errEl.hidden = true;
 		errEl.textContent = "";
@@ -2522,18 +2580,70 @@ const submit = async (
 	const submitBtn = form.querySelector("button[type=submit]") as HTMLButtonElement | null;
 	if (submitBtn) submitBtn.disabled = true;
 
+	const notice = (message: string): void => {
+		if (errEl) {
+			errEl.textContent = message;
+			errEl.classList.add("is-notice");
+			errEl.hidden = false;
+		}
+		// Recoverable, unlike `onFailed` — the visitor can solve the challenge
+		// or retry, so give them the button back.
+		if (submitBtn) submitBtn.disabled = false;
+	};
+
+	// Wait for a token before reading anything else. The mount is deferred to
+	// first composer focus, and a draft restored by attachDraft dispatches no
+	// events, so a returning visitor can submit a pre-filled composer having
+	// focused nothing at all — the hidden input wouldn't even exist yet.
+	let waitedToken = "";
+	if (ts) {
+		const label = submitBtn?.textContent ?? "";
+		if (submitBtn) submitBtn.textContent = "Checking…";
+		const waited = await ts.gate.wait();
+		if (submitBtn) submitBtn.textContent = label;
+		if (!waited.ok) {
+			switch (waited.reason) {
+				case "interactive":
+					notice("Complete the anti-spam check above, then post again.");
+					return;
+				case "timeout":
+					notice(
+						"The anti-spam check didn't load. Check your connection or reload the page.",
+					);
+					return;
+				case "failed":
+					// `onFailed` already wrote the message and disabled the button.
+					// Leave both alone.
+					return;
+			}
+		}
+		waitedToken = waited.token;
+	}
+
+	// Read the fields *after* the wait: the visitor can keep typing while it
+	// runs, and posting a pre-wait snapshot would then clearDraft() over text
+	// that never made it to the server.
 	const nameInput = form.querySelector(".gr-name-input") as HTMLInputElement | null;
 	const name = nameInput?.value ?? "";
 	const body = (form.querySelector(".gr-body-input") as HTMLTextAreaElement).value;
 	const honeypot = (form.querySelector(".gr-honeypot") as HTMLInputElement).value;
 
-	const tokenInput = form.querySelector(
-		'input[name="cf-turnstile-response"]',
-	) as HTMLInputElement | null;
-	const turnstileToken = tokenInput?.value ?? "";
-
 	try {
 		const formTs = await getFormToken(apiBase);
+		// Read the token at the last possible moment — after the form-token
+		// await — and prefer the live input over what the gate resolved with, in
+		// case Turnstile refreshed in between. Never post an empty or stale one:
+		// the API's presence check returns before the rate limiter, but a token
+		// that fails siteverify burns the caller's write budget and their retry
+		// can eat a 429 (see api.comments.ts).
+		const tokenInput = form.querySelector(
+			'input[name="cf-turnstile-response"]',
+		) as HTMLInputElement | null;
+		const turnstileToken = tokenInput?.value || waitedToken || "";
+		if (ts && !turnstileToken) {
+			notice("Complete the anti-spam check above, then post again.");
+			return;
+		}
 		const res = await fetch(`${apiBase}/api/v1/comments`, {
 			method: "POST",
 			credentials: "include",
@@ -2559,7 +2669,10 @@ const submit = async (
 				errEl.hidden = false;
 			}
 			if (submitBtn) submitBtn.disabled = false;
-			turnstileFor(form)?.reset();
+			// The token is single-use once siteverify has seen it, so re-challenge
+			// and make the next wait actually wait rather than replay it.
+			ts?.reset();
+			ts?.gate.clear();
 			return;
 		}
 
@@ -2595,7 +2708,8 @@ const submit = async (
 			errEl.hidden = false;
 		}
 		if (submitBtn) submitBtn.disabled = false;
-		turnstileFor(form)?.reset();
+		ts?.reset();
+		ts?.gate.clear();
 	}
 };
 
