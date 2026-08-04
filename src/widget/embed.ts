@@ -954,10 +954,28 @@ type TurnstileFrameHandle = {
 	destroy: () => void;
 };
 
+/**
+ * What the caller wants to hear about. Every field is optional so a call site
+ * can subscribe to only the messages it acts on.
+ *
+ * The hidden input is still maintained here regardless — it is what the form
+ * serializes and what `submit()` reads — so a listener never has to mirror the
+ * token itself, only react to it arriving.
+ */
+type TurnstileFrameListener = {
+	onToken?: (token: string) => void;
+	onExpired?: () => void;
+	onError?: () => void;
+	/** `render()` returned: api.js loaded and a widget is painted. */
+	onReady?: () => void;
+	/** The challenge needs a human to act before a token can exist. */
+	onInteractive?: () => void;
+};
+
 const mountTurnstileFrame = (
 	container: HTMLElement,
 	apiBase: string,
-	onError: () => void,
+	listener: TurnstileFrameListener,
 ): TurnstileFrameHandle => {
 	const apiOrigin = new URL(apiBase).origin;
 
@@ -999,15 +1017,28 @@ const mountTurnstileFrame = (
 		if (!data || typeof data.type !== "string") return;
 		switch (data.type) {
 			case "garrul:turnstile-token":
-				if (typeof data.token === "string") tokenInput.value = data.token;
+				if (typeof data.token === "string") {
+					tokenInput.value = data.token;
+					listener.onToken?.(data.token);
+				}
 				return;
 			case "garrul:turnstile-expired":
 				// Turnstile auto-re-challenges; clear the stale token so a
 				// submit can't reuse it (siteverify would reject anyway).
 				tokenInput.value = "";
+				listener.onExpired?.();
 				return;
 			case "garrul:turnstile-error":
-				onError();
+				listener.onError?.();
+				return;
+			// The two mount-state messages exist so a submit waiting on a token
+			// can tell "the challenge wants a click" from "the frame never came
+			// up" — see the wire protocol in src/routes/embed-iframe.ts.
+			case "garrul:turnstile-ready":
+				listener.onReady?.();
+				return;
+			case "garrul:turnstile-interactive":
+				listener.onInteractive?.();
 				return;
 		}
 	};
@@ -1554,12 +1585,14 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	// doesn't accumulate across the page lifetime.
 	let tsHandle: TurnstileFrameHandle | null = null;
 	if (tsSlot) {
-		tsHandle = mountTurnstileFrame(tsSlot, ctx.apiBase, () => {
-			tsSlot.hidden = true;
-			submit.disabled = true;
-			errBox.textContent =
-				"Anti-spam check failed to load. Reload the page; if it keeps failing the site owner should check that https://challenges.cloudflare.com is reachable.";
-			errBox.hidden = false;
+		tsHandle = mountTurnstileFrame(tsSlot, ctx.apiBase, {
+			onError: () => {
+				tsSlot.hidden = true;
+				submit.disabled = true;
+				errBox.textContent =
+					"Anti-spam check failed to load. Reload the page; if it keeps failing the site owner should check that https://challenges.cloudflare.com is reachable.";
+				errBox.hidden = false;
+			},
 		});
 		const cleanupObserver = new MutationObserver(() => {
 			if (!wrap.isConnected) {
@@ -2444,18 +2477,20 @@ const loadOnce = async (
 	if (siteKey && acceptingComments) {
 		const tsBox = form.querySelector(".gr-turnstile") as HTMLElement | null;
 		if (tsBox) {
-			const handle = mountTurnstileFrame(tsBox, apiBase, () => {
-				tsBox.hidden = true;
-				const submitBtn = form.querySelector(
-					"button[type=submit]",
-				) as HTMLButtonElement | null;
-				if (submitBtn) submitBtn.disabled = true;
-				const errEl = form.querySelector(".gr-error") as HTMLElement | null;
-				if (errEl) {
-					errEl.textContent =
-						"Anti-spam check failed to load. Reload the page; if it keeps failing the site owner should check that https://challenges.cloudflare.com is reachable.";
-					errEl.hidden = false;
-				}
+			const handle = mountTurnstileFrame(tsBox, apiBase, {
+				onError: () => {
+					tsBox.hidden = true;
+					const submitBtn = form.querySelector(
+						"button[type=submit]",
+					) as HTMLButtonElement | null;
+					if (submitBtn) submitBtn.disabled = true;
+					const errEl = form.querySelector(".gr-error") as HTMLElement | null;
+					if (errEl) {
+						errEl.textContent =
+							"Anti-spam check failed to load. Reload the page; if it keeps failing the site owner should check that https://challenges.cloudflare.com is reachable.";
+						errEl.hidden = false;
+					}
+				},
 			});
 			topComposerTurnstile = {
 				form,
