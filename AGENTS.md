@@ -106,6 +106,12 @@ requests per pageview on mount (`/api/v1/config`, `/api/v1/auth/me`,
 or docs site where most visitors bounce above the comments section,
 that is the bulk of Cloudflare Worker usage.
 
+Turnstile is **not** in that list. The anti-spam iframe
+(`/embed/turnstile-frame`, which in turn pulls Cloudflare's `api.js` and
+its challenge platform) mounts only when the visitor first focuses the
+comment box, so a reader who never comments never downloads it. Expect
+those requests to appear on first focus rather than on page load.
+
 **Default to deferring the script load via `IntersectionObserver`**
 when the comments section is below the fold. Replace the
 `<script src="…/embed.js" defer>` line with this loader, leaving the
