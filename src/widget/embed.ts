@@ -899,10 +899,43 @@ const getFormToken = (apiBase: string): Promise<string> => {
 	return formTokenPromise as Promise<string>;
 };
 
-// Per-form Turnstile handle lookup — the submit handler runs as a free
-// function with no closure over the mount site, so we stash the handle on
-// the form element via WeakMap (auto-cleared when the form is GC'd).
-const turnstileHandles = new WeakMap<HTMLFormElement, TurnstileFrameHandle>();
+/**
+ * The live top-level composer's Turnstile handle. The submit handler runs as a
+ * free function with no closure over the mount site, so it needs a lookup.
+ *
+ * A `WeakMap` keyed on the form used to live here, on the theory that GC would
+ * clean up after a re-render. It can't: `mountTurnstileFrame` registers its
+ * message listener on `window`, and that closure retains the iframe, the token
+ * input and the detached form subtree. The handle is what keeps the form
+ * reachable, so a map keyed on the form is never collected — every `loadOnce`
+ * re-render (sign-in, sort change, a posted comment or reply) leaked another
+ * permanent listener pointing at a dead frame.
+ *
+ * One record instead, matching the single-widget-per-document assumption the
+ * form-token cache already relies on (see `prefetchFormToken`). Teardown is
+ * explicit: `destroyTopComposerTurnstile` runs at the two places that discard
+ * the shadow tree.
+ */
+let topComposerTurnstile: {
+	form: HTMLFormElement;
+	reset: () => void;
+	destroy: () => void;
+} | null = null;
+
+const destroyTopComposerTurnstile = (): void => {
+	topComposerTurnstile?.destroy();
+	topComposerTurnstile = null;
+};
+
+/**
+ * The Turnstile record for `form`, or null when it belongs to a superseded
+ * render. Guards against a stale record outliving its form for the window
+ * between a reload starting and the teardown below running.
+ */
+const turnstileFor = (
+	form: HTMLFormElement,
+): typeof topComposerTurnstile | null =>
+	topComposerTurnstile?.form === form ? topComposerTurnstile : null;
 
 /**
  * Mount Cloudflare Turnstile in a same-origin iframe instead of inline.
@@ -2243,6 +2276,9 @@ const loadOnce = async (
 		fetchPage(apiBase, slug, null, sort).catch((err: unknown) => err),
 	]);
 	if (dataResult instanceof Error) {
+		// renderError replaces the shadow tree, so the composer this handle
+		// belongs to is about to vanish.
+		destroyTopComposerTurnstile();
 		renderError(root, dataResult);
 		return;
 	}
@@ -2256,6 +2292,11 @@ const loadOnce = async (
 			? data.accepting_comments
 			: commentsEnabled;
 	const closedReason = data.closed_reason ?? null;
+
+	// Last point of no return before the old tree goes away. Deliberately not at
+	// the top of loadOnce: the awaited fetches above take hundreds of ms, during
+	// which the currently-displayed composer must keep working.
+	destroyTopComposerTurnstile();
 
 	root.replaceChildren();
 	const style = el("style");
@@ -2416,7 +2457,11 @@ const loadOnce = async (
 					errEl.hidden = false;
 				}
 			});
-			turnstileHandles.set(form, handle);
+			topComposerTurnstile = {
+				form,
+				reset: handle.reset,
+				destroy: handle.destroy,
+			};
 		}
 	}
 
@@ -2479,7 +2524,7 @@ const submit = async (
 				errEl.hidden = false;
 			}
 			if (submitBtn) submitBtn.disabled = false;
-			turnstileHandles.get(form)?.reset();
+			turnstileFor(form)?.reset();
 			return;
 		}
 
@@ -2515,7 +2560,7 @@ const submit = async (
 			errEl.hidden = false;
 		}
 		if (submitBtn) submitBtn.disabled = false;
-		turnstileHandles.get(form)?.reset();
+		turnstileFor(form)?.reset();
 	}
 };
 
