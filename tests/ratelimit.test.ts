@@ -133,6 +133,11 @@ describe("checkRateLimit", () => {
 		//
 		// The trade-off itself is settled (the Cache API has no CAS) — this is
 		// here so the comment above can't drift back to understating it.
+		//
+		// The inverse lives in ratelimit-do.test.ts: the same N-concurrent shape
+		// on the optional Durable Object backend, where exactly one gets through.
+		// Both must keep passing — this pins what the DEFAULT backend does, and
+		// that one pins what binding RATE_LIMIT_DO buys.
 		const slow = memoryStore();
 		const concurrent: RateLimitStore = {
 			// A tick between read and write is what a real colo's latency gives

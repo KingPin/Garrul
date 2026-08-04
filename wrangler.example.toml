@@ -111,6 +111,30 @@ OAUTH_CALLBACK_BASE = "https://comments.example.com"
 # [ai]
 # binding = "AI"
 
+# Optional: atomic, cross-colo-accurate rate limiting via a Durable Object.
+#
+# Without this the limiter runs on the edge Cache API, which cannot do a
+# compare-and-swap and keeps counters per datacenter. See docs/ANTISPAM.md
+# § "Rate-limit accuracy" for exactly what that costs and what this fixes —
+# including what it does NOT fix.
+#
+# CAREFUL WITH THE MIGRATION TAG. [[migrations]] is an ordered sequence for
+# the whole Worker, not per-class. `tag = "v1"` is correct only if you have no
+# other Durable Object; if you do, use the next unused tag and keep the
+# existing blocks in place. Removing the binding later is a clean no-op — the
+# shard holds no persistent state — so leave the class exported rather than
+# writing a deleted_classes migration.
+#
+# [[durable_objects.bindings]]
+# name = "RATE_LIMIT_DO"
+# class_name = "RateLimitShard"
+#
+# [[migrations]]
+# tag = "v1"
+# new_sqlite_classes = ["RateLimitShard"]  # NOT new_classes — the Workers free
+#                                          # plan only offers SQLite-backed
+#                                          # Durable Object classes.
+
 # Notification digest job runs every 15 minutes; tune to taste.
 # Comments newer than 5 minutes are debounced so a reply burst coalesces
 # into a single email per subscriber.

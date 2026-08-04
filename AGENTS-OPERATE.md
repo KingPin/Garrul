@@ -453,6 +453,49 @@ breakdown, privacy tradeoffs (Akismet sends comment content off
 Cloudflare; Workers AI keeps it on-network), and recommended starter
 configs.
 
+### Accurate rate limiting: the Durable Object backend (opt-in)
+
+By default the rate limiter runs its counters on the edge Cache API.
+That backend has no compare-and-swap and keeps counters **per
+datacenter**, so the configured caps are a cost-raiser rather than a
+hard ceiling: concurrent requests from one identity are undercounted,
+and a distributed burst is counted once per colo it reaches.
+
+Binding a Durable Object moves the counters onto a single authority per
+identity, which closes both. `setup.sh` does not create it and nothing
+prompts for it — this is deliberate: existing instances keep working
+untouched, and enabling it is a `wrangler.toml` edit plus a redeploy.
+
+Uncomment the `RATE_LIMIT_DO` block in `wrangler.example.toml`, copy it
+into your `wrangler.toml`, and deploy. No new secrets, no D1 migration.
+Two things to get right:
+
+- The migration must use `new_sqlite_classes`, not `new_classes`. The
+  Workers free plan only offers SQLite-backed Durable Object classes.
+- `[[migrations]]` is an **ordered sequence for the whole Worker**, not
+  per-class. `tag = "v1"` is correct only if this is your first Durable
+  Object; otherwise use the next unused tag and leave existing blocks
+  in place.
+
+Rolling back is removing the binding block and redeploying — the shard
+holds no persistent state, so the limiter simply returns to the Cache
+API with nothing to clean up. Leave the class and the migration alone.
+
+Two caveats worth knowing before you rely on it. Counters are held in
+memory (persisting them would spend a storage write on every allowed
+request), so a shard that goes idle and hibernates resets its buckets —
+a caller pacing itself slower than the hibernation interval can exceed
+the *long* window. And if a shard is unreachable the limiter fails
+**open**, logging `ratelimit.degraded` with `backend: "do"`; watch for
+that with `wrangler tail`. Neither is a reason to skip it, but neither
+makes it a hard ceiling either — for that, put Cloudflare WAF
+rate-limiting rules in front of the Worker.
+
+Free-plan budget: 100,000 Durable Object requests/day account-wide, one
+per metered write-endpoint call. Storage quota is untouched.
+[`docs/ANTISPAM.md`](./docs/ANTISPAM.md) § "The Durable Object backend"
+has the full detail.
+
 ## 8. OAuth providers
 
 Five providers ship: GitHub, Google, Facebook, X, and Discord (the
@@ -802,7 +845,9 @@ OAuth handoff tokens (60-second TTL), and rebuildable caches (resolved
 settings, version check, optional Workers-AI spam verdicts). Rate-limit
 counters and the comment first-page and counts caches live in the edge
 Cache API (`caches.default`), not KV — so they never count against the
-KV write budget.
+KV write budget. If you enabled the optional `RATE_LIMIT_DO` Durable
+Object, its counters are in-memory only and equally not worth backing
+up: losing them just resets the current windows.
 
 **D1 export.** `npm run db:export` wraps `bash scripts/db-export.sh`,
 writing a `.sql` dump locally. Cloudflare also keeps point-in-time
@@ -821,7 +866,8 @@ picks a conforming name for you.
 
 **KV considerations.** Don't bother backing up KV: `RATE_LIMITS` only
 holds the optional Workers-AI spam verdict cache (rate limiting itself
-runs on the Cache API); `OAUTH_STATE` holds 60-second widget handoff
+runs on the Cache API, or on the Durable Object if you bound one);
+`OAUTH_STATE` holds 60-second widget handoff
 tokens (OAuth state is a signed cookie, not a KV row); `SESSIONS` loss
 just forces re-sign-in; `TREE_CACHE` rebuilds on next read.
 

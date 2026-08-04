@@ -415,10 +415,12 @@ export const checkRateLimit = async (
 		// same way and multiplies with it, so it is not a backstop against this.
 		//
 		// The Cache API has no compare-and-swap, so this is inherent to the
-		// backend: a Durable Object behind `RateLimitStore` is what closes it
-		// (tracked in #53, and it would fix the per-colo undercount above too).
+		// backend. Closing it is what `AtomicRateLimiter` and the optional
+		// `RATE_LIMIT_DO` Durable Object are for — bind it and none of this
+		// paragraph applies, including the envelope caveat above. Everything
+		// below describes the DEFAULT backend, which is what most installs run.
 		//
-		// Accepted for now, and the reason is not "it's only a burst" — it isn't
+		// Accepted there, and the reason is not "it's only a burst" — it isn't
 		// one. It is that the limiter is deliberately not the sole control on any
 		// endpoint taking an unauthenticated caller: Turnstile on anonymous
 		// comment POST, UNIQUE(comment_id, reporter_ip_hash) on reports,
@@ -432,10 +434,9 @@ export const checkRateLimit = async (
 		// holding in the same release this note ships in: IPv6 is now normalized
 		// to its /64, so a household is one identity rather than 2^64. The race
 		// is therefore the cheapest remaining bypass on the IP-keyed buckets,
-		// not a rounding error beside a larger one. That raises what #53 is
-		// worth; it does not change the fact that the Cache API cannot close it.
-		// It is also the only bypass on the `user:`-keyed buckets and the
-		// Telegram route, which cost an attacker a bannable account.
+		// not a rounding error beside a larger one. It is also the only bypass
+		// on the `user:`-keyed buckets and the Telegram route, which cost an
+		// attacker a bannable account. That is the case for binding the DO.
 		//
 		// This is an operator-visible property, not just an internal caveat:
 		// docs/ANTISPAM.md § "Rate-limit accuracy" states it, and points
