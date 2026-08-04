@@ -413,6 +413,16 @@ testing keys (`1x00000000...AA` for both). Without both values set the
 anonymous form blocks on posting. There is no "anonymous off" toggle
 in v1.
 
+**The challenge loads on first composer focus, not on page load.** The
+widget mounts its `/embed/turnstile-frame` iframe (which in turn fetches
+Cloudflare's `api.js`) only once the visitor focuses the comment box, so
+readers who never comment never download it. Expect no `turnstile`
+requests in a DevTools trace of a page load. A submit that arrives before
+a token exists waits up to 9 seconds and then reports one of three
+distinct messages — see `docs/ANTISPAM.md` § "Turnstile mount timing" for
+the table mapping each to the operator action, and note that only the
+`api.js`-unreachable one leaves the composer disabled.
+
 ### Optional extra anti-spam layers
 
 Three lightweight heuristics and a pluggable content classifier are
@@ -1129,6 +1139,18 @@ the wrong hostname (Turnstile binds site key → hostname; the hostname
 is the **blog**, not the Worker), or `TURNSTILE_SECRET` is unset on
 the Worker. Verify with `wrangler secret list`. In local dev, use the
 "always passes" test keys from `.dev.vars.example`.
+
+**Turnstile never appears at all.** Check that the visitor focused the
+comment box — the mount is deferred until they do (section 7). If it
+still doesn't appear on focus, it's the host CSP: `frame-src` must allow
+the Worker origin. `docs/troubleshooting.md` has the full recipe.
+
+**A commenter reports a permanently dead Post button.** That is the one
+sticky Turnstile state, and it only comes from Turnstile reporting an
+error — practically always `challenges.cloudflare.com` being unreachable
+or a site-key mismatch. The other two failure messages always re-enable
+the button, so a stuck composer is an outage or misconfiguration, not a
+widget bug.
 
 **OAuth redirect mismatch.** Provider redirects back with
 `redirect_uri_mismatch`. The URI registered with the provider must

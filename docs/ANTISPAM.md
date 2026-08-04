@@ -6,10 +6,31 @@ Garrul defends against spam in layers. The base protections below are **always o
 
 These don't need configuration; they ship with every Garrul instance:
 
-- **Turnstile** — Cloudflare's CAPTCHA-alternative. Required for anonymous POSTs whenever `TURNSTILE_SITE_KEY` is set.
+- **Turnstile** — Cloudflare's CAPTCHA-alternative. Required for anonymous POSTs whenever `TURNSTILE_SITE_KEY` is set. See [Turnstile mount timing](#turnstile-mount-timing) for when it loads and what its three visitor-facing messages mean.
 - **Rate-limit** — sliding window on the edge Cache API (not KV), keyed on the hashed client IP for anonymous callers and on the user id for signed-in ones. 1 anonymous comment per 10s and 5 per 10 min by default; signed-in authors get 3 per 10s and 60 per 10 min. Every caller is also held under one shared per-identity envelope across all endpoints. **Read [Rate-limit accuracy](#rate-limit-accuracy-known-limitations) before you rely on these numbers as a hard ceiling** — they are not one.
 - **Markdown sanitizer** — strict allowlist; only `https:`/`http:`/`mailto:` links survive, raw HTML and `<img>` are dropped, every link gets `rel="nofollow ugc noopener" target="_blank"`.
 - **Field honeypot** — a hidden `website` input in the embed form. If a bot fills it, the POST is rejected with HTTP 400.
+
+## Turnstile mount timing
+
+Turnstile does not load with the page. The widget mounts its anti-spam iframe — `/embed/turnstile-frame`, which then pulls Cloudflare's `api.js` and its challenge platform — when the visitor **first focuses the comment box**. `api.js` and its dependencies are roughly twice the size of the whole comment widget, and almost nobody who loads a page comments, so a reader who never touches the composer never downloads any of it.
+
+Consequences worth knowing before you debug a report:
+
+- **In DevTools, expect zero `turnstile` requests on load.** They appear on first focus of the composer (the textarea, the name field, anything in the form except the submit button). This is correct behavior, not a broken widget. Reply forms mount on open, since opening one is already the intent signal.
+- **A visitor can submit before a token exists** — clicking Post without focusing anything is reachable, because a restored draft pre-fills the box silently. The widget shows `Checking…` on the button and waits up to 9 seconds.
+
+### The three messages, and what each one means
+
+When that wait doesn't produce a token, the visitor sees one of three things. They are deliberately different, because the operator action differs:
+
+| Message | Meaning | Post button | What to check |
+| --- | --- | --- | --- |
+| "Complete the anti-spam check above, then post again." | Turnstile is working and has decided this visitor needs to click the checkbox. | Re-enabled | Nothing. Expected in managed mode. Deferring the mount makes this somewhat more likely, since Turnstile has less passive observation time before it has to mint a token. |
+| "The anti-spam check didn't load. Check your connection or reload the page." | The iframe never reported in at all. | Re-enabled | Host CSP missing `frame-src` for the Worker origin, the host site missing from `ALLOWED_ORIGINS`, or a blocked/failed frame document. Also expected briefly (up to 5 minutes) right after an upgrade, since the frame document is cached with `max-age=300` and an older copy doesn't send the newer status messages. |
+| "Anti-spam check failed to load. Reload the page; …" | Turnstile itself reported an error — usually `api.js` unreachable. | **Stays disabled** | `https://challenges.cloudflare.com` reachability, and that `TURNSTILE_SITE_KEY` matches the site key configured in Cloudflare. |
+
+Only the third message disables the composer, and it is sticky: nothing later re-enables the button, because the widget genuinely cannot produce a valid post. The first two are recoverable and always hand the button back. If you see a report of a permanently dead composer, it is the third message — treat it as an outage of `challenges.cloudflare.com` or a site-key misconfiguration, not a widget bug.
 
 ## Optional layers
 

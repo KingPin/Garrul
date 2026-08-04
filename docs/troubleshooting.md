@@ -51,11 +51,11 @@ Two options:
 2. Use the iframe variant (`/embed/:slug`) instead — it has its own
    CSP and won't touch yours.
 
-### Posting a comment fails with "Spam check failed. Refresh and try again."
+### Posting a comment fails with "The anti-spam check didn't load."
 
-The Turnstile (anti-spam) widget never loaded, so the form submitted
-without a token and the API rejected it. The browser console usually
-shows a CSP violation referencing the Worker origin, e.g.:
+The Turnstile (anti-spam) iframe never reported in, so the widget had no
+token to submit. The browser console usually shows a CSP violation
+referencing the Worker origin, e.g.:
 
 ```
 Framing 'https://comments.example.com/' violates the following Content
@@ -93,6 +93,20 @@ If you intentionally disabled Turnstile by leaving `TURNSTILE_SITE_KEY`
 unset, this error shouldn't appear — verify `/api/v1/config` returns
 no `turnstile_site_key` and that the widget is loading the current
 `embed.js` (Cloudflare caches it for ~24h at the edge).
+
+Two related notes:
+
+- **The Turnstile iframe is not requested until the visitor focuses the
+  comment box.** If you are watching DevTools on page load and see no
+  request for `/embed/turnstile-frame`, that is expected — click into the
+  comment box to trigger it. See [Turnstile mount
+  timing](ANTISPAM.md#turnstile-mount-timing).
+- **Older instances failed differently.** Before the deferred mount, a
+  missing token was submitted anyway and the *server* rejected it with
+  "Spam check failed. Refresh and try again." That server error still
+  exists but is now hard to reach from the widget, which waits for a token
+  and reports the problem itself. If you are seeing the server wording,
+  the caller is probably not the current `embed.js`.
 
 ## OAuth
 
