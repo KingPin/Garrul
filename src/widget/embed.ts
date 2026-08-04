@@ -1594,9 +1594,23 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	// button, reply submit success, reload) so the global message listener
 	// doesn't accumulate across the page lifetime.
 	let tsHandle: TurnstileFrameHandle | null = null;
+	let tsGate: TurnstileGate | null = null;
 	if (tsSlot) {
-		tsHandle = mountTurnstileFrame(tsSlot, ctx.apiBase, {
-			onError: () => {
+		// Unlike the top-level composer, this mounts eagerly: opening a reply form
+		// *is* the intent signal, so there is nothing left to defer. The gate is
+		// here for the other half of its job — letting submit wait for a token
+		// that hasn't arrived yet.
+		tsGate = createTurnstileGate({
+			mount: () => {
+				tsHandle = mountTurnstileFrame(tsSlot, ctx.apiBase, {
+					onToken: (token) => tsGate?.token(token),
+					onExpired: () => tsGate?.signal("expired"),
+					onError: () => tsGate?.signal("error"),
+					onReady: () => tsGate?.signal("ready"),
+					onInteractive: () => tsGate?.signal("interactive"),
+				});
+			},
+			onFailed: () => {
 				tsSlot.hidden = true;
 				submit.disabled = true;
 				errBox.textContent =
@@ -1604,8 +1618,10 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 				errBox.hidden = false;
 			},
 		});
+		tsGate.arm();
 		const cleanupObserver = new MutationObserver(() => {
 			if (!wrap.isConnected) {
+				tsGate?.dispose();
 				tsHandle?.destroy();
 				cleanupObserver.disconnect();
 			}
@@ -1619,22 +1635,71 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 
 	cancel.addEventListener("click", () => {
 		clearDraft(dkey);
+		tsGate?.dispose();
 		tsHandle?.destroy();
 		wrap.remove();
 	});
 
+	// Same precedence as the top-level composer: the Turnstile failure message
+	// is sticky, so nothing here overwrites it or hands the button back.
+	const notice = (message: string): void => {
+		if (tsGate?.failed) return;
+		errBox.textContent = message;
+		errBox.classList.add("is-notice");
+		errBox.hidden = false;
+		submit.disabled = false;
+	};
+
 	wrap.addEventListener("submit", async (e) => {
 		e.preventDefault();
 		submit.disabled = true;
-		errBox.hidden = true;
-		errBox.textContent = "";
-		errBox.classList.remove("is-notice");
-		const turnstileToken =
-			(wrap.querySelector(
-				'input[name="cf-turnstile-response"]',
-			) as HTMLInputElement | null)?.value ?? "";
+		if (!tsGate?.failed) {
+			errBox.hidden = true;
+			errBox.textContent = "";
+			errBox.classList.remove("is-notice");
+		}
+
+		// Turnstile needs a moment even when it mounted with the form: a reply
+		// posted within about a second of opening the box used to send an empty
+		// token, which the API rejects outright.
+		let waitedToken = "";
+		if (tsGate) {
+			const label = submit.textContent ?? "";
+			submit.textContent = "Checking…";
+			const waited = await tsGate.wait();
+			submit.textContent = label;
+			if (!waited.ok) {
+				switch (waited.reason) {
+					case "interactive":
+						notice("Complete the anti-spam check above, then post again.");
+						return;
+					case "timeout":
+						notice(
+							"The anti-spam check didn't load. Check your connection or reload the page.",
+						);
+						return;
+					case "failed":
+						// onFailed already wrote the message and disabled the button.
+						return;
+				}
+			}
+			waitedToken = waited.token;
+		}
+
 		try {
 			const formTs = await getFormToken(ctx.apiBase);
+			// Read the live input last, preferring it over the resolved token in
+			// case Turnstile refreshed in between, and never post an empty one.
+			const turnstileToken =
+				(wrap.querySelector(
+					'input[name="cf-turnstile-response"]',
+				) as HTMLInputElement | null)?.value ||
+				waitedToken ||
+				"";
+			if (tsGate && !turnstileToken) {
+				notice("Complete the anti-spam check above, then post again.");
+				return;
+			}
 			const res = await fetch(`${ctx.apiBase}/api/v1/comments`, {
 				method: "POST",
 				credentials: "include",
@@ -1656,10 +1721,14 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 				comment?: { status?: string };
 			};
 			if (!res.ok) {
+				if (tsGate?.failed) return;
 				errBox.textContent = json.error ?? `HTTP ${res.status}`;
 				errBox.hidden = false;
 				submit.disabled = false;
+				// Single-use once siteverify has seen it: re-challenge, and make the
+				// next wait actually wait instead of replaying the spent token.
 				tsHandle?.reset();
+				tsGate?.clear();
 				return;
 			}
 			// Reply landed — drop the saved draft before the list re-renders.
@@ -1669,10 +1738,12 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 			// inline with a "Pending approval" badge.
 			ctx.reload();
 		} catch (err) {
+			if (tsGate?.failed) return;
 			errBox.textContent = String(err);
 			errBox.hidden = false;
 			submit.disabled = false;
 			tsHandle?.reset();
+			tsGate?.clear();
 		}
 	});
 
