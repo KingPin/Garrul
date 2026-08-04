@@ -139,26 +139,43 @@ export const cacheApiStore = (reqUrl: string): RateLimitStore => ({
 type Bucket = { key: string; stamps: number[]; reason?: "short" | "long" };
 
 /**
- * Read a bucket and decide it against both windows. Returns `reason` set when
- * over budget, and the surviving stamps (pruned to the long window) either way
- * so an allowed request can append and write back without a second read.
+ * Decide a stamp list against both windows. Pure, and deliberately
+ * SYNCHRONOUS: any future backend that needs an atomic read-modify-write has
+ * to run its decide with no `await` between reading its state and writing it
+ * back, which is only possible if this function never yields. Returns the
+ * surviving stamps (pruned to the long window) either way, so an allowed
+ * request can append and write back without a second read.
  */
+export const decideStamps = (
+	stamps: number[],
+	cfg: LimitConfig,
+	now: number,
+): { stamps: number[]; reason?: "short" | "long" } => {
+	const longCutoff = now - cfg.long.windowSec * 1000;
+	const shortCutoff = now - cfg.short.windowSec * 1000;
+	const live = stamps.filter((t) => t > longCutoff);
+	// Short window checked first so a burst reports "short" rather than the
+	// sustained reason, which is what the operator-facing analytics expect.
+	if (live.filter((t) => t > shortCutoff).length >= cfg.short.max) {
+		return { stamps: live, reason: "short" };
+	}
+	if (live.length >= cfg.long.max) return { stamps: live, reason: "long" };
+	return { stamps: live };
+};
+
+/** Read a bucket from the store and decide it. */
 const decide = async (
 	store: RateLimitStore,
 	key: string,
 	cfg: LimitConfig,
 	now: number,
 ): Promise<Bucket> => {
-	const longCutoff = now - cfg.long.windowSec * 1000;
-	const shortCutoff = now - cfg.short.windowSec * 1000;
-	const stamps = (await store.read(key)).filter((t) => t > longCutoff);
-	// Short window checked first so a burst reports "short" rather than the
-	// sustained reason, which is what the operator-facing analytics expect.
-	if (stamps.filter((t) => t > shortCutoff).length >= cfg.short.max) {
-		return { key, stamps, reason: "short" };
-	}
-	if (stamps.length >= cfg.long.max) return { key, stamps, reason: "long" };
-	return { key, stamps };
+	const d = decideStamps(await store.read(key), cfg, now);
+	// `exactOptionalPropertyTypes` forbids assigning `undefined` to an optional
+	// property, so the reason is spread in only when present.
+	return d.reason
+		? { key, stamps: d.stamps, reason: d.reason }
+		: { key, stamps: d.stamps };
 };
 
 export type RateLimitOptions = {
