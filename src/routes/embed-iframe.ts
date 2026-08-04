@@ -145,11 +145,14 @@ const frameAncestors = (env: Bindings, selfOrigin: string): string => {
  *   - `ready` fires once render() returns, proving api.js loaded and the
  *     widget painted. A parent that has seen it knows a later silence means
  *     the challenge is waiting on the visitor, not broken.
- *   - `interactive` fires when the challenge needs a human — either before it
- *     enters interactive mode, or when an interactive challenge went unsolved
- *     long enough for Turnstile to reset it. Both mean the same thing to the
- *     parent, so both map to one message: stop waiting, tell the visitor to
- *     complete the check.
+ *   - `interactive` fires when a token isn't coming without something else
+ *     happening first — either before the challenge enters interactive mode,
+ *     or when a challenge timed out and Turnstile reset it. Both map to one
+ *     message: stop waiting, tell the visitor to complete the check. The
+ *     timeout case is the looser of the two — it doesn't strictly imply
+ *     there's something on screen to click — so the copy can be slightly off
+ *     there. It self-corrects: Turnstile re-runs after a reset, so a token
+ *     usually arrives and the next attempt goes through.
  *
  * Neither is required for correctness — a parent that never receives them
  * falls back to its own timeout — so an old cached copy of this document
@@ -233,9 +236,11 @@ iframe.get("/turnstile-frame", (c) => {
         callback: function (token) { post({ type: "garrul:turnstile-token", token: token }); },
         "error-callback": function () { post({ type: "garrul:turnstile-error" }); },
         "expired-callback": function () { post({ type: "garrul:turnstile-expired" }); },
-        // Both of these mean "a human has to act": one fires before the
-        // challenge turns interactive, the other when an interactive challenge
-        // went unsolved long enough for Turnstile to reset it.
+        // Both mean "no token is coming until something else happens": one
+        // fires before the challenge turns interactive, the other when a
+        // challenge timed out and Turnstile reset it. The parent treats them
+        // alike; see the wire protocol above for why the shared copy is a
+        // slightly loose fit for the timeout case.
         "before-interactive-callback": function () { post({ type: "garrul:turnstile-interactive" }); },
         "timeout-callback": function () { post({ type: "garrul:turnstile-interactive" }); }
       });
