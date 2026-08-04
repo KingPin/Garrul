@@ -169,4 +169,59 @@ describe("GET /embed/turnstile-frame", () => {
 		// setting both is worse than one — browsers disagree on which wins.
 		expect(res.headers.get("x-frame-options")).toBeNull();
 	});
+
+	// The parent defers mounting this frame until the visitor focuses the
+	// composer, so a submit can end up waiting on a token that hasn't arrived.
+	// These two messages are what let it tell "the challenge wants a click" from
+	// "the frame never came up" — see the wire-protocol doc comment in
+	// src/routes/embed-iframe.ts.
+	describe("mount-state protocol", () => {
+		it("reports ready once render() has returned", async () => {
+			const res = await fetchFrame("/embed/turnstile-frame");
+			const body = await res.text();
+			expect(body).toContain("garrul:turnstile-ready");
+			// Must be posted after the render call, not before it — the whole
+			// point is that it proves api.js loaded and the widget painted.
+			expect(body.indexOf("turnstile.render")).toBeLessThan(
+				body.indexOf("garrul:turnstile-ready"),
+			);
+		});
+
+		it("reports interactive from both callbacks that mean a human must act", async () => {
+			const res = await fetchFrame("/embed/turnstile-frame");
+			const body = await res.text();
+			// before-interactive-callback: the challenge is about to demand a
+			// click. timeout-callback: an interactive challenge went unsolved and
+			// Turnstile reset it. Same consequence for the parent, one message.
+			expect(body).toContain("before-interactive-callback");
+			expect(body).toContain("timeout-callback");
+			expect(
+				body.match(/garrul:turnstile-interactive/g)?.length,
+			).toBeGreaterThanOrEqual(2);
+		});
+
+		it("keeps the api.js load watchdog that distinguishes a dead frame", async () => {
+			const res = await fetchFrame("/embed/turnstile-frame");
+			const body = await res.text();
+			// The parent's own cap is set above this deliberately so this more
+			// specific verdict wins the race. If this budget moves, so must
+			// TURNSTILE_WAIT_MS in src/widget/turnstile-gate.ts.
+			expect(body).toContain("8000");
+			expect(body).toContain("garrul:turnstile-error");
+		});
+
+		it("still never posts any message to a wildcard target", async () => {
+			// A token is what makes this frame worth attacking; every post must
+			// go to the validated parent origin. New messages must not weaken it.
+			const res = await fetchFrame(
+				"/embed/turnstile-frame?parent_origin=https%3A%2F%2Fblog.example.com",
+			);
+			const body = await res.text();
+			expect(body).not.toContain('postMessage(msg, "*")');
+			expect(body).not.toContain("postMessage(msg, '*')");
+			// Every post goes through the single `post` helper, which is bound to
+			// the validated origin. Assert that funnel still exists.
+			expect(body).toContain("window.parent.postMessage(msg, parentOrigin)");
+		});
+	});
 });

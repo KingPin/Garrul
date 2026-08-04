@@ -131,8 +131,30 @@ const frameAncestors = (env: Bindings, selfOrigin: string): string => {
  *     { type: "garrul:turnstile-token",    token: string }
  *     { type: "garrul:turnstile-expired" }
  *     { type: "garrul:turnstile-error" }
+ *     { type: "garrul:turnstile-ready" }
+ *     { type: "garrul:turnstile-interactive" }
  *   parent → iframe:
  *     { type: "garrul:turnstile-reset" }
+ *
+ * `ready` and `interactive` exist because the parent defers this frame's mount
+ * until the visitor focuses the composer, and then has to decide what to say
+ * when a submit is waiting on a token that hasn't arrived. Without them, "the
+ * challenge is waiting for a human to click" and "the frame never executed"
+ * are both indistinguishable silence:
+ *
+ *   - `ready` fires once render() returns, proving api.js loaded and the
+ *     widget painted. A parent that has seen it knows a later silence means
+ *     the challenge is waiting on the visitor, not broken.
+ *   - `interactive` fires when the challenge needs a human — either before it
+ *     enters interactive mode, or when an interactive challenge went unsolved
+ *     long enough for Turnstile to reset it. Both mean the same thing to the
+ *     parent, so both map to one message: stop waiting, tell the visitor to
+ *     complete the check.
+ *
+ * Neither is required for correctness — a parent that never receives them
+ * falls back to its own timeout — so an old cached copy of this document
+ * paired with a new parent script degrades to vaguer copy, not a broken
+ * composer. That matters: this route is served with max-age=300.
  *
  * Query params:
  *   ?parent_origin=...   — required. Must be in ALLOWED_ORIGINS (or be this
@@ -210,8 +232,17 @@ iframe.get("/turnstile-frame", (c) => {
         theme: theme,
         callback: function (token) { post({ type: "garrul:turnstile-token", token: token }); },
         "error-callback": function () { post({ type: "garrul:turnstile-error" }); },
-        "expired-callback": function () { post({ type: "garrul:turnstile-expired" }); }
+        "expired-callback": function () { post({ type: "garrul:turnstile-expired" }); },
+        // Both of these mean "a human has to act": one fires before the
+        // challenge turns interactive, the other when an interactive challenge
+        // went unsolved long enough for Turnstile to reset it.
+        "before-interactive-callback": function () { post({ type: "garrul:turnstile-interactive" }); },
+        "timeout-callback": function () { post({ type: "garrul:turnstile-interactive" }); }
       });
+      // render() returned, so api.js is loaded and the widget painted. Tells
+      // the parent that any later silence is the challenge waiting on the
+      // visitor rather than a frame that never came up.
+      post({ type: "garrul:turnstile-ready" });
     } catch (e) {
       post({ type: "garrul:turnstile-error" });
     }
@@ -228,6 +259,12 @@ iframe.get("/turnstile-frame", (c) => {
   // when this iframe is itself embedded under a strict-CSP host frame-src list).
   // Surface that as an error so the parent can show a friendly message instead
   // of a silently blank iframe.
+  //
+  // The parent mirrors this budget with its own cap (TURNSTILE_WAIT_MS in
+  // src/widget/turnstile-gate.ts), deliberately set a little higher so this
+  // watchdog — which can tell "api.js never arrived" from "the challenge is
+  // waiting on a click" — wins the race and produces the better message. Move
+  // one and you must move the other.
   setTimeout(function () {
     if (!window.turnstile) post({ type: "garrul:turnstile-error" });
   }, 8000);
