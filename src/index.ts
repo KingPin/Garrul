@@ -157,7 +157,24 @@ export type Bindings = {
 	//                            Does NOT touch anonymous ghost provider_id —
 	//                            that column *is* the identity.
 	IP_HASH_RETENTION_DAYS?: string;
+	// Optional: atomic, cross-colo-accurate rate limiting via a Durable
+	// Object. Unbound (the default) leaves the limiter on the edge Cache API —
+	// see docs/ANTISPAM.md § "Rate-limit accuracy" for what that costs.
+	//
+	// Deliberately not a `string`: scripts/bindings.ts classifies by exact type
+	// name and skips anything it doesn't recognise, so this stays out of the
+	// config registry and the release manifest — the same treatment `AI?: Ai`
+	// gets. Adding it as a string would drag the whole config/manifest
+	// pipeline in for a binding that has no string value to validate.
+	RATE_LIMIT_DO?: DurableObjectNamespace;
 };
+
+/**
+ * Durable Object class export. Wrangler resolves `class_name` in
+ * `[[durable_objects.bindings]]` against the entry module's exports, so this
+ * has to be re-exported here even though nothing in the app imports it.
+ */
+export { RateLimitShard } from "./lib/ratelimit-shard";
 
 const app = new Hono<{ Bindings: Bindings }>();
 

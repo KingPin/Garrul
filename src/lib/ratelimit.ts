@@ -161,6 +161,101 @@ export const cacheApiStore = (reqUrl: string): RateLimitStore => ({
 	},
 });
 
+/**
+ * The subset of `Bindings` this module needs. Structural rather than an import
+ * of the app's `Bindings` type — same reasoning as `SpamEnv` in
+ * src/lib/spam/index.ts: no import cycle back to the app root, and tests can
+ * pass a plain object literal.
+ */
+export type RateLimitEnv = { RATE_LIMIT_DO?: DurableObjectNamespace };
+
+/**
+ * Number of `RateLimitShard` instances. A module constant on purpose, not an
+ * env var: any `string`-typed field added to `Bindings` is picked up by
+ * `parseBindings` in scripts/bindings.ts, and tests/config-registry.test.ts
+ * asserts the config registry covers every string field and nothing more — so
+ * making this tunable would drag the whole config/manifest pipeline in for a
+ * knob nobody needs.
+ *
+ * Correctness needs exactly ONE shard: atomicity holds within a shard whatever
+ * the count. Count only buys blast radius — at 8, one shard's colo being
+ * unreachable fails 12.5% of identities open instead of all of them.
+ *
+ * Why not more, e.g. the 256 the issue proposed: stamps are in-memory, and
+ * hibernation discards them. Fewer requests per shard means colder shards
+ * means more bucket resets, i.e. weaker limiting. On a small self-hosted blog
+ * at ~500 metered writes/day, 256 shards is ~2 requests per shard per day —
+ * effectively every request hitting an empty bucket, plus a cross-colo hop for
+ * the privilege. At 8, the same instance sees enough traffic to stay warm.
+ *
+ * Changing this reshuffles every bucket once, which is one round of resets —
+ * the same fail-open posture eviction and hibernation already have.
+ */
+const SHARDS = 8;
+
+/**
+ * FNV-1a/32. Synchronous is the requirement: `crypto.subtle.digest` is async
+ * and buys nothing on inputs that are already HMAC digests, ULIDs or numeric
+ * ids. This is a dispersion function, not a security boundary.
+ */
+const shardName = (identity: string): string => {
+	let h = 0x811c9dc5;
+	for (let i = 0; i < identity.length; i++) {
+		h ^= identity.charCodeAt(i);
+		h = Math.imul(h, 0x01000193);
+	}
+	return `shard-${(h >>> 0) % SHARDS}`;
+};
+
+/**
+ * Talk to a shard over its stub.
+ *
+ * Lives here rather than in ratelimit-shard.ts for two reasons: the client
+ * never references the class (only a namespace stub), and putting it there
+ * would make ratelimit -> ratelimit-shard -> ratelimit an ESM cycle, which is
+ * a TDZ landmine with const-arrow exports.
+ *
+ * Sharding is on the IDENTITY, never the full bucket key. Both buckets a
+ * request consults — `${scope}:${identity}` and `global:${identity}` — then
+ * land in the same instance, so one round trip decides both atomically. Key
+ * sharding would split them across instances: two hops, and an envelope that
+ * is no longer decided against the same state as the bucket it is meant to
+ * bound.
+ *
+ * Every failure throws, so it lands in `checkRateLimit`'s catch and fails
+ * open. Notably a wrong-shaped body throws rather than being coerced to
+ * `{ok:false}` — failing closed would turn a transport glitch into a 429 storm
+ * across every write endpoint.
+ */
+const SHARD_TIMEOUT_MS = 2_000;
+
+const doLimiter = (ns: DurableObjectNamespace): AtomicRateLimiter => ({
+	decide: async (input) => {
+		const stub = ns.get(ns.idFromName(shardName(input.identity)));
+		const res = await stub.fetch(
+			new Request("https://ratelimit.invalid/decide", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify(input),
+				// A hung shard must not hang a comment POST.
+				signal: AbortSignal.timeout(SHARD_TIMEOUT_MS),
+			}),
+		);
+		if (!res.ok) throw new Error(`shard ${res.status}`);
+		const body: unknown = await res.json();
+		if (typeof body !== "object" || body === null) {
+			throw new Error("shard returned a non-object");
+		}
+		const r = body as { ok?: unknown; reason?: unknown };
+		if (typeof r.ok !== "boolean") throw new Error("shard returned no verdict");
+		if (r.ok) return { ok: true };
+		if (r.reason !== "short" && r.reason !== "long" && r.reason !== "global") {
+			throw new Error("shard returned an unknown reason");
+		}
+		return { ok: false, reason: r.reason };
+	},
+});
+
 type Bucket = { key: string; stamps: number[]; reason?: "short" | "long" };
 
 /**
@@ -218,6 +313,12 @@ export type RateLimitOptions = {
 	/** Override with an atomic backend. Tests only — production resolves one
 	 *  from the environment. Ignored when `store` is also set. */
 	limiter?: AtomicRateLimiter;
+	/**
+	 * The request's bindings. Optional so existing tests compile untouched;
+	 * production routes pass `c.env`. When it carries `RATE_LIMIT_DO`, the
+	 * limiter runs atomically on that Durable Object instead of the Cache API.
+	 */
+	env?: RateLimitEnv;
 };
 
 /**
@@ -226,17 +327,26 @@ export type RateLimitOptions = {
  * unreachable" — two very different things for an operator to chase.
  */
 type Backend =
-	| { kind: "atomic"; limiter: AtomicRateLimiter; label: "custom" }
+	| { kind: "atomic"; limiter: AtomicRateLimiter; label: "custom" | "do" }
 	| { kind: "store"; store: RateLimitStore; label: "cache" };
 
 /**
  * An explicit `store` wins over an explicit `limiter` so the existing
- * store-injecting tests keep their meaning verbatim; otherwise the Cache API.
+ * store-injecting tests keep their meaning verbatim; then the bound Durable
+ * Object; otherwise the Cache API, which stays the default for every install
+ * that has not opted in.
  */
 const resolveBackend = (reqUrl: string, opts: RateLimitOptions): Backend => {
 	if (opts.store) return { kind: "store", store: opts.store, label: "cache" };
 	if (opts.limiter) {
 		return { kind: "atomic", limiter: opts.limiter, label: "custom" };
+	}
+	const ns = opts.env?.RATE_LIMIT_DO;
+	// Duck-checked rather than trusted: an operator who points the binding name
+	// at the wrong resource type should get a clean logged fail-open, not a
+	// TypeError thrown from inside the try.
+	if (ns && typeof ns.idFromName === "function") {
+		return { kind: "atomic", limiter: doLimiter(ns), label: "do" };
 	}
 	return { kind: "store", store: cacheApiStore(reqUrl), label: "cache" };
 };
