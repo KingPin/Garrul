@@ -20,8 +20,9 @@
  * colos under-counts by roughly the number of colos it touches. KV was only
  * marginally better here (eventually consistent, so the same class of
  * under-count) and cost the quota above. Accurate global limiting needs a
- * Durable Object; `RateLimitStore` exists so that can be added later as an
- * opt-in backend without touching a single call site.
+ * Durable Object, which plugs in as an `AtomicRateLimiter` rather than a
+ * `RateLimitStore` — read/decide/write cannot be made atomic no matter what
+ * sits behind the two methods, so an atomic backend has to own the decision.
  *
  * Two windows per bucket, both enforced from ONE stored stamp list:
  *   - short: N requests in T_short seconds (burst protection)
@@ -37,7 +38,7 @@
 import { cacheKey, edgeCache } from "./response-cache";
 import { log } from "./log";
 
-type LimitConfig = {
+export type LimitConfig = {
 	short: { max: number; windowSec: number };
 	long: { max: number; windowSec: number };
 };
@@ -60,14 +61,38 @@ export const GLOBAL_ENVELOPE: LimitConfig = {
 };
 
 /**
- * Storage backend for stamp lists. Backend-agnostic by design: the default is
- * the Cache API, tests inject an in-memory map, and a Durable Object backend
- * (for accurate cross-colo counting) can be dropped in behind the same two
- * methods. Neither method may reject — see `cacheApiStore`.
+ * Storage backend for stamp lists: the Cache API in production, an in-memory
+ * map in tests. Read-then-write with the decision in between, which is exactly
+ * why it CANNOT carry an atomic backend — see `AtomicRateLimiter`.
  */
 export type RateLimitStore = {
 	read(key: string): Promise<number[]>;
 	write(key: string, stamps: number[], ttlSec: number): Promise<void>;
+};
+
+/**
+ * The other kind of backend: one that decides BOTH buckets itself and returns
+ * the verdict, rather than handing state back for the caller to decide on.
+ *
+ * This is a separate contract, not a third method on `RateLimitStore`, because
+ * the read/decide/write split *is* the race this exists to close. A backend
+ * that can do a genuine compare-and-swap has to own the decision, so the
+ * window arithmetic runs on the far side of the wire with nothing able to
+ * interleave. Bolting a third method onto `RateLimitStore` would instead leave
+ * every existing implementer structurally satisfying a type it only half
+ * implements, forcing `checkRateLimit` to duck-type-probe at runtime.
+ *
+ * Implementations must reject on any failure rather than returning a synthetic
+ * block: `checkRateLimit` fails OPEN, and a transport glitch coerced into
+ * `{ok:false}` would 429-storm every write endpoint instead.
+ */
+export type AtomicRateLimiter = {
+	decide(input: {
+		identity: string;
+		scope: string;
+		config: LimitConfig;
+		envelope: LimitConfig;
+	}): Promise<RateLimitResult>;
 };
 
 export type RateLimitResult = {
@@ -190,6 +215,30 @@ export type RateLimitOptions = {
 	config?: LimitConfig;
 	/** Override the backend. Tests inject in-memory; production omits it. */
 	store?: RateLimitStore;
+	/** Override with an atomic backend. Tests only — production resolves one
+	 *  from the environment. Ignored when `store` is also set. */
+	limiter?: AtomicRateLimiter;
+};
+
+/**
+ * Which backend a call ended up on. `label` exists so the degraded log line
+ * distinguishes "the edge cache is down" from "my atomic backend is
+ * unreachable" — two very different things for an operator to chase.
+ */
+type Backend =
+	| { kind: "atomic"; limiter: AtomicRateLimiter; label: "custom" }
+	| { kind: "store"; store: RateLimitStore; label: "cache" };
+
+/**
+ * An explicit `store` wins over an explicit `limiter` so the existing
+ * store-injecting tests keep their meaning verbatim; otherwise the Cache API.
+ */
+const resolveBackend = (reqUrl: string, opts: RateLimitOptions): Backend => {
+	if (opts.store) return { kind: "store", store: opts.store, label: "cache" };
+	if (opts.limiter) {
+		return { kind: "atomic", limiter: opts.limiter, label: "custom" };
+	}
+	return { kind: "store", store: cacheApiStore(reqUrl), label: "cache" };
 };
 
 /**
@@ -210,10 +259,23 @@ export const checkRateLimit = async (
 	opts: RateLimitOptions,
 ): Promise<RateLimitResult> => {
 	const cfg = opts.config ?? DEFAULTS;
-	const store = opts.store ?? cacheApiStore(reqUrl);
+	const backend = resolveBackend(reqUrl, opts);
 	const now = Date.now();
 
 	try {
+		if (backend.kind === "atomic") {
+			// The backend owns the whole decision, so everything below — the
+			// two-pass read, the append, the race it documents — is not on this
+			// path at all. It answers for both buckets in one round trip.
+			return await backend.limiter.decide({
+				identity,
+				scope: opts.scope,
+				config: cfg,
+				envelope: GLOBAL_ENVELOPE,
+			});
+		}
+		const store = backend.store;
+
 		// Read-only pass over both buckets first. Returning before any write
 		// means a blocked request doesn't spend budget it was denied — without
 		// this, an identity fighting the long window would also burn its short
@@ -283,6 +345,7 @@ export const checkRateLimit = async (
 	} catch (err) {
 		log.warn("ratelimit.degraded", {
 			scope: opts.scope,
+			backend: backend.label,
 			// Never the identity itself: it's an IP hash, and log hygiene keeps
 			// per-user identifiers out of log lines.
 			error: err === STORE_UNAVAILABLE ? "store_unavailable" : String(err),
