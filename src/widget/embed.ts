@@ -318,8 +318,9 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
 .gr-error.is-notice { color: var(--gr-notice); }
 /* Composer submit errors are inline (text only) — a box-in-a-box reads too
    heavy next to the composer. The :not(.is-notice) guard keeps the boxed
-   styling for the in-form "awaiting moderation" notice, which reuses this
-   same element by toggling .is-notice. */
+   styling for notices that reuse this same element by toggling .is-notice:
+   today that's the two recoverable Turnstile states, "solve the challenge"
+   and "the check didn't load". */
 .gr-error.is-inline:not(.is-notice) {
 	background: transparent;
 	border: 0;
@@ -556,6 +557,47 @@ const el = <K extends keyof HTMLElementTagNameMap>(
 	if (cls) e.className = cls;
 	if (text != null) e.textContent = text;
 	return e;
+};
+
+/**
+ * The composer's inline status box: submit errors and the Turnstile notices. A
+ * polite live region so a screen-reader user learns that a post failed or that
+ * the anti-spam check needs them — neither of which was announced before, since
+ * the visible change happens well away from the button they just activated.
+ *
+ * `role="status"` carries an implicit `aria-live="polite"`; both are set because
+ * older AT pairs honour one or the other.
+ */
+const statusBox = (cls: string): HTMLElement => {
+	const box = el("div", cls);
+	box.setAttribute("role", "status");
+	box.setAttribute("aria-live", "polite");
+	box.hidden = true;
+	return box;
+};
+
+/**
+ * Show a message in a `statusBox`.
+ *
+ * Unhides *before* writing the text, deliberately. A `hidden` element is out of
+ * the accessibility tree, so a live region mutated while hidden has nothing to
+ * announce from — most screen readers stay silent. Neither statement paints on
+ * its own, so there is no empty-box flash from the ordering.
+ */
+const showStatus = (
+	box: HTMLElement,
+	message: string,
+	kind: "error" | "notice" = "error",
+): void => {
+	box.hidden = false;
+	box.classList.toggle("is-notice", kind === "notice");
+	box.textContent = message;
+};
+
+const clearStatus = (box: HTMLElement): void => {
+	box.textContent = "";
+	box.classList.remove("is-notice");
+	box.hidden = true;
 };
 
 /**
@@ -1584,8 +1626,7 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	actions.append(submit, cancel);
 	wrap.appendChild(actions);
 
-	const errBox = el("div", "gr-error is-inline");
-	errBox.hidden = true;
+	const errBox = statusBox("gr-error is-inline");
 	wrap.appendChild(errBox);
 
 	// Mount Turnstile inside its same-origin iframe (see mountTurnstileFrame
@@ -1613,9 +1654,10 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 			onFailed: () => {
 				tsSlot.hidden = true;
 				submit.disabled = true;
-				errBox.textContent =
-					"Anti-spam check failed to load. Reload the page; if it keeps failing the site owner should check that https://challenges.cloudflare.com is reachable.";
-				errBox.hidden = false;
+				showStatus(
+					errBox,
+					"Anti-spam check failed to load. Reload the page; if it keeps failing the site owner should check that https://challenges.cloudflare.com is reachable.",
+				);
 			},
 		});
 		tsGate.arm();
@@ -1644,20 +1686,14 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	// is sticky, so nothing here overwrites it or hands the button back.
 	const notice = (message: string): void => {
 		if (tsGate?.failed) return;
-		errBox.textContent = message;
-		errBox.classList.add("is-notice");
-		errBox.hidden = false;
+		showStatus(errBox, message, "notice");
 		submit.disabled = false;
 	};
 
 	wrap.addEventListener("submit", async (e) => {
 		e.preventDefault();
 		submit.disabled = true;
-		if (!tsGate?.failed) {
-			errBox.hidden = true;
-			errBox.textContent = "";
-			errBox.classList.remove("is-notice");
-		}
+		if (!tsGate?.failed) clearStatus(errBox);
 
 		// Turnstile needs a moment even when it mounted with the form: a reply
 		// posted within about a second of opening the box used to send an empty
@@ -1722,8 +1758,7 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 			};
 			if (!res.ok) {
 				if (tsGate?.failed) return;
-				errBox.textContent = json.error ?? `HTTP ${res.status}`;
-				errBox.hidden = false;
+				showStatus(errBox, json.error ?? `HTTP ${res.status}`);
 				submit.disabled = false;
 				// Single-use once siteverify has seen it: re-challenge, and make the
 				// next wait actually wait instead of replaying the spent token.
@@ -1739,8 +1774,7 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 			ctx.reload();
 		} catch (err) {
 			if (tsGate?.failed) return;
-			errBox.textContent = String(err);
-			errBox.hidden = false;
+			showStatus(errBox, String(err));
 			submit.disabled = false;
 			tsHandle?.reset();
 			tsGate?.clear();
@@ -2082,8 +2116,7 @@ const buildForm = (
 	const submit = el("button", undefined, "Post comment");
 	submit.type = "submit";
 
-	const errBox = el("div", "gr-error is-inline");
-	errBox.hidden = true;
+	const errBox = statusBox("gr-error is-inline");
 
 	form.append(submit, errBox);
 	return form;
@@ -2593,9 +2626,10 @@ const loadOnce = async (
 				if (submitBtn) submitBtn.disabled = true;
 				const errEl = form.querySelector(".gr-error") as HTMLElement | null;
 				if (errEl) {
-					errEl.textContent =
-						"Anti-spam check failed to load. Reload the page; if it keeps failing the site owner should check that https://challenges.cloudflare.com is reachable.";
-					errEl.hidden = false;
+					showStatus(
+						errEl,
+						"Anti-spam check failed to load. Reload the page; if it keeps failing the site owner should check that https://challenges.cloudflare.com is reachable.",
+					);
 				}
 			},
 		});
@@ -2641,29 +2675,21 @@ const submit = async (
 	apiBase: string,
 	host: HTMLElement,
 ) => {
-	// Three things write to .gr-error: submit failures, the moderation notice,
-	// and Turnstile. Precedence: the "anti-spam check failed to load" message
-	// wins and is sticky. It means the composer cannot produce a valid post at
-	// all, so nothing may overwrite it and nothing may re-enable the button —
-	// otherwise the visitor is invited to retry something guaranteed to fail.
-	// Every write below is therefore gated on the failure not having happened.
+	// Two things write to this box: submit failures, and Turnstile. Precedence:
+	// the "anti-spam check failed to load" message wins and is sticky. It means
+	// the composer cannot produce a valid post at all, so nothing may overwrite
+	// it and nothing may re-enable the button — otherwise the visitor is invited
+	// to retry something guaranteed to fail. Every write below is therefore
+	// gated on the failure not having happened.
 	const errEl = form.querySelector(".gr-error") as HTMLElement | null;
 	const ts = turnstileFor(form);
-	if (errEl && !ts?.gate.failed) {
-		errEl.hidden = true;
-		errEl.textContent = "";
-		errEl.classList.remove("is-notice");
-	}
+	if (errEl && !ts?.gate.failed) clearStatus(errEl);
 	const submitBtn = form.querySelector("button[type=submit]") as HTMLButtonElement | null;
 	if (submitBtn) submitBtn.disabled = true;
 
 	const notice = (message: string): void => {
 		if (ts?.gate.failed) return;
-		if (errEl) {
-			errEl.textContent = message;
-			errEl.classList.add("is-notice");
-			errEl.hidden = false;
-		}
+		if (errEl) showStatus(errEl, message, "notice");
 		// Recoverable, unlike `onFailed` — the visitor can solve the challenge
 		// or retry, so give them the button back.
 		if (submitBtn) submitBtn.disabled = false;
@@ -2744,10 +2770,7 @@ const submit = async (
 		if (!res.ok) {
 			// A Turnstile error can arrive while this request is in flight.
 			if (ts?.gate.failed) return;
-			if (errEl) {
-				errEl.textContent = json.error ?? `HTTP ${res.status}`;
-				errEl.hidden = false;
-			}
+			if (errEl) showStatus(errEl, json.error ?? `HTTP ${res.status}`);
 			if (submitBtn) submitBtn.disabled = false;
 			// The token is single-use once siteverify has seen it, so re-challenge
 			// and make the next wait actually wait rather than replay it.
@@ -2787,10 +2810,7 @@ const submit = async (
 		// mid-submit had its message replaced by String(err) here, and the
 		// composer was handed back to the visitor with a dead anti-spam widget.
 		if (ts?.gate.failed) return;
-		if (errEl) {
-			errEl.textContent = String(err);
-			errEl.hidden = false;
-		}
+		if (errEl) showStatus(errEl, String(err));
 		if (submitBtn) submitBtn.disabled = false;
 		ts?.reset();
 		ts?.gate.clear();
