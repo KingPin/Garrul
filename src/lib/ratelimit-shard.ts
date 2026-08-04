@@ -141,6 +141,11 @@ export class RateLimitShard {
 	 */
 	private sweepIter: IterableIterator<string> | null = null;
 
+	// biome-ignore lint/complexity/noUselessConstructor: not useless — it is the
+	// Durable Object contract. workerd constructs the class with (state, env),
+	// and declaring it keeps the signature visible and lets the unit tests
+	// construct one directly. Deleting it makes `new RateLimitShard(a, b)` a
+	// TS error ("Expected 0 arguments") in tests/ratelimit-shard.test.ts.
 	constructor(_state: DurableObjectState, _env: unknown) {}
 
 	async fetch(req: Request): Promise<Response> {
