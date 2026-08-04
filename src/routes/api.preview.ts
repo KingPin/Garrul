@@ -51,6 +51,7 @@ preview.post("/", async (c) => {
 	const rl = await checkRateLimit(c.req.url, ipHash, {
 		scope: "preview",
 		config: PREVIEW_LIMITS,
+		env: c.env,
 	});
 	if (!rl.ok) return c.json({ error: t("err.ratelimit") }, 429);
 

@@ -80,7 +80,10 @@ votes.post("/", async (c) => {
 
 	const ipHash = await requireIpHash(c);
 	if (ipHash instanceof Response) return ipHash;
-	const rl = await checkRateLimit(c.req.url, ipHash, { scope: "vote" });
+	const rl = await checkRateLimit(c.req.url, ipHash, {
+		scope: "vote",
+		env: c.env,
+	});
 	if (!rl.ok) {
 		writeEvent(c.env.ANALYTICS, "ratelimit.hit", {
 			outcome: rl.reason ?? null,

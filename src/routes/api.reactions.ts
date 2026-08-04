@@ -54,7 +54,10 @@ reactions.post("/", async (c) => {
 
 	const ipHash = await requireIpHash(c);
 	if (ipHash instanceof Response) return ipHash;
-	const rl = await checkRateLimit(c.req.url, ipHash, { scope: "reaction" });
+	const rl = await checkRateLimit(c.req.url, ipHash, {
+		scope: "reaction",
+		env: c.env,
+	});
 	if (!rl.ok) {
 		writeEvent(c.env.ANALYTICS, "ratelimit.hit", {
 			outcome: rl.reason ?? null,

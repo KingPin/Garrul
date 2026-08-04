@@ -209,6 +209,50 @@ describe("checkRateLimit on the Durable Object backend", () => {
 	});
 });
 
+describe("route wiring", () => {
+	it("passes env at every checkRateLimit call site", async () => {
+		// A route that forgets `env` silently lands on the Cache API while the
+		// operator believes the Durable Object is enforcing — a limiter quietly
+		// weaker than its configuration, with nothing in the logs to say so.
+		// Types cannot catch it: `env` is optional so existing tests compile.
+		const { readdir, readFile } = await import("node:fs/promises");
+		const { join } = await import("node:path");
+		const { fileURLToPath } = await import("node:url");
+		// `.href` rather than the URL object: the global `URL` here is
+		// workers-types', which node's typings don't accept.
+		const dir = fileURLToPath(new URL("../src/routes/", import.meta.url).href);
+		const files = (await readdir(dir)).filter((f) => f.endsWith(".ts"));
+
+		/** Argument list of the call starting at `open`, paren-balanced. */
+		const argsAt = (src: string, open: number): string => {
+			let depth = 0;
+			for (let i = open; i < src.length; i++) {
+				if (src[i] === "(") depth++;
+				else if (src[i] === ")" && --depth === 0) return src.slice(open, i);
+			}
+			return src.slice(open);
+		};
+
+		const missing: string[] = [];
+		let found = 0;
+		for (const f of files) {
+			const src = await readFile(join(dir, f), "utf8");
+			// Balanced scan rather than a regex: the calls are a mix of one-line
+			// and multi-line, and a shape-sensitive pattern would rot the first
+			// time one is reformatted.
+			for (const m of src.matchAll(/checkRateLimit\s*\(/g)) {
+				found++;
+				const args = argsAt(src, m.index + m[0].length - 1);
+				if (!args.includes("env: c.env")) missing.push(`${f} @${m.index}`);
+			}
+		}
+		expect(missing).toEqual([]);
+		// Guards the guard: a regex that stopped matching would otherwise pass
+		// vacuously and this test would quietly stop protecting anything.
+		expect(found).toBe(11);
+	});
+});
+
 describe("the wrangler contract", () => {
 	it("re-exports RateLimitShard from the worker entry module", async () => {
 		// `class_name` in [[durable_objects.bindings]] resolves against the entry
