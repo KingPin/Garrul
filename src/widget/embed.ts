@@ -314,7 +314,18 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
 	border-radius: var(--gr-radius);
 	padding: 0.5rem 0.7rem;
 }
-.gr-error[hidden] { display: none; }
+/* Collapses an empty composer status box without taking it out of the a11y
+   tree (it's a live region). Absolute, not zero-height, so it stops being a
+   flex item and stops earning a gap. See statusBox() for why. */
+.gr-error:empty {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	padding: 0;
+	border: 0;
+	overflow: hidden;
+	clip-path: inset(50%);
+}
 .gr-error.is-notice { color: var(--gr-notice); }
 /* Composer submit errors are inline (text only) — a box-in-a-box reads too
    heavy next to the composer. The :not(.is-notice) guard keeps the boxed
@@ -567,29 +578,37 @@ const el = <K extends keyof HTMLElementTagNameMap>(
  *
  * `role="status"` carries an implicit `aria-live="polite"`; both are set because
  * older AT pairs honour one or the other.
+ *
+ * The box is never hidden via `hidden` or `display: none`. Both remove an
+ * element from the accessibility tree, and a live region has to already be in
+ * that tree when its text changes for the change to be announced — a region
+ * that appears and fills in at the same moment is precisely the case screen
+ * readers miss. So it stays in the tree permanently and `.gr-error:empty`
+ * collapses it out of the layout while it holds no message.
+ *
+ * That rule uses `position: absolute` rather than a zero height because these
+ * boxes are flex children (`.gr-form` gap 0.5rem, `.gr-reply-form` gap 0.4rem)
+ * and a flex item earns its share of the gap however small it is. Taking it out
+ * of flow avoids having to cancel two different gap values. No offsets are set,
+ * so it stays at its static position and cannot extend the page.
  */
 const statusBox = (cls: string): HTMLElement => {
 	const box = el("div", cls);
 	box.setAttribute("role", "status");
 	box.setAttribute("aria-live", "polite");
-	box.hidden = true;
 	return box;
 };
 
 /**
- * Show a message in a `statusBox`.
- *
- * Unhides *before* writing the text, deliberately. A `hidden` element is out of
- * the accessibility tree, so a live region mutated while hidden has nothing to
- * announce from — most screen readers stay silent. Neither statement paints on
- * its own, so there is no empty-box flash from the ordering.
+ * Show a message in a `statusBox`. Setting the text is all that's needed: the
+ * box is already in the accessibility tree, so this is a live mutation, and
+ * going from empty to non-empty is what makes it visible again.
  */
 const showStatus = (
 	box: HTMLElement,
 	message: string,
 	kind: "error" | "notice" = "error",
 ): void => {
-	box.hidden = false;
 	box.classList.toggle("is-notice", kind === "notice");
 	box.textContent = message;
 };
@@ -597,7 +616,6 @@ const showStatus = (
 const clearStatus = (box: HTMLElement): void => {
 	box.textContent = "";
 	box.classList.remove("is-notice");
-	box.hidden = true;
 };
 
 /**
