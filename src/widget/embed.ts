@@ -2570,9 +2570,15 @@ const submit = async (
 	apiBase: string,
 	host: HTMLElement,
 ) => {
+	// Three things write to .gr-error: submit failures, the moderation notice,
+	// and Turnstile. Precedence: the "anti-spam check failed to load" message
+	// wins and is sticky. It means the composer cannot produce a valid post at
+	// all, so nothing may overwrite it and nothing may re-enable the button —
+	// otherwise the visitor is invited to retry something guaranteed to fail.
+	// Every write below is therefore gated on the failure not having happened.
 	const errEl = form.querySelector(".gr-error") as HTMLElement | null;
 	const ts = turnstileFor(form);
-	if (errEl) {
+	if (errEl && !ts?.gate.failed) {
 		errEl.hidden = true;
 		errEl.textContent = "";
 		errEl.classList.remove("is-notice");
@@ -2581,6 +2587,7 @@ const submit = async (
 	if (submitBtn) submitBtn.disabled = true;
 
 	const notice = (message: string): void => {
+		if (ts?.gate.failed) return;
 		if (errEl) {
 			errEl.textContent = message;
 			errEl.classList.add("is-notice");
@@ -2664,6 +2671,8 @@ const submit = async (
 			comment?: { status?: string };
 		};
 		if (!res.ok) {
+			// A Turnstile error can arrive while this request is in flight.
+			if (ts?.gate.failed) return;
 			if (errEl) {
 				errEl.textContent = json.error ?? `HTTP ${res.status}`;
 				errEl.hidden = false;
@@ -2703,6 +2712,10 @@ const submit = async (
 
 		await load(root, slug, apiBase, host);
 	} catch (err) {
+		// Same race, and the one that actually bit: a Turnstile error landing
+		// mid-submit had its message replaced by String(err) here, and the
+		// composer was handed back to the visitor with a dead anti-spam widget.
+		if (ts?.gate.failed) return;
 		if (errEl) {
 			errEl.textContent = String(err);
 			errEl.hidden = false;
