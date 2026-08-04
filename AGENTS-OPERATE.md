@@ -1147,10 +1147,13 @@ the Worker origin. `docs/troubleshooting.md` has the full recipe.
 
 **A commenter reports a permanently dead Post button.** That is the one
 sticky Turnstile state, and it only comes from Turnstile reporting an
-error — practically always `challenges.cloudflare.com` being unreachable
-or a site-key mismatch. The other two failure messages always re-enable
-the button, so a stuck composer is an outage or misconfiguration, not a
-widget bug.
+error. Check `challenges.cloudflare.com` reachability and that
+`TURNSTILE_SITE_KEY` matches Cloudflare first — those are the usual
+causes. But the widget latches on *any* error Turnstile reports,
+including transient ones, so an isolated report that reachability and
+config don't explain is probably a one-off rather than something to keep
+chasing. Either way a reload clears it. See `docs/ANTISPAM.md`
+§ "Turnstile mount timing" for the detail.
 
 **OAuth redirect mismatch.** Provider redirects back with
 `redirect_uri_mismatch`. The URI registered with the provider must
