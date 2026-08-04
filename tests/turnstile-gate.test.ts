@@ -2,7 +2,7 @@
  * Turnstile token gate (src/widget/turnstile-gate.ts).
  *
  * Issue #49 defers the Turnstile mount to first composer focus, which means a
- * submit can arrive before a token exists. These cover the two things that makes
+ * submit can arrive before a token exists. These cover the two things that are
  * load-bearing: that nothing mounts until something asks (the entire point of the
  * change), and that every way a wait can end maps to the right verdict — because
  * one of those verdicts disables the composer permanently and the others must not.
