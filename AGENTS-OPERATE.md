@@ -492,7 +492,13 @@ makes it a hard ceiling either — for that, put Cloudflare WAF
 rate-limiting rules in front of the Worker.
 
 Free-plan budget: 100,000 Durable Object requests/day account-wide, one
-per metered write-endpoint call. Storage quota is untouched.
+per metered write-endpoint call — **including calls the limiter blocks**.
+Storage and duration quotas are untouched. Exceeding the request budget
+makes further Durable Object calls fail, which the limiter treats as any
+other unreachable shard: it fails open until the quota resets at 00:00
+UTC. So a flood large enough to exhaust the budget also turns this
+backend off for the rest of the day, which the Cache API backend cannot
+do. Put a WAF rate-limiting rule in front if you expect one.
 [`docs/ANTISPAM.md`](./docs/ANTISPAM.md) § "The Durable Object backend"
 has the full detail.
 
