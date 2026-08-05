@@ -207,6 +207,9 @@ const shardName = (identity: string): string => {
 	return `shard-${(h >>> 0) % SHARDS}`;
 };
 
+/** A hung shard must not hang a comment POST. */
+const SHARD_TIMEOUT_MS = 2_000;
+
 /**
  * Talk to a shard over its stub.
  *
@@ -227,8 +230,6 @@ const shardName = (identity: string): string => {
  * `{ok:false}` — failing closed would turn a transport glitch into a 429 storm
  * across every write endpoint.
  */
-const SHARD_TIMEOUT_MS = 2_000;
-
 const doLimiter = (ns: DurableObjectNamespace): AtomicRateLimiter => ({
 	decide: async (input) => {
 		const stub = ns.get(ns.idFromName(shardName(input.identity)));
@@ -237,7 +238,6 @@ const doLimiter = (ns: DurableObjectNamespace): AtomicRateLimiter => ({
 				method: "POST",
 				headers: { "content-type": "application/json" },
 				body: JSON.stringify(input),
-				// A hung shard must not hang a comment POST.
 				signal: AbortSignal.timeout(SHARD_TIMEOUT_MS),
 			}),
 		);
