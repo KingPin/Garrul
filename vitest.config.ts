@@ -6,8 +6,10 @@
  * pool starts ~10x faster than the Workers pool.
  *
  * When we add integration tests (M9+) that exercise D1/KV/Turnstile via
- * Hono routes, switch those test files to the `@cloudflare/vitest-pool-
- * workers` pool — keep this config as the fast lane for unit tests.
+ * Hono routes, those test files want the `@cloudflare/vitest-pool-workers`
+ * pool — keep this config as the fast lane for unit tests. That package is
+ * not currently a dependency; install it at that point rather than carrying
+ * it (and its miniflare/undici subtree) unused.
  */
 import { defineConfig } from "vitest/config";
 
