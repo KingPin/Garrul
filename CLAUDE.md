@@ -77,7 +77,7 @@ Forward-only SQL files in `src/db/migrations/NNNN_name.sql`. The `_migrations` t
 Use `src/lib/log.ts`. Every request gets an ID; every log line is JSON. Operators tail with `wrangler tail`. No PII (names, emails, comment bodies) in logs.
 
 ### Tests
-Critical paths only: API contracts, sanitizer (XSS attempts), auth cookie roundtrip, rate-limit, depth cap. No coverage threshold. Tests must not require network or paid services — hand-rolled in-memory D1/KV stubs (see `tests/helpers/`), mocks for OAuth/email/Turnstile. `@cloudflare/vitest-pool-workers` is installed but unused; moving integration tests onto the Workers pool is future work (`vitest.config.ts:8-10`).
+Critical paths only: API contracts, sanitizer (XSS attempts), auth cookie roundtrip, rate-limit, depth cap. No coverage threshold. Tests must not require network or paid services — hand-rolled in-memory D1/KV stubs (see `tests/helpers/`), mocks for OAuth/email/Turnstile. Moving integration tests onto the Workers pool is future work; `@cloudflare/vitest-pool-workers` is deliberately *not* a dependency until then, so install it as part of that work (`vitest.config.ts:8-12`).
 
 ### Dependency overrides
 `package.json` has no comment syntax, so every entry in `overrides` is documented here. All of them exist for the same reason: a Cloudflare dev-tooling package pins a transitive dependency to an *exact* version that has an open advisory, so Dependabot can never open a PR for it — only an override moves it. None of these packages reach the Worker runtime; they are build- and dev-time only.
