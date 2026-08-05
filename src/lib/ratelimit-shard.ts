@@ -41,9 +41,16 @@ import {
 } from "./ratelimit";
 
 /**
- * Hard ceiling on live identities held by one shard. Worst case is roughly
- * 2.4 KB per identity (a 200-stamp envelope bucket dominates), so 20k buckets
- * lands well inside a 128 MB instance with room for the request itself.
+ * Hard ceiling on live BUCKETS held by one shard — not identities. An active
+ * identity holds two of them, its scope bucket and its envelope bucket, so this
+ * is roughly 10k concurrent identities per shard.
+ *
+ * At the configs that ship, a bucket pair costs ~2.4 KB (the 200-stamp envelope
+ * dominates), so ~24 MB at the cap — well inside a 128 MB instance with room
+ * for the request itself. That figure is a property of the shipped configs, not
+ * a bound this file enforces: `MAX_STAMPS` permits 1,000 stamps per bucket, so
+ * a config asking for a much larger `long.max` would raise it. Nothing on the
+ * wire can, since configs are module constants rather than caller input.
  */
 const MAX_BUCKETS = 20_000;
 
