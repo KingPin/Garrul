@@ -43,7 +43,7 @@
     "tail": "wrangler tail"
   },
   "dependencies": {
-    "hono": "^4.12.32",
+    "hono": "^4.12.34",
     "marked": "^18.0.7"
   },
   "overrides": {
