@@ -481,6 +481,14 @@ Rolling back is removing the binding block and redeploying — the shard
 holds no persistent state, so the limiter simply returns to the Cache
 API with nothing to clean up. Leave the class and the migration alone.
 
+It is not free at runtime. A shard lives in one datacenter, so every
+metered write endpoint call trades a colo-local cache read for a round
+trip to that one location — single-digit milliseconds for a nearby
+reader, up to a couple of hundred for a distant one, on every comment
+post, vote and reaction. Reads are unaffected; the comment tree still
+comes from the edge cache. A hung shard is capped at 2 seconds and then
+fails open.
+
 Two caveats worth knowing before you rely on it. Counters are held in
 memory (persisting them would spend a storage write on every allowed
 request), so a shard that goes idle and hibernates resets its buckets —
