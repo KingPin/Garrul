@@ -141,11 +141,17 @@ export class RateLimitShard {
 	 */
 	private sweepIter: IterableIterator<string> | null = null;
 
-	// biome-ignore lint/complexity/noUselessConstructor: not useless — it is the
-	// Durable Object contract. workerd constructs the class with (state, env),
-	// and declaring it keeps the signature visible and lets the unit tests
-	// construct one directly. Deleting it makes `new RateLimitShard(a, b)` a
-	// TS error ("Expected 0 arguments") in tests/ratelimit-shard.test.ts.
+	// Not useless: it is the Durable Object contract. workerd constructs the
+	// class with (state, env), and declaring it keeps the signature visible and
+	// lets the unit tests construct one directly. Deleting it makes
+	// `new RateLimitShard(a, b)` a TS error ("Expected 0 arguments") in
+	// tests/ratelimit-shard.test.ts.
+	//
+	// The suppression has to be the LAST comment line before the constructor.
+	// biome applies it to the following line, so trailing the reason across
+	// continuation lines suppresses nothing and reports `suppressions/unused`
+	// while the rule still fires.
+	// biome-ignore lint/complexity/noUselessConstructor: see above
 	constructor(_state: DurableObjectState, _env: unknown) {}
 
 	async fetch(req: Request): Promise<Response> {
