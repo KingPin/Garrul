@@ -38,6 +38,14 @@ export type MockDoOptions = {
 	 * assertion could pass for the wrong reason.
 	 */
 	yieldFirst?: boolean;
+	/**
+	 * Never answer, except by honouring the request's `AbortSignal` — a shard
+	 * that has gone away without closing the connection, which is the case
+	 * `SHARD_TIMEOUT_MS` exists for. Rejecting only on abort is the point: if
+	 * the client stops attaching a signal, this hangs forever and the test times
+	 * out loudly instead of passing.
+	 */
+	hang?: boolean;
 };
 
 export const makeMockDoNamespace = (
@@ -59,6 +67,14 @@ export const makeMockDoNamespace = (
 				fetch: async (req: Request): Promise<Response> => {
 					state.fetches++;
 					if (opts.yieldFirst) await Promise.resolve();
+					if (opts.hang) {
+						return new Promise<Response>((_resolve, reject) => {
+							if (req.signal.aborted) return reject(req.signal.reason);
+							req.signal.addEventListener("abort", () =>
+								reject(req.signal.reason),
+							);
+						});
+					}
 					if (opts.fail) opts.fail();
 					if (opts.respond) return opts.respond();
 					let shard = shards.get(id.name);

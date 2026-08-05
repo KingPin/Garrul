@@ -182,6 +182,32 @@ describe("checkRateLimit on the Durable Object backend", () => {
 			for (const w of warns) expect(w).not.toContain("ip-hash-secret");
 		});
 
+		it("when the shard hangs, on the timeout it actually attaches", async () => {
+			// The one property that cannot be proven in the node pool is whether
+			// workerd honors `AbortSignal.timeout` on a DO stub fetch; that was
+			// checked by hand against `wrangler dev` with a genuinely hung shard.
+			// What IS provable here, and what a refactor could silently break, is
+			// the half Garrul owns: that a signal is attached at all, and that the
+			// abort surfaces as a throw rather than a synthetic block.
+			//
+			// Substituting a short deadline for the real one keeps this in
+			// milliseconds while still running the production call — the spy's
+			// argument pins the 2s value, so shortening it here cannot hide a
+			// change to it. Fake timers are not an option: vitest's do not drive
+			// `AbortSignal.timeout`, which is a host timer.
+			const real = AbortSignal.timeout.bind(AbortSignal);
+			const timeout = vi
+				.spyOn(AbortSignal, "timeout")
+				.mockImplementation(() => real(5));
+			vi.spyOn(console, "log").mockImplementation(() => {});
+
+			const { env } = envWith({ hang: true });
+			const r = await checkRateLimit(REQ_URL, "ip-hung", { scope: "test", env });
+
+			expect(r).toEqual({ ok: true, degraded: true });
+			expect(timeout).toHaveBeenCalledWith(2_000);
+		});
+
 		it("never fails CLOSED on a wrong-shaped verdict", async () => {
 			// Coercing garbage to `{ok:false}` would turn one transport glitch
 			// into a 429 storm across every write endpoint.
