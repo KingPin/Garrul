@@ -20,8 +20,9 @@
  * colos under-counts by roughly the number of colos it touches. KV was only
  * marginally better here (eventually consistent, so the same class of
  * under-count) and cost the quota above. Accurate global limiting needs a
- * Durable Object; `RateLimitStore` exists so that can be added later as an
- * opt-in backend without touching a single call site.
+ * Durable Object, which plugs in as an `AtomicRateLimiter` rather than a
+ * `RateLimitStore` — read/decide/write cannot be made atomic no matter what
+ * sits behind the two methods, so an atomic backend has to own the decision.
  *
  * Two windows per bucket, both enforced from ONE stored stamp list:
  *   - short: N requests in T_short seconds (burst protection)
@@ -37,7 +38,7 @@
 import { cacheKey, edgeCache } from "./response-cache";
 import { log } from "./log";
 
-type LimitConfig = {
+export type LimitConfig = {
 	short: { max: number; windowSec: number };
 	long: { max: number; windowSec: number };
 };
@@ -60,14 +61,38 @@ export const GLOBAL_ENVELOPE: LimitConfig = {
 };
 
 /**
- * Storage backend for stamp lists. Backend-agnostic by design: the default is
- * the Cache API, tests inject an in-memory map, and a Durable Object backend
- * (for accurate cross-colo counting) can be dropped in behind the same two
- * methods. Neither method may reject — see `cacheApiStore`.
+ * Storage backend for stamp lists: the Cache API in production, an in-memory
+ * map in tests. Read-then-write with the decision in between, which is exactly
+ * why it CANNOT carry an atomic backend — see `AtomicRateLimiter`.
  */
 export type RateLimitStore = {
 	read(key: string): Promise<number[]>;
 	write(key: string, stamps: number[], ttlSec: number): Promise<void>;
+};
+
+/**
+ * The other kind of backend: one that decides BOTH buckets itself and returns
+ * the verdict, rather than handing state back for the caller to decide on.
+ *
+ * This is a separate contract, not a third method on `RateLimitStore`, because
+ * the read/decide/write split *is* the race this exists to close. A backend
+ * that can do a genuine compare-and-swap has to own the decision, so the
+ * window arithmetic runs on the far side of the wire with nothing able to
+ * interleave. Bolting a third method onto `RateLimitStore` would instead leave
+ * every existing implementer structurally satisfying a type it only half
+ * implements, forcing `checkRateLimit` to duck-type-probe at runtime.
+ *
+ * Implementations must reject on any failure rather than returning a synthetic
+ * block: `checkRateLimit` fails OPEN, and a transport glitch coerced into
+ * `{ok:false}` would 429-storm every write endpoint instead.
+ */
+export type AtomicRateLimiter = {
+	decide(input: {
+		identity: string;
+		scope: string;
+		config: LimitConfig;
+		envelope: LimitConfig;
+	}): Promise<RateLimitResult>;
 };
 
 export type RateLimitResult = {
@@ -136,29 +161,141 @@ export const cacheApiStore = (reqUrl: string): RateLimitStore => ({
 	},
 });
 
+/**
+ * The subset of `Bindings` this module needs. Structural rather than an import
+ * of the app's `Bindings` type — same reasoning as `SpamEnv` in
+ * src/lib/spam/index.ts: no import cycle back to the app root, and tests can
+ * pass a plain object literal.
+ */
+export type RateLimitEnv = { RATE_LIMIT_DO?: DurableObjectNamespace };
+
+/**
+ * Number of `RateLimitShard` instances. A module constant on purpose, not an
+ * env var: any `string`-typed field added to `Bindings` is picked up by
+ * `parseBindings` in scripts/bindings.ts, and tests/config-registry.test.ts
+ * asserts the config registry covers every string field and nothing more — so
+ * making this tunable would drag the whole config/manifest pipeline in for a
+ * knob nobody needs.
+ *
+ * Correctness needs exactly ONE shard: atomicity holds within a shard whatever
+ * the count. Count only buys blast radius — at 8, one shard's colo being
+ * unreachable fails 12.5% of identities open instead of all of them.
+ *
+ * Why not more, e.g. the 256 the issue proposed: stamps are in-memory, and
+ * hibernation discards them. Fewer requests per shard means colder shards
+ * means more bucket resets, i.e. weaker limiting. On a small self-hosted blog
+ * at ~500 metered writes/day, 256 shards is ~2 requests per shard per day —
+ * effectively every request hitting an empty bucket, plus a cross-colo hop for
+ * the privilege. At 8, the same instance sees enough traffic to stay warm.
+ *
+ * Changing this reshuffles every bucket once, which is one round of resets —
+ * the same fail-open posture eviction and hibernation already have.
+ */
+const SHARDS = 8;
+
+/**
+ * FNV-1a/32. Synchronous is the requirement: `crypto.subtle.digest` is async
+ * and buys nothing on inputs that are already HMAC digests, ULIDs or numeric
+ * ids. This is a dispersion function, not a security boundary.
+ */
+const shardName = (identity: string): string => {
+	let h = 0x811c9dc5;
+	for (let i = 0; i < identity.length; i++) {
+		h ^= identity.charCodeAt(i);
+		h = Math.imul(h, 0x01000193);
+	}
+	return `shard-${(h >>> 0) % SHARDS}`;
+};
+
+/** A hung shard must not hang a comment POST. */
+const SHARD_TIMEOUT_MS = 2_000;
+
+/**
+ * Talk to a shard over its stub.
+ *
+ * Lives here rather than in ratelimit-shard.ts for two reasons: the client
+ * never references the class (only a namespace stub), and putting it there
+ * would make ratelimit -> ratelimit-shard -> ratelimit an ESM cycle, which is
+ * a TDZ landmine with const-arrow exports.
+ *
+ * Sharding is on the IDENTITY, never the full bucket key. Both buckets a
+ * request consults — `${scope}:${identity}` and `global:${identity}` — then
+ * land in the same instance, so one round trip decides both atomically. Key
+ * sharding would split them across instances: two hops, and an envelope that
+ * is no longer decided against the same state as the bucket it is meant to
+ * bound.
+ *
+ * Every failure throws, so it lands in `checkRateLimit`'s catch and fails
+ * open. Notably a wrong-shaped body throws rather than being coerced to
+ * `{ok:false}` — failing closed would turn a transport glitch into a 429 storm
+ * across every write endpoint.
+ */
+const doLimiter = (ns: DurableObjectNamespace): AtomicRateLimiter => ({
+	decide: async (input) => {
+		const stub = ns.get(ns.idFromName(shardName(input.identity)));
+		const res = await stub.fetch(
+			new Request("https://ratelimit.invalid/decide", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify(input),
+				signal: AbortSignal.timeout(SHARD_TIMEOUT_MS),
+			}),
+		);
+		if (!res.ok) throw new Error(`shard ${res.status}`);
+		const body: unknown = await res.json();
+		if (typeof body !== "object" || body === null) {
+			throw new Error("shard returned a non-object");
+		}
+		const r = body as { ok?: unknown; reason?: unknown };
+		if (typeof r.ok !== "boolean") throw new Error("shard returned no verdict");
+		if (r.ok) return { ok: true };
+		if (r.reason !== "short" && r.reason !== "long" && r.reason !== "global") {
+			throw new Error("shard returned an unknown reason");
+		}
+		return { ok: false, reason: r.reason };
+	},
+});
+
 type Bucket = { key: string; stamps: number[]; reason?: "short" | "long" };
 
 /**
- * Read a bucket and decide it against both windows. Returns `reason` set when
- * over budget, and the surviving stamps (pruned to the long window) either way
- * so an allowed request can append and write back without a second read.
+ * Decide a stamp list against both windows. Pure, and deliberately
+ * SYNCHRONOUS: any future backend that needs an atomic read-modify-write has
+ * to run its decide with no `await` between reading its state and writing it
+ * back, which is only possible if this function never yields. Returns the
+ * surviving stamps (pruned to the long window) either way, so an allowed
+ * request can append and write back without a second read.
  */
+export const decideStamps = (
+	stamps: number[],
+	cfg: LimitConfig,
+	now: number,
+): { stamps: number[]; reason?: "short" | "long" } => {
+	const longCutoff = now - cfg.long.windowSec * 1000;
+	const shortCutoff = now - cfg.short.windowSec * 1000;
+	const live = stamps.filter((t) => t > longCutoff);
+	// Short window checked first so a burst reports "short" rather than the
+	// sustained reason, which is what the operator-facing analytics expect.
+	if (live.filter((t) => t > shortCutoff).length >= cfg.short.max) {
+		return { stamps: live, reason: "short" };
+	}
+	if (live.length >= cfg.long.max) return { stamps: live, reason: "long" };
+	return { stamps: live };
+};
+
+/** Read a bucket from the store and decide it. */
 const decide = async (
 	store: RateLimitStore,
 	key: string,
 	cfg: LimitConfig,
 	now: number,
 ): Promise<Bucket> => {
-	const longCutoff = now - cfg.long.windowSec * 1000;
-	const shortCutoff = now - cfg.short.windowSec * 1000;
-	const stamps = (await store.read(key)).filter((t) => t > longCutoff);
-	// Short window checked first so a burst reports "short" rather than the
-	// sustained reason, which is what the operator-facing analytics expect.
-	if (stamps.filter((t) => t > shortCutoff).length >= cfg.short.max) {
-		return { key, stamps, reason: "short" };
-	}
-	if (stamps.length >= cfg.long.max) return { key, stamps, reason: "long" };
-	return { key, stamps };
+	const d = decideStamps(await store.read(key), cfg, now);
+	// `exactOptionalPropertyTypes` forbids assigning `undefined` to an optional
+	// property, so the reason is spread in only when present.
+	return d.reason
+		? { key, stamps: d.stamps, reason: d.reason }
+		: { key, stamps: d.stamps };
 };
 
 export type RateLimitOptions = {
@@ -173,6 +310,45 @@ export type RateLimitOptions = {
 	config?: LimitConfig;
 	/** Override the backend. Tests inject in-memory; production omits it. */
 	store?: RateLimitStore;
+	/** Override with an atomic backend. Tests only — production resolves one
+	 *  from the environment. Ignored when `store` is also set. */
+	limiter?: AtomicRateLimiter;
+	/**
+	 * The request's bindings. Optional so existing tests compile untouched;
+	 * production routes pass `c.env`. When it carries `RATE_LIMIT_DO`, the
+	 * limiter runs atomically on that Durable Object instead of the Cache API.
+	 */
+	env?: RateLimitEnv;
+};
+
+/**
+ * Which backend a call ended up on. `label` exists so the degraded log line
+ * distinguishes "the edge cache is down" from "my atomic backend is
+ * unreachable" — two very different things for an operator to chase.
+ */
+type Backend =
+	| { kind: "atomic"; limiter: AtomicRateLimiter; label: "custom" | "do" }
+	| { kind: "store"; store: RateLimitStore; label: "cache" };
+
+/**
+ * An explicit `store` wins over an explicit `limiter` so the existing
+ * store-injecting tests keep their meaning verbatim; then the bound Durable
+ * Object; otherwise the Cache API, which stays the default for every install
+ * that has not opted in.
+ */
+const resolveBackend = (reqUrl: string, opts: RateLimitOptions): Backend => {
+	if (opts.store) return { kind: "store", store: opts.store, label: "cache" };
+	if (opts.limiter) {
+		return { kind: "atomic", limiter: opts.limiter, label: "custom" };
+	}
+	const ns = opts.env?.RATE_LIMIT_DO;
+	// Duck-checked rather than trusted: an operator who points the binding name
+	// at the wrong resource type should get a clean logged fail-open, not a
+	// TypeError thrown from inside the try.
+	if (ns && typeof ns.idFromName === "function") {
+		return { kind: "atomic", limiter: doLimiter(ns), label: "do" };
+	}
+	return { kind: "store", store: cacheApiStore(reqUrl), label: "cache" };
 };
 
 /**
@@ -193,10 +369,23 @@ export const checkRateLimit = async (
 	opts: RateLimitOptions,
 ): Promise<RateLimitResult> => {
 	const cfg = opts.config ?? DEFAULTS;
-	const store = opts.store ?? cacheApiStore(reqUrl);
+	const backend = resolveBackend(reqUrl, opts);
 	const now = Date.now();
 
 	try {
+		if (backend.kind === "atomic") {
+			// The backend owns the whole decision, so everything below — the
+			// two-pass read, the append, the race it documents — is not on this
+			// path at all. It answers for both buckets in one round trip.
+			return await backend.limiter.decide({
+				identity,
+				scope: opts.scope,
+				config: cfg,
+				envelope: GLOBAL_ENVELOPE,
+			});
+		}
+		const store = backend.store;
+
 		// Read-only pass over both buckets first. Returning before any write
 		// means a blocked request doesn't spend budget it was denied — without
 		// this, an identity fighting the long window would also burn its short
@@ -226,10 +415,12 @@ export const checkRateLimit = async (
 		// same way and multiplies with it, so it is not a backstop against this.
 		//
 		// The Cache API has no compare-and-swap, so this is inherent to the
-		// backend: a Durable Object behind `RateLimitStore` is what closes it
-		// (tracked in #53, and it would fix the per-colo undercount above too).
+		// backend. Closing it is what `AtomicRateLimiter` and the optional
+		// `RATE_LIMIT_DO` Durable Object are for — bind it and none of this
+		// paragraph applies, including the envelope caveat above. Everything
+		// below describes the DEFAULT backend, which is what most installs run.
 		//
-		// Accepted for now, and the reason is not "it's only a burst" — it isn't
+		// Accepted there, and the reason is not "it's only a burst" — it isn't
 		// one. It is that the limiter is deliberately not the sole control on any
 		// endpoint taking an unauthenticated caller: Turnstile on anonymous
 		// comment POST, UNIQUE(comment_id, reporter_ip_hash) on reports,
@@ -243,10 +434,9 @@ export const checkRateLimit = async (
 		// holding in the same release this note ships in: IPv6 is now normalized
 		// to its /64, so a household is one identity rather than 2^64. The race
 		// is therefore the cheapest remaining bypass on the IP-keyed buckets,
-		// not a rounding error beside a larger one. That raises what #53 is
-		// worth; it does not change the fact that the Cache API cannot close it.
-		// It is also the only bypass on the `user:`-keyed buckets and the
-		// Telegram route, which cost an attacker a bannable account.
+		// not a rounding error beside a larger one. It is also the only bypass
+		// on the `user:`-keyed buckets and the Telegram route, which cost an
+		// attacker a bannable account. That is the case for binding the DO.
 		//
 		// This is an operator-visible property, not just an internal caveat:
 		// docs/ANTISPAM.md § "Rate-limit accuracy" states it, and points
@@ -266,6 +456,7 @@ export const checkRateLimit = async (
 	} catch (err) {
 		log.warn("ratelimit.degraded", {
 			scope: opts.scope,
+			backend: backend.label,
 			// Never the identity itself: it's an IP hash, and log hygiene keeps
 			// per-user identifiers out of log lines.
 			error: err === STORE_UNAVAILABLE ? "store_unavailable" : String(err),

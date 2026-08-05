@@ -63,7 +63,10 @@ subscriptions.post("/", async (c) => {
 	// the endpoint is an enumeration / spam vector.
 	const ipHash = await requireIpHash(c);
 	if (ipHash instanceof Response) return ipHash;
-	const rl = await checkRateLimit(c.req.url, ipHash, { scope: "subscribe" });
+	const rl = await checkRateLimit(c.req.url, ipHash, {
+		scope: "subscribe",
+		env: c.env,
+	});
 	if (!rl.ok) {
 		return c.json(
 			{ error: t("err.ratelimit"), reason: rl.reason ?? null },

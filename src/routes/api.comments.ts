@@ -434,8 +434,12 @@ comments.post("/", async (c) => {
 			c.req.url,
 			session ? `user:${session.user_id}` : ipHash,
 			session
-				? { scope: "comment-authed", config: AUTHED_COMMENT_LIMITS }
-				: { scope: "comment" },
+				? {
+						scope: "comment-authed",
+						config: AUTHED_COMMENT_LIMITS,
+						env: c.env,
+					}
+				: { scope: "comment", env: c.env },
 		);
 		if (rl.ok) return null;
 		writeEvent(c.env.ANALYTICS, "ratelimit.hit", {
@@ -999,6 +1003,7 @@ comments.patch("/:id", async (c) => {
 	const rl = await checkRateLimit(c.req.url, `user:${sessionUserId}`, {
 		scope: "comment-mutate",
 		config: MUTATE_COMMENT_LIMITS,
+		env: c.env,
 	});
 	if (!rl.ok) return c.json({ error: t("err.ratelimit") }, 429);
 
@@ -1115,6 +1120,7 @@ comments.delete("/:id", async (c) => {
 	const rl = await checkRateLimit(c.req.url, `user:${sessionUserId}`, {
 		scope: "comment-mutate",
 		config: MUTATE_COMMENT_LIMITS,
+		env: c.env,
 	});
 	if (!rl.ok) return c.json({ error: t("err.ratelimit") }, 429);
 

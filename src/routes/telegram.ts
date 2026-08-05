@@ -150,6 +150,7 @@ telegram.post("/webhook", async (c) => {
 		const rl = await checkRateLimit(c.req.url, `tg:${fromId}`, {
 			scope: "telegram",
 			config: TELEGRAM_RATE_LIMIT,
+			env: c.env,
 		});
 		if (!rl.ok) {
 			// Tell the operator instead of dropping silently. Callbacks answer as

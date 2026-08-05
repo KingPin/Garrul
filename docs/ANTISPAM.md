@@ -7,7 +7,7 @@ Garrul defends against spam in layers. The base protections below are **always o
 These don't need configuration; they ship with every Garrul instance:
 
 - **Turnstile** — Cloudflare's CAPTCHA-alternative. Required for anonymous POSTs whenever `TURNSTILE_SITE_KEY` is set. See [Turnstile mount timing](#turnstile-mount-timing) for when it loads and what its three visitor-facing messages mean.
-- **Rate-limit** — sliding window on the edge Cache API (not KV), keyed on the hashed client IP for anonymous callers and on the user id for signed-in ones. 1 anonymous comment per 10s and 5 per 10 min by default; signed-in authors get 3 per 10s and 60 per 10 min. Every caller is also held under one shared per-identity envelope across all endpoints. **Read [Rate-limit accuracy](#rate-limit-accuracy-known-limitations) before you rely on these numbers as a hard ceiling** — they are not one.
+- **Rate-limit** — sliding window on the edge Cache API (not KV), keyed on the hashed client IP for anonymous callers and on the user id for signed-in ones. 1 anonymous comment per 10s and 5 per 10 min by default; signed-in authors get 3 per 10s and 60 per 10 min. Every caller is also held under one shared per-identity envelope across all endpoints. An optional [Durable Object backend](#the-durable-object-backend-opt-in) makes the counting atomic and global. **Read [Rate-limit accuracy](#rate-limit-accuracy-known-limitations) before you rely on these numbers as a hard ceiling** — they are not one.
 - **Markdown sanitizer** — strict allowlist; only `https:`/`http:`/`mailto:` links survive, raw HTML and `<img>` are dropped, every link gets `rel="nofollow ugc noopener" target="_blank"`.
 - **Field honeypot** — a hidden `website` input in the embed form. If a bot fills it, the POST is rejected with HTTP 400.
 
@@ -124,13 +124,13 @@ Layers stack. With everything on, a comment is flagged if **any** signal trips. 
 
 ## Rate-limit accuracy (known limitations)
 
-The rate limiter is a **cost-raiser, not a hard ceiling.** Treat the configured numbers as the rate a normal client sees, not the maximum a determined one can achieve. Two things loosen it, both inherent to running the counters on the edge Cache API:
+The rate limiter is a **cost-raiser, not a hard ceiling.** Treat the configured numbers as the rate a normal client sees, not the maximum a determined one can achieve. Two things loosen it, both inherent to running the counters on the edge Cache API — which is the default, and the only backend unless you opt into [the Durable Object](#the-durable-object-backend-opt-in):
 
 **1. Counters are per-datacenter.** The Cache API is colo-local, so each Cloudflare datacenter keeps its own copy of a bucket. An attacker whose traffic spreads across colos gets roughly the configured limit *per colo* they reach.
 
 **2. Concurrent requests from one identity are undercounted.** Reading a bucket, deciding, and writing it back is not atomic, and the write replaces the entry rather than appending to it. So N requests held in flight at once all read the same pre-state, all pass the gate, and all write back a bucket grown by exactly one entry — the N-1 losers leave no trace. The effect is a sustained multiplier, not a one-off burst: a client keeping N requests in flight holds roughly N× the configured rate for as long as it likes. The shared envelope races the same way, so it multiplies rather than backstopping.
 
-**Why this is accepted rather than fixed.** The Cache API has no compare-and-swap, so #2 cannot be closed on this backend; a [Durable Object backend](https://github.com/KingPin/Garrul/issues/53) would close both and is tracked for a later release. It is not the front line in the meantime, because the limiter is deliberately not the only control on any endpoint that accepts an unauthenticated caller:
+**Why this is the default rather than fixed everywhere.** The Cache API has no compare-and-swap, so #2 cannot be closed on this backend at all — closing it needs the [Durable Object backend](#the-durable-object-backend-opt-in), which is opt-in because it adds a Cloudflare resource and a migration to your deploy. On the default backend it is still not the front line, because the limiter is deliberately not the only control on any endpoint that accepts an unauthenticated caller:
 
 | Endpoint | Second, non-racy control |
 | --- | --- |
@@ -143,7 +143,37 @@ The rate limiter is a **cost-raiser, not a hard ceiling.** Treat the configured 
 
 On the IP-keyed buckets it is the cheapest bypass currently available. It used not to be: while Garrul hashed the full IPv6 address, one household supplied 2^64 distinct identities and per-IP limiting was unenforceable over IPv6 no matter what the race did. IP hashing now normalizes IPv6 to its /64, so a household is one identity — which closed the larger hole and left this one as the front edge. On the user-id-keyed buckets (signed-in comment POST, edit, delete) and the Telegram route the race is the *only* bypass, and those cost an attacker a real account, which you can ban.
 
-**What to do if this matters for your instance.** Put Cloudflare WAF rate-limiting rules in front of the Worker. They run before your code, count accurately, and can key on things Garrul can't see. Garrul's limiter is the floor that ships in the box, not the ceiling you should rely on under active attack.
+**What to do if this matters for your instance.** Two options, and they are not alternatives — under active attack, use both:
+
+1. **Put Cloudflare WAF rate-limiting rules in front of the Worker.** They run before your code, count accurately, and can key on things Garrul can't see. This is the real ceiling.
+2. **Enable the Durable Object backend below.** It closes #1 and #2 inside Garrul, which is what you want for the buckets WAF can't express — the per-user-id ones especially.
+
+Garrul's limiter is the floor that ships in the box, not the ceiling you should rely on under active attack.
+
+## The Durable Object backend (opt-in)
+
+Bind a `RateLimitShard` Durable Object and the limiter moves off the Cache API onto it. Uncomment the block in `wrangler.example.toml` (search for `RATE_LIMIT_DO`), copy it into your `wrangler.toml`, and redeploy. Nothing else changes — no new secrets, no migration to your D1 database, no code change.
+
+**What it fixes.**
+
+- **The concurrency race (#2) is closed.** One Durable Object instance is the single authority for an identity, and it decides without yielding, so concurrent requests are counted one at a time. The configured cap becomes the actual cap.
+- **The per-colo split (#1) is closed.** One instance per identity means one counter, not one per datacenter.
+- **The shared envelope becomes a real backstop.** On the Cache API it races exactly like the per-scope bucket and multiplies with it. On the Durable Object both buckets are decided in the same pass against the same state, so the per-identity ceiling across all endpoints is genuinely enforced — arguably the biggest practical gain here.
+
+**What it does not fix.**
+
+- **IPv6 rotation across /64s.** Someone with many prefixes is still many identities. Nothing inside Garrul can fix that; see the WAF note above.
+- **Buckets reset when a shard goes cold.** Counters are held in memory, deliberately — persisting them would spend a storage write on every allowed request for state that is worthless within a window of itself. Cloudflare hibernates idle Durable Objects and discards their memory, so a caller pacing itself slower than the hibernation interval can exceed the *long* window (the 10-minute one). The short window is unaffected in practice. Bucket eviction under memory pressure behaves the same way. Resets only ever *loosen* the limit — they never produce a spurious 429.
+- **It is not a hard ceiling either.** It is a much better cost-raiser. WAF is still the ceiling.
+- **On the free plan, a sustained flood can switch it off.** The free tier allows 100,000 Durable Object requests/day and Cloudflare fails further operations of that type once you exceed it. Every metered call is one request, **including the ones the limiter blocks**, so roughly 100,000 requests to any write endpoint exhausts the day's budget — after which the shard errors, the limiter fails open, and you are back to no limiting until the quota resets at 00:00 UTC. The Cache API backend has no equivalent cliff. So on the free plan the Durable Object is strictly better under normal load and worse under exactly the sustained flood it exists to counter, which is the sharpest reason the WAF rule above is not optional if you expect one. On the paid plan the equivalent is a bill rather than a cliff.
+
+**Latency.** This is the real running cost, and it is not free. A shard lives in one datacenter — wherever it was first reached — so every metered write endpoint call now pays a round trip to that one location instead of reading a colo-local cache entry. For a reader near the shard that is single-digit milliseconds; for one on the far side of the world it can be a couple of hundred, added to every comment post, vote and reaction. Reads are untouched: the comment tree is still served from the edge cache, so this shows up when someone interacts, not when they load a page. A hung shard is capped at 2 seconds, after which the request is allowed through and logged as degraded rather than left waiting.
+
+**Failure behavior.** Unreachable or misbehaving shard → the request is allowed through unmetered and a `ratelimit.degraded` line is logged with `backend: "do"`. Same fail-open posture as the Cache API path, which is the right trade for a defense mechanism: a limiter outage must not take every write endpoint down with it. Watch for it with `wrangler tail`.
+
+**Cost.** On the Workers free plan: 100,000 Durable Object requests/day, shared account-wide across every Durable Object you run. One metered write endpoint call is one Durable Object request, allowed or blocked — see the quota cliff above for what happens when you run out. The shard never writes to storage, so the SQLite storage quota is untouched, and because the shard is always eligible to hibernate it uses a negligible fraction of the 13,000 GB-s/day duration allowance. Requests are spread over 8 shards; that number is a constant in `src/lib/ratelimit.ts` and changing it reshuffles every bucket once.
+
+**Rolling back.** Remove the `[[durable_objects.bindings]]` block and redeploy. The limiter falls straight back to the Cache API and there is no state to clean up. Leave the `[[migrations]]` block and the exported class alone — deleting the class would need a `deleted_classes` migration for no benefit.
 
 ## What's still possible (deferred)
 
