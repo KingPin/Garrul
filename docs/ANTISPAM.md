@@ -184,6 +184,8 @@ Both must grant for mail to go out. The short window kills the concurrency burst
 
 A reader who hits the ceiling gets a `429` with `"reason": "send_budget_exhausted"`, and nothing is written to `subscriptions` — no pending row is created that nobody can confirm. Exhaustion is logged at `warn` with the scope and cap, so `wrangler tail` tells you when it trips.
 
+It counts *sends*, not attempts: if Resend rejects the call or the API key is missing, the slot is handed straight back. An install with `EMAIL_FROM` set but `RESEND_API_KEY` unset therefore keeps accepting subscribers instead of burning its daily ceiling on mail that never left.
+
 **What it does not stop.**
 
 - **It is global, not per-identity.** That is deliberate — every per-identity key this endpoint has is either racy (the limiter) or attacker-controlled (`email` is arbitrary; `post_slug` is never validated against `posts`). A global ceiling is the one bound none of those bypasses reach. The cost is real: an attacker who spends a window denies **new** subscriptions until it rolls. Existing confirmed subscribers are untouched — only confirmation mail passes through here, so reply notifications and digests keep flowing, and comments themselves are unaffected. Bounded mail plus a temporary signup outage is a better failure than unbounded billable mail plus a sending domain accruing complaints.

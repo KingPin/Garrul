@@ -355,4 +355,27 @@ describe("POST /subscribe — the burst is bounded end to end", () => {
 		expect(sent).toHaveLength(0);
 		expect(readBudget("confirm:burst")?.sent).toBe(0);
 	});
+
+	it("spends no budget when the mail provider rejects the send", async () => {
+		// The budget counts sends, so a send the provider refused must not stay
+		// counted. The failure mode this guards: an install with EMAIL_FROM set but
+		// RESEND_API_KEY missing passes the env guard, sends nothing, and would
+		// otherwise spend its whole daily ceiling on zero mail before starting to
+		// refuse real subscribers.
+		vi.stubGlobal("fetch", async () => new Response("nope", { status: 401 }));
+		sqlite
+			.prepare(
+				"UPDATE email_send_budget SET window_start = 0, sent = 0 WHERE scope = 'confirm:burst'",
+			)
+			.run();
+
+		const res = await subscribe(
+			{ post_slug: SLUG, email: "rejected@example.com" },
+			"10.5.5.5",
+		);
+		// The request still succeeds — a provider outage is not the reader's
+		// problem, and the pending row is legitimate.
+		expect(res.status).toBe(200);
+		expect(readBudget("confirm:burst")?.sent).toBe(0);
+	});
 });

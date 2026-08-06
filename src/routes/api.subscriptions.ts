@@ -190,12 +190,22 @@ subscriptions.post("/", async (c) => {
 			postTitle: title,
 			confirmUrl,
 		});
-		await sendEmail(c.env, {
+		const sent = await sendEmail(c.env, {
 			to: email,
 			from,
 			subject: fillSubject(t("email.confirm.subject"), title),
 			html,
 		});
+		if (!sent) {
+			// The budget counts sends, so a send that didn't happen must not stay
+			// counted. `sendEmail` returns false and logs when RESEND_API_KEY is
+			// missing or the provider rejects the call; without this refund, an
+			// install with EMAIL_FROM set but the secret unset would spend the
+			// whole daily ceiling on zero mail and then start refusing new
+			// subscribers. Safe to refund here where it isn't on a budget denial:
+			// provider failure is not something a caller can induce on demand.
+			await reservation?.release();
+		}
 	} else {
 		// No mail went out — the upsert found an already-confirmed row. Hand the
 		// slot back so a reader re-subscribing to a thread they already confirmed
