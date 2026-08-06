@@ -662,7 +662,8 @@ Operator notes:
   the attacker-reachable share of your Resend spend, not the total.
 - Caps are constants in `src/lib/email-budget.ts`
   (`CONFIRM_SEND_BUDGETS`); changing them is an edit plus a redeploy,
-  not a setting. Resend's free tier is 100 emails/day, so `confirm:daily
+  not a setting — making them `/admin/settings` dials is tracked in
+  https://github.com/KingPin/Garrul/issues/69. Resend's free tier is 100 emails/day, so `confirm:daily
   = 200` deliberately sits above it — your provider's limit, not this
   one, is what a normal instance hits first. On the free tier, set it
   below 100 minus your expected digest volume if you want Garrul to stop

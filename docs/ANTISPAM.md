@@ -230,7 +230,7 @@ These aren't in the box yet — open an issue if you need them:
 - IP-reputation lookups (StopForumSpam, AbuseIPDB) — would need to handle raw IPs, conflicts with privacy stance.
 - Bayesian / locally-trained classifier.
 - CleanTalk or other classifier vendors — the adapter interface is in `src/lib/spam/`; adding one is one new file.
-- Operator-tunable [confirmation-email caps](#the-confirmation-email-ceiling) — today they're constants plus a redeploy, not `/admin/settings` entries.
+- Operator-tunable [confirmation-email caps](#the-confirmation-email-ceiling) — today they're constants plus a redeploy, not `/admin/settings` entries. Tracked in [#69](https://github.com/KingPin/Garrul/issues/69).
 
 ## Operating the queue
 
