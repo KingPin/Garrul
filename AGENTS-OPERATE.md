@@ -653,10 +653,20 @@ Operator notes:
   rather than refusing every subscription. Run `npm run migrate` after
   upgrading, or you lose the ceiling silently (the `warn` line
   `email budget scope missing` is your signal).
+- It counts *sends*, not attempts. If Resend rejects the call or
+  `RESEND_API_KEY` is missing, the slot is refunded — so an install with
+  `EMAIL_FROM` set but the secret unset keeps accepting subscribers
+  instead of spending the ceiling on mail that never left.
+- **Digests are not counted here** — they go to already-confirmed
+  addresses and no unauthenticated caller can trigger them. This bounds
+  the attacker-reachable share of your Resend spend, not the total.
 - Caps are constants in `src/lib/email-budget.ts`
   (`CONFIRM_SEND_BUDGETS`); changing them is an edit plus a redeploy,
-  not a setting. Lower `confirm:daily` first if you're on a small
-  Resend plan.
+  not a setting. Resend's free tier is 100 emails/day, so `confirm:daily
+  = 200` deliberately sits above it — your provider's limit, not this
+  one, is what a normal instance hits first. On the free tier, set it
+  below 100 minus your expected digest volume if you want Garrul to stop
+  before Resend does.
 - Full threat-model write-up: `docs/ANTISPAM.md` §"The
   confirmation-email ceiling".
 

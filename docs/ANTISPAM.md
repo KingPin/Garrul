@@ -193,7 +193,9 @@ It counts *sends*, not attempts: if Resend rejects the call or the API key is mi
 - **It fails open.** If the migration hasn't landed or D1 errors, the ceiling counts nothing rather than refusing every subscription. Same posture as the rate limiter. Run `npm run migrate` after upgrading.
 - **It doesn't stop junk *rows*.** Auto-confirmed subscriptions (a signed-in user subscribing to their own comment's thread) send no confirmation mail and so aren't counted here — they're bounded by the limiter and the per-email cap.
 
-**Tuning.** The caps are module constants in `src/lib/email-budget.ts` (`CONFIRM_SEND_BUDGETS`) — edit and redeploy. If you're on a small Resend plan and want them lower, lower `confirm:daily` first. Wiring these to `/admin/settings` so they're changeable without a redeploy is planned, not shipped.
+- **It only counts confirmation mail.** Digests are sent by the cron to addresses that already confirmed, so they're outside this ceiling — an attacker can't trigger them. But it does mean this budget is not a bound on your *total* Resend spend, only on the part an unauthenticated caller can cause.
+
+**Tuning.** The caps are module constants in `src/lib/email-budget.ts` (`CONFIRM_SEND_BUDGETS`) — edit and redeploy. Lower `confirm:daily` first if you want them tighter. For scale: Resend's free tier is 100 emails/day, so at 200 the ceiling deliberately sits *above* it — the intent is that your provider's own limit, not this one, is what a normal instance notices, and that this only engages on abuse. If you're on the free tier and want Garrul to stop before your provider does, set `confirm:daily` below 100 minus your expected digest volume. Wiring these to `/admin/settings` so they're changeable without a redeploy is planned, not shipped.
 
 ## The Durable Object backend (opt-in)
 
