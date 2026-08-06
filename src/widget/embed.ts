@@ -1748,6 +1748,8 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 						);
 						return;
 					case "retrying":
+						// Recoverable by construction: the gate has already asked the
+						// frame to re-challenge, so the next attempt has a real chance.
 						notice(
 							"The anti-spam check hit a snag and is retrying. Post again in a moment.",
 						);

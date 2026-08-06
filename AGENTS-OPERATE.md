@@ -425,14 +425,18 @@ the four leaves the composer disabled.
 
 **A transient Turnstile error retries once rather than latching.** The
 frame forwards Turnstile's error code, and the widget resets the challenge
-for the codes Cloudflare says are retryable (`300***` internal, `600***`
-challenge execution). Everything else latches: any other code, a second
-error, and a code-less error — which is what the three frame-never-came-up
-paths report, and what an older cached copy of the frame document reports
-for everything. That last point means the first five minutes after an
-upgrade behave exactly like the old build, since the frame is cached with
-`max-age=300`. The retry is UX only; `POST /api/v1/comments` still rejects
-a missing or invalid token server-side regardless.
+for every code Cloudflare marks `Retry: Yes` — `300***`/`600***` generic
+challenge failure, `110600` challenge timed out, `110620` interaction
+timed out, `200500` iframe load error. Everything else latches: any other
+code, a second error, and a code-less error — which is what the three
+frame-never-came-up paths report, and what an older cached copy of the
+frame document reports for everything. That last point means the first
+five minutes after an upgrade behave exactly like the old build, since the
+frame is cached with `max-age=300`. The frame also renders with
+`retry: "never"` so Turnstile's own 8-second auto-retry can't spend that
+budget behind the widget's back. The retry is UX only;
+`POST /api/v1/comments` still rejects a missing or invalid token
+server-side regardless.
 
 ### Optional extra anti-spam layers
 
@@ -1218,10 +1222,10 @@ the Worker origin. `docs/troubleshooting.md` has the full recipe.
 
 **A commenter reports a permanently dead Post button.** That is the one
 sticky Turnstile state. It is now reserved for errors a retry cannot fix:
-a non-retryable Turnstile code, a second error after the one-shot retry
-already ran, or a frame that never came up. Transient `300***`/`600***`
-errors reset the challenge and leave the composer usable, so this report
-is real signal rather than possible noise. Check
+a Turnstile code the vendor marks non-retryable, a second error after the
+one-shot retry already ran, or a frame that never came up. Codes marked
+retryable reset the challenge and leave the composer usable, so this
+report is real signal rather than possible noise. Check
 `challenges.cloudflare.com` reachability and that `TURNSTILE_SITE_KEY`
 matches Cloudflare — those are the usual causes. One exception: within
 five minutes of an upgrade, a cached older frame document sends no error
