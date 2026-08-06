@@ -213,11 +213,11 @@ describe("GET /embed/turnstile-frame", () => {
 		it("forwards Turnstile's error code from error-callback", async () => {
 			const res = await fetchFrame("/embed/turnstile-frame");
 			const body = await res.text();
-			// Without the code the parent can only latch, because retrying a
-			// misconfigured sitekey (110***) fails forever. See the retry budget
+			// Without the code the parent can only latch, because retrying an
+			// unauthorized domain (110200) fails forever. See the retryable set
 			// in src/widget/turnstile-gate.ts.
-			expect(body).toContain('"error-callback": function (code)');
-			expect(body).toContain('code: String(code || "")');
+			expect(body).toMatch(/"error-callback":\s*function\s*\(\s*code\s*\)/);
+			expect(body).toMatch(/code:\s*String\(\s*code\s*\|\|\s*""\s*\)/);
 		});
 
 		it("leaves the three frame-never-came-up errors code-less", async () => {
@@ -227,10 +227,14 @@ describe("GET /embed/turnstile-frame", () => {
 			// reload is genuinely the right advice. Code-less is what tells the
 			// parent to latch rather than retry, so it is load-bearing that
 			// exactly one of the four error posts carries a code.
-			expect(body.match(/garrul:turnstile-error/g)?.length).toBe(4);
-			expect(
-				body.match(/type: "garrul:turnstile-error" \}/g)?.length,
-			).toBe(3);
+			//
+			// Matched on the shape of each post rather than its exact source text,
+			// so reformatting the frame script can't fail this for the wrong
+			// reason: `[^}]*` can't cross the end of the object literal, so it only
+			// finds a `code` belonging to the error post it started from.
+			const errorPosts = body.match(/garrul:turnstile-error"[^}]*/g) ?? [];
+			expect(errorPosts.length).toBe(4);
+			expect(errorPosts.filter((p) => /\bcode:/.test(p)).length).toBe(1);
 		});
 
 		it("still never posts any message to a wildcard target", async () => {
