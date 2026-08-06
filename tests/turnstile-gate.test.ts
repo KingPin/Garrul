@@ -15,16 +15,18 @@ import {
 	type TurnstileWaitResult,
 } from "../src/widget/turnstile-gate";
 
-/** A gate plus the two side effects worth observing. */
+/** A gate plus the three side effects worth observing. */
 const makeGate = (
 	waitMs?: number,
 ): {
 	gate: TurnstileGate;
 	mounts: () => number;
 	failures: () => number;
+	retries: () => number;
 } => {
 	let mounts = 0;
 	let failures = 0;
+	let retries = 0;
 	const gate = createTurnstileGate({
 		mount: () => {
 			mounts += 1;
@@ -32,10 +34,23 @@ const makeGate = (
 		onFailed: () => {
 			failures += 1;
 		},
+		onRetry: () => {
+			retries += 1;
+		},
 		...(waitMs === undefined ? {} : { waitMs }),
 	});
-	return { gate, mounts: () => mounts, failures: () => failures };
+	return {
+		gate,
+		mounts: () => mounts,
+		failures: () => failures,
+		retries: () => retries,
+	};
 };
+
+/** A transient internal error; Cloudflare's remedy for these is reset+retry. */
+const RETRYABLE_CODE = "300010";
+/** Sitekey/domain mismatch. Retrying this fails identically forever. */
+const PERMANENT_CODE = "110200";
 
 /**
  * Whether a promise has settled, without awaiting it. `Promise.race` against an
@@ -146,6 +161,144 @@ describe("createTurnstileGate", () => {
 			gate.signal("error");
 			gate.arm();
 			expect(mounts()).toBe(0);
+		});
+
+		it("latches on a code Turnstile does not say to retry", async () => {
+			// `110***` is a sitekey/domain mismatch. Resetting it produces the same
+			// error forever, so the retry budget must not be spent on it.
+			const { gate, failures, retries } = makeGate();
+			const p = gate.wait();
+			gate.signal("error", PERMANENT_CODE);
+			await expect(p).resolves.toEqual({ ok: false, reason: "failed" });
+			expect(retries()).toBe(0);
+			expect(failures()).toBe(1);
+			expect(gate.failed).toBe(true);
+		});
+
+		it("latches on a code-less error, which is the frame never coming up", async () => {
+			// api.js absent, `render()` throwing and the load watchdog all post
+			// without a code (src/routes/embed-iframe.ts). So does any older cached
+			// copy of that document, which is why this is the fail-safe direction:
+			// version skew must degrade to latching, never to a blind retry.
+			const { gate, failures, retries } = makeGate();
+			const p = gate.wait();
+			gate.signal("error");
+			await expect(p).resolves.toEqual({ ok: false, reason: "failed" });
+			expect(retries()).toBe(0);
+			expect(failures()).toBe(1);
+		});
+
+		it("latches on an empty code, which is what the wire actually carries", async () => {
+			// The frame posts `code: String(code || "")`, so an `error-callback`
+			// that fires without a code — an older api.js — arrives as "" rather
+			// than as an absent field. Same verdict as no code at all.
+			const { gate, failures, retries } = makeGate();
+			gate.signal("error", "");
+			expect(retries()).toBe(0);
+			expect(failures()).toBe(1);
+			expect(gate.failed).toBe(true);
+		});
+
+		it("latches on an unrecognized code shape", async () => {
+			// Anything the retryable families don't cover is treated as permanent,
+			// so a future Turnstile code can never open a silent retry loop.
+			const { gate, retries } = makeGate();
+			gate.signal("error", "not-a-code");
+			expect(retries()).toBe(0);
+			expect(gate.failed).toBe(true);
+		});
+	});
+
+	describe("a transient error Turnstile says to retry", () => {
+		it("resets the challenge instead of latching", async () => {
+			const { gate, failures, retries } = makeGate();
+			const p = gate.wait();
+			gate.signal("ready");
+			gate.signal("error", RETRYABLE_CODE);
+			await expect(p).resolves.toEqual({ ok: false, reason: "retrying" });
+			// The whole point: the composer stays usable and nobody has to reload.
+			expect(gate.failed).toBe(false);
+			expect(failures()).toBe(0);
+			expect(retries()).toBe(1);
+		});
+
+		it("resolves the next wait with the token the reset produced", async () => {
+			const { gate } = makeGate();
+			gate.signal("ready");
+			gate.signal("error", RETRYABLE_CODE);
+			const p = gate.wait();
+			expect(await settled(p)).toBe("pending");
+			gate.token("after-retry");
+			await expect(p).resolves.toEqual({ ok: true, token: "after-retry" });
+		});
+
+		it("drops the token and the interactive latch, since the reset re-arms", async () => {
+			// Same reasoning as `clear()`: whatever the old challenge was waiting on
+			// says nothing about the new one, and the old token is spent.
+			const { gate } = makeGate();
+			gate.token("stale");
+			gate.signal("interactive");
+			gate.signal("error", RETRYABLE_CODE);
+			const p = gate.wait();
+			expect(await settled(p)).toBe("pending");
+		});
+
+		it("heals silently when nothing is waiting", () => {
+			// The common case: the blip happens long before anyone clicks Post.
+			// No waiter to settle, no message written, composer untouched.
+			const { gate, failures, retries } = makeGate();
+			gate.arm();
+			gate.signal("ready");
+			gate.signal("error", RETRYABLE_CODE);
+			expect(retries()).toBe(1);
+			expect(failures()).toBe(0);
+			expect(gate.failed).toBe(false);
+		});
+
+		it("latches on the second one, because the budget is one reset", async () => {
+			// After a reset produced the same error again, a blip is indistinguishable
+			// from an outage — and a visitor watching "retrying…" loop is worse served
+			// than one told to reload.
+			const { gate, failures, retries } = makeGate();
+			gate.signal("error", RETRYABLE_CODE);
+			const p = gate.wait();
+			gate.signal("error", RETRYABLE_CODE);
+			await expect(p).resolves.toEqual({ ok: false, reason: "failed" });
+			expect(retries()).toBe(1);
+			expect(failures()).toBe(1);
+			expect(gate.failed).toBe(true);
+		});
+
+		it("spends the budget once even across a successful post", async () => {
+			// `clear()` runs on a server rejection. It must not refill the budget:
+			// the cap is one reset for the gate's whole lifetime.
+			const { gate, retries } = makeGate();
+			gate.signal("error", RETRYABLE_CODE);
+			gate.token("solved");
+			gate.clear();
+			gate.signal("error", RETRYABLE_CODE);
+			expect(retries()).toBe(1);
+			expect(gate.failed).toBe(true);
+		});
+
+		it("reads a silent frame after the reset as interactive, not as never-loaded", async () => {
+			// A code can only come from `error-callback`, which only exists once
+			// render() has run. So the frame demonstrably executed, and "didn't
+			// load" would be the wrong message if the reset then produces nothing.
+			const { gate, failures } = makeGate();
+			gate.signal("error", RETRYABLE_CODE);
+			const p = gate.wait();
+			await vi.advanceTimersByTimeAsync(TURNSTILE_WAIT_MS);
+			await expect(p).resolves.toEqual({ ok: false, reason: "interactive" });
+			expect(failures()).toBe(0);
+		});
+
+		it("ignores a retryable error after disposal", () => {
+			const { gate, retries } = makeGate();
+			gate.arm();
+			gate.dispose();
+			gate.signal("error", RETRYABLE_CODE);
+			expect(retries()).toBe(0);
 		});
 	});
 

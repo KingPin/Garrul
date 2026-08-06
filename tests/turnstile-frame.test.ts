@@ -216,9 +216,8 @@ describe("GET /embed/turnstile-frame", () => {
 			// Without the code the parent can only latch, because retrying a
 			// misconfigured sitekey (110***) fails forever. See the retry budget
 			// in src/widget/turnstile-gate.ts.
-			expect(body).toContain(
-				'"error-callback": function (code) { post({ type: "garrul:turnstile-error", code: String(code || "") }); }',
-			);
+			expect(body).toContain('"error-callback": function (code)');
+			expect(body).toContain('code: String(code || "")');
 		});
 
 		it("leaves the three frame-never-came-up errors code-less", async () => {

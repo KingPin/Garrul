@@ -1035,7 +1035,12 @@ type TurnstileFrameHandle = {
 type TurnstileFrameListener = {
 	onToken?: (token: string) => void;
 	onExpired?: () => void;
-	onError?: () => void;
+	/**
+	 * `code` is Turnstile's own error code, present only when the error came
+	 * from its `error-callback`. Absent means the frame never came up — see the
+	 * wire protocol in src/routes/embed-iframe.ts.
+	 */
+	onError?: (code?: string) => void;
 	/** `render()` returned: api.js loaded and a widget is painted. */
 	onReady?: () => void;
 	/** The challenge needs a human to act before a token can exist. */
@@ -1081,7 +1086,7 @@ const mountTurnstileFrame = (
 		if (e.origin !== apiOrigin) return;
 		if (e.source !== frame.contentWindow) return;
 		const data = e.data as
-			| { type?: string; token?: string }
+			| { type?: string; token?: string; code?: string }
 			| undefined
 			| null;
 		if (!data || typeof data.type !== "string") return;
@@ -1099,7 +1104,12 @@ const mountTurnstileFrame = (
 				listener.onExpired?.();
 				return;
 			case "garrul:turnstile-error":
-				listener.onError?.();
+				// Anything that isn't a string is treated as no code at all, which
+				// is the latching path — a frame that can't name its error doesn't
+				// get to ask for a retry.
+				listener.onError?.(
+					typeof data.code === "string" ? data.code : undefined,
+				);
 				return;
 			// The two mount-state messages exist so a submit waiting on a token
 			// can tell "the challenge wants a click" from "the frame never came
@@ -1664,11 +1674,16 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 				tsHandle = mountTurnstileFrame(tsSlot, ctx.apiBase, {
 					onToken: (token) => tsGate?.token(token),
 					onExpired: () => tsGate?.signal("expired"),
-					onError: () => tsGate?.signal("error"),
+					onError: (code) => tsGate?.signal("error", code),
 					onReady: () => tsGate?.signal("ready"),
 					onInteractive: () => tsGate?.signal("interactive"),
 				});
 			},
+			// Turnstile said to retry, and the gate has budget for it. Re-arm the
+			// challenge and leave everything else alone: the composer stays usable
+			// and no message is written, so a blip nobody was waiting on heals
+			// without the visitor ever seeing it.
+			onRetry: () => tsHandle?.reset(),
 			onFailed: () => {
 				tsSlot.hidden = true;
 				submit.disabled = true;
@@ -1730,6 +1745,11 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 					case "timeout":
 						notice(
 							"The anti-spam check didn't load. Check your connection or reload the page.",
+						);
+						return;
+					case "retrying":
+						notice(
+							"The anti-spam check hit a snag and is retrying. Post again in a moment.",
 						);
 						return;
 					case "failed":
@@ -2631,14 +2651,19 @@ const loadOnce = async (
 				handle = mountTurnstileFrame(tsBox, apiBase, {
 					onToken: (token) => gate.token(token),
 					onExpired: () => gate.signal("expired"),
-					onError: () => gate.signal("error"),
+					onError: (code) => gate.signal("error", code),
 					onReady: () => gate.signal("ready"),
 					onInteractive: () => gate.signal("interactive"),
 				});
 			},
-			// Turnstile's own verdict, and the only thing that disables the
-			// composer for good. The cap expiring in the gate is a guess and
-			// deliberately does not come through here.
+			// Turnstile said to retry, and the gate has budget for it. Re-arm the
+			// challenge and touch nothing else: the composer stays usable, and a
+			// blip that nobody was waiting on heals with the visitor none the
+			// wiser. A submit that *was* waiting gets the `retrying` verdict.
+			onRetry: () => handle?.reset(),
+			// Turnstile's own verdict on something a retry can't fix, and the only
+			// thing that disables the composer for good. The cap expiring in the
+			// gate is a guess and deliberately does not come through here.
 			onFailed: () => {
 				tsBox.hidden = true;
 				if (submitBtn) submitBtn.disabled = true;
@@ -2731,6 +2756,13 @@ const submit = async (
 				case "timeout":
 					notice(
 						"The anti-spam check didn't load. Check your connection or reload the page.",
+					);
+					return;
+				case "retrying":
+					// Recoverable by construction: the gate has already asked the
+					// frame to re-challenge, so the next attempt has a real chance.
+					notice(
+						"The anti-spam check hit a snag and is retrying. Post again in a moment.",
 					);
 					return;
 				case "failed":
