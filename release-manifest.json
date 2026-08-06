@@ -1,5 +1,5 @@
 {
-  "version": "2.3.1",
+  "version": "2.4.0",
   "minPreviousVersion": "1.0.0",
   "renderer": {
     "version": 2,
@@ -334,7 +334,8 @@
     "0014_telegram.sql",
     "0015_comment_depth.sql",
     "0016_user_erasure.sql",
-    "0017_subscriptions_email_index.sql"
+    "0017_subscriptions_email_index.sql",
+    "0018_email_send_budget.sql"
   ],
   "breakingChanges": [
     {
