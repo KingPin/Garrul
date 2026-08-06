@@ -130,11 +130,21 @@ const frameAncestors = (env: Bindings, selfOrigin: string): string => {
  *   iframe → parent:
  *     { type: "garrul:turnstile-token",    token: string }
  *     { type: "garrul:turnstile-expired" }
- *     { type: "garrul:turnstile-error" }
+ *     { type: "garrul:turnstile-error",    code?: string }
  *     { type: "garrul:turnstile-ready" }
  *     { type: "garrul:turnstile-interactive" }
  *   parent → iframe:
  *     { type: "garrul:turnstile-reset" }
+ *
+ * `code` on the error message is Turnstile's own error code, and it is present
+ * on exactly one of the four things that post that message: `error-callback`.
+ * The other three — api.js absent, `render()` throwing, the load watchdog — mean
+ * the frame never came up, and they stay code-less on purpose. That is the
+ * signal the parent uses to decide whether a retry could possibly help: a
+ * code-less error latches the composer, a code is looked up against the
+ * retryable families (see src/widget/turnstile-gate.ts). Old cached copies of
+ * this document send no code at all, so version skew degrades to the latching
+ * behavior that predates the retry — never to a blind retry loop.
  *
  * `ready` and `interactive` exist because the parent defers this frame's mount
  * until the visitor focuses the composer, and then has to decide what to say
@@ -234,7 +244,10 @@ iframe.get("/turnstile-frame", (c) => {
         sitekey: sitekey,
         theme: theme,
         callback: function (token) { post({ type: "garrul:turnstile-token", token: token }); },
-        "error-callback": function () { post({ type: "garrul:turnstile-error" }); },
+        // Forward the code: it is the only thing that tells the parent a
+        // transient blip apart from a misconfigured sitekey. See the wire
+        // protocol above for why the other error posts stay code-less.
+        "error-callback": function (code) { post({ type: "garrul:turnstile-error", code: String(code || "") }); },
         "expired-callback": function () { post({ type: "garrul:turnstile-expired" }); },
         // Both mean "no token is coming until something else happens": one
         // fires before the challenge turns interactive, the other when a

@@ -210,6 +210,30 @@ describe("GET /embed/turnstile-frame", () => {
 			expect(body).toContain("garrul:turnstile-error");
 		});
 
+		it("forwards Turnstile's error code from error-callback", async () => {
+			const res = await fetchFrame("/embed/turnstile-frame");
+			const body = await res.text();
+			// Without the code the parent can only latch, because retrying a
+			// misconfigured sitekey (110***) fails forever. See the retry budget
+			// in src/widget/turnstile-gate.ts.
+			expect(body).toContain(
+				'"error-callback": function (code) { post({ type: "garrul:turnstile-error", code: String(code || "") }); }',
+			);
+		});
+
+		it("leaves the three frame-never-came-up errors code-less", async () => {
+			const res = await fetchFrame("/embed/turnstile-frame");
+			const body = await res.text();
+			// api.js absent, render() throwing, and the load watchdog all mean a
+			// reload is genuinely the right advice. Code-less is what tells the
+			// parent to latch rather than retry, so it is load-bearing that
+			// exactly one of the four error posts carries a code.
+			expect(body.match(/garrul:turnstile-error/g)?.length).toBe(4);
+			expect(
+				body.match(/type: "garrul:turnstile-error" \}/g)?.length,
+			).toBe(3);
+		});
+
 		it("still never posts any message to a wildcard target", async () => {
 			// A token is what makes this frame worth attacking; every post must
 			// go to the validated parent origin. New messages must not weaken it.
