@@ -9,14 +9,16 @@
  * able to wait — and to say something useful when the wait doesn't end well.
  *
  * Deciding *what* to say is the whole reason this is a state machine and not a
- * promise. Silence has three causes, and they need three different answers:
+ * promise. Silence has four causes, and they need four different answers:
  *
  *   - The challenge wants a human to click. Tell them to do that, and leave the
  *     composer usable.
  *   - api.js or the frame never came up. Tell them it didn't load, and leave the
  *     composer usable so a retry is possible.
+ *   - Turnstile reported an error it says to retry. Reset the challenge, say so,
+ *     and leave the composer usable — once (see RETRYABLE_TURNSTILE_ERROR).
  *   - Turnstile reported an actual error. That verdict is authoritative: say so
- *     and keep the composer disabled, exactly as before this change.
+ *     and keep the composer disabled.
  *
  * The frame reports `ready` and `interactive` (see the wire protocol in
  * src/routes/embed-iframe.ts) precisely so the first two can be told apart. When
@@ -42,16 +44,59 @@
  */
 export const TURNSTILE_WAIT_MS = 9000;
 
+/**
+ * Turnstile error codes whose documented remedy is to reset and try again.
+ *
+ * This is exactly the `Retry: Yes` column of Cloudflare's client-side error
+ * table, transcribed rather than curated — a hand-picked subset drifts, and
+ * "whatever Cloudflare says is retryable" is a rule the next reader can check
+ * against the source in one lookup:
+ *
+ *   - `300*` / `600*` — generic challenge failure. Starred in the table, so the
+ *     trailing digits vary and only the prefix is matched.
+ *   - `110600` — challenge timed out (a wrong visitor clock, or a challenge
+ *     that simply took too long).
+ *   - `110620` — interaction timed out; the table names `turnstile.reset()` as
+ *     the remedy. Normally this arrives as `timeout-callback` instead, which
+ *     the frame maps to `interactive` — a better answer, since it tells the
+ *     visitor to click rather than silently re-arming. Listed anyway so the
+ *     verdict doesn't depend on which callback Turnstile happens to use.
+ *   - `200500` — the inner Turnstile iframe failed to load.
+ *
+ * Everything else is a standing condition a retry cannot fix. That includes the
+ * rest of the `110***` family — `110100`/`110110` invalid or unknown sitekey and
+ * `110200` unauthorized domain — plus `200100` (clock/cache) and `400020` /
+ * `400070` (invalid or disabled sitekey). All of them fail identically forever,
+ * so retrying just spends the visitor's time before showing the same message.
+ *
+ * Being generous here is cheap because the budget is one: a condition that only
+ * *looked* transient latches on its second report anyway. Being wrong the other
+ * way — latching something Cloudflare says to retry — costs the visitor a page
+ * reload, which is the bug this whole path exists to fix.
+ *
+ * Matching is still fail-safe in the latching direction: a code shape this
+ * doesn't recognize (including a missing code) is treated as permanent, so a
+ * future Turnstile code family can never turn into a silent retry loop.
+ *
+ * Terminated with `(?![\s\S])` rather than `$`, which in JavaScript also matches
+ * *before* a trailing newline — so plain `$` would read `"300\n"` as retryable.
+ * Nothing realistic puts one there, but "an unrecognized shape latches" should
+ * be true as written, not true modulo an anchor's edge case.
+ */
+const RETRYABLE_TURNSTILE_ERROR =
+	/^(?:300\d*|600\d*|110600|110620|200500)(?![\s\S])/;
+
 /** Non-token messages the frame can send. */
 export type TurnstileSignal = "ready" | "interactive" | "expired" | "error";
 
 export type TurnstileWaitResult =
 	| { ok: true; token: string }
 	/**
-	 * `interactive` and `timeout` are recoverable — show a message and re-enable
-	 * the composer. `failed` is not: it means Turnstile said so itself.
+	 * `interactive`, `timeout` and `retrying` are recoverable — show a message
+	 * and re-enable the composer. `failed` is not: it means Turnstile said so
+	 * itself, about something a retry cannot fix.
 	 */
-	| { ok: false; reason: "interactive" | "failed" | "timeout" };
+	| { ok: false; reason: "interactive" | "failed" | "timeout" | "retrying" };
 
 export interface TurnstileGate {
 	/** Mount the frame if it isn't mounted. Safe to call on every focus event. */
@@ -61,7 +106,12 @@ export interface TurnstileGate {
 	readonly failed: boolean;
 	/** A token arrived. An empty string is treated as "no token". */
 	token(token: string): void;
-	signal(sig: TurnstileSignal): void;
+	/**
+	 * `code` is Turnstile's error code, and only ever accompanies `"error"`. It
+	 * is what decides between a retry and the sticky failure; see
+	 * RETRYABLE_TURNSTILE_ERROR.
+	 */
+	signal(sig: TurnstileSignal, code?: string): void;
 	/** Forget the current token, so the next `wait()` really waits. */
 	clear(): void;
 	/** Arm if needed, then resolve as soon as a usable token exists. */
@@ -73,8 +123,14 @@ export interface TurnstileGate {
 export const createTurnstileGate = (opts: {
 	/** Creates the iframe. Called at most once, synchronously, from `arm()`. */
 	mount: () => void;
-	/** Fired once, the first time the frame reports an error. */
+	/** Fired once, the first time the frame reports an unrecoverable error. */
 	onFailed: () => void;
+	/**
+	 * Fired once, when a retryable error is spending the retry budget: re-arm
+	 * the challenge (the frame's `garrul:turnstile-reset`). Runs after waiters
+	 * have been settled, so a throwing implementation can't strand a submit.
+	 */
+	onRetry: () => void;
 	/** Override for tests. */
 	waitMs?: number;
 }): TurnstileGate => {
@@ -83,6 +139,12 @@ export const createTurnstileGate = (opts: {
 	let mounted = false;
 	let failed = false;
 	let notifiedFailure = false;
+	/**
+	 * One reset, per gate. A blip is indistinguishable from an outage after the
+	 * second identical error, and a visitor watching "retrying…" loop is worse
+	 * served than one told to reload.
+	 */
+	let retriesLeft = 1;
 	let disposed = false;
 	/** Any message at all proves the frame document is executing. */
 	let alive = false;
@@ -149,7 +211,7 @@ export const createTurnstileGate = (opts: {
 			settle({ ok: true, token: t });
 		},
 
-		signal: (sig) => {
+		signal: (sig, code) => {
 			if (disposed) return;
 			if (sig !== "error") alive = true;
 			switch (sig) {
@@ -166,6 +228,27 @@ export const createTurnstileGate = (opts: {
 					held = "";
 					return;
 				case "error":
+					if (
+						retriesLeft > 0 &&
+						code &&
+						RETRYABLE_TURNSTILE_ERROR.test(code)
+					) {
+						retriesLeft -= 1;
+						// A code can only come from `error-callback`, which only exists
+						// once render() has run — so unlike a code-less error, this one
+						// proves the frame document executed. That matters if the reset
+						// then produces nothing: the cap should read as "waiting on the
+						// visitor", not as "never loaded".
+						alive = true;
+						held = "";
+						// The reset re-arms the challenge, so whatever the old one was
+						// waiting on says nothing about the new one (same reasoning as
+						// `clear()`).
+						interactive = false;
+						settle({ ok: false, reason: "retrying" });
+						opts.onRetry();
+						return;
+					}
 					failed = true;
 					settle({ ok: false, reason: "failed" });
 					if (!notifiedFailure) {

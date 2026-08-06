@@ -6,7 +6,7 @@ Garrul defends against spam in layers. The base protections below are **always o
 
 These don't need configuration; they ship with every Garrul instance:
 
-- **Turnstile** — Cloudflare's CAPTCHA-alternative. Required for anonymous POSTs whenever `TURNSTILE_SITE_KEY` is set. See [Turnstile mount timing](#turnstile-mount-timing) for when it loads and what its three visitor-facing messages mean.
+- **Turnstile** — Cloudflare's CAPTCHA-alternative. Required for anonymous POSTs whenever `TURNSTILE_SITE_KEY` is set. See [Turnstile mount timing](#turnstile-mount-timing) for when it loads and what its four visitor-facing messages mean.
 - **Rate-limit** — sliding window on the edge Cache API (not KV), keyed on the hashed client IP for anonymous callers and on the user id for signed-in ones. 1 anonymous comment per 10s and 5 per 10 min by default; signed-in authors get 3 per 10s and 60 per 10 min. Every caller is also held under one shared per-identity envelope across all endpoints. An optional [Durable Object backend](#the-durable-object-backend-opt-in) makes the counting atomic and global. **Read [Rate-limit accuracy](#rate-limit-accuracy-known-limitations) before you rely on these numbers as a hard ceiling** — they are not one.
 - **Markdown sanitizer** — strict allowlist; only `https:`/`http:`/`mailto:` links survive, raw HTML and `<img>` are dropped, every link gets `rel="nofollow ugc noopener" target="_blank"`.
 - **Field honeypot** — a hidden `website` input in the embed form. If a bot fills it, the POST is rejected with HTTP 400.
@@ -20,19 +20,37 @@ Consequences worth knowing before you debug a report:
 - **In DevTools, expect zero `turnstile` requests on load.** They appear on first focus of the composer (the textarea, the name field, anything in the form except the submit button). This is correct behavior, not a broken widget. Reply forms mount on open, since opening one is already the intent signal.
 - **A visitor can submit before a token exists** — clicking Post without focusing anything is reachable, because a restored draft pre-fills the box silently. The widget shows `Checking…` on the button and waits up to 9 seconds.
 
-### The three messages, and what each one means
+### The four messages, and what each one means
 
-When that wait doesn't produce a token, the visitor sees one of three things. They are deliberately different, because the operator action differs:
+When that wait doesn't produce a token, the visitor sees one of four things. They are deliberately different, because the operator action differs:
 
 | Message | Meaning | Post button | What to check |
 | --- | --- | --- | --- |
 | "Complete the anti-spam check above, then post again." | Turnstile is working and something has to happen before it will mint a token — usually that the visitor clicks the checkbox. | Re-enabled | Nothing. Expected in managed mode. Deferring the mount makes this somewhat more likely, since Turnstile has less passive observation time before it has to mint a token. This message is also used when a challenge timed out and reset itself, where there may be nothing visible to click; Turnstile re-runs on its own, so posting again a moment later works. |
 | "The anti-spam check didn't load. Check your connection or reload the page." | The iframe never reported in at all. | Re-enabled | Host CSP missing `frame-src` for the Worker origin, the host site missing from `ALLOWED_ORIGINS`, or a blocked/failed frame document. Also expected briefly (up to 5 minutes) right after an upgrade, since the frame document is cached with `max-age=300` and an older copy doesn't send the newer status messages. |
-| "Anti-spam check failed to load. Reload the page; …" | Turnstile itself reported an error — usually `api.js` unreachable. | **Stays disabled** | `https://challenges.cloudflare.com` reachability, and that `TURNSTILE_SITE_KEY` matches the site key configured in Cloudflare. |
+| "The anti-spam check hit a snag and is retrying. Post again in a moment." | Turnstile reported an error it marks **retryable** and the widget has reset the challenge. | Re-enabled | Nothing, on an isolated report. If visitors see this routinely, check `challenges.cloudflare.com` reachability — a flaky path produces the same code as a one-off blip. |
+| "Anti-spam check failed to load. Reload the page; …" | The frame *reported* an error that a retry cannot fix — either a non-retryable Turnstile code, or a code-less error post (which means the frame itself never got as far as running the challenge). Distinct from the row above, where the frame stayed silent and the widget only inferred a problem when the wait timed out. | **Stays disabled** | `https://challenges.cloudflare.com` reachability, and that `TURNSTILE_SITE_KEY` matches the site key configured in Cloudflare. |
 
-Only the third message disables the composer, and it is sticky: nothing later re-enables the button, and only a page reload clears it. The first two are recoverable and always hand the button back.
+Only the fourth message disables the composer, and it is sticky: nothing later re-enables the button, and only a page reload clears it. The other three are recoverable and always hand the button back.
 
-That stickiness is deliberate but blunt. The widget latches on **any** error Turnstile reports, and Turnstile's error callback also fires for transient conditions — an internal `300***` code, or a network blip while the challenge is executing — not just for the persistent causes above. Cloudflare's own guidance for those is to reset the widget and retry, which the widget does not currently do. So a report of a permanently dead Post button is *most often* `challenges.cloudflare.com` being unreachable or a site-key mismatch, but a one-off transient error looks identical to the visitor and is cleared the same way, by reloading. If you get an isolated report you can't reproduce and reachability checks out, a transient error is the likely explanation — don't keep hunting for a misconfiguration that isn't there.
+#### Which errors retry, and which latch
+
+The widget used to latch on **any** error Turnstile reported. That was blunt: `error-callback` also fires for transient conditions Cloudflare's own guidance says to reset and retry, and those latched identically to a real outage — so a visitor who hit a blip had to reload the page to comment.
+
+The frame now forwards Turnstile's error code to the widget, which spends a **one-shot retry budget** on the codes Cloudflare says are retryable:
+
+- **Retries once** — every code marked `Retry: Yes` in [Cloudflare's client-side error table](https://developers.cloudflare.com/turnstile/troubleshooting/client-side-errors/error-codes/): `300***` and `600***` (generic challenge failure), `110600` (challenge timed out), `110620` (interaction timed out) and `200500` (the inner Turnstile iframe failed to load). The widget resets the challenge and stays usable. If nobody was mid-submit when the error landed, this is completely silent: no message, no visible change.
+- **Latches immediately** — every code marked `Retry: No`: `110100`/`110110` (invalid or unknown sitekey), `110200` (domain not authorized), `200100` (clock or cache problem), `400020`/`400070` (invalid or disabled sitekey). These fail identically forever, so retrying them just wastes the visitor's time before showing the same message. Anything not in the table at all latches too — an unrecognized code is treated as permanent so a future Turnstile code family can't open a silent retry loop.
+- **Latches immediately** — a code-less error. Three of the four things that report an error mean the frame never came up (`api.js` absent, `render()` throwing, the 8-second load watchdog), and for those "reload the page" is genuinely the right advice.
+- **Latches on the second error**, whatever it is. After a reset produced the same failure again, a blip is indistinguishable from an outage, and a visitor watching a retry loop is worse served than one told to reload.
+
+The budget is one reset for the lifetime of the composer; it is not refilled by a successful post.
+
+The widget also renders the challenge with `retry: "never"`, turning off Turnstile's own auto-retry. That default silently re-runs a failed challenge every 8 seconds, which would make the budget above meaningless — one outage lasting past a single interval fires the error callback twice, spending the retry on the first and latching on the second while Turnstile was still recovering. With it off, the reset the widget asks for is the only thing that re-arms a failed challenge, so the behavior described here is the behavior you get. Token *expiry* is unaffected: `refresh-expired` is still `auto`, so an expiring token re-challenges on its own and never reaches this path.
+
+**During the first five minutes after an upgrade, expect the old behavior.** The frame document is cached with `max-age=300`, and an older copy sends no error code — which the widget treats as "the frame never came up" and latches, exactly as it did before. That is the deliberate fail-safe direction: version skew degrades to latching, never to a blind retry loop.
+
+None of this is a security relaxation. The client-side latch was never the control — `POST /api/v1/comments` rejects a missing or invalid `turnstile_token` unconditionally, server-side, so the worst a retry can produce is one more failed submit against an already rate-limited endpoint.
 
 ## Optional layers
 
