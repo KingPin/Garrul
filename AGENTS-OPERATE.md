@@ -608,9 +608,57 @@ Operators who don't want digests can leave both unset and remove the
 `[triggers]` block to avoid registering the cron at all.
 
 Triggers (events that produce a send): a subscriber to a thread sees a
-new reply land (digest email); an unsubscribe-link click (opens a
-confirmation page, no send). No transactional sends per comment;
-everything flows through the debounced cron.
+new reply land (digest email); a reader subscribes to a thread
+(double-opt-in confirmation email — the one transactional send, and the
+only one an unauthenticated caller can trigger, so it has its own
+ceiling below); an unsubscribe-link click (opens a confirmation page, no
+send). No transactional sends per comment; reply notification flows
+through the debounced cron.
+
+### The confirmation-email ceiling
+
+`POST /api/v1/subscriptions` sends one confirmation email per accepted
+request, which makes it the only endpoint where an unauthenticated
+caller spends your Resend quota and your domain's sending reputation.
+The rate limiter is not a hard ceiling there — on the default Cache API
+backend concurrent requests from one identity sustain a multiple of the
+configured rate — and the per-address pending cap is bypassed by
+cycling addresses. So sends are counted directly, in D1:
+
+| Budget | Cap | Window |
+| --- | --- | --- |
+| `confirm:burst` | 20 sends | 60 s |
+| `confirm:daily` | 200 sends | 24 h |
+
+Both must grant. The counters are single rows in `email_send_budget`
+(migration `0018`) and the whole decision is one `UPDATE` carrying the
+cap in its own `WHERE` clause, so it is atomic — concurrency cannot
+multiply it, and this needs no Durable Object.
+
+What you'll see when it trips: `429` with `"reason":
+"send_budget_exhausted"`, no row written to `subscriptions`, and a
+`warn` log line naming the scope and cap. Grep `wrangler tail` for
+`confirmation email budget exhausted`.
+
+Operator notes:
+
+- The ceiling is **global**, not per-IP or per-address — deliberately,
+  because every per-identity key on that endpoint is either racy or
+  attacker-supplied. The cost: an attacker who spends a window denies
+  **new** subscriptions until it rolls. Confirmed subscribers keep
+  getting digests; comments are unaffected.
+- The window is fixed, not sliding, so a burst across a boundary can
+  land up to ~2× the cap in quick succession.
+- It **fails open** — a missing table or a D1 error counts nothing
+  rather than refusing every subscription. Run `npm run migrate` after
+  upgrading, or you lose the ceiling silently (the `warn` line
+  `email budget scope missing` is your signal).
+- Caps are constants in `src/lib/email-budget.ts`
+  (`CONFIRM_SEND_BUDGETS`); changing them is an edit plus a redeploy,
+  not a setting. Lower `confirm:daily` first if you're on a small
+  Resend plan.
+- Full threat-model write-up: `docs/ANTISPAM.md` §"The
+  confirmation-email ceiling".
 
 The unsubscribe link is a two-step flow: the `GET` from the email only
 renders a "Yes, unsubscribe me" button, and the `POST` behind that
@@ -647,6 +695,7 @@ tracked by the `_migrations` table. Current set:
 - `0015_comment_depth.sql` — `comments.depth`, backfilled from `parent_id`; enforces the reply-depth cap at insert
 - `0016_user_erasure.sql` — `users.erased_at`, for the admin erase-personal-data path
 - `0017_subscriptions_email_index.sql` — `subscriptions(email, confirmed_at)`; the per-email pending cap was a full table scan on every subscribe
+- `0018_email_send_budget.sql` — `email_send_budget`, the atomic global ceiling on outbound confirmation email (seeds its own counter rows)
 
 Run with `npm run migrate` (local Miniflare) or
 `npm run migrate -- --remote` (production D1). Idempotent. Never edit a

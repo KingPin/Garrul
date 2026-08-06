@@ -10,6 +10,7 @@ These don't need configuration; they ship with every Garrul instance:
 - **Rate-limit** — sliding window on the edge Cache API (not KV), keyed on the hashed client IP for anonymous callers and on the user id for signed-in ones. 1 anonymous comment per 10s and 5 per 10 min by default; signed-in authors get 3 per 10s and 60 per 10 min. Every caller is also held under one shared per-identity envelope across all endpoints. An optional [Durable Object backend](#the-durable-object-backend-opt-in) makes the counting atomic and global. **Read [Rate-limit accuracy](#rate-limit-accuracy-known-limitations) before you rely on these numbers as a hard ceiling** — they are not one.
 - **Markdown sanitizer** — strict allowlist; only `https:`/`http:`/`mailto:` links survive, raw HTML and `<img>` are dropped, every link gets `rel="nofollow ugc noopener" target="_blank"`.
 - **Field honeypot** — a hidden `website` input in the embed form. If a bot fills it, the POST is rejected with HTTP 400.
+- **Confirmation-email ceiling** — a global, atomic cap on outbound subscription confirmation mail, counted in D1. Unlike the rate limit this *is* a hard ceiling, and it is the only control on the subscribe endpoint that an address-cycling concurrent burst cannot get past. See [The confirmation-email ceiling](#the-confirmation-email-ceiling).
 
 ## Turnstile mount timing
 
@@ -155,7 +156,7 @@ The rate limiter is a **cost-raiser, not a hard ceiling.** Treat the configured 
 | Anonymous comment POST | Turnstile — a fresh single-use token per comment |
 | Report | `UNIQUE(comment_id, reporter_ip_hash)` — one report per comment per network, full stop |
 | Vote / reaction / page vote | Idempotent toggle on a unique row — repeats flip a row, they don't accumulate |
-| Subscribe | `PENDING_PER_EMAIL_CAP` — at most 5 unconfirmed rows per address |
+| Subscribe | A [global confirmation-email ceiling](#the-confirmation-email-ceiling), counted atomically in D1. `PENDING_PER_EMAIL_CAP` (5 unconfirmed rows per address) is also non-racy but binds *per address*, so it alone does not stop an attacker cycling addresses |
 
 **What the race actually buys an attacker.** Every control in that table is unaffected by it, so what #2 loosens is a *rate*, not an action — it cannot buy a second report on the same comment, or a double-counted vote.
 
@@ -167,6 +168,30 @@ On the IP-keyed buckets it is the cheapest bypass currently available. It used n
 2. **Enable the Durable Object backend below.** It closes #1 and #2 inside Garrul, which is what you want for the buckets WAF can't express — the per-user-id ones especially.
 
 Garrul's limiter is the floor that ships in the box, not the ceiling you should rely on under active attack.
+
+## The confirmation-email ceiling
+
+Subscribe is the one unauthenticated endpoint where a loosened *rate* also spends **your money and your sending reputation**: every accepted request sends one confirmation email through Resend. The controls above don't bound that. `PENDING_PER_EMAIL_CAP` is atomic but keyed on the address, so `a@x.com` / `b@x.com` / `c@x.com` each get their own budget; the limiter is IP-keyed and, on the default backend, races. So Garrul counts outbound confirmation mail directly, against a hard ceiling:
+
+| Budget | Cap | Window |
+| --- | --- | --- |
+| `confirm:burst` | 20 sends | 60 s |
+| `confirm:daily` | 200 sends | 24 h |
+
+Both must grant for mail to go out. The short window kills the concurrency burst the racy limiter allows; the long one bounds total spend and bounce-reputation damage over a day. The caps are far above any plausible organic signup rate for a self-hosted blog — the intent is that only abuse ever reaches them.
+
+**Why this one isn't racy.** The counters live in D1 (`email_send_budget`, migration `0018`), not the Cache API, and the whole decision is a single `UPDATE` that carries the cap in its own `WHERE` clause. One SQL statement is indivisible, so check-and-increment cannot be interleaved: concurrent requests are counted one at a time and the losers change zero rows and are told so. This is exactly the compare-and-swap the Cache API doesn't have, which is why #2 above can't be closed there but can be closed here — **with no opt-in resource and no Durable Object.** A single counter row also means the cost is O(1) no matter the traffic; a windowed `COUNT(*)` over `subscriptions` would get *more* expensive precisely under attack, since D1 bills rows read.
+
+A reader who hits the ceiling gets a `429` with `"reason": "send_budget_exhausted"`, and nothing is written to `subscriptions` — no pending row is created that nobody can confirm. Exhaustion is logged at `warn` with the scope and cap, so `wrangler tail` tells you when it trips.
+
+**What it does not stop.**
+
+- **It is global, not per-identity.** That is deliberate — every per-identity key this endpoint has is either racy (the limiter) or attacker-controlled (`email` is arbitrary; `post_slug` is never validated against `posts`). A global ceiling is the one bound none of those bypasses reach. The cost is real: an attacker who spends a window denies **new** subscriptions until it rolls. Existing confirmed subscribers are untouched — only confirmation mail passes through here, so reply notifications and digests keep flowing, and comments themselves are unaffected. Bounded mail plus a temporary signup outage is a better failure than unbounded billable mail plus a sending domain accruing complaints.
+- **The window is fixed, not sliding.** A burst straddling a window boundary can land up to ~2× the cap in quick succession (`max` at the end of one window, `max` at the start of the next). Same trade-off as the rate limiter's buckets. It bounds the sustained rate, which is what matters for a Resend quota.
+- **It fails open.** If the migration hasn't landed or D1 errors, the ceiling counts nothing rather than refusing every subscription. Same posture as the rate limiter. Run `npm run migrate` after upgrading.
+- **It doesn't stop junk *rows*.** Auto-confirmed subscriptions (a signed-in user subscribing to their own comment's thread) send no confirmation mail and so aren't counted here — they're bounded by the limiter and the per-email cap.
+
+**Tuning.** The caps are module constants in `src/lib/email-budget.ts` (`CONFIRM_SEND_BUDGETS`) — edit and redeploy. If you're on a small Resend plan and want them lower, lower `confirm:daily` first. Wiring these to `/admin/settings` so they're changeable without a redeploy is planned, not shipped.
 
 ## The Durable Object backend (opt-in)
 
@@ -201,6 +226,7 @@ These aren't in the box yet — open an issue if you need them:
 - IP-reputation lookups (StopForumSpam, AbuseIPDB) — would need to handle raw IPs, conflicts with privacy stance.
 - Bayesian / locally-trained classifier.
 - CleanTalk or other classifier vendors — the adapter interface is in `src/lib/spam/`; adding one is one new file.
+- Operator-tunable [confirmation-email caps](#the-confirmation-email-ceiling) — today they're constants plus a redeploy, not `/admin/settings` entries.
 
 ## Operating the queue
 
