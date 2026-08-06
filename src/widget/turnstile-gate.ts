@@ -9,7 +9,7 @@
  * able to wait — and to say something useful when the wait doesn't end well.
  *
  * Deciding *what* to say is the whole reason this is a state machine and not a
- * promise. Silence has three causes, and they need three different answers:
+ * promise. Silence has four causes, and they need four different answers:
  *
  *   - The challenge wants a human to click. Tell them to do that, and leave the
  *     composer usable.
