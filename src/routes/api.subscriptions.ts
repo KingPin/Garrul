@@ -24,6 +24,18 @@
  *   - A per-email pending cap (5) prevents amplifying the confirmation
  *     email itself into a mailbomb — without it an attacker could forge
  *     5 confirm-emails per minute per IP without consuming any of them.
+ *
+ * Mailbomb defence, in the order it applies (issue #64):
+ *   1. The IP-keyed rate limiter. Racy on the default Cache API backend — N
+ *      concurrent requests from one identity sustain ~N x the cap — so it
+ *      raises cost but is not a ceiling. Binding RATE_LIMIT_DO fixes that, and
+ *      is opt-in.
+ *   2. `PENDING_PER_EMAIL_CAP`. Atomic, but keyed on the address, so an attacker
+ *      cycling addresses never touches it.
+ *   3. `reserveConfirmSend` — a global, atomic, D1-counted ceiling on
+ *      confirmation email. The only one of the three that an address-cycling
+ *      concurrent burst cannot get past on a default install. See
+ *      src/lib/email-budget.ts for why it is global and what that costs.
  */
 import { Hono } from "hono";
 import type { Bindings } from "../index";
@@ -37,6 +49,7 @@ import {
 	upsertSubscription,
 } from "../db/queries";
 import { requireActiveUser } from "../lib/active-user";
+import { reserveConfirmSend } from "../lib/email-budget";
 import { requireIpHash } from "../lib/ip-hash";
 import { checkRateLimit } from "../lib/ratelimit";
 import { renderConfirmEmailHtml } from "../lib/digest";
@@ -131,6 +144,21 @@ subscriptions.post("/", async (c) => {
 		return c.json({ error: t("err.internal") }, 503);
 	}
 
+	// The one control an address-cycling concurrent burst cannot get past on a
+	// default install. Reserved BEFORE the upsert on purpose: denying after it
+	// would leave behind exactly what the guard above exists to prevent — a
+	// pending row whose confirmation email never went out, which the reader can
+	// never confirm and which still consumes their per-email cap.
+	//
+	// The auto-confirm path sends no confirmation email, so it spends no budget.
+	const reservation = autoConfirm ? null : await reserveConfirmSend(c.env.DB);
+	if (reservation && !reservation.ok) {
+		return c.json(
+			{ error: t("err.ratelimit"), reason: "send_budget_exhausted" },
+			429,
+		);
+	}
+
 	const unsubscribeToken = randomToken();
 	const confirm_token = autoConfirm ? null : randomToken();
 	const sub = await upsertSubscription(
@@ -168,6 +196,11 @@ subscriptions.post("/", async (c) => {
 			subject: fillSubject(t("email.confirm.subject"), title),
 			html,
 		});
+	} else {
+		// No mail went out — the upsert found an already-confirmed row. Hand the
+		// slot back so a reader re-subscribing to a thread they already confirmed
+		// doesn't silently spend global budget on an email nobody sent.
+		await reservation?.release();
 	}
 
 	// Constant unless *this* caller proved they own the inbox. Mirroring the
