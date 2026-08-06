@@ -146,6 +146,12 @@ const frameAncestors = (env: Bindings, selfOrigin: string): string => {
  * this document send no code at all, so version skew degrades to the latching
  * behavior that predates the retry — never to a blind retry loop.
  *
+ * `reset` is the *only* thing that re-arms a failed challenge: the render call
+ * below turns Turnstile's own `retry: "auto"` off, so every recovery is one the
+ * parent asked for and spent budget on. Note the one exception the parent can't
+ * suppress — `refresh-expired` is still `auto`, so an expiring token
+ * re-challenges on its own and arrives as `expired`, not as an error.
+ *
  * `ready` and `interactive` exist because the parent defers this frame's mount
  * until the visitor focuses the composer, and then has to decide what to say
  * when a submit is waiting on a token that hasn't arrived. Without them, "the
@@ -243,6 +249,16 @@ iframe.get("/turnstile-frame", (c) => {
       widgetId = window.turnstile.render(box, {
         sitekey: sitekey,
         theme: theme,
+        // Turnstile's default is retry:"auto" — it silently re-runs a failed
+        // challenge every 8s on its own. That would make the parent's one-shot
+        // retry budget (src/widget/turnstile-gate.ts) meaningless: a single
+        // outage lasting past one interval fires error-callback twice, spends
+        // the budget on the first and latches on the second, all while
+        // Turnstile was still recovering. Cloudflare documents "never" for
+        // exactly this case — an app with its own retry logic. The parent's
+        // reset is now the only thing that re-arms the challenge, so what the
+        // docs describe is what actually happens.
+        retry: "never",
         callback: function (token) { post({ type: "garrul:turnstile-token", token: token }); },
         // Forward the code: it is the only thing that tells the parent a
         // transient blip apart from a misconfigured sitekey. See the wire

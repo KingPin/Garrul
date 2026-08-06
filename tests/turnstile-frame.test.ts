@@ -237,6 +237,16 @@ describe("GET /embed/turnstile-frame", () => {
 			expect(errorPosts.filter((p) => /\bcode:/.test(p)).length).toBe(1);
 		});
 
+		it("turns off Turnstile's own auto-retry", async () => {
+			const res = await fetchFrame("/embed/turnstile-frame");
+			const body = await res.text();
+			// The default is retry:"auto", which re-runs a failed challenge every
+			// 8s behind the parent's back. That would spend the one-shot retry
+			// budget in src/widget/turnstile-gate.ts on a single outage and latch
+			// while Turnstile was still recovering. The parent owns retry now.
+			expect(body).toMatch(/retry:\s*"never"/);
+		});
+
 		it("still never posts any message to a wildcard target", async () => {
 			// A token is what makes this frame worth attacking; every post must
 			// go to the validated parent origin. New messages must not weaken it.
