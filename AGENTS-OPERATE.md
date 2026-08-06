@@ -418,10 +418,21 @@ widget mounts its `/embed/turnstile-frame` iframe (which in turn fetches
 Cloudflare's `api.js`) only once the visitor focuses the comment box, so
 readers who never comment never download it. Expect no `turnstile`
 requests in a DevTools trace of a page load. A submit that arrives before
-a token exists waits up to 9 seconds and then reports one of three
+a token exists waits up to 9 seconds and then reports one of four
 distinct messages — see `docs/ANTISPAM.md` § "Turnstile mount timing" for
-the table mapping each to the operator action, and note that only the
-`api.js`-unreachable one leaves the composer disabled.
+the table mapping each to the operator action, and note that only one of
+the four leaves the composer disabled.
+
+**A transient Turnstile error retries once rather than latching.** The
+frame forwards Turnstile's error code, and the widget resets the challenge
+for the codes Cloudflare says are retryable (`300***` internal, `600***`
+challenge execution). Everything else latches: any other code, a second
+error, and a code-less error — which is what the three frame-never-came-up
+paths report, and what an older cached copy of the frame document reports
+for everything. That last point means the first five minutes after an
+upgrade behave exactly like the old build, since the frame is cached with
+`max-age=300`. The retry is UX only; `POST /api/v1/comments` still rejects
+a missing or invalid token server-side regardless.
 
 ### Optional extra anti-spam layers
 
@@ -1206,13 +1217,15 @@ still doesn't appear on focus, it's the host CSP: `frame-src` must allow
 the Worker origin. `docs/troubleshooting.md` has the full recipe.
 
 **A commenter reports a permanently dead Post button.** That is the one
-sticky Turnstile state, and it only comes from Turnstile reporting an
-error. Check `challenges.cloudflare.com` reachability and that
-`TURNSTILE_SITE_KEY` matches Cloudflare first — those are the usual
-causes. But the widget latches on *any* error Turnstile reports,
-including transient ones, so an isolated report that reachability and
-config don't explain is probably a one-off rather than something to keep
-chasing. Either way a reload clears it. See `docs/ANTISPAM.md`
+sticky Turnstile state. It is now reserved for errors a retry cannot fix:
+a non-retryable Turnstile code, a second error after the one-shot retry
+already ran, or a frame that never came up. Transient `300***`/`600***`
+errors reset the challenge and leave the composer usable, so this report
+is real signal rather than possible noise. Check
+`challenges.cloudflare.com` reachability and that `TURNSTILE_SITE_KEY`
+matches Cloudflare — those are the usual causes. One exception: within
+five minutes of an upgrade, a cached older frame document sends no error
+code, which latches by design. A reload clears it. See `docs/ANTISPAM.md`
 § "Turnstile mount timing" for the detail.
 
 **OAuth redirect mismatch.** Provider redirects back with
