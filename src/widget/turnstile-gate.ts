@@ -47,18 +47,44 @@ export const TURNSTILE_WAIT_MS = 9000;
 /**
  * Turnstile error codes whose documented remedy is to reset and try again.
  *
- * `300***` is Turnstile's generic internal/execution error and `600***` is a
- * failed challenge execution; Cloudflare's own guidance for both is
- * `turnstile.reset()`. Everything else is a standing condition a retry cannot
- * fix — `110***` sitekey/domain mismatches and `102***`/`104***`/`106***`
- * invalid parameters would fail identically forever, and retrying them just
- * spends the visitor's time before showing the same message.
+ * This is exactly the `Retry: Yes` column of Cloudflare's client-side error
+ * table, transcribed rather than curated — a hand-picked subset drifts, and
+ * "whatever Cloudflare says is retryable" is a rule the next reader can check
+ * against the source in one lookup:
  *
- * Matching is deliberately fail-safe in the latching direction: a code shape
- * this doesn't recognize (including a missing code) is treated as permanent, so
- * a future Turnstile code family can never turn into a silent retry loop.
+ *   - `300*` / `600*` — generic challenge failure. Starred in the table, so the
+ *     trailing digits vary and only the prefix is matched.
+ *   - `110600` — challenge timed out (a wrong visitor clock, or a challenge
+ *     that simply took too long).
+ *   - `110620` — interaction timed out; the table names `turnstile.reset()` as
+ *     the remedy. Normally this arrives as `timeout-callback` instead, which
+ *     the frame maps to `interactive` — a better answer, since it tells the
+ *     visitor to click rather than silently re-arming. Listed anyway so the
+ *     verdict doesn't depend on which callback Turnstile happens to use.
+ *   - `200500` — the inner Turnstile iframe failed to load.
+ *
+ * Everything else is a standing condition a retry cannot fix. That includes the
+ * rest of the `110***` family — `110100`/`110110` invalid or unknown sitekey and
+ * `110200` unauthorized domain — plus `200100` (clock/cache) and `400020` /
+ * `400070` (invalid or disabled sitekey). All of them fail identically forever,
+ * so retrying just spends the visitor's time before showing the same message.
+ *
+ * Being generous here is cheap because the budget is one: a condition that only
+ * *looked* transient latches on its second report anyway. Being wrong the other
+ * way — latching something Cloudflare says to retry — costs the visitor a page
+ * reload, which is the bug this whole path exists to fix.
+ *
+ * Matching is still fail-safe in the latching direction: a code shape this
+ * doesn't recognize (including a missing code) is treated as permanent, so a
+ * future Turnstile code family can never turn into a silent retry loop.
+ *
+ * Terminated with `(?![\s\S])` rather than `$`, which in JavaScript also matches
+ * *before* a trailing newline — so plain `$` would read `"300\n"` as retryable.
+ * Nothing realistic puts one there, but "an unrecognized shape latches" should
+ * be true as written, not true modulo an anchor's edge case.
  */
-const RETRYABLE_TURNSTILE_ERROR = /^(300|600)\d*$/;
+const RETRYABLE_TURNSTILE_ERROR =
+	/^(?:300\d*|600\d*|110600|110620|200500)(?![\s\S])/;
 
 /** Non-token messages the frame can send. */
 export type TurnstileSignal = "ready" | "interactive" | "expired" | "error";

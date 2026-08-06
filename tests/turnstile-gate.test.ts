@@ -49,8 +49,33 @@ const makeGate = (
 
 /** A transient internal error; Cloudflare's remedy for these is reset+retry. */
 const RETRYABLE_CODE = "300010";
-/** Sitekey/domain mismatch. Retrying this fails identically forever. */
+/** Domain not authorized. Retrying this fails identically forever. */
 const PERMANENT_CODE = "110200";
+
+/**
+ * Every code Cloudflare's client-side error table marks `Retry: Yes`, and every
+ * code it marks `Retry: No`. Transcribed from the table rather than reasoned
+ * about, so the day Cloudflare adds a family this test is what notices the gate
+ * hasn't kept up. `300***`/`600***` are starred there — trailing digits vary —
+ * so both a bare prefix and a full-length code are checked.
+ */
+const CLOUDFLARE_RETRYABLE = [
+	"110600",
+	"110620",
+	"200500",
+	"300",
+	"300010",
+	"600",
+	"600010",
+];
+const CLOUDFLARE_PERMANENT = [
+	"110100",
+	"110110",
+	"110200",
+	"200100",
+	"400020",
+	"400070",
+];
 
 /**
  * Whether a promise has settled, without awaiting it. `Promise.race` against an
@@ -164,7 +189,7 @@ describe("createTurnstileGate", () => {
 		});
 
 		it("latches on a code Turnstile does not say to retry", async () => {
-			// `110***` is a sitekey/domain mismatch. Resetting it produces the same
+			// `110200` is an unauthorized domain. Resetting it produces the same
 			// error forever, so the retry budget must not be spent on it.
 			const { gate, failures, retries } = makeGate();
 			const p = gate.wait();
@@ -299,6 +324,44 @@ describe("createTurnstileGate", () => {
 			gate.dispose();
 			gate.signal("error", RETRYABLE_CODE);
 			expect(retries()).toBe(0);
+		});
+	});
+
+	describe("classification against Cloudflare's error table", () => {
+		// One gate per code: the budget is one reset, so reusing a gate would make
+		// every case after the first latch for the wrong reason.
+		it.each(CLOUDFLARE_RETRYABLE)("retries %s", (code) => {
+			const { gate, failures, retries } = makeGate();
+			gate.signal("error", code);
+			expect(retries()).toBe(1);
+			expect(failures()).toBe(0);
+			expect(gate.failed).toBe(false);
+		});
+
+		it.each(CLOUDFLARE_PERMANENT)("latches %s", (code) => {
+			const { gate, failures, retries } = makeGate();
+			gate.signal("error", code);
+			expect(retries()).toBe(0);
+			expect(failures()).toBe(1);
+			expect(gate.failed).toBe(true);
+		});
+
+		it.each([
+			// Prefix-only matching must not leak into neighbouring families: a
+			// leading or trailing digit makes it a different code, not a `300*`.
+			"1300",
+			"3001 0",
+			"300a",
+			" 300",
+			"300\n",
+			"110",
+			"1106001",
+			"2005000",
+		])("latches the near-miss %j", (code) => {
+			const { gate, retries } = makeGate();
+			gate.signal("error", code);
+			expect(retries()).toBe(0);
+			expect(gate.failed).toBe(true);
 		});
 	});
 
