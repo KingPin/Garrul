@@ -2,11 +2,12 @@
  * `audit_log.meta` must not carry personal data about anyone other than the
  * acting admin.
  *
- * Three actions used to copy a value in that erasure could never reach:
+ * Several actions used to copy a value in that erasure could never reach:
  * `sub.unsubscribe` / `sub.resend` recorded the subscriber's address, and the
- * role-change actions recorded the target's display name. Erasing a user
- * anonymizes `users.name` and deletes their subscriptions, but nothing has ever
- * touched the audit log — so those copies survived a completed Art. 17 request.
+ * role-change and ban/unban actions recorded the target's display name. Erasing
+ * a user anonymizes `users.name` and deletes their subscriptions, but nothing
+ * has ever touched the audit log — so those copies survived a completed Art. 17
+ * request.
  *
  * Two halves, both needed:
  *
@@ -37,6 +38,12 @@ const SUB_ID = "01HSUB000000000000000SUB0";
 const SLUG = "hello";
 const PII_EMAIL = "subscriber@example.com";
 const PII_NAME = "Real Name";
+const ROLE_ACTIONS = [
+	"role.grant_mod",
+	"role.revoke_mod",
+	"role.grant_admin",
+	"role.revoke_admin",
+] as const;
 
 const migrationFiles = (): string[] =>
 	readdirSync(MIGRATIONS_DIR)
@@ -111,12 +118,7 @@ describe("migration 0019_audit_log_pii", () => {
 	});
 
 	it("removes target_name from role changes and keeps from/to", () => {
-		for (const action of [
-			"role.grant_mod",
-			"role.revoke_mod",
-			"role.grant_admin",
-			"role.revoke_admin",
-		]) {
+		for (const action of ROLE_ACTIONS) {
 			insertLegacy(
 				`a-${action}`,
 				action,
@@ -126,12 +128,7 @@ describe("migration 0019_audit_log_pii", () => {
 
 		apply0019();
 
-		for (const action of [
-			"role.grant_mod",
-			"role.revoke_mod",
-			"role.grant_admin",
-			"role.revoke_admin",
-		]) {
+		for (const action of ROLE_ACTIONS) {
 			expect(JSON.parse(meta(`a-${action}`) ?? "{}")).toEqual({
 				from: "user",
 				to: "mod",
@@ -139,12 +136,28 @@ describe("migration 0019_audit_log_pii", () => {
 		}
 	});
 
+	// ban/unban carried the same field. It's the action an operator is most
+	// likely to retain longest, which makes it the worst place to leave a name.
+	it("removes target_name from bans and keeps from_comment", () => {
+		insertLegacy(
+			"a-ban",
+			"ban",
+			JSON.stringify({ target_name: PII_NAME, from_comment: "c-1" }),
+		);
+		insertLegacy("a-unban", "unban", JSON.stringify({ target_name: PII_NAME }));
+
+		apply0019();
+
+		expect(JSON.parse(meta("a-ban") ?? "{}")).toEqual({ from_comment: "c-1" });
+		expect(JSON.parse(meta("a-unban") ?? "{}")).toEqual({});
+	});
+
 	// A NULL meta must stay NULL rather than becoming the string 'null', which is
 	// what an unguarded json_remove would produce.
 	it("leaves NULL and already-clean rows alone", () => {
 		insertLegacy("a-null", "sub.resend", null);
 		insertLegacy("a-clean", "sub.resend", JSON.stringify({ post_slug: SLUG }));
-		insertLegacy("a-other", "ban", JSON.stringify({ email: PII_EMAIL }));
+		insertLegacy("a-other", "user.erase", JSON.stringify({ email: PII_EMAIL }));
 
 		apply0019();
 

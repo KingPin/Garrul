@@ -148,9 +148,13 @@ export const banUser = async (args: {
 		target_kind: "user",
 		target_id: userId,
 		reason: args.reason ?? null,
-		meta: fromComment
-			? { target_name: target.name, from_comment: fromComment }
-			: { target_name: target.name },
+		// No `target_name`, for the same reason as the role and subscription
+		// actions: `target_id` identifies the user, the audit page joins a name at
+		// read time, and a display name copied in here is personal data that
+		// outlives the account — erasure anonymizes `users.name` but has never
+		// reached the audit log. `ban` is the action most likely to be kept
+		// longest, which makes it the worst place to leave a copy.
+		meta: fromComment ? { from_comment: fromComment } : {},
 	});
 	return { ok: true, id: userId, banned };
 };

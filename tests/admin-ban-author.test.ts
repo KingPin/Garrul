@@ -163,17 +163,18 @@ describe("POST /admin/api/users/:id (one-click ban author)", () => {
 		expect(isBanned(TARGET_ID)).toBe(1);
 		const audit = lastBanAudit();
 		expect(audit?.action).toBe("ban");
-		const meta = JSON.parse(audit?.meta ?? "{}");
-		expect(meta.from_comment).toBe("01HCOMMENT00000000000000CM");
-		expect(meta.target_name).toBe("Spammer");
+		// No `target_name`: the name would outlive the account, since erasure
+		// anonymizes `users.name` but never reaches the audit log. See
+		// tests/audit-log-pii.test.ts.
+		expect(JSON.parse(audit?.meta ?? "{}")).toEqual({
+			from_comment: "01HCOMMENT00000000000000CM",
+		});
 	});
 
 	it("bans without from_comment and omits it from meta", async () => {
 		const res = await ban({ banned: true });
 		expect(res.status).toBe(200);
-		const meta = JSON.parse(lastBanAudit()?.meta ?? "{}");
-		expect(meta.from_comment).toBeUndefined();
-		expect(meta.target_name).toBe("Spammer");
+		expect(JSON.parse(lastBanAudit()?.meta ?? "{}")).toEqual({});
 	});
 
 	it("rejects a mod (admin-only)", async () => {
