@@ -2149,6 +2149,12 @@ export const ADMIN_ACTIONS = [
 	"user.export",
 	"rerender",
 	"seed-demo",
+	// Retention sweeps. `ip_retention.sweep` has been written to the log since
+	// 2.1.0 but was never listed here, so the audit filter silently rejected it —
+	// this list is the allowlist the dropdown and the `?action=` query validate
+	// against (see routes/admin.ts).
+	"ip_retention.sweep",
+	"audit_retention.sweep",
 	"sub.unsubscribe",
 	"sub.resend",
 	"bulk.approve",

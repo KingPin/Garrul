@@ -133,6 +133,11 @@ const PRIVACY_NUMBER_META: { key: NumberKey; label: string; help: string }[] = [
 		label: "Clear stored IP hashes after (days)",
 		help: "Erase the hashed IP and user-agent on comments and reports once they're this old. 0 = keep them for the life of the row (the default). Values from 1 to 6 are ignored — the sweep refuses anything under 7 days so a typo can't wipe nearly everything. Irreversible: a cleared hash is gone, and with it the ability to spot a ban evader on that network. Anonymous ghost accounts are never swept — their hash is the identity itself.",
 	},
+	{
+		key: "audit_log_retention_days",
+		label: "Delete audit-log rows after (days)",
+		help: "Prune the moderation audit trail once entries are this old. 0 = keep it forever (the default). Values from 1 to 29 are ignored — the sweep refuses anything under 30 days, a higher floor than the IP one because a moderation record stays useful for months. Irreversible, and whole rows go rather than being redacted: an audit entry with the actor stripped out reads as evidence while proving nothing. Set this if \"we keep moderation records indefinitely\" is a retention period you'd rather not have to justify.",
+	},
 ];
 
 // Anti-spam heuristic dials. The classifier provider and its credentials stay

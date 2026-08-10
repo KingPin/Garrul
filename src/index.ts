@@ -21,6 +21,7 @@ import { runDigest } from "./lib/digest";
 import { runTelegramDigest } from "./lib/telegram-digest";
 import { runWebhookRetries } from "./lib/webhook";
 import { runIpRetention } from "./db/ip-retention";
+import { runAuditRetention } from "./db/audit-retention";
 import { log, requestLogger } from "./lib/log";
 import { corsAndCsrf } from "./lib/cors";
 import { jsonBodyLimit } from "./lib/body-limit";
@@ -157,6 +158,10 @@ export type Bindings = {
 	//                            Does NOT touch anonymous ghost provider_id —
 	//                            that column *is* the identity.
 	IP_HASH_RETENTION_DAYS?: string;
+	//   AUDIT_LOG_RETENTION_DAYS — delete audit_log rows once they are this many
+	//                              days old. Swept by the cron; irreversible. The
+	//                              sweep refuses below 30 days.
+	AUDIT_LOG_RETENTION_DAYS?: string;
 	// Optional: atomic, cross-colo-accurate rate limiting via a Durable
 	// Object. Unbound (the default) leaves the limiter on the edge Cache API —
 	// see docs/ANTISPAM.md § "Rate-limit accuracy" for what that costs.
@@ -338,6 +343,14 @@ export default {
 		ctx.waitUntil(
 			runIpRetention(env).catch((err) => {
 				log.error("scheduled.ip_retention", { error: String(err) });
+			}),
+		);
+		// Same deal for the audit log, and for the same reason it's separate:
+		// pruning moderation history is a different retention decision from
+		// clearing hashed IPs, so it gets its own dial and its own pass.
+		ctx.waitUntil(
+			runAuditRetention(env).catch((err) => {
+				log.error("scheduled.audit_retention", { error: String(err) });
 			}),
 		);
 	},

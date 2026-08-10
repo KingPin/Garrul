@@ -324,6 +324,10 @@ describe("loadNumbers — defaults", () => {
 			// first cron tick after an upgrade, on instances that never asked for
 			// it. See src/db/ip-retention.ts.
 			ip_hash_retention_days: 0,
+			// Same reasoning, and just as load-bearing: a non-zero default would
+			// start deleting an operator's moderation history on the first cron tick
+			// after an upgrade. See src/db/audit-retention.ts.
+			audit_log_retention_days: 0,
 		});
 	});
 

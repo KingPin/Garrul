@@ -47,7 +47,8 @@ export type NumberKey =
 	| "edit_window_minutes"
 	| "spam_link_threshold"
 	| "spam_honeypot_min_ms"
-	| "ip_hash_retention_days";
+	| "ip_hash_retention_days"
+	| "audit_log_retention_days";
 
 export type ResolvedNumbers = Record<NumberKey, number>;
 
@@ -210,6 +211,15 @@ const NUMBERS: Record<
 	// timer measured in days.
 	ip_hash_retention_days: {
 		env: "IP_HASH_RETENTION_DAYS",
+		default: 0,
+		min: 0,
+		max: 3650,
+	},
+	// Same shape and the same "0 means keep forever" default, with a higher
+	// refusal floor (30 days) because a moderation record stays useful far longer
+	// than a hashed IP — see MIN_AUDIT_RETENTION_DAYS in src/db/audit-retention.ts.
+	audit_log_retention_days: {
+		env: "AUDIT_LOG_RETENTION_DAYS",
 		default: 0,
 		min: 0,
 		max: 3650,

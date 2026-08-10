@@ -151,6 +151,12 @@ import {
 	retentionStats,
 	sweepExpiredIpHashes,
 } from "../db/ip-retention";
+import {
+	MIN_AUDIT_RETENTION_DAYS,
+	auditRetentionStats,
+	isAuditRetentionEnabled,
+	pruneAuditLog,
+} from "../db/audit-retention";
 import { runSeedDemo } from "../db/seed-demo";
 import { renderConfirmEmailHtml } from "../lib/digest";
 import { sendEmail } from "../lib/email";
@@ -678,11 +684,20 @@ admin.get("/operator", async (c) => {
 	const user = await requireAdmin(c);
 	if (user instanceof Response) return user;
 	const stats = await rerenderStats(c.env.DB);
-	const { ip_hash_retention_days } = await loadNumbers(c.env);
+	const { ip_hash_retention_days, audit_log_retention_days } =
+		await loadNumbers(c.env);
+	// One `now` for both sweeps' stats so the two cards can't disagree about
+	// where the cutoff falls.
+	const now = Date.now();
 	const retention = await retentionStats(
 		c.env.DB,
 		ip_hash_retention_days,
-		Date.now(),
+		now,
+	);
+	const auditRetention = await auditRetentionStats(
+		c.env.DB,
+		audit_log_retention_days,
+		now,
 	);
 	const updateInfo = await peekCachedLatestVersion(c.env);
 	return c.html(
@@ -691,6 +706,7 @@ admin.get("/operator", async (c) => {
 			renderOperator({
 				rerender: stats,
 				retention,
+				audit_retention: auditRetention,
 				seed_demo_allowed: isSeedDemoAllowed(c.env),
 			}),
 			user,
@@ -1990,6 +2006,49 @@ admin.post("/api/ops/ip-retention", async (c) => {
 				comments: result.comments,
 				reports: result.reports,
 			},
+		});
+	}
+	return c.json({ ok: true, ...result });
+});
+
+// --- Audit-log retention ---------------------------------------------------
+//
+// Same shape as the IP sweep above: one batch per call so an operator who just
+// turned retention on can drain a backlog without waiting out the cron, the
+// window itself stays a Settings dial, and the endpoint refuses rather than
+// inventing a window when the resolved value is off or below the floor.
+//
+// Audited, with the same wrinkle worth naming: this writes an audit row
+// recording the deletion of audit rows. That is deliberate — the sweep is the
+// one action that can erase its own evidence, so the record of it running has
+// to survive, and it does: the new row is written now and so is far newer than
+// any cutoff it could delete.
+
+admin.post("/api/ops/audit-retention", async (c) => {
+	const user = await requireAdmin(c);
+	if (user instanceof Response) return user;
+
+	const { audit_log_retention_days: days } = await loadNumbers(c.env);
+	if (!isAuditRetentionEnabled(days)) {
+		return c.json(
+			{
+				error: "retention_disabled",
+				retention_days: days,
+				min_days: MIN_AUDIT_RETENTION_DAYS,
+			},
+			400,
+		);
+	}
+
+	const result = await pruneAuditLog(c.env.DB, days, Date.now());
+	if (result.deleted > 0) {
+		await adminInsertAudit(c.env.DB, {
+			admin_id: user.id,
+			action: "audit_retention.sweep",
+			target_kind: "system",
+			target_id: null,
+			reason: null,
+			meta: { retention_days: days, deleted: result.deleted },
 		});
 	}
 	return c.json({ ok: true, ...result });
