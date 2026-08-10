@@ -58,6 +58,13 @@ export type TreeNode = {
 	/** When non-null, this node was lifted out of its real parent (depth >
 	 *  MAX_DEPTH) and the UI should show "@<flatten_from> ..." prefix. */
 	flatten_from: string | null;
+	/** Whether POSTing a reply to this node would be accepted, mirroring the
+	 *  insert-time rule in src/routes/api.comments.ts exactly. Derived from the
+	 *  *stored* 1-based depth, deliberately not `depth` above: past the flatten
+	 *  threshold every node reports `depth === MAX_DEPTH` regardless of how deep
+	 *  it really is, so a client gating on the render depth cannot tell a
+	 *  repliable node from one the server would 400. */
+	can_reply: boolean;
 	reactions: ReactionCount[];
 	score_up: number;
 	score_down: number;
@@ -74,9 +81,10 @@ export const MAX_DEPTH = 4;
  * time against `comments.depth` (1-based: a top-level comment is 1).
  *
  * This is NOT the rendering threshold. MAX_DEPTH above is a *display* flatten
- * point — anything past it still renders, just un-indented — and the widget
- * already hides the reply button at `n.depth < MAX_DEPTH`, so no reachable UI
- * path creates a chain this long. The cap exists because nothing stopped a
+ * point — anything past it still renders, just un-indented — and replying stays
+ * available all the way to this cap: the widget hides its reply button on
+ * `can_reply`, which is computed from this constant, so the UI dead-ends exactly
+ * where the insert path does. The cap exists because nothing stopped a
  * scripted client from doing it: tree assembly is O(N^2) in chain length, so a
  * few hundred chained comments exceed the 10ms free-tier CPU budget and the
  * slug's comment list starts returning Error 1102 to every reader — and since
@@ -202,6 +210,7 @@ const toNode = (
 	author: buildAuthor(usersById, row.user_id),
 	depth,
 	flatten_from,
+	can_reply: row.depth < MAX_REPLY_DEPTH,
 	reactions: reactionsById.get(row.id) ?? [],
 	score_up: row.score_up ?? 0,
 	score_down: row.score_down ?? 0,
