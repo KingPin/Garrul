@@ -43,8 +43,8 @@
     "tail": "wrangler tail"
   },
   "dependencies": {
-    "hono": "^4.12.34",
-    "marked": "^18.0.7"
+    "hono": "^4.13.1",
+    "marked": "^18.0.9"
   },
   "overrides": {
     "esbuild": "^0.28.1",
