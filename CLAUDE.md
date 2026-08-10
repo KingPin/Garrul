@@ -86,7 +86,6 @@ Each override is temporary. Re-check them when bumping `wrangler`, and drop the 
 
 | Override | Why | Drop it when |
 | --- | --- | --- |
-| `esbuild: ^0.28.1` | Force-dedupes the copy `wrangler` pins at 0.27.3. Cleared GHSA-gv7w-rqvm-qjhr (high) and GHSA-g7r4-m6w7-qqqr (low). See b8aeb6b. | `wrangler` pins esbuild ≥ 0.28.1 itself. |
 | `undici: ^7.29.0` | `miniflare` (via `wrangler`) pins undici at exactly 7.28.0. Clears five advisories, including GHSA-4cwx-7wf7-3272 (high, cross-user disclosure + parse-time crash via degenerate private cache directives). | `miniflare` pins undici ≥ 7.29.0 itself. Note the ceiling: if miniflare moves to undici 8.x, this `^7` range would pin it back — widen or remove it. |
 
 ### Commits
