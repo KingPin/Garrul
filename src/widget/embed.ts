@@ -370,6 +370,28 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
 .gr-body { margin: 0.25rem 0 0; }
 .gr-body p { margin: 0.3em 0; }
 .gr-body a { color: var(--gr-link); }
+/* Fenced code blocks. A UA-default <pre> neither wraps nor scrolls, so one long
+   line grew the widget past its column and pushed the *host page* into
+   horizontal scroll on narrow viewports. Scroll inside the block instead.
+   .gr-main already carries min-width: 0, without which this flex child would
+   refuse to shrink below its content and the rule would do nothing. */
+.gr-body pre {
+	margin: 0.4em 0;
+	padding: 0.6em 0.75em;
+	max-width: 100%;
+	overflow-x: auto;
+	background: var(--gr-surface);
+	border-radius: 6px;
+}
+.gr-body pre code { background: none; padding: 0; font-size: inherit; }
+.gr-body code {
+	padding: 0.1em 0.3em;
+	background: var(--gr-surface);
+	border-radius: 4px;
+	font-size: 0.9em;
+	/* A long inline token (URL, hash) must break rather than widen the row. */
+	overflow-wrap: break-word;
+}
 .gr-deleted { color: var(--gr-muted); font-style: italic; }
 .gr-actions { display: flex; gap: 0.75rem; margin-top: 0.35rem; font-size: 0.85em; }
 .gr-actions button {
