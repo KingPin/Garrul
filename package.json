@@ -47,7 +47,6 @@
     "marked": "^18.0.9"
   },
   "overrides": {
-    "esbuild": "^0.28.1",
     "undici": "^7.29.0"
   },
   "devDependencies": {
