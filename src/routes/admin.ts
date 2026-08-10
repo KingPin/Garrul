@@ -1734,13 +1734,14 @@ admin.get("/api/users/:id/export", async (c) => {
 	// the safe set rather than trusting that, so nothing can smuggle a quote or
 	// a newline into the header.
 	const safeId = id.replace(/[^A-Za-z0-9_-]/g, "") || "user";
-	return new Response(JSON.stringify(data, null, 2), {
-		headers: {
-			"content-type": "application/json; charset=utf-8",
-			"content-disposition": `attachment; filename="garrul-export-${safeId}.json"`,
-			// Never let an export sit in a shared cache.
-			"cache-control": "no-store",
-		},
+	// `c.body`, not `new Response` — a raw Response drops the headers the admin
+	// middleware prepared with `c.header()` (CSP, nosniff, frame-options,
+	// referrer-policy), the same trap `lib/cors.ts` backfills around.
+	return c.body(JSON.stringify(data, null, 2), 200, {
+		"content-type": "application/json; charset=utf-8",
+		"content-disposition": `attachment; filename="garrul-export-${safeId}.json"`,
+		// Never let an export sit in a shared cache.
+		"cache-control": "no-store",
 	});
 });
 
