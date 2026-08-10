@@ -358,7 +358,7 @@ ancestor.
 | `--garrul-badge-bg`   | `#e0e7ff`                                                | "Verified" badge background            |
 | `--garrul-badge-fg`   | `#1e3a8a`                                                | "Verified" badge text                  |
 | `--garrul-skel`       | `#e7e9ec`                                                | Skeleton-loading placeholder color     |
-| `--garrul-surface`    | `#f7f8fa`                                                | Raised surface fill: composer card, error/notice box |
+| `--garrul-surface`    | `#f7f8fa`                                                | Raised surface fill: composer card, error/notice box, code blocks and inline code |
 | `--garrul-hover`      | `#eef0f3`                                                | Hover background on toolbar/icon buttons |
 | `--garrul-accent-hover` | `#1d4ed8`                                              | Submit button hover background         |
 | `--garrul-vote-active` | `--garrul-badge-bg`                                     | Active vote / reaction highlight (defaults to the badge background) |
@@ -384,6 +384,20 @@ override every variable by hand. By default it follows the visitor's OS/browser
 Host `--garrul-*` overrides still win at every theme level, so the table above
 remains the supported customization surface. For the full reference and
 stability policy, see `docs/THEMING.md`.
+
+### Code blocks in comments (since v2.5.1)
+
+Fenced code blocks render as a tinted box filled with `--garrul-surface`, and a
+long line **scrolls inside that box**. It does not widen the widget, and it does
+not push the host page into horizontal scroll — which is what happened before
+v2.5.1, where a single long line in a comment made the whole host page scrollable
+sideways on a phone.
+
+Inline `code` gets the same tint and breaks on long tokens (URLs, hashes) rather
+than forcing the row wider.
+
+If you are theming a dark host, `--garrul-surface` is the variable to set: it
+fills the composer card, notice boxes, and now code as well.
 
 ## 6. Iframe fallback
 

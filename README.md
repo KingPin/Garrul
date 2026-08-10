@@ -11,7 +11,7 @@ billing, your data stays in your account.
 - **Threaded comments** with markdown, reactions, edit/delete window
 - **OAuth sign-in** (GitHub, Google, Facebook, X, Discord) + anonymous
   posting with rate limiting and Turnstile
-- **Embeddable widget** (~12 KB gzipped, CI-capped at 20 KB) with
+- **Embeddable widget** (~15 KB gzipped, CI-capped at 20 KB) with
   Shadow-DOM isolation, theme variables, and an iframe alternative
 - **Email digests**, RSS feeds, comment counts, permalinks
 - **Admin UI** for moderation queue + user management
@@ -21,6 +21,26 @@ billing, your data stays in your account.
 
 Every doc in the repo, grouped by task:
 [`docs/README.md`](docs/README.md).
+
+## Screenshots
+
+What your readers see — threaded comments, reactions, and a markdown composer,
+rendered inside a Shadow DOM so the host page's CSS can't collide with it:
+
+![Garrul comment widget on a host page, showing the page reaction bar, the markdown composer, and a threaded discussion](docs/screenshots/widget-light.png)
+
+The admin dashboard: counts at a glance, your embed snippet ready to copy, and
+30-day comment volume.
+
+![Admin dashboard showing comment and user counts, the embed snippet, and a comments-per-day chart](docs/screenshots/admin-dashboard.png)
+
+The moderation queue, where comments are approved, marked spam, or deleted
+inline:
+
+![Moderation queue listing pending comments with author, body, metadata and per-row actions](docs/screenshots/admin-queue-pending.png)
+
+More, including dark mode, mobile, and the rest of the admin UI:
+[`docs/screenshots.md`](docs/screenshots.md).
 
 ## Install
 
