@@ -381,13 +381,13 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
 	max-width: 100%;
 	overflow-x: auto;
 	background: var(--gr-surface);
-	border-radius: 6px;
+	border-radius: var(--gr-radius);
 }
 .gr-body pre code { background: none; padding: 0; font-size: inherit; }
 .gr-body code {
 	padding: 0.1em 0.3em;
 	background: var(--gr-surface);
-	border-radius: 4px;
+	border-radius: var(--gr-radius);
 	font-size: 0.9em;
 	/* A long inline token (URL, hash) must break rather than widen the row. */
 	overflow-wrap: break-word;

@@ -2,7 +2,7 @@
 
 A visual tour of the reader-facing widget and the admin UI.
 
-> Screenshots reflect **v2.5.0** and may lag the current UI. They are
+> Screenshots reflect **v2.5.1** and may lag the current UI. They are
 > regenerated from seeded demo data, not from a live instance — every name,
 > avatar, comment, email address and webhook URL below is invented.
 
