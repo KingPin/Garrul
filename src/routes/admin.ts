@@ -1828,8 +1828,11 @@ admin.post("/api/users/:id/role", async (c) => {
 		target_kind: "user",
 		target_id: id,
 		reason: body.reason ?? null,
+		// No `target_name`. `target_id` identifies the user, the audit page joins
+		// the current name at read time, and a display name copied in here is
+		// personal data that outlives the account it belongs to — erasure
+		// anonymizes `users.name` but has never reached the audit log.
 		meta: {
-			target_name: target.name,
 			from: target.role,
 			to: body.role,
 		},
@@ -1868,7 +1871,11 @@ admin.post("/api/subscriptions/:id", async (c) => {
 			target_kind: "subscription",
 			target_id: id,
 			reason: body?.reason ?? null,
-			meta: { email: sub.email, post_slug: sub.post_slug },
+			// No `email`. `target_id` is the subscription id and the row is
+			// soft-unsubscribed rather than deleted, so the address is still
+			// reachable from the subscription itself — copying it here only created a
+			// second copy that erasure never found.
+			meta: { post_slug: sub.post_slug },
 		});
 		return c.json({ ok: true, id, status: "unsubscribed" });
 	}
@@ -1918,7 +1925,9 @@ admin.post("/api/subscriptions/:id", async (c) => {
 		target_kind: "subscription",
 		target_id: id,
 		reason: body?.reason ?? null,
-		meta: { email: sub.email, post_slug: sub.post_slug },
+		// See the note on sub.unsubscribe above — the address stays on the
+		// subscription row, not in here.
+		meta: { post_slug: sub.post_slug },
 	});
 	return c.json({ ok: true, id, status: "resent" });
 });
