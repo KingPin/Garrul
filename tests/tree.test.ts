@@ -5,7 +5,13 @@
  */
 import { describe, it, expect } from "vitest";
 import type { Comment } from "../src/db/queries";
-import { buildTree, MAX_DEPTH, type TreeAuthor } from "../src/lib/tree";
+import {
+	buildTree,
+	MAX_DEPTH,
+	MAX_REPLY_DEPTH,
+	type TreeAuthor,
+	type TreeNode,
+} from "../src/lib/tree";
 
 const author = (id: string, name = id, provider = "anon"): TreeAuthor => ({
 	id,
@@ -28,6 +34,7 @@ const mk = (
 	user_id = "u1",
 	status: Comment["status"] = "approved",
 	deleted_by: Comment["deleted_by"] = status === "deleted" ? "author" : null,
+	depth = 1,
 ): Comment => ({
 	id,
 	post_slug: "p",
@@ -43,18 +50,21 @@ const mk = (
 	ip_hash: null,
 	user_agent: null,
 	created_at,
-	// Stored depth is irrelevant to these tests: buildTree derives render depth
-	// from the traversal, not from the column (a re-parented import would
-	// otherwise report a depth that doesn't match where it renders).
-	depth: 1,
+	// Render depth still comes from the traversal, not from this column (a
+	// re-parented import would otherwise report a depth that doesn't match where
+	// it renders) — but `can_reply` is derived from it, because that is the
+	// column the insert path caps against. Tests that assert on can_reply must
+	// pass a realistic value; the rest can leave it at the top-level default.
+	depth,
 	score_up: 0,
 	score_down: 0,
 });
 
-/** Chain of `n` comments, each a reply to the previous. */
+/** Chain of `n` comments, each a reply to the previous. Stored depth ascends
+ *  with the chain, matching what the insert path would have written. */
 const chain = (n: number): Comment[] =>
 	Array.from({ length: n }, (_, i) =>
-		mk(`c${i}`, i === 0 ? null : `c${i - 1}`, 1000 + i),
+		mk(`c${i}`, i === 0 ? null : `c${i - 1}`, 1000 + i, "u1", "approved", null, i + 1),
 	);
 
 describe("buildTree — basic shape and order", () => {
@@ -100,7 +110,7 @@ describe("buildTree — depth cap", () => {
 		// depth-(MAX_DEPTH-1) ancestor with flatten_from pointing to parent name.
 		let prev: string | null = null;
 		for (let d = 0; d < MAX_DEPTH + 2; d++) {
-			rows.push(mk(`d${d}`, prev, 100 + d, `u${d}`));
+			rows.push(mk(`d${d}`, prev, 100 + d, `u${d}`, "approved", null, d + 1));
 			prev = `d${d}`;
 		}
 		const authors = Array.from({ length: MAX_DEPTH + 2 }, (_, i) =>
@@ -162,6 +172,46 @@ describe("buildTree — depth cap", () => {
 			"user-a",
 			`user-${MAX_DEPTH}`,
 		]);
+	});
+});
+
+describe("buildTree — can_reply", () => {
+	/** Every node in the tree, nested or lifted. */
+	const allNodes = (nodes: TreeNode[]): TreeNode[] =>
+		nodes.flatMap((n) => [n, ...allNodes(n.replies)]);
+
+	it("mirrors the insert cap, not the render depth", () => {
+		// chain() writes ascending stored depths, so c0..c7 sit at depth 1..8. The
+		// last one is exactly the node POST /comments refuses to accept a reply to.
+		const { threads } = buildTree(chain(MAX_REPLY_DEPTH), usersById(author("u1")));
+		const canReply = new Map(allNodes(threads).map((n) => [n.id, n.can_reply]));
+		expect(canReply.get(`c${MAX_REPLY_DEPTH - 2}`)).toBe(true);
+		expect(canReply.get(`c${MAX_REPLY_DEPTH - 1}`)).toBe(false);
+	});
+
+	it("keeps flattened nodes repliable while their stored depth is under the cap", () => {
+		// The regression this field exists for. Past the flatten threshold every
+		// node reports depth === MAX_DEPTH, so a client gating on render depth
+		// dead-ends a thread MAX_REPLY_DEPTH - MAX_DEPTH levels early.
+		const rows = Array.from({ length: MAX_DEPTH + 2 }, (_, d) =>
+			mk(`d${d}`, d === 0 ? null : `d${d - 1}`, 100 + d, "u1", "approved", null, d + 1),
+		);
+		const { threads } = buildTree(rows, usersById(author("u1")));
+		const lifted = allNodes(threads).filter((n) => n.flatten_from !== null);
+		expect(lifted).toHaveLength(2);
+		expect(lifted.every((n) => n.depth === MAX_DEPTH)).toBe(true);
+		expect(lifted.every((n) => n.can_reply)).toBe(true);
+	});
+
+	it("refuses replies on a legacy row parked at the backfill sentinel", () => {
+		// Migration 0015 backfills rows its recursion never reaches (orphans, chains
+		// past the guard) to depth 1000 so they fail closed. They still render.
+		const { threads } = buildTree(
+			[mk("legacy", null, 100, "u1", "approved", null, 1000)],
+			usersById(author("u1")),
+		);
+		expect(threads[0]!.depth).toBe(0);
+		expect(threads[0]!.can_reply).toBe(false);
 	});
 });
 

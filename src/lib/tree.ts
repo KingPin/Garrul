@@ -58,6 +58,17 @@ export type TreeNode = {
 	/** When non-null, this node was lifted out of its real parent (depth >
 	 *  MAX_DEPTH) and the UI should show "@<flatten_from> ..." prefix. */
 	flatten_from: string | null;
+	/** Whether this node is shallow enough to be replied to, mirroring the
+	 *  insert-time depth rule in src/routes/api.comments.ts exactly. Derived from
+	 *  the *stored* 1-based depth, deliberately not `depth` above: past the
+	 *  flatten threshold every node reports `depth === MAX_DEPTH` regardless of
+	 *  how deep it really is, so a client gating on the render depth cannot tell
+	 *  a repliable node from one the server would 400.
+	 *
+	 *  Depth only. The other reasons a POST can be refused — thread closed,
+	 *  parent deleted, spam, rate limit — are orthogonal and not folded in here;
+	 *  `true` means "the cap leaves room", not "this reply will succeed". */
+	can_reply: boolean;
 	reactions: ReactionCount[];
 	score_up: number;
 	score_down: number;
@@ -74,14 +85,20 @@ export const MAX_DEPTH = 4;
  * time against `comments.depth` (1-based: a top-level comment is 1).
  *
  * This is NOT the rendering threshold. MAX_DEPTH above is a *display* flatten
- * point — anything past it still renders, just un-indented — and the widget
- * already hides the reply button at `n.depth < MAX_DEPTH`, so no reachable UI
- * path creates a chain this long. The cap exists because nothing stopped a
- * scripted client from doing it: tree assembly is O(N^2) in chain length, so a
- * few hundred chained comments exceed the 10ms free-tier CPU budget and the
- * slug's comment list starts returning Error 1102 to every reader — and since
- * the response never completes, the edge cache never populates and it never
- * self-heals.
+ * point — anything past it still renders, just un-indented — and replying stays
+ * available all the way to this cap: the widget hides its reply button on
+ * `can_reply`, which is computed from this constant, so the UI dead-ends exactly
+ * where the insert path does.
+ *
+ * The cap landed when tree assembly was O(N^2) in chain length: a few hundred
+ * chained comments exceeded the 10ms free-tier CPU budget, so the slug's comment
+ * list returned Error 1102 to every reader — and since the response never
+ * completed, the edge cache never populated and it never self-healed. Assembly is
+ * linear now (see `markAncestors` and the iterative builder below), so that
+ * particular cliff is gone, but the cap stays: nothing else stops a scripted
+ * client from chaining unbounded replies that every reader then pays to assemble
+ * on each cache miss, and past the flatten point the whole tail renders on one
+ * tier anyway, so the depth buys nothing.
  *
  * 8 leaves headroom above the flatten point for imported threads (Disqus).
  */
@@ -202,6 +219,7 @@ const toNode = (
 	author: buildAuthor(usersById, row.user_id),
 	depth,
 	flatten_from,
+	can_reply: row.depth < MAX_REPLY_DEPTH,
 	reactions: reactionsById.get(row.id) ?? [],
 	score_up: row.score_up ?? 0,
 	score_down: row.score_down ?? 0,
