@@ -311,8 +311,10 @@ see AGENTS-OPERATE.md §5) control the volume:
   unbounded chain made the whole thread un-renderable. Each node in the list
   response carries a `can_reply` boolean computed from that same rule, and the
   widget shows its Reply button on that flag — so the UI dead-ends exactly where
-  the server does, and never offers a reply that would 400. Existing deeper rows
-  (from a Disqus import, say) still render; they arrive with `can_reply: false`.
+  the server does, and never offers a reply the cap would reject. It answers the
+  depth question only: a closed thread, a deleted parent or a rate limit can
+  still refuse a reply to a `can_reply: true` node. Existing deeper rows (from a
+  Disqus import, say) still render; they arrive with `can_reply: false`.
 
   Note this is independent of the **display** flatten threshold of 4 levels:
   replies past it stop indenting and render flat with an `@name` prefix, but
