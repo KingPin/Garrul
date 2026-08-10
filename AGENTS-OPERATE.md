@@ -763,10 +763,10 @@ Pages (top nav):
 | `/admin/queue` | Moderation queue. Status tabs (incl. a **Reported** tab — comments with open reader reports, with a count badge) + filter bar (body search, post slug, date range, scoped-by-user). Per-row + bulk actions (Approve/Spam/Delete/Restore). When filtered to a single post slug, a **Close / Open comments for this post** toggle appears. Rows also offer one-click **Ban author**. Each row shows author identity (avatar + provider + admin/banned pills) and the latest audit footer. |
 | `/admin/comments/:id` | Single-comment view: parent + replies, raw markdown, spam-verdicts per source, full audit history for that comment, author block with their last 5 comments. |
 | `/admin/users` | User search + ban toggle. |
-| `/admin/users/:id` | User detail: all their comments paginated, reactions received, audit history affecting them, Ban/Unban, role controls, and a folded-away **Erase personal data** panel (admin-only; see below). |
+| `/admin/users/:id` | User detail: all their comments paginated, reactions received, audit history affecting them, Ban/Unban, role controls, and two folded-away admin-only panels — **Export personal data** and **Erase personal data** (both below). |
 | `/admin/audit` | Audit log with filter form (admin, action, target kind/id, date range). |
 | `/admin/subscriptions` | Email subscription list. Filter by email/post/confirmed/unsubscribed. Actions: manual unsubscribe, resend confirmation. |
-| `/admin/operator` | Batch operations: rerender stale comments (POSTs `/admin/api/ops/rerender` in 50-row chunks until done), seed-demo (idempotent; gated to `ENV != "production"`), and the Disqus import upload (see below). |
+| `/admin/operator` | Batch operations: rerender stale comments (POSTs `/admin/api/ops/rerender` in 50-row chunks until done), seed-demo (idempotent; gated to `ENV != "production"`), the Disqus import upload (see below), and two retention cards — IP-hash and audit-log — each showing how many rows are past the configured window and offering a manual drain. |
 | `/admin/settings` | Editable form for feature flags, display/pagination numbers, and the moderation dials (edit window, thread auto-close, community auto-collapse, the three anti-spam heuristics), saved to the `settings` D1 table (no redeploy — see section 5). Also renders a read-only `(set)`/`(unset)` summary of deploy-time config (Turnstile, email, OAuth, spam provider), which still changes via `wrangler secret put` / `wrangler.toml`. |
 | `/admin/webhooks` | Outbound webhook endpoints: add/pause/delete, per-endpoint secret + event filter, adapter (`generic` / `slack` / `discord` / `telegram`), failure counts and retry status. |
 | `/admin/telegram` | **Admin-only.** Telegram operator bot: shows whether the bot token/webhook secret are set, links your personal Telegram account (one-time code or deep link), toggles the daily digest, and unlinks. See `docs/telegram.md`. |
@@ -787,6 +787,41 @@ responding):
 - `POST /admin/api/subscriptions/:id` — `{action: unsubscribe|resend, reason?}`
 - `POST /admin/api/ops/rerender` — `{batch?: number, cursor?}` → `{processed, next_cursor}`
 - `POST /admin/api/ops/seed-demo` — disabled when `ENV=production`
+- `POST /admin/api/ops/ip-retention` — manual drain of the IP-hash sweep; no body. `400 retention_disabled` when `IP_HASH_RETENTION_DAYS` is `0` or below the 7-day floor. Audits `ip_retention.sweep` only when it actually cleared something.
+- `POST /admin/api/ops/audit-retention` — same shape for the audit-log sweep, gated on `AUDIT_LOG_RETENTION_DAYS` and a 30-day floor, audited `audit_retention.sweep`.
+
+One admin read is listed here too, because of what it returns:
+
+- `GET /admin/api/users/:id/export` — the whole of one person's personal data as
+  JSON (admin-only). See below.
+
+**Exporting a user's personal data.** `/admin/users/<id>` → **Export
+personal data** → *Download JSON*, or `GET /admin/api/users/:id/export`
+directly. This is the answer to a GDPR Art. 15 / Art. 20 or CCPA
+right-to-know request: one file (`garrul-export-<id>.json`) holding the
+account row, every comment they wrote, reports they filed, subscriptions
+for their address, Telegram link, votes, reactions, page engagement, spam
+classifications on their comments, and moderation actions taken against
+them. Admin-only; a plain link rather than a fetch, so the payload never
+sits in a JS variable.
+
+Two shaping decisions worth knowing before you send one:
+
+- `ip_hash` and `user_agent` **are** included — they are the subject's own
+  data, and withholding them would make the export a false statement about
+  what you hold. That also makes the file as sensitive as a `.sql` dump of
+  their rows. Verify who you're talking to first.
+- `audit_log.admin_id` is **excluded**. Which moderator acted is a third
+  party's identifier, not the subject's, and Art. 15(4) doesn't require
+  disclosing it. Only action, reason and timestamp are exported — and
+  `reason` is free text a moderator typed, so skim it before releasing the
+  file.
+
+Running an export writes a `user.export` audit row recording **row counts
+only**, so you have a record that it happened without minting a second
+copy of the data. The verify-locate-respond procedure, including what to do
+for an email-only subscriber who has no account row at all, is
+[`docs/compliance/dsar-runbook.md`](docs/compliance/dsar-runbook.md).
 
 **Erasing a user's personal data.** `/admin/users/<id>` → **Erase
 personal data**. Admin-only, audit-logged, and irreversible — the button
@@ -820,9 +855,14 @@ Two guards: you cannot erase **yourself**, and you cannot erase another
 that person out of the instance for good). The `user.erase` audit row
 records **counts only**, never the removed values: writing the name or
 address into `audit_log.meta` would relocate the data rather than erase
-it. Everything else you might want here — a retention window, key
-epoching, a bulk purge — is still missing; see
-[`../docs/ip-hashing.md`](../docs/ip-hashing.md).
+it — which is also why no audit action records a subscriber address or a
+target's display name any more (see `0019_audit_log_pii.sql`).
+
+Retention windows now exist for both PII-bearing tables outside erasure's
+reach (`IP_HASH_RETENTION_DAYS`, `AUDIT_LOG_RETENTION_DAYS` — §5 and §11).
+Still missing: key epoching for `ip_hash`, and self-serve deletion for the
+subject. See [`docs/ip-hashing.md`](docs/ip-hashing.md) and
+[`docs/compliance/gdpr.md`](docs/compliance/gdpr.md).
 
 **Reader reporting & thread moderation.** Readers can flag a comment
 from the widget (anonymous allowed, no Turnstile — rate-limited by
@@ -993,6 +1033,19 @@ shipped.
 Full posture, including what rotation breaks and what a deletion request
 costs today: [`docs/ip-hashing.md`](docs/ip-hashing.md).
 
+### Exporting one person rather than the database
+
+For a data-subject access or portability request, don't hand over a `.sql`
+dump — it contains everyone. `/admin/users/<id>` → **Export personal
+data**, or `GET /admin/api/users/:id/export`, returns that one account's
+rows as JSON. Contract and caveats are in §10.
+
+The hashed-IP warning above applies unchanged: an export carries the
+subject's `comments.ip_hash` values, so against anyone who also holds
+`IP_HASH_SECRET` you are disclosing IP addresses. Verify the requester
+before you send it, and don't attach it to an unverified email thread.
+[`docs/compliance/dsar-runbook.md`](docs/compliance/dsar-runbook.md).
+
 ### Emergency purge: `IP_HASH_SECRET` leaked
 
 If the secret is exposed — committed, pasted into a chat, or leaked
@@ -1066,6 +1119,71 @@ audit-logged, and scoped to that user's rows.
 how much history a future leak exposes; it does nothing about hashes a
 leaked key can already crack today. Setting it now is worth doing anyway —
 it shrinks the next incident.
+
+### Personal-data breach
+
+The section above is the *technical* response to one specific leak. This is
+the reporting obligation that sits on top of any of them, because you are
+the controller of the data in your instance.
+
+**The clock is 72 hours** from the moment you become *aware* — not from the
+moment you finish investigating (GDPR Art. 33(1)). Awareness includes a
+processor telling you: if Cloudflare or Resend notify you of an incident
+affecting your data, your clock started when their mail arrived. An
+incomplete notification inside 72 hours beats a complete one on day four;
+Art. 33(4) explicitly allows filing in phases.
+
+**Step 1 — contain, without destroying evidence.**
+
+- Rotate whatever leaked (`wrangler secret put …`). If it was
+  `IP_HASH_SECRET`, run the emergency purge above *before* rotating.
+- Revoke every session if an admin credential or the `SESSIONS` namespace is
+  in scope. There is no button for this: sessions are `sess:<hex>` keys in
+  KV, so you delete them with `wrangler kv key list` / `kv bulk delete`
+  against that namespace. Everyone signs in again; nothing else breaks.
+- Rotate per-endpoint webhook secrets from `/admin/webhooks` — they live in
+  D1, so a database dump exposes them.
+- Snapshot logs and take a dated `.sql` export *before* purging anything, and
+  keep both encrypted and off shared storage. You will need them to describe
+  the scope, and Art. 33(5) requires you to keep the record regardless.
+
+**Step 2 — establish what was actually exposed.** For a D1 dump, that is:
+
+| Data | Why it matters |
+| --- | --- |
+| Subscriber **email addresses** | The one class that is not already public. This is usually what makes a breach notifiable. |
+| `comments.ip_hash`, `reports.reporter_ip_hash`, anon `users.provider_id` | Pseudonyms **unless the leak also included `IP_HASH_SECRET`** — in which case treat it as an IP-address disclosure, because the construction is unsalted and IPv4 is brute-forceable. |
+| OAuth `email`, `name`, `avatar_url`, `provider_id` | Links a real identity to everything that account wrote. |
+| `comments.body_md` / `body_html` | Already public on your site; not usually a disclosure. Pending, spam and soft-deleted rows are the exception — those were never published. |
+| `telegram_links` | External chat ids for operators. |
+| `subscriptions.token` / `confirm_token` | Lets a holder unsubscribe or confirm someone else. Low severity, real nuisance. |
+| `webhook_endpoints.secret` | Lets a holder forge signed events at your endpoints. |
+
+**Sessions are not in D1.** A database dump does not hand anyone a login —
+session ids live in KV. That is worth stating in your assessment, because it
+narrows the risk considerably.
+
+**Step 3 — decide, and be honest about it.** Notify the supervisory
+authority unless the breach is "unlikely to result in a risk" (Art. 33(1));
+notify the **subjects** too where the risk is *high* (Art. 34(1)). The
+combination that usually clears the "high risk" bar here is **an email
+address plus the pseudonymous comments belonging to it** — that is
+deanonymisation, and on a site about health, politics, sexuality or
+employment it is exactly the harm the article is aimed at. Comment bodies
+alone, already published under names their authors chose, usually is not.
+
+Encryption is the Art. 34(3)(a) escape hatch, and hashing is **not**
+encryption: an `ip_hash` leaked alongside its key does not qualify.
+
+**Step 4 — record it either way.** Art. 33(5) requires an internal register
+of *all* breaches, including the ones you decided not to report, with the
+facts, the effects, and the remedial action. Your notification, if you filed
+one, is part of that record.
+
+Article-level detail, and where the erasure and export mechanisms fit:
+[`docs/compliance/gdpr.md`](docs/compliance/gdpr.md). California has its own
+regime (Civ. Code § 1798.29 / § 1798.82) with a different trigger set — see
+[`docs/compliance/ccpa.md`](docs/compliance/ccpa.md).
 
 ## 12. Upgrades
 

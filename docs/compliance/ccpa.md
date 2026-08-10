@@ -140,6 +140,38 @@ anonymously without signing in, and can decline notifications.
 
 ---
 
+## Breach notification, and § 1798.150
+
+California's breach-notification duty is **not** in the CCPA — it is Civ. Code
+§ 1798.29 (agencies) and § 1798.82 (businesses), and it triggers on unauthorized
+acquisition of *unencrypted* personal information in a defined set of
+combinations: name plus SSN, driver's licence, financial account, medical or
+health-insurance information, or **an email address together with a password or
+security question**. A Garrul instance stores none of those combinations — no
+passwords (sign-in is OAuth or nothing), no government or financial identifiers.
+A leaked comment database is a GDPR Art. 33 event but generally not a
+§ 1798.82 one.
+
+What the CCPA does add is § 1798.150: a **private right of action** for consumers
+whose "nonencrypted and nonredacted personal information" is exfiltrated because
+the business failed to maintain reasonable security. Statutory damages run
+$100–$750 per consumer per incident, with a 30-day cure period on written notice.
+Two consequences for how you run this:
+
+- **`ip_hash` is neither encrypted nor, arguably, redacted** — it is a
+  brute-forceable pseudonym against anyone holding `IP_HASH_SECRET`. Setting
+  `IP_HASH_RETENTION_DAYS` directly shrinks the population a single incident
+  could cover.
+- **"Reasonable security" is the whole test.** Keeping `IP_HASH_SECRET` and your
+  `.sql` dumps out of anywhere they can leak, and limiting who holds an admin
+  account, is what you would be arguing about.
+
+The operational runbook — the 72-hour clock, what a D1 dump actually exposes, and
+what to do first — is in
+[`../../AGENTS-OPERATE.md`](../../AGENTS-OPERATE.md) §11, *Personal-data breach*.
+
+---
+
 ## The 12-month lookback, and CPRA's extension
 
 § 1798.130(a)(2) requires disclosure covering the 12 months preceding the
