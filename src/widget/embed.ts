@@ -59,6 +59,10 @@ type TreeNode = {
 	author: TreeAuthor;
 	depth: number;
 	flatten_from: string | null;
+	/** Optional on purpose: the list response is edge-cached, so payloads
+	 *  predating this field keep being served for up to TREE_CACHE_TTL after a
+	 *  deploy. Read it through the `n.depth < 4` fallback below, never bare. */
+	can_reply?: boolean;
 	reactions: ReactionCount[];
 	score_up: number;
 	score_down: number;
@@ -1440,7 +1444,12 @@ const buildPageEngagement = (ctx: WidgetCtx): HTMLElement => {
 const buildActions = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): HTMLElement => {
 	const row = el("div", "gr-actions");
 
-	if (ctx.acceptingComments && n.depth < 4 && n.status !== "deleted") {
+	// `can_reply` is server-computed from the real stored depth. Past the flatten
+	// threshold every node reports depth 4, so the old `n.depth < 4` test dead-ended
+	// threads four levels before the server actually stops accepting replies — it
+	// survives only as the fallback for edge-cached payloads that predate the field.
+	const canReply = n.can_reply ?? n.depth < 4;
+	if (ctx.acceptingComments && canReply && n.status !== "deleted") {
 		const replyBtn = el("button", undefined, "Reply");
 		replyBtn.type = "button";
 		replyBtn.addEventListener("click", () => {
