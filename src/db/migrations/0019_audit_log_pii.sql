@@ -6,7 +6,7 @@
 -- someone other than the acting admin:
 --
 --   sub.unsubscribe / sub.resend  ->  meta.email       (a subscriber's address)
---   role.*                        ->  meta.target_name (a user's display name)
+--   role.* / ban / unban          ->  meta.target_name (a user's display name)
 --
 -- The routes stopped writing them in 2.6.0. This clears the rows already
 -- written, which matter because they are the ones that outlive erasure: erasing
@@ -15,9 +15,10 @@
 -- survived a completed Art. 17 request.
 --
 -- Neither field carried information that isn't still reachable: the role rows
--- keep `from`/`to` and identify the user by `target_id`, and the subscription
--- rows keep `post_slug` and identify the subscription by `target_id` (the row is
--- soft-unsubscribed, never deleted, so its address is still there).
+-- keep `from`/`to`, the ban rows keep `from_comment`, all of them identify the
+-- user by `target_id`, and the subscription rows keep `post_slug` and identify
+-- the subscription by `target_id` (the row is soft-unsubscribed, never deleted,
+-- so its address is still there).
 --
 -- json_remove is a SQLite JSON1 function. D1 ships JSON1, verified against the
 -- local D1 engine before this migration was written. It returns the document
@@ -37,7 +38,8 @@ UPDATE audit_log
 UPDATE audit_log
    SET meta = json_remove(meta, '$.target_name')
  WHERE action IN ('role.grant_mod', 'role.revoke_mod',
-                  'role.grant_admin', 'role.revoke_admin')
+                  'role.grant_admin', 'role.revoke_admin',
+                  'ban', 'unban')
    AND meta IS NOT NULL
    AND json_valid(meta)
    AND json_extract(meta, '$.target_name') IS NOT NULL;
