@@ -278,6 +278,19 @@ describe("GET /admin/api/users/:id/export", () => {
 
 	// Admin-only: a mod moderates comments, but handing out a personal-data dump
 	// is the operator's call.
+	// `subscriptions.email` is always written lowercased, but `users.email` keeps
+	// whatever casing the OAuth provider sent. A case-sensitive `=` between them
+	// drops the subject's subscriptions out of a legal deliverable, silently.
+	it("matches subscriptions when the provider sent mixed-case email", async () => {
+		sqlite
+			.prepare(`UPDATE users SET email = 'Subject@Example.com' WHERE id = ?`)
+			.run(SUBJECT_ID);
+
+		const body = await exportBody();
+
+		expect(body.subscriptions).toHaveLength(1);
+	});
+
 	it("rejects a mod", async () => {
 		const res = await fetchExport({ sid: MOD_SID });
 
