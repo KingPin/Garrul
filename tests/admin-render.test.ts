@@ -16,6 +16,7 @@ import {
 } from "../src/admin-ui/pages/subscriptions";
 import { renderOperator } from "../src/admin-ui/pages/operator";
 import type { RetentionStats } from "../src/db/ip-retention";
+import type { AuditRetentionStats } from "../src/db/audit-retention";
 import { renderSettings } from "../src/admin-ui/pages/settings";
 import { MAX_XML_BYTES } from "../src/lib/disqus-import";
 import { renderDashboard } from "../src/admin-ui/pages/dashboard";
@@ -459,11 +460,20 @@ const retentionOff: RetentionStats = {
 	ghosts_total: 0,
 };
 
+const auditRetentionOff: AuditRetentionStats = {
+	retention_days: 0,
+	enabled: false,
+	pending: 0,
+	total: 0,
+	oldest: null,
+};
+
 describe("renderOperator", () => {
 	it("hides the seed card and explains the gate when seed_demo_allowed=false", () => {
 		const html = renderOperator({
 			rerender: { current_version: 1, up_to_date: 10, stale: 0, oldest_version: null },
 			retention: retentionOff,
+			audit_retention: auditRetentionOff,
 			seed_demo_allowed: false,
 		});
 		expect(html).toContain("Disabled in production");
@@ -474,6 +484,7 @@ describe("renderOperator", () => {
 		const noop = renderOperator({
 			rerender: { current_version: 2, up_to_date: 100, stale: 0, oldest_version: null },
 			retention: retentionOff,
+			audit_retention: auditRetentionOff,
 			seed_demo_allowed: true,
 		});
 		expect(noop).toContain("all comments are at the current version");
@@ -482,6 +493,7 @@ describe("renderOperator", () => {
 		const work = renderOperator({
 			rerender: { current_version: 2, up_to_date: 100, stale: 7, oldest_version: 1 },
 			retention: retentionOff,
+			audit_retention: auditRetentionOff,
 			seed_demo_allowed: true,
 		});
 		expect(work).toContain(">Run rerender<");
@@ -492,6 +504,7 @@ describe("renderOperator", () => {
 		const html = renderOperator({
 			rerender: { current_version: 1, up_to_date: 10, stale: 0, oldest_version: null },
 			retention: retentionOff,
+			audit_retention: auditRetentionOff,
 			seed_demo_allowed: false,
 		});
 		const mb = Math.floor(MAX_XML_BYTES / (1024 * 1024));

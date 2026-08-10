@@ -774,6 +774,17 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
 		example: "0",
 		addedIn: "2.1.0",
 	},
+	{
+		name: "AUDIT_LOG_RETENTION_DAYS",
+		kind: "var",
+		required: false,
+		group: "Privacy",
+		hint: "delete audit_log rows after N days (0 = keep forever)",
+		description:
+			"Delete `audit_log` rows once they are this many days old, swept by the cron. `0` = off (the default — an upgrade never starts deleting an operator's moderation history on its own). Range `[0, 3650]`, and the sweep refuses to run below **30** days, a higher floor than the IP sweep's because a moderation record stays operationally useful far longer than a hashed IP. **Irreversible** — a pruned audit row is gone, and with it the answer to \"why is this user banned\". Whole rows are deleted rather than redacted: an audit entry with the actor removed reads as evidence while proving nothing. See `docs/compliance/data-inventory.md`.",
+		example: "0",
+		addedIn: "2.6.0",
+	},
 ];
 
 /** Secrets, in registry order. */

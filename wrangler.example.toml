@@ -85,6 +85,13 @@ OAUTH_CALLBACK_BASE = "https://comments.example.com"
 # the sweep refuses to run below 7 days. Anonymous ghost users.provider_id is
 # never swept — that column IS the identity. See docs/ip-hashing.md.
 # IP_HASH_RETENTION_DAYS = "0"
+#
+# Delete audit_log rows once they are N days old (swept by the same cron).
+# 0 = off (default): moderation history is kept indefinitely. IRREVERSIBLE, and
+# the sweep refuses to run below 30 days — a higher floor than the IP one
+# because a moderation record stays useful for months. Whole rows go rather than
+# being redacted. See docs/compliance/data-inventory.md.
+# AUDIT_LOG_RETENTION_DAYS = "0"
 # Optional: Cloudflare account ID — paired with the CF_API_TOKEN secret to
 # enable the /admin/usage analytics page.
 # CF_ACCOUNT_ID = "0123abcd..."

@@ -1,5 +1,5 @@
 {
-  "version": "2.5.0",
+  "version": "2.6.0",
   "minPreviousVersion": "1.0.0",
   "renderer": {
     "version": 2,
@@ -277,6 +277,11 @@
       "name": "IP_HASH_RETENTION_DAYS",
       "required": false,
       "addedIn": "2.1.0"
+    },
+    {
+      "name": "AUDIT_LOG_RETENTION_DAYS",
+      "required": false,
+      "addedIn": "2.6.0"
     }
   ],
   "kvNamespaces": [

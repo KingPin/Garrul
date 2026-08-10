@@ -1,11 +1,14 @@
 import type { RerenderStats } from "../../db/rerender";
 import type { RetentionStats } from "../../db/ip-retention";
 import { MIN_RETENTION_DAYS } from "../../db/ip-retention";
+import type { AuditRetentionStats } from "../../db/audit-retention";
+import { MIN_AUDIT_RETENTION_DAYS } from "../../db/audit-retention";
 import { MAX_XML_BYTES } from "../../lib/disqus-import";
 
 export type OperatorData = {
 	rerender: RerenderStats;
 	retention: RetentionStats;
+	audit_retention: AuditRetentionStats;
 	seed_demo_allowed: boolean;
 };
 
@@ -102,8 +105,85 @@ const retentionCard = (r: RetentionStats): string => {
 </div>`;
 };
 
+const auditRetentionCard = (r: AuditRetentionStats): string => {
+	// The oldest surviving row is the number that makes the setting concrete: an
+	// operator deciding on a window wants to know they're sitting on four years
+	// of history, not just that the table has 12,000 rows in it.
+	const oldest =
+		r.oldest === null
+			? `<p class="muted">The audit log is empty.</p>`
+			: `<p class="muted">Rows: <strong>${r.total}</strong>, oldest dated
+	     <strong>${new Date(r.oldest).toISOString().slice(0, 10)}</strong>.</p>`;
+
+	if (!r.enabled) {
+		const reason =
+			r.retention_days === 0
+				? `Off. Moderation history is kept indefinitely.`
+				: `Set to <code>${r.retention_days}</code> day(s), which is below the
+	     ${MIN_AUDIT_RETENTION_DAYS}-day floor — the sweep refuses to run rather
+	     than shred months of moderation history on a typo. Raise it to
+	     ${MIN_AUDIT_RETENTION_DAYS} or more, or set it to 0 to keep everything
+	     deliberately.`;
+		return `
+<div class="card">
+  <h3>Audit-log retention</h3>
+  <p class="muted">${reason}
+    Change it on <a href="/admin/settings">Settings</a> (or via
+    <code>AUDIT_LOG_RETENTION_DAYS</code>).</p>
+  ${oldest}
+</div>`;
+	}
+
+	return `
+<div class="card" x-data="{
+  busy: false,
+  deleted: 0,
+  done: false,
+  error: null,
+  step(first) {
+    if (this.busy) return;
+    if (first &amp;&amp; !confirm('Delete audit-log rows older than ${r.retention_days} days? This cannot be undone.')) return;
+    this.busy = true; this.error = null;
+    return fetch('/admin/api/ops/audit-retention', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    }).then(async r => {
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'failed');
+      this.deleted += j.deleted;
+      this.busy = false;
+      if (j.more) return this.step(false);
+      this.done = true;
+    }).catch(e => { this.error = e.message; this.busy = false; });
+  }
+}">
+  <h3>Audit-log retention</h3>
+  <p class="muted">Window: <strong>${r.retention_days}</strong> days. The cron
+    prunes automatically; this button just drains the backlog now instead of
+    over the next few ticks. <strong>Irreversible</strong> — a pruned row is
+    gone, and with it the record of why an action was taken.</p>
+  ${oldest}
+  <p class="muted">Past the window right now: <strong>${r.pending}</strong>.</p>
+  ${
+		r.pending > 0
+			? `<button :disabled="busy" @click="step(true)">
+    <span x-show="!busy &amp;&amp; !done">Prune now</span>
+    <span x-show="busy">Pruning…</span>
+    <span x-show="!busy &amp;&amp; done">Done</span>
+  </button>
+  <div class="muted" style="margin-top:0.5rem" x-show="deleted">
+    Deleted <span x-text="deleted"></span> row(s)
+  </div>
+  <p style="color:var(--bad)" x-show="error" x-text="error"></p>`
+			: `<p class="muted">Nothing to do — the cron has already pruned everything
+    past the window.</p>`
+	}
+</div>`;
+};
+
 export const renderOperator = (data: OperatorData): string => {
-	const { rerender, retention, seed_demo_allowed } = data;
+	const { rerender, retention, audit_retention, seed_demo_allowed } = data;
 	const seedCard = seed_demo_allowed
 		? `
 <div class="card" x-data="{
@@ -195,6 +275,7 @@ export const renderOperator = (data: OperatorData): string => {
 </div>
 
 ${retentionCard(retention)}
+${auditRetentionCard(audit_retention)}
 
 ${seedCard}
 
