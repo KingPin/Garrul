@@ -354,6 +354,22 @@ describe("POST /admin/api/users/:id/erase — linked records", () => {
 		).toBe(1);
 	});
 
+	// `subscriptions.email` is always written lowercased; `users.email` keeps the
+	// casing the OAuth provider sent, and the column has no COLLATE NOCASE. A raw
+	// `=` between them leaves the subscription behind after a *completed*
+	// erasure — the mail keeps arriving and the audit row reports 0 deleted.
+	it("removes subscriptions when the provider sent a mixed-case email", async () => {
+		sqlite
+			.prepare(`UPDATE users SET email = ? WHERE id = ?`)
+			.run("Target@Example.com", TARGET_ID);
+
+		const res = await erase({ confirm: "ERASE", redact_bodies: false });
+		expect(res.status).toBe(200);
+		expect(
+			count("SELECT COUNT(*) AS n FROM subscriptions WHERE email = ?", TARGET_EMAIL),
+		).toBe(0);
+	});
+
 	it("removes the Telegram link", async () => {
 		await erase({ confirm: "ERASE", redact_bodies: false });
 		expect(

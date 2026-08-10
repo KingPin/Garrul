@@ -1461,7 +1461,13 @@ export const eraseUserData = async (
 		now: number;
 	},
 ): Promise<UserErasureCounts> => {
-	const { id, email, placeholderName, redactBodies, now } = args;
+	const { id, placeholderName, redactBodies, now } = args;
+	// Lowercased for the same reason as `exportUserData`: subscription rows are
+	// written through `email.toLowerCase()` while `users.email` keeps the OAuth
+	// provider's casing, and the column has no COLLATE NOCASE. Matching raw left
+	// the subscription alive after a completed erasure — mail kept arriving and
+	// the audit row reported 0 deleted, so nothing surfaced the miss.
+	const email = args.email?.toLowerCase() ?? null;
 	// Two statements are conditional, so each one's position in the batch is
 	// captured as it's queued rather than counted out afterwards — the row counts
 	// below have to survive someone inserting a statement in the middle.
@@ -1618,7 +1624,13 @@ export const exportUserData = async (
 
 	// The subject's own address, read from the row we just fetched — an erased
 	// user has email NULL, which correctly matches no subscriptions.
-	const email = user.email;
+	//
+	// Lowercased to match: `subscriptions.email` is always written through
+	// `email.toLowerCase()`, while `users.email` keeps whatever casing the OAuth
+	// provider sent. The column carries no COLLATE NOCASE, so a raw `=` between
+	// the two silently returns nothing for anyone whose provider capitalized
+	// their address — an access response short a table, with no error to notice.
+	const email = user.email?.toLowerCase() ?? null;
 
 	return {
 		export_version: EXPORT_VERSION,
