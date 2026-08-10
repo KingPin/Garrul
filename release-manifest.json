@@ -340,7 +340,8 @@
     "0015_comment_depth.sql",
     "0016_user_erasure.sql",
     "0017_subscriptions_email_index.sql",
-    "0018_email_send_budget.sql"
+    "0018_email_send_budget.sql",
+    "0019_audit_log_pii.sql"
   ],
   "breakingChanges": [
     {
