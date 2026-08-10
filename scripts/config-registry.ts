@@ -713,7 +713,7 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
 		group: "Display & pagination",
 		hint: "replies at this depth start collapsed (0 = never)",
 		description:
-			"Replies nested at this depth or deeper start collapsed in the widget. `0` = never auto-collapse. Defaults **3**; clamped to `[0, 4]` (the tree depth cap).",
+			"Replies nested at this depth or deeper start collapsed in the widget. `0` = never auto-collapse. Defaults **3**; clamped to `[0, 4]` (the display flatten threshold — *not* the 8-level reply cap).",
 		example: "3",
 		addedIn: "1.10.0",
 	},

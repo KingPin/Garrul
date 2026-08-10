@@ -307,11 +307,18 @@ see AGENTS-OPERATE.md §5) control the volume:
   never auto-collapse.
 
 - **Reply depth cap.** A reply nested more than **8** levels deep is rejected
-  server-side with HTTP 400 and `err.parent.too_deep`. The widget already hides
-  the reply button below the flatten threshold, so this is invisible in normal
-  use — it exists because an unbounded chain made the whole thread
-  un-renderable. Existing deeper rows (from a Disqus import, say) still render;
-  they just can't be replied to.
+  server-side with HTTP 400 and `err.parent.too_deep`. It exists because an
+  unbounded chain made the whole thread un-renderable. Each node in the list
+  response carries a `can_reply` boolean computed from that same rule, and the
+  widget shows its Reply button on that flag — so the UI dead-ends exactly where
+  the server does, and never offers a reply that would 400. Existing deeper rows
+  (from a Disqus import, say) still render; they arrive with `can_reply: false`.
+
+  Note this is independent of the **display** flatten threshold of 4 levels:
+  replies past it stop indenting and render flat with an `@name` prefix, but
+  stay repliable up to the cap. Do not infer reply eligibility from a node's
+  `depth` — past the flatten point every node reports `depth: 4` regardless of
+  how deep it actually is.
 
 Reply collapsing is **purely client-side** — the replies arrive in the single
 list response and the widget folds them. There is no `data-*` per-page
