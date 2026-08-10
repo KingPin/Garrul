@@ -255,6 +255,17 @@ describe("GET /admin/api/users/:id/export", () => {
 		expect(res.headers.get("cache-control")).toBe("no-store");
 	});
 
+	// A raw `new Response` would drop everything the admin middleware prepared
+	// via `c.header()`, shipping the export with no CSP and no nosniff.
+	it("keeps the admin middleware security headers", async () => {
+		const res = await fetchExport();
+
+		expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+		expect(res.headers.get("x-frame-options")).toBe("DENY");
+		expect(res.headers.get("referrer-policy")).toBe("no-referrer");
+		expect(res.headers.get("content-security-policy")).toBeTruthy();
+	});
+
 	// Counts, never values — an audit row echoing the payload would recreate the
 	// personal data it exists to audit.
 	it("audits the export without recording what was in it", async () => {
