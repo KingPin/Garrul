@@ -47,6 +47,7 @@ import {
 	deleteSettings,
 	deleteTelegramLinkByUser,
 	deleteWebhookEndpoint,
+	exportUserData,
 	getComment,
 	getTelegramLinkByUser,
 	getPost,
@@ -1675,6 +1676,56 @@ admin.post("/api/users/:id", async (c) => {
 	});
 	if (!result.ok) return c.json({ error: result.error }, 404);
 	return c.json({ ok: true, id: result.id, banned: result.banned });
+});
+
+/**
+ * Everything the instance holds about one user, as a JSON download — the
+ * mechanism behind a GDPR Art. 15 (access) / Art. 20 (portability) request.
+ * See `docs/compliance/dsar-runbook.md` for the process around it.
+ *
+ * A GET, like every other admin read, so it carries no `Origin` CSRF gate and
+ * an operator can save it straight from the browser. That is safe *because* it
+ * is a read: `requireAdmin` is the only thing standing between a caller and the
+ * file, and a cross-site GET can't exfiltrate the body to another origin.
+ *
+ * The file contains the subject's `ip_hash` and comment bodies in the clear.
+ * It is a personal-data export by construction — handle the download itself as
+ * carefully as a D1 dump.
+ */
+admin.get("/api/users/:id/export", async (c) => {
+	const user = await requireAdmin(c);
+	if (user instanceof Response) return user;
+	const id = c.req.param("id");
+	const data = await exportUserData(c.env.DB, id);
+	if (!data) return c.json({ error: "not_found" }, 404);
+
+	// Record that an export happened, never what was in it — an audit row that
+	// echoed the payload would recreate the personal data it is auditing.
+	await adminInsertAudit(c.env.DB, {
+		admin_id: user.id,
+		action: "user.export",
+		target_kind: "user",
+		target_id: id,
+		reason: null,
+		meta: {
+			comments: data.comments.length,
+			reports_filed: data.reports_filed.length,
+			subscriptions: data.subscriptions.length,
+		},
+	});
+
+	// The id is a ULID in practice, but it arrives from the URL — clamp it to
+	// the safe set rather than trusting that, so nothing can smuggle a quote or
+	// a newline into the header.
+	const safeId = id.replace(/[^A-Za-z0-9_-]/g, "") || "user";
+	return new Response(JSON.stringify(data, null, 2), {
+		headers: {
+			"content-type": "application/json; charset=utf-8",
+			"content-disposition": `attachment; filename="garrul-export-${safeId}.json"`,
+			// Never let an export sit in a shared cache.
+			"cache-control": "no-store",
+		},
+	});
 });
 
 /**

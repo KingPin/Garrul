@@ -48,6 +48,10 @@ const userHeader = (d: AdminUserDetail, viewer: User): string => {
 	// matched on). Offering a button that can only 400 is worse than no button.
 	const canErase =
 		viewer.role === "admin" && viewer.id !== u.id && u.role !== "admin";
+	// Export has none of erasure's guards: it's a read, and an access request can
+	// legitimately concern your own account or another admin's. Admin-only all the
+	// same — the file is a personal-data dump.
+	const canExport = viewer.role === "admin";
 	return `
 <div class="user-head">
   ${avatar}
@@ -67,8 +71,32 @@ const userHeader = (d: AdminUserDetail, viewer: User): string => {
   </div>
 </div>
 ${roleControls}
+${canExport ? exportPanel(u.id) : ""}
 ${canErase ? erasePanel() : ""}`;
 };
+
+/**
+ * Art. 15 / Art. 20 response, as a file. A plain link rather than a fetch: the
+ * route answers with `Content-Disposition: attachment`, so the browser's own
+ * download path is both simpler and the one that won't hold a personal-data
+ * payload in a JS variable.
+ */
+const exportPanel = (id: string): string => `
+<details style="margin-top:1rem;border-top:1px solid #e5e7eb;padding-top:0.75rem">
+  <summary style="cursor:pointer">Export personal data…</summary>
+  <p class="muted">
+    Everything the instance holds about this account, as JSON: profile,
+    comments (including stored IP hashes and user agents), reports they filed,
+    subscriptions for their address, Telegram link, votes and reactions, spam
+    classifications, and moderation actions taken against them. Which moderator
+    acted is omitted — that's a third party's data.
+  </p>
+  <p class="muted">
+    The file is a personal-data export in the clear. Treat the download like a
+    database dump, and confirm the requester's identity before sending it.
+  </p>
+  <p><a href="/admin/api/users/${encodeURIComponent(id)}/export">Download JSON</a></p>
+</details>`;
 
 /**
  * Erasure is irreversible, so the control is deliberately slow: it stays folded

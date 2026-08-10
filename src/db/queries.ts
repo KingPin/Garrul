@@ -1550,6 +1550,137 @@ export const eraseUserData = async (
 };
 
 /**
+ * Everything the instance holds about one data subject, for a GDPR Art. 15
+ * (access) / Art. 20 (portability) response. Read-only counterpart to
+ * `eraseUserData` — if you add a table that stores personal data, it belongs in
+ * both or the pair silently drifts apart.
+ *
+ * Two shaping decisions are deliberate, not oversights:
+ *
+ *   - **`ip_hash` and `user_agent` ARE included.** They are the subject's own
+ *     data, so withholding them would make the export a lie. The hash is a
+ *     pseudonym only against someone without `IP_HASH_SECRET`; see
+ *     `docs/ip-hashing.md` before deciding how to transmit the file.
+ *   - **`audit_log.admin_id` is NOT included.** Moderation actions taken against
+ *     the subject are their data, but *which moderator* took them is a third
+ *     party's, and Art. 15(4) does not require disclosing it. Only
+ *     action/reason/timestamp are exported. `reason` is a free-text moderator
+ *     note — an operator should skim it before releasing the file.
+ *
+ * Subscriptions are matched by address rather than by user id because that is
+ * how the table is keyed — an anonymous subscriber has no account at all.
+ */
+export type UserDataExport = {
+	/** Schema version of this envelope, so a consumer can tell shapes apart. */
+	export_version: number;
+	exported_at: number;
+	user: User;
+	comments: Comment[];
+	reports_filed: Report[];
+	subscriptions: Subscription[];
+	telegram_links: TelegramLink[];
+	votes: { comment_id: string; value: number; created_at: number }[];
+	reactions: { comment_id: string; kind: string; created_at: number }[];
+	page_votes: { post_slug: string; value: number; created_at: number }[];
+	page_reactions: { post_slug: string; kind: string; created_at: number }[];
+	/** Spam classifications recorded against their comments. */
+	spam_verdicts: {
+		comment_id: string;
+		source: string;
+		verdict: string;
+		score: number | null;
+		created_at: number;
+	}[];
+	/** Moderation actions targeting them, with the acting admin omitted. */
+	moderation_actions: {
+		action: string;
+		reason: string | null;
+		created_at: number;
+	}[];
+};
+
+export const EXPORT_VERSION = 1;
+
+export const exportUserData = async (
+	db: D1Database,
+	userId: string,
+): Promise<UserDataExport | null> => {
+	const user = await getUser(db, userId);
+	if (!user) return null;
+
+	const rows = async <T>(sql: string, ...binds: unknown[]): Promise<T[]> => {
+		const result = await db
+			.prepare(sql)
+			.bind(...binds)
+			.all<T>();
+		return result.results ?? [];
+	};
+
+	// The subject's own address, read from the row we just fetched — an erased
+	// user has email NULL, which correctly matches no subscriptions.
+	const email = user.email;
+
+	return {
+		export_version: EXPORT_VERSION,
+		exported_at: Date.now(),
+		user,
+		comments: await rows<Comment>(
+			`SELECT * FROM comments WHERE user_id = ? ORDER BY created_at`,
+			userId,
+		),
+		reports_filed: await rows<Report>(
+			`SELECT * FROM reports WHERE reporter_user_id = ? ORDER BY created_at`,
+			userId,
+		),
+		subscriptions: email
+			? await rows<Subscription>(
+					`SELECT * FROM subscriptions WHERE email = ? ORDER BY created_at`,
+					email,
+				)
+			: [],
+		telegram_links: await rows<TelegramLink>(
+			`SELECT * FROM telegram_links WHERE user_id = ?`,
+			userId,
+		),
+		votes: await rows(
+			`SELECT comment_id, value, created_at FROM votes
+			  WHERE user_id = ? ORDER BY created_at`,
+			userId,
+		),
+		reactions: await rows(
+			`SELECT comment_id, kind, created_at FROM reactions
+			  WHERE user_id = ? ORDER BY created_at`,
+			userId,
+		),
+		page_votes: await rows(
+			`SELECT post_slug, value, created_at FROM page_votes
+			  WHERE user_id = ? ORDER BY created_at`,
+			userId,
+		),
+		page_reactions: await rows(
+			`SELECT post_slug, kind, created_at FROM page_reactions
+			  WHERE user_id = ? ORDER BY created_at`,
+			userId,
+		),
+		spam_verdicts: await rows(
+			`SELECT v.comment_id, v.source, v.verdict, v.score, v.created_at
+			   FROM spam_verdicts v
+			   JOIN comments c ON c.id = v.comment_id
+			  WHERE c.user_id = ?
+			  ORDER BY v.created_at`,
+			userId,
+		),
+		// admin_id is deliberately absent from the projection — see the note above.
+		moderation_actions: await rows(
+			`SELECT action, reason, created_at FROM audit_log
+			  WHERE target_kind = 'user' AND target_id = ?
+			  ORDER BY created_at`,
+			userId,
+		),
+	};
+};
+
+/**
  * Distinct post slugs a user has commented on. Used to bust the cached first
  * page of each affected thread after an erasure — the author name (and possibly
  * the bodies) just changed on pages that are served from the edge cache.
@@ -2015,6 +2146,7 @@ export const ADMIN_ACTIONS = [
 	"ban",
 	"unban",
 	"user.erase",
+	"user.export",
 	"rerender",
 	"seed-demo",
 	"sub.unsubscribe",
