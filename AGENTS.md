@@ -556,6 +556,9 @@ What's stored when someone comments:
   keyed with the operator's `IP_HASH_SECRET`. The raw IP is never
   logged or persisted; see `src/lib/ip-hash.ts` for the single entry
   point.
+- The **`User-Agent` header** as sent, alongside the hashed IP, for spam
+  and abuse investigation. Cleared by the same
+  `IP_HASH_RETENTION_DAYS` sweep and by user erasure.
 - For email-notification subscribers: the email address and an opaque
   unsubscribe token.
 
@@ -574,6 +577,21 @@ point integrators at the operator's privacy page. A ready-to-edit
 template lives at `docs/privacy-policy.template.md` in this repo —
 the operator publishes a filled-in version on their own site and
 links to it from the embed page's footer or `/privacy` route.
+
+**Compliance paperwork**, for an operator who needs more than a policy
+template, is in `docs/compliance/`: a personal-data inventory that maps
+one-to-one onto a GDPR Art. 30 record, the data-subject rights mapped to
+the mechanisms that serve them, the CCPA/CPRA category vocabulary, a
+subprocessor register, and a runbook for answering an access or erasure
+request. It describes what the software does; the operator is the
+controller and owns the legal call. Garrul is not "GDPR compliant" —
+compliance is a property of a deployment.
+
+One thing that lands on the **host page**, not the widget: a
+notice-at-collection. The widget renders no privacy notice of its own, so
+an operator relying on CCPA § 1798.100(a) or GDPR Art. 13 needs a line
+near the comment form linking to their policy. Worth mentioning when you
+wire up an embed.
 
 ## 10. Troubleshooting
 
@@ -683,6 +701,8 @@ both `data-api` and the `<script src>`.
   (deploy, secrets, OAuth setup) belong in `AGENTS-OPERATE.md` and
   `docs/troubleshooting.md`.
 - `docs/THEMING.md` — full CSS variable reference + stability policy.
+- `docs/compliance/` — personal-data inventory, GDPR and CCPA/CPRA
+  guides, subprocessor register, DSAR runbook. Operator-facing; see §9.
 - `examples/` — runnable per-framework starter projects
   (`astro/`, `hugo/`, `jekyll/`, `wordpress/`, `plain-html/`, `iframe/`).
 - `AGENTS-OPERATE.md` — operator-side guide. Read this too if you are

@@ -202,3 +202,12 @@ policy around the two columns the window covers rather than all three.
   reader-facing wording, which should match this page.
 - [`../AGENTS-OPERATE.md`](../AGENTS-OPERATE.md) §5 for the secret,
   §11 for backups and export.
+- [`compliance/data-inventory.md`](compliance/data-inventory.md) — the three
+  columns in the context of every other store that holds personal data.
+- [`compliance/dsar-runbook.md`](compliance/dsar-runbook.md) — read before
+  sending anyone a per-user export. It carries their `comments.ip_hash`
+  values, so against a recipient who also has `IP_HASH_SECRET` it is an IP
+  disclosure, not a hash disclosure.
+- [`compliance/gdpr.md`](compliance/gdpr.md) — why a hash is
+  pseudonymisation and not anonymisation, and what that costs you under
+  Recital 26.
