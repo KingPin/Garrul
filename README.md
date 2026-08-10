@@ -209,12 +209,25 @@ Garrul stores:
 
 - Comment bodies + author names
 - Email addresses (OAuth users, and subscribers who opted in to digests)
-- HMAC-SHA-256 hashed IP addresses (never the raw IP)
+- HMAC-SHA-256 hashed IP addresses (never the raw IP) and user-agent strings
 - Provider IDs and avatar URLs for OAuth users
+
+No analytics, no tracking pixels, no advertising, no Gravatar. One
+strictly-necessary cookie. Data-subject requests are served by a per-user
+JSON export and an admin erase panel, both on `/admin/users/<id>`.
 
 To deploy a public instance, copy `docs/privacy-policy.template.md` and
 `docs/tos.template.md`, fill in your contact details, and link them
 from your blog footer.
+
+Running an instance European or Californian readers comment on makes **you**
+the controller of that data, not this project.
+[`docs/compliance/`](docs/compliance/) has the paperwork that follows from
+that: a personal-data inventory that maps onto a GDPR Art. 30 record, the
+data-subject rights mapped to the mechanisms that serve them, the CCPA/CPRA
+categories, a subprocessor register, and a runbook for answering a request.
+Not legal advice, and it does not claim Garrul "is GDPR compliant" —
+compliance is a property of a deployment.
 
 ## Troubleshooting
 

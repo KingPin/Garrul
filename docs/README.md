@@ -43,6 +43,21 @@ Fill in your contact details and link these from your site:
 | [`privacy-policy.template.md`](privacy-policy.template.md) | Template privacy policy — what Garrul collects, retention, cookies, deletion requests. |
 | [`tos.template.md`](tos.template.md) | Template terms of service — acceptable use, content ownership, moderation. |
 
+## Compliance
+
+You are the controller of the data in your instance. These describe what the
+software does so you can fill in your own paperwork; none of it is legal advice,
+and none of it claims Garrul "is GDPR compliant" — compliance is a property of a
+deployment, not of a codebase.
+
+| Doc | Covers |
+| --- | --- |
+| [`compliance/data-inventory.md`](compliance/data-inventory.md) | **Start here.** Every store that holds personal data: fields, purpose, lawful basis, retention, whether erasure reaches it, whether the export covers it. Maps onto a GDPR Art. 30 record. |
+| [`compliance/gdpr.md`](compliance/gdpr.md) | Controller/processor split, lawful basis per purpose, and Arts. 15/16/17/20/21/7/8/30/32/33 mapped to the mechanisms that serve them. |
+| [`compliance/ccpa.md`](compliance/ccpa.md) | The § 1798.140(v) category vocabulary applied to real fields, sensitive-PI status, the "we do not sell or share" position with its reasoning, verification and deadlines. |
+| [`compliance/subprocessors.md`](compliance/subprocessors.md) | Who else receives data, when: Cloudflare always, Resend/Akismet/Workers AI/Telegram/webhooks only if you enable them. Ends with a Cloudflare-only minimal-transfer configuration. |
+| [`compliance/dsar-runbook.md`](compliance/dsar-runbook.md) | What to do when a request lands: verify, locate, respond — per request type, with the deadlines. |
+
 ## Design notes
 
 Not shipped. Read as intent, not as documentation of current behavior.
