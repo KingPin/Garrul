@@ -178,13 +178,20 @@ beforeEach(() => {
 
 afterEach(() => uninstallMockCaches());
 
-const fetchExport = (opts: { sid?: string; id?: string } = {}) => {
-	const { sid = ADMIN_SID, id = SUBJECT_ID } = opts;
+const fetchExport = (
+	opts: { sid?: string; id?: string; fetchSite?: string } = {},
+) => {
+	const { sid = ADMIN_SID, id = SUBJECT_ID, fetchSite } = opts;
 	return new Hono<{ Bindings: Bindings }>()
 		.route("/admin", admin)
 		.request(
 			`/admin/api/users/${id}/export`,
-			{ headers: { cookie: `__Host-garrul_sess=${sid}` } },
+			{
+				headers: {
+					cookie: `__Host-garrul_sess=${sid}`,
+					...(fetchSite ? { "sec-fetch-site": fetchSite } : {}),
+				},
+			},
 			env as unknown as Record<string, unknown>,
 			execCtx,
 		);
@@ -300,6 +307,22 @@ describe("GET /admin/api/users/:id/export", () => {
 		const body = await exportBody();
 
 		expect(body.subscriptions).toHaveLength(1);
+	});
+
+	// This GET writes an audit row, and admin GETs carry no Origin gate, so a
+	// cross-site page holding the operator's SameSite=None cookie could spend
+	// D1 writes and forge audit rows even though it can't read the response.
+	it("rejects a cross-site caller before touching the database", async () => {
+		const res = await fetchExport({ fetchSite: "cross-site" });
+
+		expect(res.status).toBe(403);
+		expect(lastAudit()?.action).not.toBe("user.export");
+	});
+
+	it.each(["same-origin", "none"])("allows a %s caller", async (fetchSite) => {
+		const res = await fetchExport({ fetchSite });
+
+		expect(res.status).toBe(200);
 	});
 
 	it("rejects a mod", async () => {

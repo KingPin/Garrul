@@ -1709,6 +1709,17 @@ admin.post("/api/users/:id", async (c) => {
  * carefully as a D1 dump.
  */
 admin.get("/api/users/:id/export", async (c) => {
+	// Unlike every other admin GET this one *writes* (the audit row below), and
+	// admin GETs carry no `Origin` gate. Session cookies are `SameSite=None`, so
+	// a page on another origin can fire this with the operator's credentials —
+	// it can't read the response, but it can spend D1 writes and forge audit
+	// rows. `Sec-Fetch-Site` is the cheap gate: the admin UI reaches this by a
+	// same-origin `<a>`, and a saved bookmark sends `none`. Absent header means
+	// a browser too old to send it (or a CLI), which the `Origin` gate elsewhere
+	// can't see either — fail open there rather than lock out curl.
+	if (c.req.header("sec-fetch-site") === "cross-site") {
+		return c.json({ error: "cross_site_forbidden" }, 403);
+	}
 	const user = await requireAdmin(c);
 	if (user instanceof Response) return user;
 	const id = c.req.param("id");
