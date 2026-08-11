@@ -33,10 +33,22 @@ import { DEFAULT_LOCALE, LOCALES, isAutoSelectable } from "./index";
  */
 export const AUTO_LOCALE = "auto";
 
-/** Case-insensitive tag → canonical registry key. */
-const CANONICAL = new Map<string, string>(
-	Object.keys(LOCALES).map((tag) => [tag.toLowerCase(), tag]),
-);
+/**
+ * Case-insensitive tag → canonical registry key.
+ *
+ * Scanned rather than memoized into a Map. The registry holds a handful of
+ * entries, so the scan is free next to the KV read that resolves the operator's
+ * default — and a Map built at module load is a snapshot that silently goes
+ * stale for anything that registers a locale afterwards, which is exactly what
+ * a test harness does. A lookup that can disagree with the registry it is
+ * derived from is not worth the microseconds.
+ */
+const canonical = (tag: string): string | undefined => {
+	for (const key of Object.keys(LOCALES)) {
+		if (key.toLowerCase() === tag) return key;
+	}
+	return undefined;
+};
 
 /** BCP-47's practical ceiling; anything longer is junk, not a language tag. */
 const MAX_TAG_LENGTH = 35;
@@ -52,10 +64,10 @@ export const matchLocale = (raw: string | null | undefined): string | undefined 
 	if (typeof raw !== "string") return undefined;
 	const tag = raw.trim().toLowerCase();
 	if (!tag || tag.length > MAX_TAG_LENGTH) return undefined;
-	const exact = CANONICAL.get(tag);
+	const exact = canonical(tag);
 	if (exact) return exact;
 	const primary = tag.split("-")[0];
-	return primary ? CANONICAL.get(primary) : undefined;
+	return primary ? canonical(primary) : undefined;
 };
 
 export interface LocaleSources {

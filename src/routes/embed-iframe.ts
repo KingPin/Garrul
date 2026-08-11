@@ -20,6 +20,16 @@
  *   ?title=...                        — passed through to data-title
  *   ?url=...                          — passed through to data-url
  *   ?theme=light|dark|auto            — host-page theme hint
+ *   ?lang=de                          — locale for the widget inside the frame.
+ *     Lands on both <html lang> and data-lang: the first is what assistive tech
+ *     and the browser's own UI read, the second is what the widget negotiates
+ *     with. Unvalidated here on purpose — the server whitelists it against the
+ *     locale registry when the widget asks for its strings, and an unknown tag
+ *     falls back to English there. This route only has to keep it from escaping
+ *     its attribute, which escapeAttr does.
+ *
+ * The page is cached for 5 minutes, which is safe because every one of these
+ * params is part of the URL and therefore part of the cache key.
  *
  * Strings flowing into the HTML body are escaped (JSON.stringify for JS
  * literals, attribute escape for data-* values) so query params can't
@@ -349,6 +359,7 @@ iframe.get("/:slug", (c) => {
 	const title = c.req.query("title") ?? "";
 	const pageUrl = c.req.query("url") ?? "";
 	const theme = c.req.query("theme") ?? "auto";
+	const lang = c.req.query("lang") ?? "";
 
 	// The postMessage target for the height protocol. Must be allowlisted —
 	// see safeParentOrigin. Callers pass ?parent_origin=https://yourblog.example.
@@ -374,7 +385,7 @@ iframe.get("/:slug", (c) => {
 	].join("; ");
 
 	const html = `<!doctype html>
-<html lang="en">
+<html lang="${escapeAttr(lang || "en")}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -392,6 +403,7 @@ iframe.get("/:slug", (c) => {
   data-title="${escapeAttr(title)}"
   data-url="${escapeAttr(pageUrl)}"
   data-theme="${escapeAttr(theme)}"
+  data-lang="${escapeAttr(lang)}"
 ></div>
 <script src="${escapeAttr(apiBase)}/embed.js"></script>
 <script>

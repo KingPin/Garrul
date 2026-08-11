@@ -34,14 +34,43 @@ import { loadErrorMessage } from "./load-error";
 import { watchForSignIn } from "./auth-recovery";
 import { autoSizeTextarea } from "./autosize";
 import { createTurnstileGate, type TurnstileGate } from "./turnstile-gate";
-import { makeS, type WidgetKey } from "./strings";
+import { makeS, type StringTable, type WidgetKey } from "./strings";
 
 // The widget's translator. A module singleton is correct only because init()
 // binds exactly one `#garrul` element per page; a multi-mount widget would have
 // to carry this on WidgetCtx instead. Read through `s(...)` at render time
-// rather than captured into module constants, so a locale swap after the
-// /api/v1/config fetch takes effect on the first render.
-const { s, sAround } = makeS();
+// rather than captured into module constants, so the swap below takes effect on
+// the first render of the tree.
+let { s, sAround } = makeS();
+
+// The resolved locale, and the two things negotiation is fed from. All three
+// are module state for the same single-mount reason as the translator above.
+//
+// `locale` stays "en" until /api/v1/config answers, which is deliberate: the
+// server owns negotiation (it knows the operator's default_locale and which
+// locales are reviewed enough to auto-select), so the widget asks rather than
+// guesses. Nothing but the loading skeleton renders before the answer arrives.
+let locale = "en";
+/** `data-lang` on the mount element — the operator's explicit choice. */
+let langExplicit = "";
+/** The host page's `<html lang>`. A hint; the server may decline to use it. */
+let langHint = "";
+
+/**
+ * Build an API URL carrying the resolved locale.
+ *
+ * Server error bodies are rendered verbatim by the widget, so a German reader
+ * hitting a rate limit has to get the German sentence. `?lang=` rather than a
+ * header because a header would need adding to Access-Control-Allow-Headers on
+ * every cross-site embed (src/lib/cors.ts).
+ *
+ * English sends nothing at all — it is the server's default, so the param would
+ * be pure noise on the overwhelming majority of requests.
+ */
+const apiUrl = (base: string, path: string): string =>
+	locale === "en"
+		? base + path
+		: `${base + path + (path.indexOf("?") < 0 ? "?" : "&")}lang=${encodeURIComponent(locale)}`;
 
 // Mirrors lib/tree.ts's TreeAuthor. No `is_admin`: the API stopped sending it
 // (it let anyone enumerate privileged accounts) and nothing here rendered it.
@@ -875,7 +904,7 @@ const buildWritePreview = (
 		}
 		pane.textContent = s("w.preview.loading");
 		try {
-			const res = await fetch(`${apiBase}/api/v1/preview`, {
+			const res = await fetch(apiUrl(apiBase, "/api/v1/preview"), {
 				method: "POST",
 				credentials: "include",
 				headers: { "content-type": "application/json" },
@@ -1004,7 +1033,7 @@ const prefetchFormToken = (apiBase: string): void => {
 	if (formTokenPromise) return;
 	formTokenPromise = (async () => {
 		try {
-			const res = await fetch(`${apiBase}/api/v1/comments/form-token`, {
+			const res = await fetch(apiUrl(apiBase, "/api/v1/comments/form-token"), {
 				credentials: "include",
 			});
 			if (!res.ok) return "";
@@ -1243,7 +1272,7 @@ const buildVotes = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 		up.disabled = true;
 		down.disabled = true;
 		try {
-			const res = await fetch(`${ctx.apiBase}/api/v1/votes`, {
+			const res = await fetch(apiUrl(ctx.apiBase, "/api/v1/votes"), {
 				method: "POST",
 				credentials: "include",
 				headers: { "content-type": "application/json" },
@@ -1306,7 +1335,7 @@ const buildReactions = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 		btn.addEventListener("click", async () => {
 			btn.disabled = true;
 			try {
-				const res = await fetch(`${ctx.apiBase}/api/v1/reactions`, {
+				const res = await fetch(apiUrl(ctx.apiBase, "/api/v1/reactions"), {
 					method: "POST",
 					credentials: "include",
 					headers: { "content-type": "application/json" },
@@ -1378,7 +1407,7 @@ const buildPageEngagement = (ctx: WidgetCtx): HTMLElement => {
 		cell.btn.disabled = true;
 		try {
 			const res = await fetch(
-				`${ctx.apiBase}/api/v1/page-engagement/reactions`,
+				apiUrl(ctx.apiBase, "/api/v1/page-engagement/reactions"),
 				{
 					method: "POST",
 					credentials: "include",
@@ -1431,7 +1460,7 @@ const buildPageEngagement = (ctx: WidgetCtx): HTMLElement => {
 		up.disabled = true;
 		down.disabled = true;
 		try {
-			const res = await fetch(`${ctx.apiBase}/api/v1/page-engagement/votes`, {
+			const res = await fetch(apiUrl(ctx.apiBase, "/api/v1/page-engagement/votes"), {
 				method: "POST",
 				credentials: "include",
 				headers: { "content-type": "application/json" },
@@ -1471,7 +1500,10 @@ const buildPageEngagement = (ctx: WidgetCtx): HTMLElement => {
 	void (async () => {
 		try {
 			const res = await fetch(
-				`${ctx.apiBase}/api/v1/page-engagement?slug=${encodeURIComponent(ctx.slug)}`,
+				apiUrl(
+					ctx.apiBase,
+					`/api/v1/page-engagement?slug=${encodeURIComponent(ctx.slug)}`,
+				),
 				{ credentials: "include" },
 			);
 			if (!res.ok) return;
@@ -1533,7 +1565,7 @@ const buildActions = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): HTMLEleme
 			if (!window.confirm(s("w.delete_confirm"))) return;
 			try {
 				const res = await fetch(
-					`${ctx.apiBase}/api/v1/comments/${encodeURIComponent(n.id)}`,
+					apiUrl(ctx.apiBase, `/api/v1/comments/${encodeURIComponent(n.id)}`),
 					{ method: "DELETE", credentials: "include" },
 				);
 				if (res.ok) ctx.reload();
@@ -1562,7 +1594,10 @@ const buildActions = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): HTMLEleme
 				// success signal we get — and the only one we need. fetch does NOT
 				// reject on a 4xx/5xx, so we must inspect res.ok explicitly.
 				const res = await fetch(
-					`${ctx.apiBase}/api/v1/comments/${encodeURIComponent(n.id)}/report`,
+					apiUrl(
+						ctx.apiBase,
+						`/api/v1/comments/${encodeURIComponent(n.id)}/report`,
+					),
 					{
 						method: "POST",
 						credentials: "include",
@@ -1645,7 +1680,7 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 		save.disabled = true;
 		try {
 			const res = await fetch(
-				`${ctx.apiBase}/api/v1/comments/${encodeURIComponent(n.id)}`,
+				apiUrl(ctx.apiBase, `/api/v1/comments/${encodeURIComponent(n.id)}`),
 				{
 					method: "PATCH",
 					credentials: "include",
@@ -1830,7 +1865,7 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 				notice(s("w.ts.interactive"));
 				return;
 			}
-			const res = await fetch(`${ctx.apiBase}/api/v1/comments`, {
+			const res = await fetch(apiUrl(ctx.apiBase, "/api/v1/comments"), {
 				method: "POST",
 				credentials: "include",
 				headers: { "content-type": "application/json" },
@@ -2095,7 +2130,7 @@ const buildAuthBlock = (
 		out.addEventListener("click", async () => {
 			out.disabled = true;
 			try {
-				await fetch(`${apiBase}/api/v1/auth/signout`, {
+				await fetch(apiUrl(apiBase, "/api/v1/auth/signout"), {
 					method: "POST",
 					credentials: "include",
 					headers: { "content-type": "application/json" },
@@ -2273,7 +2308,7 @@ const startOauth = (
 			onSuccess();
 			return;
 		}
-		void fetch(`${apiBase}/api/v1/auth/session/exchange`, {
+		void fetch(apiUrl(apiBase, "/api/v1/auth/session/exchange"), {
 			method: "POST",
 			credentials: "include",
 			headers: { "content-type": "application/json" },
@@ -2355,6 +2390,12 @@ const init = () => {
 		(scriptEl ? new URL(scriptEl.src).origin : window.location.origin);
 
 	applyDirection(host);
+	// Locale is a property of the site, not of the reader: data-lang is what the
+	// operator chose, <html lang> is what their theme claims. Accept-Language and
+	// navigator.language are deliberately never consulted — a German comment box
+	// under English prose reads as broken, not helpful.
+	langExplicit = host.dataset.lang ?? "";
+	langHint = document.documentElement.lang;
 
 	const root = host.attachShadow({ mode: "open" });
 	const style = el("style");
@@ -2382,7 +2423,7 @@ const fetchPage = async (
 	const qs = new URLSearchParams({ slug });
 	if (cursor) qs.set("before", cursor);
 	if (sort !== "new") qs.set("sort", sort);
-	const res = await fetch(`${apiBase}/api/v1/comments?${qs.toString()}`, {
+	const res = await fetch(apiUrl(apiBase, `/api/v1/comments?${qs.toString()}`), {
 		credentials: "include",
 	});
 	if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -2399,7 +2440,7 @@ const appendThreads = (
 
 const fetchMe = async (apiBase: string): Promise<Me> => {
 	try {
-		const res = await fetch(`${apiBase}/api/v1/auth/me`, {
+		const res = await fetch(apiUrl(apiBase, "/api/v1/auth/me"), {
 			credentials: "include",
 		});
 		if (!res.ok) return null;
@@ -2496,9 +2537,19 @@ const loadOnce = async (
 	let communityMinVotes = 5;
 	let communityCollapseRatio = 0;
 	try {
-		const cfgRes = await fetch(`${apiBase}/api/v1/config`, {
-			credentials: "include",
-		});
+		// The one call that can't go through apiUrl(): it is what resolves the
+		// locale, so it sends the raw negotiation inputs instead. `hl` is kept
+		// separate from `lang` because the server treats them differently — an
+		// unreviewed translation is reachable only through the operator's
+		// explicit data-lang, never through a theme's stray <html lang>.
+		const cfgQs = new URLSearchParams();
+		if (langExplicit) cfgQs.set("lang", langExplicit);
+		if (langHint) cfgQs.set("hl", langHint);
+		const cfgQuery = cfgQs.toString();
+		const cfgRes = await fetch(
+			`${apiBase}/api/v1/config${cfgQuery ? `?${cfgQuery}` : ""}`,
+			{ credentials: "include" },
+		);
 		if (cfgRes.ok) {
 			const cfg = (await cfgRes.json()) as {
 				turnstile_site_key?: string;
@@ -2515,7 +2566,26 @@ const loadOnce = async (
 				auto_collapse_depth?: number;
 				community_min_votes?: number;
 				community_collapse_ratio?: number;
+				locale?: string;
+				strings?: Record<string, string | Record<string, string>>;
+				rtl?: boolean;
 			};
+			// Install the locale before anything renders below. The table is the
+			// locale's own overrides, not a merged copy — makeS falls back to the
+			// bundled English per key, so a partial translation renders English
+			// exactly where it is incomplete and correct everywhere else.
+			if (typeof cfg.locale === "string" && cfg.locale) {
+				locale = cfg.locale;
+				host.lang = locale;
+				({ s, sAround } = makeS(
+					(cfg.strings ?? {}) as StringTable,
+					locale,
+				));
+				// An RTL locale on an LTR page still has to lay out RTL. The host
+				// page's own direction already applied at mount (applyDirection);
+				// this only ever tightens it, never flips a page back to LTR.
+				if (cfg.rtl === true) host.dir = "rtl";
+			}
 			siteKey = cfg.turnstile_site_key ?? null;
 			editWindowMinutes = cfg.edit_window_minutes ?? 15;
 			providers = (cfg.providers ?? []).filter((p): p is OAuthProvider =>
@@ -2884,7 +2954,7 @@ const submit = async (
 			notice(s("w.ts.interactive"));
 			return;
 		}
-		const res = await fetch(`${apiBase}/api/v1/comments`, {
+		const res = await fetch(apiUrl(apiBase, "/api/v1/comments"), {
 			method: "POST",
 			credentials: "include",
 			headers: { "content-type": "application/json" },
@@ -2931,7 +3001,7 @@ const submit = async (
 		if (notifyCb?.checked) {
 			const email = emailInput?.value.trim() ?? "";
 			if (email) {
-				void fetch(`${apiBase}/api/v1/subscribe`, {
+				void fetch(apiUrl(apiBase, "/api/v1/subscribe"), {
 					method: "POST",
 					credentials: "include",
 					headers: { "content-type": "application/json" },

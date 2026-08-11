@@ -142,6 +142,34 @@ describe("GET /embed/:slug", () => {
 		});
 	});
 
+	describe("?lang=", () => {
+		it("lands on both <html lang> and data-lang", async () => {
+			// Two consumers, not one: <html lang> is what assistive tech and the
+			// browser's own UI read, data-lang is what the widget negotiates with.
+			const res = await fetchPage("/embed/hello?lang=de");
+			const body = await res.text();
+			expect(body).toContain('<html lang="de">');
+			expect(body).toContain('data-lang="de"');
+		});
+
+		it("defaults <html lang> to en when absent", async () => {
+			const body = await fetchPage("/embed/hello").then((r) => r.text());
+			expect(body).toContain('<html lang="en">');
+			expect(body).toContain('data-lang=""');
+		});
+
+		it("cannot break out of either attribute", async () => {
+			// Unknown tags are the server's problem when the widget asks for its
+			// strings; this route's only job is keeping the value in its quotes.
+			const res = await fetchPage(
+				`/embed/hello?lang=${encodeURIComponent('"><script>alert(1)</script>')}`,
+			);
+			const body = await res.text();
+			expect(body).not.toContain("<script>alert(1)</script>");
+			expect(body).toContain("&quot;&gt;&lt;script&gt;");
+		});
+	});
+
 	it("keeps the ?api= override gated on the allowlist", async () => {
 		// Regression guard on the pattern parent_origin was modelled after: an
 		// unlisted override would load attacker-controlled JS into the frame,
