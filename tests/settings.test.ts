@@ -20,10 +20,15 @@ import {
 	bustFlagsCache,
 	loadNumbers,
 	bustNumbersCache,
+	loadStrings,
+	bustStringsCache,
 	parseIntSetting,
+	parseStringSetting,
 	FLAG_KEYS,
 	NUMBER_KEYS,
+	STRING_KEYS,
 	numberBounds,
+	stringOptions,
 	type FlagKey,
 	type NumberKey,
 } from "../src/lib/settings";
@@ -665,5 +670,82 @@ describe("promoted runtime settings — /form-token honors the DB override", () 
 			{ SPAM_FORM_TS_SECRET: "k", SPAM_HONEYPOT_MIN_MS: "1500" },
 		);
 		expect((await tokenReq(env)).status).toBe(404);
+	});
+});
+
+describe("parseStringSetting", () => {
+	const OPTS = ["auto", "en"];
+
+	it("falls back when the value is absent or empty", () => {
+		expect(parseStringSetting(undefined, "auto", OPTS)).toBe("auto");
+		expect(parseStringSetting("", "auto", OPTS)).toBe("auto");
+		expect(parseStringSetting("   ", "auto", OPTS)).toBe("auto");
+	});
+
+	it("accepts a whitelisted value", () => {
+		expect(parseStringSetting("en", "auto", OPTS)).toBe("en");
+	});
+
+	it("canonicalizes case and surrounding space", () => {
+		expect(parseStringSetting("  EN ", "auto", OPTS)).toBe("en");
+	});
+
+	it("falls back rather than repairing an off-list value", () => {
+		// The whole safety property: a string setting is safe because it is one
+		// of a known set, so a near-miss must not be coerced onto the list.
+		expect(parseStringSetting("en-GB", "auto", OPTS)).toBe("auto");
+		expect(parseStringSetting("de", "auto", OPTS)).toBe("auto");
+		expect(parseStringSetting("../../etc", "auto", OPTS)).toBe("auto");
+		expect(parseStringSetting("<script>", "auto", OPTS)).toBe("auto");
+		expect(parseStringSetting("__proto__", "auto", OPTS)).toBe("auto");
+	});
+});
+
+describe("loadStrings", () => {
+	it("returns built-in defaults when no DB rows and no env vars", async () => {
+		const { env } = mkEnv();
+		expect(await loadStrings(env)).toEqual({ default_locale: "auto" });
+	});
+
+	it("resolves a value for every canonical string key", async () => {
+		const { env } = mkEnv();
+		const strings = await loadStrings(env);
+		for (const key of STRING_KEYS) {
+			expect(stringOptions(key)).toContain(strings[key]);
+		}
+	});
+
+	it("env var beats the default", async () => {
+		const { env } = mkEnv({}, { DEFAULT_LOCALE: "en" });
+		expect((await loadStrings(env)).default_locale).toBe("en");
+	});
+
+	it("DB row beats the env var", async () => {
+		const { env } = mkEnv({ default_locale: "auto" }, { DEFAULT_LOCALE: "en" });
+		expect((await loadStrings(env)).default_locale).toBe("auto");
+	});
+
+	it("an unknown env value falls back to the default, not to the DB row", async () => {
+		const { env } = mkEnv({}, { DEFAULT_LOCALE: "kl" });
+		expect((await loadStrings(env)).default_locale).toBe("auto");
+	});
+
+	it("caches under its own key and skips D1 while warm", async () => {
+		const { env, db, kv } = mkEnv({ default_locale: "en" });
+		await loadStrings(env);
+		expect(db.reads()).toBe(1);
+		await loadStrings(env);
+		expect(db.reads()).toBe(1);
+		// Its own key, so it can't collide with the flags/numbers entries.
+		expect([...kv.store.keys()]).toEqual(["settings:strings"]);
+		expect(kv.putOpts.get("settings:strings")?.expirationTtl).toBe(3600);
+	});
+
+	it("bustStringsCache forces the next read back to D1", async () => {
+		const { env, db } = mkEnv({ default_locale: "en" });
+		await loadStrings(env);
+		await bustStringsCache(env);
+		await loadStrings(env);
+		expect(db.reads()).toBe(2);
 	});
 });

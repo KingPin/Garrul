@@ -163,6 +163,14 @@ export type Bindings = {
 	//                              days old. Swept by the cron; irreversible. The
 	//                              sweep refuses below 30 days.
 	AUDIT_LOG_RETENTION_DAYS?: string;
+	// Locale the widget, feed and notification emails render in when the embed
+	// doesn't request one. Env-var *default*; a `settings` row overrides at
+	// runtime (see src/lib/settings.ts).
+	//
+	// `auto` (the default) means "not configured", which lets the host page's
+	// `<html lang>` select a locale. An explicit `en` means English regardless
+	// of what the page says. Unknown values fall back to `auto`.
+	DEFAULT_LOCALE?: string;
 	// Optional: atomic, cross-colo-accurate rate limiting via a Durable
 	// Object. Unbound (the default) leaves the limiter on the edge Cache API —
 	// see docs/ANTISPAM.md § "Rate-limit accuracy" for what that costs.

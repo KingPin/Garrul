@@ -89,7 +89,16 @@ beforeEach(() => {
 		.sort()) {
 		sqlite.exec(readFileSync(join(MIGRATIONS_DIR, file), "utf8"));
 	}
-	env = { DB: makeD1(sqlite), ENV: "dev" } as unknown as Bindings;
+	// The route resolves the operator's `default_locale` through loadStrings,
+	// which reads the settings cache. A miss on every call is what production
+	// looks like on a cold edge, so a KV stub that never hits is the honest
+	// stub here — the point of these tests is the XML the route serializes.
+	const kv = {
+		get: async () => null,
+		put: async () => {},
+		delete: async () => {},
+	};
+	env = { DB: makeD1(sqlite), ENV: "dev", TREE_CACHE: kv } as unknown as Bindings;
 });
 
 describe("GET /feed/:slug — XML well-formedness", () => {
@@ -161,5 +170,36 @@ describe("GET /feed/:slug — XML well-formedness", () => {
 
 		const xml = await (await fetchFeed()).text();
 		expect(xml).toContain('href="https://blog.example/post"');
+	});
+});
+
+describe("GET /feed/:slug — locale", () => {
+	beforeEach(() => {
+		seedPost("https://blog.example/post");
+		seedComment("Bob", "<p>hi</p>");
+	});
+
+	it("declares xml:lang from the operator default", async () => {
+		const xml = await (await fetchFeed()).text();
+		expect(xml).toContain('xml:lang="en"');
+	});
+
+	it("ignores ?lang= — the response is edge-cached under a locale-free URL", async () => {
+		const xml = await (
+			await new Hono<{ Bindings: Bindings }>()
+				.route("/", feed)
+				.request(
+					`/${SLUG}?lang=de`,
+					{},
+					env as unknown as Record<string, unknown>,
+				)
+		).text();
+		expect(xml).toContain('xml:lang="en"');
+	});
+
+	it("falls back to English when DEFAULT_LOCALE names an unregistered locale", async () => {
+		(env as unknown as Record<string, unknown>).DEFAULT_LOCALE = "kl";
+		const xml = await (await fetchFeed()).text();
+		expect(xml).toContain('xml:lang="en"');
 	});
 });

@@ -64,6 +64,10 @@ OAUTH_CALLBACK_BASE = "https://comments.example.com"
 # REPLIES_PER_THREAD = "3"
 # Replies at this nesting depth or deeper start collapsed (0 = never):
 # AUTO_COLLAPSE_DEPTH = "3"
+# Language for the widget, the Atom feed and notification emails. "auto" (the
+# default) follows the host page's <html lang>; an explicit tag overrides it.
+# Comment text itself is never translated.
+# DEFAULT_LOCALE = "auto"
 # Thread lifecycle — auto-close threads to new comments (existing comments,
 # reactions and votes stay live). Evaluated lazily at read/write time, no cron.
 # Both default 0 = disabled. Close a thread N days after its article was

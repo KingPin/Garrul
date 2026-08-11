@@ -1,12 +1,15 @@
 import type { Bindings } from "../../index";
+import { LOCALES } from "../../i18n";
+import { AUTO_LOCALE } from "../../i18n/negotiate";
 import {
 	type FlagKey,
 	type NumberKey,
 	type ResolvedFlags,
 	type ResolvedNumbers,
+	type ResolvedStrings,
 	numberBounds,
 } from "../../lib/settings";
-import { renderStepper, renderSwitch, renderTabs } from "../controls";
+import { renderSelect, renderStepper, renderSwitch, renderTabs } from "../controls";
 import { escapeHtml } from "../escape";
 
 // Settings tabs. Email / Moderation tabs can slot in here later without
@@ -156,10 +159,39 @@ const SPAM_NUMBER_META: { key: NumberKey; label: string; help: string }[] = [
 	},
 ];
 
+// Locale options for the Display tab.
+//
+// Each entry shows the endonym first (a German operator scanning the list looks
+// for "Deutsch", not "German"), and machine-seeded translations say so right in
+// the option label. That disclosure lives *here*, at the point where the choice
+// is made, and deliberately nowhere in the widget: the reader didn't pick the
+// locale and can't fix it, so a banner there would only make the site look
+// unfinished to its own audience.
+const localeOptions = (): { value: string; label: string }[] => [
+	{
+		value: AUTO_LOCALE,
+		label: "Follow the page (<html lang>), else English",
+	},
+	...Object.entries(LOCALES).map(([tag, meta]) => {
+		const name =
+			meta.endonym === meta.label
+				? `${meta.label} (${tag})`
+				: `${meta.endonym} — ${meta.label} (${tag})`;
+		return {
+			value: tag,
+			label:
+				meta.status === "machine-seeded"
+					? `${name} — machine-translated, not yet reviewed`
+					: name,
+		};
+	}),
+];
+
 export const renderSettings = (
 	env: Bindings,
 	flags: ResolvedFlags,
 	numbers: ResolvedNumbers,
+	strings: ResolvedStrings,
 ): string => {
 	const rows: [string, string][] = [
 		["ENV", env.ENV ?? "(unset)"],
@@ -239,12 +271,21 @@ export const renderSettings = (
 	// is deploy-time, so its presence can't change while the page is open.
 	const hasFormTsSecret = Boolean(env.SPAM_FORM_TS_SECRET);
 
+	const localeSelect = renderSelect({
+		name: "default_locale",
+		model: "strs.default_locale",
+		options: localeOptions(),
+		label: "Language",
+		help: "Language for the widget, the Atom feed and notification emails. Comment text is never translated. An embed can override this per-page with data-lang. \"Follow the page\" reads the host page's <html lang> — reviewed translations only, so a machine-translated language has to be chosen here or on the embed.",
+	});
+
 	const initial = JSON.stringify(
 		Object.fromEntries(ALL_FLAG_META.map((f) => [f.key, flags[f.key]])),
 	);
 	// Seed the whole resolved numbers object so keys surfaced as non-stepper
 	// controls (auto_close_at, via the date picker) round-trip on save too.
 	const numInitial = JSON.stringify(numbers);
+	const strInitial = JSON.stringify(strings);
 
 	return `
 <div x-data="{
@@ -252,6 +293,7 @@ export const renderSettings = (
   busy: false,
   flags: ${escapeHtml(initial)},
   nums: ${escapeHtml(numInitial)},
+  strs: ${escapeHtml(strInitial)},
   hasFormTsSecret: ${hasFormTsSecret},
   // Friendly proxy over the epoch-ms auto_close_at: the date picker reads/writes
   // a YYYY-MM-DD string; the canonical value stays the number in nums. Empty
@@ -271,7 +313,7 @@ export const renderSettings = (
       const r = await fetch('/admin/settings', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ flags: this.flags, numbers: this.nums }),
+        body: JSON.stringify({ flags: this.flags, numbers: this.nums, strings: this.strs }),
       });
       if (!r.ok) {
         const j = await r.json().catch(() => ({}));
@@ -323,6 +365,7 @@ export const renderSettings = (
       replies collapse. Smaller values keep a busy thread from pushing the rest
       of the page down.</p>
       ${numberInputs}
+      ${localeSelect}
     </div>
 
     <div class="card" x-show="tab === 'moderation'" x-cloak>

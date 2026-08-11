@@ -262,8 +262,58 @@ describe("POST /admin/settings — numeric writes", () => {
 	});
 });
 
+describe("POST /admin/settings — string writes", () => {
+	it("stores a whitelisted value and busts only the strings cache", async () => {
+		const { env, kv, runs } = mkEnv();
+		const res = await postSettings(env, { strings: { default_locale: "en" } });
+		expect(res.status).toBe(200);
+		const json = (await res.json()) as { strings: Record<string, string> };
+		expect(json.strings.default_locale).toBe("en");
+
+		expect(settingWrites(runs)).toContainEqual(["default_locale", "en"]);
+		expect(kv.deletedKeys).toContain("settings:strings");
+		expect(kv.deletedKeys).not.toContain("settings:flags");
+		expect(kv.deletedKeys).not.toContain("settings:numbers");
+	});
+
+	it("stores the auto sentinel, which is distinct from an explicit locale", async () => {
+		const { env, runs } = mkEnv();
+		const res = await postSettings(env, { strings: { default_locale: "auto" } });
+		expect(res.status).toBe(200);
+		expect(settingWrites(runs)).toContainEqual(["default_locale", "auto"]);
+	});
+
+	// Rejected outright rather than coerced to the default: a silent
+	// substitution would let a stale admin page reset a locale the operator
+	// picked, and report success while doing it.
+	it("rejects an off-list value with 400 invalid_string:<key>", async () => {
+		const { env, runs } = mkEnv();
+		for (const bad of ["kl", "en-GB", "../../etc", "<script>", "__proto__"]) {
+			const res = await postSettings(env, { strings: { default_locale: bad } });
+			expect(res.status).toBe(400);
+			expect(await res.json()).toEqual({ error: "invalid_string:default_locale" });
+		}
+		expect(settingWrites(runs)).toEqual([]);
+	});
+
+	it("rejects a non-string value", async () => {
+		const { env } = mkEnv();
+		const res = await postSettings(env, { strings: { default_locale: 7 } });
+		expect(res.status).toBe(400);
+	});
+
+	it("ignores unknown string keys (whitelist)", async () => {
+		const { env, runs } = mkEnv();
+		const res = await postSettings(env, {
+			strings: { default_locale: "en", nonsense_key: "x" },
+		});
+		expect(res.status).toBe(200);
+		expect(settingWrites(runs).map(([k]) => k)).toEqual(["default_locale"]);
+	});
+});
+
 describe("POST /admin/settings — reset", () => {
-	it("clears both flag and number keys and busts both caches", async () => {
+	it("clears flag, number and string keys and busts all three caches", async () => {
 		const { env, kv, runs } = mkEnv();
 		const res = await postSettings(env, { reset: true });
 		expect(res.status).toBe(200);
@@ -276,9 +326,11 @@ describe("POST /admin/settings — reset", () => {
 		expect(del!.binds).toContain("comments_enabled");
 		expect(del!.binds).toContain("comments_per_page");
 		expect(del!.binds).toContain("auto_collapse_depth");
+		expect(del!.binds).toContain("default_locale");
 
 		expect(kv.deletedKeys).toContain("settings:flags");
 		expect(kv.deletedKeys).toContain("settings:numbers");
+		expect(kv.deletedKeys).toContain("settings:strings");
 	});
 });
 

@@ -22,6 +22,8 @@
  */
 import type { Bindings } from "../index";
 import { getAllSettings } from "../db/queries";
+import { LOCALES } from "../i18n";
+import { AUTO_LOCALE } from "../i18n/negotiate";
 import { MAX_DEPTH } from "./tree";
 
 export type FlagKey =
@@ -51,6 +53,10 @@ export type NumberKey =
 	| "audit_log_retention_days";
 
 export type ResolvedNumbers = Record<NumberKey, number>;
+
+export type StringSettingKey = "default_locale";
+
+export type ResolvedStrings = Record<StringSettingKey, string>;
 
 // Each flag's env-var source and hardcoded default. `votes_enabled` /
 // `downvotes_enabled` keep their legacy env names so existing wrangler.toml
@@ -228,6 +234,46 @@ const NUMBERS: Record<
 
 export const NUMBER_KEYS = Object.keys(NUMBERS) as NumberKey[];
 
+// String-valued settings. Same precedence chain as FLAGS/NUMBERS (DB > env >
+// default), but the safety property is different: a number is made safe by
+// clamping, whereas a string is made safe by being *one of a known set*. Every
+// entry therefore carries an `options` whitelist and anything outside it —
+// junk, hostile, or merely stale — resolves to the built-in default rather
+// than being escaped and passed along.
+//
+// `options` is a function rather than an array so the set is read at use time.
+// The locale registry is the source of truth for which locales exist, and a
+// snapshot taken at module load would silently go stale the moment locales are
+// registered somewhere other than at the top of the module graph.
+const STRINGS: Record<
+	StringSettingKey,
+	{ env: keyof Bindings; default: string; options: () => string[] }
+> = {
+	// The locale the widget, the feed and notification emails render in when the
+	// embed doesn't ask for one explicitly.
+	//
+	// The default is the `auto` sentinel, not `"en"`, and the difference is
+	// load-bearing: `auto` means "never configured", which lets negotiation fall
+	// through to the host page's `<html lang>` hint. An explicit `"en"` means the
+	// operator chose English and the hint is ignored. Collapsing the two would
+	// make "I want English no matter what the theme says" unexpressible.
+	default_locale: {
+		env: "DEFAULT_LOCALE",
+		default: AUTO_LOCALE,
+		options: () => [AUTO_LOCALE, ...Object.keys(LOCALES)],
+	},
+};
+
+export const STRING_KEYS = Object.keys(STRINGS) as StringSettingKey[];
+
+/** The accepted values for a string setting (used by the admin UI + save path). */
+export const stringOptions = (key: StringSettingKey): string[] =>
+	STRINGS[key].options();
+
+/** The built-in default for a string setting, for the admin UI's option list. */
+export const stringDefault = (key: StringSettingKey): string =>
+	STRINGS[key].default;
+
 /** Min/max clamp bounds for a numeric setting (used by the admin UI inputs). */
 export const numberBounds = (
 	key: NumberKey,
@@ -238,6 +284,7 @@ export const numberBounds = (
 
 const CACHE_KEY = "settings:flags";
 const CACHE_KEY_NUMBERS = "settings:numbers";
+const CACHE_KEY_STRINGS = "settings:strings";
 // These resolve on the hot path (every comments GET reads numbers; config/counts
 // read flags). They're a fixed pair of KV keys, so a write happens at most once
 // per TTL window per edge colo — but on the free tier those add up. A longer TTL
@@ -282,6 +329,43 @@ export const parseIntSetting = (
 	const n = Number.parseInt(v, 10);
 	if (!Number.isFinite(n)) return fallback;
 	return Math.min(max, Math.max(min, n));
+};
+
+/**
+ * Resolve a string setting against a whitelist. Anything not on the list —
+ * empty, junk, hostile, or a locale that used to exist and no longer does —
+ * falls back to `fallback`.
+ *
+ * Matching is case-insensitive and returns the *canonical* option, so an
+ * operator writing `DEFAULT_LOCALE="EN"` gets `en` rather than the default.
+ * It is deliberately not laxer than that: this is a whitelist, and a value
+ * that isn't on it must not be repaired into something that is.
+ */
+export const parseStringSetting = (
+	raw: string | undefined,
+	fallback: string,
+	options: readonly string[],
+): string => {
+	if (raw == null) return fallback;
+	const v = raw.trim().toLowerCase();
+	if (v === "") return fallback;
+	return options.find((opt) => opt.toLowerCase() === v) ?? fallback;
+};
+
+const resolveStrings = (
+	env: Bindings,
+	dbSettings: Record<string, string>,
+): ResolvedStrings => {
+	const out = {} as ResolvedStrings;
+	for (const key of STRING_KEYS) {
+		const spec = STRINGS[key];
+		const raw =
+			key in dbSettings
+				? dbSettings[key]
+				: (env[spec.env] as string | undefined);
+		out[key] = parseStringSetting(raw, spec.default, spec.options());
+	}
+	return out;
 };
 
 const resolveNumbers = (
@@ -355,3 +439,30 @@ export const loadNumbers = async (env: Bindings): Promise<ResolvedNumbers> => {
 /** Drop the cached resolved numbers so the next read reflects a fresh save. */
 export const bustNumbersCache = (env: Bindings): Promise<void> =>
 	env.TREE_CACHE.delete(CACHE_KEY_NUMBERS).catch(() => {});
+
+/**
+ * Resolve all string settings (DB override > env > default), KV-cached under
+ * its own key.
+ *
+ * Deliberately *not* called from the per-request locale middleware: that runs
+ * on every `/api/*` request, and a third settings key there would add a KV
+ * read to routes that read nothing else. The operator default is applied once,
+ * at `GET /api/v1/config` (which already loads flags and numbers), and the
+ * widget echoes the resolved locale back on subsequent calls.
+ */
+export const loadStrings = async (env: Bindings): Promise<ResolvedStrings> => {
+	const cached = await env.TREE_CACHE.get(CACHE_KEY_STRINGS, "json").catch(
+		() => null,
+	);
+	if (cached) return cached as ResolvedStrings;
+	const dbSettings = await getAllSettings(env.DB);
+	const strings = resolveStrings(env, dbSettings);
+	await env.TREE_CACHE.put(CACHE_KEY_STRINGS, JSON.stringify(strings), {
+		expirationTtl: CACHE_TTL_SEC,
+	}).catch(() => {});
+	return strings;
+};
+
+/** Drop the cached resolved strings so the next read reflects a fresh save. */
+export const bustStringsCache = (env: Bindings): Promise<void> =>
+	env.TREE_CACHE.delete(CACHE_KEY_STRINGS).catch(() => {});

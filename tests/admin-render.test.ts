@@ -26,6 +26,10 @@ import {
 	NUMBER_KEYS,
 	type ResolvedFlags,
 	type ResolvedNumbers,
+	type ResolvedStrings,
+	STRING_KEYS,
+	stringDefault,
+	stringOptions,
 } from "../src/lib/settings";
 import { ADMIN_ACTIONS } from "../src/db/queries";
 import type {
@@ -693,7 +697,10 @@ describe("renderSettings field-name contract", () => {
 	const numbers = Object.fromEntries(
 		NUMBER_KEYS.map((k) => [k, 10]),
 	) as ResolvedNumbers;
-	const html = renderSettings({} as Bindings, flags, numbers);
+	const strings = Object.fromEntries(
+		STRING_KEYS.map((k) => [k, stringDefault(k)]),
+	) as ResolvedStrings;
+	const html = renderSettings({} as Bindings, flags, numbers, strings);
 
 	it("emits a switch for every flag key the POST handler whitelists", () => {
 		for (const key of FLAG_KEYS) {
@@ -708,6 +715,31 @@ describe("renderSettings field-name contract", () => {
 		for (const key of NUMBER_KEYS) {
 			expect(html).toContain(`name="${key}"`);
 			expect(html).toContain(`x-model.number="nums.${key}"`);
+		}
+	});
+
+	it("emits a select for every string key the POST handler whitelists", () => {
+		for (const key of STRING_KEYS) {
+			expect(html).toContain(`name="${key}"`);
+			expect(html).toContain(`x-model="strs.${key}"`);
+		}
+	});
+
+	it("offers only values the POST handler accepts for each string key", () => {
+		// The select is the operator's whole vocabulary for these settings, and
+		// the handler rejects anything off its whitelist outright — so an option
+		// the handler doesn't know is a control that 400s when used.
+		for (const key of STRING_KEYS) {
+			const select = html.match(
+				new RegExp(`<select name="${key}"[^>]*>([\\s\\S]*?)</select>`),
+			);
+			expect(select).not.toBeNull();
+			const values = [
+				...(select?.[1] ?? "").matchAll(/<option value="([^"]*)"/g),
+			].map((m) => m[1]!);
+			expect(values.length).toBeGreaterThan(0);
+			const allowed = new Set(stringOptions(key));
+			for (const v of values) expect(allowed.has(v)).toBe(true);
 		}
 	});
 
@@ -730,10 +762,12 @@ describe("renderSettings field-name contract", () => {
 	// stays hidden through the one transition that matters (operator raises the
 	// dial off 0 and is told only "Settings saved").
 	it("drives the fill-time inactive warning from Alpine state", () => {
-		const off = renderSettings({} as Bindings, flags, {
-			...numbers,
-			spam_honeypot_min_ms: 0,
-		});
+		const off = renderSettings(
+			{} as Bindings,
+			flags,
+			{ ...numbers, spam_honeypot_min_ms: 0 },
+			strings,
+		);
 		expect(off).toContain("hasFormTsSecret: false");
 		expect(off).toContain(
 			'x-show="nums.spam_honeypot_min_ms > 0 && !hasFormTsSecret"',
@@ -746,6 +780,7 @@ describe("renderSettings field-name contract", () => {
 			{ SPAM_FORM_TS_SECRET: "s3cret" } as Bindings,
 			flags,
 			numbers,
+			strings,
 		);
 		expect(withSecret).toContain("hasFormTsSecret: true");
 	});

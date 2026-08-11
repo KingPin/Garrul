@@ -115,11 +115,15 @@ import { renderSettings } from "../admin-ui/pages/settings";
 import {
 	bustFlagsCache,
 	bustNumbersCache,
+	bustStringsCache,
 	FLAG_KEYS,
 	loadFlags,
 	loadNumbers,
+	loadStrings,
 	NUMBER_KEYS,
 	numberBounds,
+	STRING_KEYS,
+	stringOptions,
 } from "../lib/settings";
 import { bustTreeCache } from "../lib/tree-cache";
 import { MAX_REPLY_DEPTH } from "../lib/tree";
@@ -794,16 +798,17 @@ admin.post("/api/telegram/digest", async (c) => {
 admin.get("/settings", async (c) => {
 	const user = await requireAdmin(c);
 	if (user instanceof Response) return user;
-	const [updateInfo, flags, numbers] = await Promise.all([
+	const [updateInfo, flags, numbers, strings] = await Promise.all([
 		peekCachedLatestVersion(c.env),
 		loadFlags(c.env),
 		loadNumbers(c.env),
+		loadStrings(c.env),
 	]);
 	return c.html(
 		renderPage(
 			c,
 			"Settings",
-			renderSettings(c.env, flags, numbers),
+			renderSettings(c.env, flags, numbers, strings),
 			user,
 			updateInfo,
 		),
@@ -812,13 +817,15 @@ admin.get("/settings", async (c) => {
 
 // Persist runtime settings overrides. Body is either
 //   { flags: { comments_enabled: bool, … },     — boolean feature toggles
-//     numbers: { comments_per_page: 25, … } }    — numeric display settings
+//     numbers: { comments_per_page: 25, … },     — numeric display settings
+//     strings: { default_locale: "de", … } }     — enumerated string settings
 //   { reset: true }                              — clear all overrides
-// flags and numbers are independent; either or both may be present.
+// The three groups are independent; any subset may be present.
 // Admin-only; same-origin CSRF check is enforced by the admin middleware.
 type SettingsBody = {
 	flags?: Record<string, unknown>;
 	numbers?: Record<string, unknown>;
+	strings?: Record<string, unknown>;
 	reset?: unknown;
 };
 
@@ -829,8 +836,16 @@ admin.post("/settings", async (c) => {
 	if (!body) return c.json({ error: "invalid_body" }, 400);
 
 	if (body.reset === true) {
-		await deleteSettings(c.env.DB, [...FLAG_KEYS, ...NUMBER_KEYS]);
-		await Promise.all([bustFlagsCache(c.env), bustNumbersCache(c.env)]);
+		await deleteSettings(c.env.DB, [
+			...FLAG_KEYS,
+			...NUMBER_KEYS,
+			...STRING_KEYS,
+		]);
+		await Promise.all([
+			bustFlagsCache(c.env),
+			bustNumbersCache(c.env),
+			bustStringsCache(c.env),
+		]);
 		await adminInsertAudit(c.env.DB, {
 			admin_id: user.id,
 			action: "settings.update",
@@ -845,7 +860,9 @@ admin.post("/settings", async (c) => {
 		body.flags && typeof body.flags === "object" ? body.flags : null;
 	const numbersObj =
 		body.numbers && typeof body.numbers === "object" ? body.numbers : null;
-	if (!flagsObj && !numbersObj) {
+	const stringsObj =
+		body.strings && typeof body.strings === "object" ? body.strings : null;
+	if (!flagsObj && !numbersObj && !stringsObj) {
 		return c.json({ error: "settings_required" }, 400);
 	}
 
@@ -878,9 +895,25 @@ admin.post("/settings", async (c) => {
 		}
 	}
 
+	// Strings are whitelisted, not clamped: rejecting an off-list value outright
+	// (rather than quietly substituting the default the way the resolver does)
+	// means a stale admin page can't silently reset a locale the operator picked.
+	const writtenStrings: Record<string, string> = {};
+	if (stringsObj) {
+		for (const key of STRING_KEYS) {
+			const raw = stringsObj[key];
+			if (raw === undefined) continue;
+			if (typeof raw !== "string" || !stringOptions(key).includes(raw)) {
+				return c.json({ error: `invalid_string:${key}` }, 400);
+			}
+			writtenStrings[key] = raw;
+		}
+	}
+
 	if (
 		Object.keys(writtenFlags).length === 0 &&
-		Object.keys(writtenNumbers).length === 0
+		Object.keys(writtenNumbers).length === 0 &&
+		Object.keys(writtenStrings).length === 0
 	) {
 		return c.json({ error: "settings_required" }, 400);
 	}
@@ -891,19 +924,29 @@ admin.post("/settings", async (c) => {
 	for (const [key, value] of Object.entries(writtenNumbers)) {
 		await setSetting(c.env.DB, key, String(value));
 	}
+	for (const [key, value] of Object.entries(writtenStrings)) {
+		await setSetting(c.env.DB, key, value);
+	}
 	const busts: Promise<void>[] = [];
 	if (Object.keys(writtenFlags).length > 0) busts.push(bustFlagsCache(c.env));
 	if (Object.keys(writtenNumbers).length > 0)
 		busts.push(bustNumbersCache(c.env));
+	if (Object.keys(writtenStrings).length > 0)
+		busts.push(bustStringsCache(c.env));
 	await Promise.all(busts);
 	await adminInsertAudit(c.env.DB, {
 		admin_id: user.id,
 		action: "settings.update",
 		target_kind: "system",
 		target_id: "settings",
-		meta: { ...writtenFlags, ...writtenNumbers },
+		meta: { ...writtenFlags, ...writtenNumbers, ...writtenStrings },
 	});
-	return c.json({ ok: true, flags: writtenFlags, numbers: writtenNumbers });
+	return c.json({
+		ok: true,
+		flags: writtenFlags,
+		numbers: writtenNumbers,
+		strings: writtenStrings,
+	});
 });
 
 admin.get("/about", async (c) => {
