@@ -34,7 +34,23 @@ const fakeTargetManifest: Manifest = {
 	],
 	analyticsDatasets: [],
 	migrations: ["0001_init.sql", "0002_notifications.sql", "0003_new.sql"],
-	breakingChanges: [],
+	// Cumulative in the real manifest, so the target always carries entries the
+	// installed version is already past. `OLD_BREAK` is the 1.0.0 operator's
+	// "nothing to do" case; `NEW_BREAK` is the one they have to act on.
+	breakingChanges: [
+		{
+			id: "OLD_BREAK",
+			summary: "already handled on the way to 1.0.0",
+			manualSteps: ["nothing to do"],
+			addedIn: "1.0.0",
+		},
+		{
+			id: "NEW_BREAK",
+			summary: "the target release needs a manual step",
+			manualSteps: ["do the thing"],
+			addedIn: "1.2.0",
+		},
+	],
 };
 
 const makeWranglerMock = (): typeof wranglerModule => ({
@@ -248,6 +264,64 @@ describe("upgrade dry-run", () => {
 		const end = after.findIndex((l) => !l.startsWith("  • "));
 		const requiredBullets = end === -1 ? after : after.slice(0, end);
 		expect(requiredBullets).toEqual(["  • NEW_SECRET"]);
+	});
+
+	it("prints only the breaking changes the operator has not crossed", async () => {
+		// The whole point of the filter: before it, a 2.5.0 → 2.7.0 hop printed
+		// all nine historical entries, including eight from 2.0.0 that the
+		// operator had already done to get there.
+		await main(["--dry-run"], {
+			wrangler: wranglerMock,
+			git: gitMock,
+			fetchLatest,
+			fetchReleaseForTag,
+			fetchTargetManifest,
+			loadLocal,
+		});
+
+		const output: string = logSpy.mock.calls
+			.map((c: unknown[]) => c.join(" "))
+			.join("\n");
+		expect(output).toMatch(/Breaking changes since 1\.0\.0 — manual steps/);
+		expect(output).toMatch(/• \[NEW_BREAK\] \[1\.2\.0\]/);
+		expect(output).toMatch(/do the thing/);
+		expect(output).not.toMatch(/NEW_BREAK.*OLD_BREAK/s);
+		expect(output).not.toMatch(/OLD_BREAK/);
+		expect(output).not.toMatch(/nothing to do/);
+	});
+
+	it("omits the breaking-changes section entirely when none apply", async () => {
+		// The 2.5.0 → 2.7.1 case: the heading itself must not print, or the
+		// operator still stops to read a section with nothing in it.
+		const current = vi.fn(
+			(): Manifest => ({
+				...structuredClone(fakeTargetManifest),
+				version: "1.1.0",
+				vars: [{ name: "ENV", required: false, addedIn: "1.0.0" }],
+			}),
+		);
+		const targetNoBreaks = vi.fn(async (): Promise<Manifest> => {
+			const m = structuredClone(fakeTargetManifest);
+			m.breakingChanges = m.breakingChanges.filter(
+				(bc) => bc.addedIn === "1.0.0",
+			);
+			return m;
+		});
+
+		await main(["--dry-run"], {
+			wrangler: wranglerMock,
+			git: gitMock,
+			fetchLatest,
+			fetchReleaseForTag,
+			fetchTargetManifest: targetNoBreaks,
+			loadLocal: current,
+		});
+
+		const output: string = logSpy.mock.calls
+			.map((c: unknown[]) => c.join(" "))
+			.join("\n");
+		expect(output).toMatch(/Plan: 1\.1\.0 → 1\.2\.0/);
+		expect(output).not.toMatch(/Breaking changes/);
 	});
 
 	it("tolerates a missing GitHub release (404)", async () => {

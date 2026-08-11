@@ -44,6 +44,7 @@ import {
 	diffVars,
 	newVarsSince,
 	newSecretsSince,
+	breakingChangesSince,
 	diffKv,
 	diffD1,
 	diffMigrations,
@@ -225,7 +226,10 @@ const computePlan = (
 		d1: diffD1(toml.d1Bindings, target.d1Databases),
 		migrations: diffMigrations(applied, target.migrations),
 		renderer: diffRenderer(current.renderer.version, target),
-		breakingChanges: target.breakingChanges,
+		breakingChanges: breakingChangesSince(
+			current.version,
+			target.breakingChanges,
+		),
 	};
 };
 
@@ -301,9 +305,13 @@ const printPlan = (current: Manifest, target: Manifest, plan: Plan): void => {
 	}
 	if (plan.breakingChanges.length > 0) {
 		console.log("");
-		console.log("Breaking changes — manual steps required:");
+		// "since", not "in this release" — an upgrade can span several tags.
+		console.log(
+			`Breaking changes since ${current.version} — manual steps required:`,
+		);
 		for (const bc of plan.breakingChanges) {
-			console.log(`  • [${bc.id}] ${bc.summary}`);
+			const added = bc.addedIn ? ` [${bc.addedIn}]` : "";
+			console.log(`  • [${bc.id}]${added} ${bc.summary}`);
 			for (const s of bc.manualSteps) console.log(`      ${s}`);
 		}
 	}
