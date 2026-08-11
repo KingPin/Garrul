@@ -203,6 +203,10 @@ export const eraseUser = async (args: {
 	const counts = await eraseUserData(env.DB, {
 		id: userId,
 		email: target.email,
+		// English on purpose, and the one `t` call that should stay bound to the
+		// module-level translator. This is written into `users.name` for good, so
+		// localizing it would freeze whichever language the acting admin's browser
+		// happened to negotiate into every reader's view of that row forever.
 		placeholderName: t("ui.deleted"),
 		redactBodies: args.redactBodies,
 		now: Date.now(),
