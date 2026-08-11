@@ -43,8 +43,18 @@ const SRC = join(__dirname, "..", "src");
  * and the check is what keeps each one honest.
  */
 const SURFACES = [
-	{ name: "server", english: SERVER_EN as Table, tables: SERVER_TABLES as Record<string, Table> },
-	{ name: "widget", english: WIDGET_EN as Table, tables: WIDGET_TABLES as Record<string, Table> },
+	{
+		name: "server",
+		english: SERVER_EN as Table,
+		tables: SERVER_TABLES as Record<string, Table>,
+		plural: "count",
+	},
+	{
+		name: "widget",
+		english: WIDGET_EN as Table,
+		tables: WIDGET_TABLES as Record<string, Table>,
+		plural: "n",
+	},
 ] as const;
 
 /** Every locale carrying a table on a surface, English excluded — it is the source. */
@@ -159,8 +169,53 @@ const CALL_SITES = sourceFiles(SRC)
 const unusedKeys = (keys: Iterable<string>, corpus: string): string[] =>
 	[...keys].filter((key) => !corpus.includes(`"${key}"`));
 
+/** Keys whose English value is a plural object rather than a flat string. */
+const pluralKeys = (english: Table): string[] =>
+	Object.entries(english)
+		.filter(([, value]) => value !== undefined && typeof value !== "string")
+		.map(([key]) => key);
+
+/**
+ * Plural keys called without the variable their surface selects on.
+ *
+ * `selectForm` reads exactly one variable (`count` server-side, `n` in the
+ * widget) and, when it isn't a finite number, skips category selection and
+ * takes the first of the fallback forms. So `s("w.replies")` doesn't throw and
+ * doesn't render braces — it renders the *plural* form for one reply. Nothing
+ * downstream can notice, which is why it needs a check up here.
+ *
+ * Literal call sites only. A key reached through a variable (`t(check.key)`)
+ * carries no argument list to inspect, but no plural key is reached that way
+ * today and the dead-key check below fails any key with no literal mention at
+ * all — so "unverifiable" cannot quietly become "unchecked".
+ *
+ * The window is the matched line plus the next, which covers both a one-line
+ * call and a wrapped one. Wrap a plural call across three lines and this
+ * reports it: annoying, and the annoyance is on the safe side.
+ */
+const pluralsMissingSelector = (
+	english: Table,
+	selector: string,
+	corpus: string,
+): string[] => {
+	const lines = corpus.split("\n");
+	// A property named `selector`, in property position — `{ count, title }` and
+	// `{ count: n }` both count, `{ title: count }` deliberately doesn't.
+	const passed = new RegExp(`[{,]\\s*${selector}\\s*[,:}]`);
+	const out: string[] = [];
+	for (const key of pluralKeys(english)) {
+		const needle = `"${key}"`;
+		for (const [i, line] of lines.entries()) {
+			if (!line.includes(needle)) continue;
+			const window = `${line}\n${lines[i + 1] ?? ""}`;
+			if (!passed.test(window)) out.push(`${key}: no {${selector}}`);
+		}
+	}
+	return out;
+};
+
 describe("i18n parity", () => {
-	for (const { name, english, tables } of SURFACES) {
+	for (const { name, english, tables, plural } of SURFACES) {
 		describe(`${name} strings`, () => {
 			const englishKeys = new Set(Object.keys(english));
 			const translations = translationsOf(tables);
@@ -212,6 +267,14 @@ describe("i18n parity", () => {
 					}
 				}
 				expect(true).toBe(true);
+			});
+
+			it(`calls every plural key with {${plural}}`, () => {
+				// The contract selectForm documents, enforced where it can be seen.
+				expect(
+					pluralsMissingSelector(english, plural, CALL_SITES),
+					`plural keys rendered without {${plural}}`,
+				).toEqual([]);
 			});
 
 			it("has no key nothing in src/ renders", () => {
@@ -289,6 +352,35 @@ describe("i18n parity", () => {
 			expect(
 				pluralGaps({ replies: { one: "{n} ответ", other: "{n} ответов" } }, english, "ru"),
 			).toContain("replies:few");
+		});
+
+		it("reports a plural key called without its selector", () => {
+			const corpus = 'const label = s("replies");';
+			expect(pluralsMissingSelector(english, "n", corpus)).toEqual(["replies: no {n}"]);
+		});
+
+		it("accepts a plural call that passes the selector, wrapped or shorthand", () => {
+			const corpus = [
+				'const a = s("replies", { n: count });',
+				'const b = s("replies", { n });',
+				'const c = s("replies", {',
+				"  n: other.length,",
+				"});",
+			].join("\n");
+			expect(pluralsMissingSelector(english, "n", corpus)).toEqual([]);
+		});
+
+		it("does not accept the selector name in a value position", () => {
+			// `{ title: n }` passes no `n` — the value happens to be called that.
+			const corpus = 'const a = s("replies", { title: n });';
+			expect(pluralsMissingSelector(english, "n", corpus)).toEqual(["replies: no {n}"]);
+		});
+
+		it("ignores a flat key that never passes the selector", () => {
+			// Only plural values select on it; a plain string with no {n} is fine.
+			expect(pluralsMissingSelector(english, "n", 'const a = t("greet", { name });')).toEqual(
+				[],
+			);
 		});
 
 		it("reports a key no call site names, and only that key", () => {

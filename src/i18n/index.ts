@@ -126,8 +126,11 @@ const FALLBACK_FORMS: Intl.LDMLPluralRule[] = ["other", "one"];
 /**
  * Resolve a message to a raw template string.
  *
- * Plural values select on the `count` var — that name is the contract, and the
- * parity test enforces that plural keys are used with it.
+ * Plural values select on the `count` var — that name is the contract, and
+ * `pluralsMissingSelector` in tests/i18n-parity.test.ts enforces that literal
+ * call sites for a plural key pass it. Without `count` this doesn't throw and
+ * doesn't render braces: it takes the first fallback form, so a caller who
+ * forgot gets the plural wording for every value.
  */
 const selectForm = (
 	msg: Message | undefined,
