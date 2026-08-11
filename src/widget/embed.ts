@@ -288,6 +288,8 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
 .gr-md-hint[hidden] { display: none; }
 .gr-preview p { margin: 0.3em 0; }
 .gr-preview a { color: var(--gr-link); }
+/* Physical left, deliberately: top is what keeps this out of scrollable
+   overflow, and an inline-axis offset would scroll on an RTL page. */
 .gr-honeypot { position: absolute; left: -9999px; top: -9999px; }
 .gr-form .gr-notify { display: flex; align-items: center; gap: 0.4rem; font-size: 0.9em; cursor: pointer; }
 .gr-form .gr-notify .gr-notify-cb { width: auto; }
@@ -351,9 +353,12 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
 }
 .gr-list { display: flex; flex-direction: column; gap: 1rem; }
 .gr-thread { display: flex; flex-direction: column; gap: 0.75rem; }
-.gr-replies { display: flex; flex-direction: column; gap: 0.75rem; margin-top: 0.5rem; padding-left: 1.25rem; border-left: 2px solid var(--gr-border); }
+/* Logical, not physical, throughout: direction inherits through the shadow
+   boundary, so a physical padding-left would strand the nesting rail on the
+   wrong side of the replies it indents on an RTL host page. */
+.gr-replies { display: flex; flex-direction: column; gap: 0.75rem; margin-top: 0.5rem; padding-inline-start: 1.25rem; border-inline-start: 2px solid var(--gr-border); }
 .gr-comment { display: flex; gap: 0.75rem; }
-.gr-comment[data-flat="1"] .gr-flatten { font-size: 0.85em; color: var(--gr-muted); margin-right: 0.3em; }
+.gr-comment[data-flat="1"] .gr-flatten { font-size: 0.85em; color: var(--gr-muted); margin-inline-end: 0.3em; }
 .gr-avatar { flex: 0 0 auto; width: 40px; height: 40px; border-radius: 50%; overflow: hidden; background: var(--gr-surface); box-shadow: 0 0 0 1px var(--gr-border); }
 .gr-avatar svg, .gr-avatar img { width: 100%; height: 100%; display: block; }
 .gr-main { flex: 1; min-width: 0; }
@@ -375,7 +380,9 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
 	padding: 0.05em 0.4em;
 	border-radius: 999px;
 }
-.gr-body { margin: 0.25rem 0 0; }
+/* A body's direction belongs to whoever typed it, not to the site: plaintext
+   takes it per paragraph, from the first strong character. */
+.gr-body { margin: 0.25rem 0 0; unicode-bidi: plaintext; }
 .gr-body p { margin: 0.3em 0; }
 .gr-body a { color: var(--gr-link); }
 /* Fenced code blocks. A UA-default <pre> neither wraps nor scrolls, so one long
@@ -458,7 +465,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
 	color: var(--gr-badge-fg);
 	border-color: var(--gr-accent);
 }
-.gr-reaction-count { margin-left: 0.25em; font-variant-numeric: tabular-nums; }
+.gr-reaction-count { margin-inline-start: 0.25em; font-variant-numeric: tabular-nums; }
 .gr-votes { display: flex; align-items: center; gap: 0.3rem; margin-top: 0.4rem; font-size: 0.85em; }
 .gr-vote {
 	font: inherit;
@@ -583,7 +590,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
 .gr-attribution {
 	font-size: 0.8em;
 	color: var(--gr-muted);
-	text-align: right;
+	text-align: end;
 	margin: 0.5rem 0 0;
 }
 .gr-attribution a { color: inherit; text-decoration: none; }
@@ -2314,6 +2321,24 @@ const startOauth = (
 	}
 };
 
+/**
+ * Mirror the host page's text direction onto the widget's own element.
+ *
+ * Direction already inherits through the shadow boundary — a shadow root is
+ * style encapsulation, not a separate document — so this changes no layout on
+ * its own. What it buys is a `dir` attribute the widget's *own* CSS and JS can
+ * key off: `:host-context([dir="rtl"])` is the obvious way to reach the host
+ * page's direction from inside a shadow tree and Firefox has never implemented
+ * it, so the direction has to be readable locally instead.
+ *
+ * The computed style is what's read, not the attribute: a host page can set
+ * `direction: rtl` in a stylesheet and never write `dir` anywhere.
+ */
+const applyDirection = (host: HTMLElement) => {
+	const dir = getComputedStyle(document.documentElement).direction;
+	host.dir = dir === "rtl" ? "rtl" : "ltr";
+};
+
 const init = () => {
 	const host = document.getElementById("garrul");
 	if (!host) return;
@@ -2328,6 +2353,8 @@ const init = () => {
 	const apiBase =
 		host.dataset.api ??
 		(scriptEl ? new URL(scriptEl.src).origin : window.location.origin);
+
+	applyDirection(host);
 
 	const root = host.attachShadow({ mode: "open" });
 	const style = el("style");
