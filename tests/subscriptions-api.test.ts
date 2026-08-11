@@ -17,6 +17,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { subscriptions } from "../src/routes/api.subscriptions";
 import { confirmSubscription, upsertSubscription } from "../src/db/queries";
+import { makeKv } from "./helpers/kv";
 import { installMockCaches, uninstallMockCaches } from "./helpers/mock-caches";
 import type { Bindings } from "../src/index";
 
@@ -72,6 +73,8 @@ beforeEach(() => {
 
 	env = {
 		DB: makeD1(sqlite),
+		// The route resolves the confirmation-email caps through loadNumbers.
+		TREE_CACHE: makeKv(),
 		ENV: "dev",
 		IP_HASH_SECRET: "test-secret",
 		PUBLIC_BASE_URL: "https://comments.example",

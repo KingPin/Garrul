@@ -53,27 +53,51 @@ export type SendBudget = {
 };
 
 /**
- * The live confirmation-email budgets. Both must grant for a send to proceed.
+ * The two windows the confirmation-email ceiling divides.
  *
- * Two windows for the same reason the rate limiter has two: the short one kills
+ * Two of them for the same reason the rate limiter has two: the short one kills
  * the concurrency burst that the racy limiter allows, and the long one bounds
  * total spend and bounce-reputation damage over a day. A single window would
  * force a choice between those.
  *
- * These are deliberately far above any plausible organic signup rate for a
- * self-hosted blog — the intent is that only abuse ever reaches them. They are
- * module constants rather than `settings.ts` entries because every NUMBERS
- * entry there needs a new `keyof Bindings` field, which pulls in
- * `parseBindings`, tests/config-registry.test.ts and a release-manifest regen.
- * Wiring them to settings so operators on a small mail plan can lower them
- * without a redeploy is worthwhile follow-up, not part of the fix.
- *
- * `reserveSend` logs at warn when a budget denies, so an operator who does out-
- * grow these finds out from `wrangler tail` rather than from silence.
+ * The windows stay constants while the caps are operator-settable
+ * (`confirm_send_burst_max` / `confirm_send_daily_max` in src/lib/settings.ts,
+ * issue #69). What an operator needs to change when a busy post 429s a real
+ * subscriber, or when their mail plan's daily limit sits below Garrul's, is how
+ * many sends they get — not the period those sends are counted over. Two dials
+ * are also easier to reason about than four, and the `scope` strings below are a
+ * primary key seeded by migration 0018, so a per-window rename is a migration.
  */
-export const CONFIRM_SEND_BUDGETS: readonly SendBudget[] = [
-	{ scope: "confirm:burst", max: 20, windowSec: 60 },
-	{ scope: "confirm:daily", max: 200, windowSec: 86_400 },
+export const CONFIRM_BURST_WINDOW_SEC = 60;
+export const CONFIRM_DAILY_WINDOW_SEC = 86_400;
+
+/**
+ * Build the live budgets from resolved settings. Both must grant for a send to
+ * proceed.
+ *
+ * The parameter is structural rather than `ResolvedNumbers` so this module keeps
+ * its only import at `./log` — the same reason `EmailBudgetDb` is a `Pick`.
+ *
+ * The defaults behind these two keys are deliberately far above any plausible
+ * organic signup rate for a self-hosted blog; the intent is that only abuse ever
+ * reaches them. `reserveConfirmSend` logs at warn when a budget denies, so an
+ * operator who does outgrow them finds out from `wrangler tail` rather than from
+ * silence — and can now retune from /admin/settings instead of redeploying.
+ */
+export const confirmSendBudgets = (numbers: {
+	confirm_send_burst_max: number;
+	confirm_send_daily_max: number;
+}): readonly SendBudget[] => [
+	{
+		scope: "confirm:burst",
+		max: numbers.confirm_send_burst_max,
+		windowSec: CONFIRM_BURST_WINDOW_SEC,
+	},
+	{
+		scope: "confirm:daily",
+		max: numbers.confirm_send_daily_max,
+		windowSec: CONFIRM_DAILY_WINDOW_SEC,
+	},
 ];
 
 /** The subset of `Bindings` this module needs — structural so tests can pass a
@@ -171,6 +195,11 @@ const ALLOW: Reservation = {
 /**
  * Reserve one confirmation email against every configured budget.
  *
+ * `budgets` is required rather than defaulted to a module constant. The caps are
+ * operator-settable now, so a default would be a second, staler source of truth
+ * for them — and a call site that forgot to pass resolved settings would silently
+ * enforce the shipped defaults instead of the operator's numbers.
+ *
  * Fails OPEN on infrastructure trouble — a D1 error, or a budget row that is
  * missing because the migration did not land. The rate limiter makes the same
  * call for the same reason (see its `fails open and flags degraded` test): a
@@ -190,7 +219,7 @@ const ALLOW: Reservation = {
  */
 export const reserveConfirmSend = async (
 	db: EmailBudgetDb,
-	budgets: readonly SendBudget[] = CONFIRM_SEND_BUDGETS,
+	budgets: readonly SendBudget[],
 	now: number = Date.now(),
 ): Promise<Reservation> => {
 	const held: SendBudget[] = [];

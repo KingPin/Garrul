@@ -23,10 +23,14 @@ import { DatabaseSync } from "node:sqlite";
 import { subscriptions } from "../src/routes/api.subscriptions";
 import { upsertSubscription } from "../src/db/queries";
 import {
-	CONFIRM_SEND_BUDGETS,
+	CONFIRM_BURST_WINDOW_SEC,
+	CONFIRM_DAILY_WINDOW_SEC,
+	confirmSendBudgets,
 	reserveConfirmSend,
 	type SendBudget,
 } from "../src/lib/email-budget";
+import { numberBounds } from "../src/lib/settings";
+import { makeKv } from "./helpers/kv";
 import { installMockCaches, uninstallMockCaches } from "./helpers/mock-caches";
 import type { Bindings } from "../src/index";
 
@@ -92,6 +96,27 @@ let sqlite: DatabaseSync;
 let env: Bindings;
 let sent: string[];
 
+/**
+ * The shipped caps, read from the settings registry rather than restated here.
+ *
+ * A literal 20/200 in this file would keep passing after someone changed the
+ * default, which is exactly the drift these tests exist to catch — the endpoint's
+ * only hard bound is whatever the registry says it is.
+ */
+const DEFAULT_BUDGETS = confirmSendBudgets({
+	confirm_send_burst_max: numberBounds("confirm_send_burst_max").default,
+	confirm_send_daily_max: numberBounds("confirm_send_daily_max").default,
+});
+
+/** Persist an operator override for a numeric setting, as /admin/settings would. */
+const setNumberSetting = (key: string, value: number) => {
+	sqlite
+		.prepare(
+			"INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+		)
+		.run(key, String(value), NOW);
+};
+
 const migrate = (db: DatabaseSync) => {
 	for (const file of readdirSync(MIGRATIONS_DIR)
 		.filter((f) => f.endsWith(".sql"))
@@ -116,6 +141,10 @@ beforeEach(() => {
 
 	env = {
 		DB: makeD1(sqlite),
+		// The subscribe path resolves the caps through loadNumbers, which reads and
+		// writes this entry. A fresh store per test means no resolved-settings
+		// carry-over between cases that set different overrides.
+		TREE_CACHE: makeKv(),
 		ENV: "dev",
 		IP_HASH_SECRET: "test-secret",
 		PUBLIC_BASE_URL: "https://comments.example",
@@ -252,7 +281,7 @@ describe("reserveConfirmSend — fails open on infrastructure trouble", () => {
 		// behaviour, not refuse every subscription.
 		sqlite.exec("DROP TABLE email_send_budget");
 		const warn = vi.spyOn(console, "log").mockImplementation(() => {});
-		const r = await reserveConfirmSend(makeD1(sqlite), CONFIRM_SEND_BUDGETS, NOW);
+		const r = await reserveConfirmSend(makeD1(sqlite), DEFAULT_BUDGETS, NOW);
 		expect(r.ok).toBe(true);
 		warn.mockRestore();
 	});
@@ -260,7 +289,7 @@ describe("reserveConfirmSend — fails open on infrastructure trouble", () => {
 	it("allows the send when a budget row was never seeded", async () => {
 		sqlite.exec("DELETE FROM email_send_budget WHERE scope = 'confirm:burst'");
 		const warn = vi.spyOn(console, "log").mockImplementation(() => {});
-		const r = await reserveConfirmSend(makeD1(sqlite), CONFIRM_SEND_BUDGETS, NOW);
+		const r = await reserveConfirmSend(makeD1(sqlite), DEFAULT_BUDGETS, NOW);
 		expect(r.ok).toBe(true);
 		warn.mockRestore();
 	});
@@ -272,7 +301,7 @@ describe("reserveConfirmSend — fails open on infrastructure trouble", () => {
 			},
 		};
 		const warn = vi.spyOn(console, "log").mockImplementation(() => {});
-		const r = await reserveConfirmSend(broken, CONFIRM_SEND_BUDGETS, NOW);
+		const r = await reserveConfirmSend(broken, DEFAULT_BUDGETS, NOW);
 		expect(r.ok).toBe(true);
 		warn.mockRestore();
 	});
@@ -284,7 +313,7 @@ describe("POST /subscribe — the burst is bounded end to end", () => {
 		// fresh email address AND a fresh source address, so neither the per-email
 		// cap nor the IP-keyed limiter binds at all. Whatever bound survives here
 		// is the one the endpoint actually has on a default install.
-		const burst = CONFIRM_SEND_BUDGETS.find((b) => b.scope === "confirm:burst");
+		const burst = DEFAULT_BUDGETS.find((b) => b.scope === "confirm:burst");
 		const max = burst?.max ?? 0;
 		expect(max).toBeGreaterThan(0);
 
@@ -377,5 +406,96 @@ describe("POST /subscribe — the burst is bounded end to end", () => {
 		// problem, and the pending row is legitimate.
 		expect(res.status).toBe(200);
 		expect(readBudget("confirm:burst")?.sent).toBe(0);
+	});
+});
+
+describe("confirmSendBudgets — operator-settable caps (issue #69)", () => {
+	it("builds both scopes with the fixed windows and the given caps", () => {
+		expect(
+			confirmSendBudgets({
+				confirm_send_burst_max: 7,
+				confirm_send_daily_max: 99,
+			}),
+		).toEqual([
+			{ scope: "confirm:burst", max: 7, windowSec: CONFIRM_BURST_WINDOW_SEC },
+			{ scope: "confirm:daily", max: 99, windowSec: CONFIRM_DAILY_WINDOW_SEC },
+		]);
+	});
+
+	it("keeps the scope strings migration 0018 seeded", () => {
+		// `scope` is the table's primary key, seeded by the migration — a rename
+		// here would silently take every budget down the fail-open path (no row →
+		// no ceiling) rather than erroring.
+		const seeded = sqlite
+			.prepare("SELECT scope FROM email_send_budget ORDER BY scope")
+			.all() as { scope: string }[];
+		expect(seeded.map((r) => r.scope)).toEqual(
+			DEFAULT_BUDGETS.map((b) => b.scope).sort(),
+		);
+	});
+
+	it("enforces an operator-lowered burst cap end to end", async () => {
+		// The point of the issue: a cap set from /admin/settings has to be what the
+		// endpoint actually enforces. Setting it *below* the shipped default is the
+		// direction that proves the constant isn't still in play — if the route
+		// ignored settings, all 4 would send.
+		setNumberSetting("confirm_send_burst_max", 2);
+
+		const responses = await Promise.all(
+			Array.from({ length: 4 }, (_, i) =>
+				subscribe({ post_slug: SLUG, email: `low${i}@example.com` }, `10.7.${i}.1`),
+			),
+		);
+
+		expect(sent).toHaveLength(2);
+		expect(responses.filter((r) => r.status === 429)).toHaveLength(2);
+		expect(readBudget("confirm:burst")?.sent).toBe(2);
+	});
+
+	it("enforces an operator-lowered daily cap end to end", async () => {
+		// The daily dial is the one a free-tier Resend operator reaches for, and it
+		// has to bind independently of the burst one — a burst cap left at its
+		// default must not let a lowered daily cap through.
+		setNumberSetting("confirm_send_daily_max", 1);
+
+		const responses = await Promise.all(
+			Array.from({ length: 3 }, (_, i) =>
+				subscribe({ post_slug: SLUG, email: `day${i}@example.com` }, `10.8.${i}.1`),
+			),
+		);
+
+		expect(sent).toHaveLength(1);
+		expect(responses.filter((r) => r.status === 429)).toHaveLength(2);
+		expect(readBudget("confirm:daily")?.sent).toBe(1);
+	});
+
+	it("honours a raised cap past the shipped default", async () => {
+		// The other direction, and the reason the issue was filed: an operator whose
+		// post got busy must be able to lift the ceiling without a redeploy.
+		const raised = numberBounds("confirm_send_burst_max").default + 3;
+		setNumberSetting("confirm_send_burst_max", raised);
+
+		const responses = await Promise.all(
+			Array.from({ length: raised }, (_, i) =>
+				subscribe({ post_slug: SLUG, email: `up${i}@example.com` }, `10.6.${i}.1`),
+			),
+		);
+
+		expect(responses.filter((r) => r.status === 429)).toHaveLength(0);
+		expect(sent).toHaveLength(raised);
+	});
+
+	it("clamps a 0 override up to 1 rather than denying every subscription", async () => {
+		// There is no "off" for a ceiling. A stored 0 — plausible from someone
+		// reading the other numeric dials, where 0 means disabled — must not resolve
+		// to a ceiling that refuses all new subscribers.
+		setNumberSetting("confirm_send_burst_max", 0);
+
+		const res = await subscribe(
+			{ post_slug: SLUG, email: "zero@example.com" },
+			"10.3.3.3",
+		);
+		expect(res.status).toBe(200);
+		expect(sent).toHaveLength(1);
 	});
 });

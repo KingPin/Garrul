@@ -22,6 +22,15 @@ ADMIN_EMAILS = "you@example.com"
 EMAIL_PROVIDER = "resend"
 # From address for digest emails. Must be on a domain verified in Resend.
 EMAIL_FROM = "Garrul <comments@example.com>"
+# Optional. Global ceiling on outbound subscription-confirmation email, counted
+# in D1. Also editable at runtime from /admin/settings. Global, not per-reader:
+# a spent window turns away new subscribers until it rolls (confirmed
+# subscribers and their digests are unaffected). Watch `wrangler tail` for
+# "confirmation email budget exhausted" before raising. The daily default sits
+# above Resend's free-tier 100/day on purpose — lower it if you'd rather Garrul
+# stop before your provider does. See docs/ANTISPAM.md.
+# CONFIRM_SEND_BURST_MAX = "20"         # sends per 60s window
+# CONFIRM_SEND_DAILY_MAX = "200"        # sends per 24h window
 # Public base URL of this worker, used for /c/:id permalinks inside digest emails
 # and for unsubscribe links. Same value as OAUTH_CALLBACK_BASE in most setups.
 PUBLIC_BASE_URL = "https://comments.example.com"

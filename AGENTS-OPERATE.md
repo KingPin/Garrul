@@ -185,6 +185,8 @@ between the two is a build error, not a silent misclassification.
 | `EMAIL_PROVIDER` | var | Adapter selector. `resend` is the only v1 value. Unset disables sends. | `resend` | `wrangler.toml` |
 | `EMAIL_FROM` | var | `From:` header for digest emails. Domain must be verified in the provider. | `Garrul <comments@example.com>` | `wrangler.toml` |
 | `RESEND_API_KEY` | secret | Resend API key. Required when `EMAIL_PROVIDER=resend`. | `re_...` | `wrangler secret put` / `.dev.vars` |
+| `CONFIRM_SEND_BURST_MAX` | var | Ceiling on outbound subscription-confirmation email per 60-second window, counted atomically in D1 and applied **globally** rather than per identity — every per-identity key on that endpoint is either racy or attacker-supplied. Default `20`, range `[1, 10000]`. Raise it if `wrangler tail` shows `confirmation email budget exhausted` while a busy post is being subscribed to legitimately; the exhausted window 429s new subscriptions but never touches already-confirmed subscribers. See `docs/ANTISPAM.md`. | `20` | `wrangler.toml` default; **Admin → Settings** overrides |
+| `CONFIRM_SEND_DAILY_MAX` | var | Ceiling on outbound subscription-confirmation email per 24-hour window, same global D1 counter as `CONFIRM_SEND_BURST_MAX`. Default `200`, range `[1, 100000]`. The default sits deliberately *above* Resend's free-tier 100/day so the provider's limit is what a normal instance meets first; lower it to `100` (or below) if you would rather Garrul stop sending before your mail plan does. See `docs/ANTISPAM.md`. | `200` | `wrangler.toml` default; **Admin → Settings** overrides |
 | `WEBHOOK_URL` | secret | Legacy single-URL webhook (fire-and-forget, no retries). Only honored when no endpoints are configured on `/admin/webhooks` — prefer endpoint rows (signed, retried, per-event filters). | `https://example.com/hook` | `wrangler secret put` / `.dev.vars` |
 | `TELEGRAM_BOT_TOKEN` | secret | Optional. BotFather token enabling the Telegram operator bot. With only this set, outbound notifications work (add a `telegram` webhook endpoint with a chat id). Unset = feature off. See `docs/telegram.md`. | `123456789:AAH...` | `wrangler secret put` / `.dev.vars` |
 | `TELEGRAM_WEBHOOK_SECRET` | secret | Optional. Shared secret echoed in the `X-Telegram-Bot-Api-Secret-Token` header; required for inbound buttons/slash commands. Pass it to Telegram's `setWebhook` as `secret_token`. Unset = inbound rejected (fail closed). | ``openssl rand -base64 32` output` | `wrangler secret put` / `.dev.vars` |
@@ -627,10 +629,10 @@ backend concurrent requests from one identity sustain a multiple of the
 configured rate — and the per-address pending cap is bypassed by
 cycling addresses. So sends are counted directly, in D1:
 
-| Budget | Cap | Window |
-| --- | --- | --- |
-| `confirm:burst` | 20 sends | 60 s |
-| `confirm:daily` | 200 sends | 24 h |
+| Budget | Default cap | Window | Setting |
+| --- | --- | --- | --- |
+| `confirm:burst` | 20 sends | 60 s | `CONFIRM_SEND_BURST_MAX` |
+| `confirm:daily` | 200 sends | 24 h | `CONFIRM_SEND_DAILY_MAX` |
 
 Both must grant. The counters are single rows in `email_send_budget`
 (migration `0018`) and the whole decision is one `UPDATE` carrying the
@@ -662,14 +664,26 @@ Operator notes:
 - **Digests are not counted here** — they go to already-confirmed
   addresses and no unauthenticated caller can trigger them. This bounds
   the attacker-reachable share of your Resend spend, not the total.
-- Caps are constants in `src/lib/email-budget.ts`
-  (`CONFIRM_SEND_BUDGETS`); changing them is an edit plus a redeploy,
-  not a setting — making them `/admin/settings` dials is tracked in
-  https://github.com/KingPin/Garrul/issues/69. Resend's free tier is 100 emails/day, so `confirm:daily
-  = 200` deliberately sits above it — your provider's limit, not this
-  one, is what a normal instance hits first. On the free tier, set it
-  below 100 minus your expected digest volume if you want Garrul to stop
-  before Resend does.
+- Both caps are **runtime-settable** (since 2.8.0): *Settings →
+  Moderation → Confirmation-email ceiling*, or the
+  `CONFIRM_SEND_BURST_MAX` / `CONFIRM_SEND_DAILY_MAX` vars. Standard
+  precedence — a `settings` row overrides the env var overrides the
+  default. Raise the burst cap when `wrangler tail` shows
+  `confirmation email budget exhausted` while a post is legitimately
+  busy; that log line is the only signal a real subscriber was turned
+  away. Resend's free tier is 100 emails/day, so the 200 daily default
+  deliberately sits above it — your provider's limit, not this one, is
+  what a normal instance hits first. On the free tier, set it below 100
+  minus your expected digest volume if you want Garrul to stop before
+  Resend does.
+- Neither cap accepts `0`. Both clamp to a floor of **1**, unlike the
+  other numeric dials where `0` means "check off" — a ceiling of 0 would
+  refuse every new subscription while reading as disabled. Set the cap
+  high to get the ceiling out of the way.
+- The two **windows** stay code constants. The `scope` strings are the
+  primary key seeded by migration `0018`, so renaming or splitting a
+  window is a migration, not a setting; and in practice what needs
+  retuning is how many sends you get, not the period.
 - Full threat-model write-up: `docs/ANTISPAM.md` §"The
   confirmation-email ceiling".
 

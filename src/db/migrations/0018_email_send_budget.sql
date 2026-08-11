@@ -25,7 +25,11 @@
 -- `scope` is a free-form string rather than an enum so other outbound mail
 -- (digests, for instance) can adopt the same ceiling later without a schema
 -- change. Only the confirmation-email scopes are wired up today — see
--- CONFIRM_SEND_BUDGETS in src/lib/email-budget.ts for the live caps.
+-- confirmSendBudgets in src/lib/email-budget.ts, whose caps come from the
+-- operator-settable confirm_send_* entries in src/lib/settings.ts. The `scope`
+-- values seeded below are therefore a contract, not an implementation detail: a
+-- rename here sends the reserve down its fail-open path (no row → no ceiling)
+-- rather than erroring, so tests/subscriptions-send-budget.test.ts pins them.
 --
 -- Not a general-purpose rate limiter: this is deliberately GLOBAL, not keyed on
 -- IP or address, because every per-identity key the endpoint has is either racy

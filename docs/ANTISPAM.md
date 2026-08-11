@@ -195,7 +195,13 @@ It counts *sends*, not attempts: if Resend rejects the call or the API key is mi
 
 - **It only counts confirmation mail.** Digests are sent by the cron to addresses that already confirmed, so they're outside this ceiling — an attacker can't trigger them. But it does mean this budget is not a bound on your *total* Resend spend, only on the part an unauthenticated caller can cause.
 
-**Tuning.** The caps are module constants in `src/lib/email-budget.ts` (`CONFIRM_SEND_BUDGETS`) — edit and redeploy. Lower `confirm:daily` first if you want them tighter. For scale: Resend's free tier is 100 emails/day, so at 200 the ceiling deliberately sits *above* it — the intent is that your provider's own limit, not this one, is what a normal instance notices, and that this only engages on abuse. If you're on the free tier and want Garrul to stop before your provider does, set `confirm:daily` below 100 minus your expected digest volume. Wiring these to `/admin/settings` so they're changeable without a redeploy is planned, not shipped.
+**Tuning.** Both caps are operator-settable, from **/admin/settings → Moderation → Confirmation-email ceiling**, or as the `CONFIRM_SEND_BURST_MAX` / `CONFIRM_SEND_DAILY_MAX` vars (defaults 20/minute and 200/day). The admin dial takes effect on the next request; no redeploy either way.
+
+- **Raising them.** The burst cap is deliberately tight *because* it is global, so a post that gets busy can plausibly turn away a genuine subscriber for a minute. The signal is a `confirmation email budget exhausted` line in `wrangler tail`, tagged with the scope that denied — check for it before assuming a reader's report of "too many requests" is something else.
+- **Lowering them.** Resend's free tier is 100 emails/day, so the 200 default sits *above* it on purpose: the intent is that your provider's own limit, not this one, is what a normal instance notices, and that this only engages on abuse. If you'd rather Garrul stop before your provider starts rejecting, set the daily cap below 100 minus your expected digest volume.
+- **There is no "off".** Both clamp to a floor of 1, unlike the other numeric dials where `0` disables a check. A ceiling of 0 would refuse every new subscription while looking like it had been switched off, so that value isn't reachable — set the cap high if you want the ceiling out of the way.
+
+The two **windows** (60s and 24h) stay code constants. What needs retuning in practice is how many sends you get, not the period they're counted over — and the `scope` strings that name them are a primary key seeded by migration `0018`, so splitting or renaming a window is a migration rather than a setting.
 
 ## The Durable Object backend (opt-in)
 
@@ -230,7 +236,7 @@ These aren't in the box yet — open an issue if you need them:
 - IP-reputation lookups (StopForumSpam, AbuseIPDB) — would need to handle raw IPs, conflicts with privacy stance.
 - Bayesian / locally-trained classifier.
 - CleanTalk or other classifier vendors — the adapter interface is in `src/lib/spam/`; adding one is one new file.
-- Operator-tunable [confirmation-email caps](#the-confirmation-email-ceiling) — today they're constants plus a redeploy, not `/admin/settings` entries. Tracked in [#69](https://github.com/KingPin/Garrul/issues/69).
+- Per-window control over the [confirmation-email ceiling](#the-confirmation-email-ceiling) — the caps are settings as of 2.8.0, but the 60s / 24h windows they divide are still constants, and adding or renaming one is a migration (the scope strings are a primary key).
 
 ## Operating the queue
 

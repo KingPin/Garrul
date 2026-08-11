@@ -49,13 +49,14 @@ import {
 	upsertSubscription,
 } from "../db/queries";
 import { requireActiveUser } from "../lib/active-user";
-import { reserveConfirmSend } from "../lib/email-budget";
+import { confirmSendBudgets, reserveConfirmSend } from "../lib/email-budget";
 import { requireIpHash } from "../lib/ip-hash";
 import { checkRateLimit } from "../lib/ratelimit";
 import { renderConfirmEmailHtml } from "../lib/digest";
 import { sendEmail } from "../lib/email";
 import { fillSubject, subjectTitle, substituteTitle } from "../lib/post-title";
 import { readSession } from "../lib/session";
+import { loadNumbers } from "../lib/settings";
 import { FALLBACK_LOCALE, LOCALES, type Translator, tFor } from "../i18n";
 import { matchLocale } from "../i18n/negotiate";
 import type { LocaleVars } from "../lib/locale";
@@ -184,8 +185,14 @@ subscriptions.post("/", async (c) => {
 	// pending row whose confirmation email never went out, which the reader can
 	// never confirm and which still consumes their per-email cap.
 	//
-	// The auto-confirm path sends no confirmation email, so it spends no budget.
-	const reservation = autoConfirm ? null : await reserveConfirmSend(c.env.DB);
+	// The auto-confirm path sends no confirmation email, so it spends no budget —
+	// and skips the settings read too, since the caps are the only thing it needs.
+	const reservation = autoConfirm
+		? null
+		: await reserveConfirmSend(
+				c.env.DB,
+				confirmSendBudgets(await loadNumbers(c.env)),
+			);
 	if (reservation && !reservation.ok) {
 		return c.json(
 			{ error: t("err.ratelimit"), reason: "send_budget_exhausted" },

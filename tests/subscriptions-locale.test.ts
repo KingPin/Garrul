@@ -19,6 +19,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Bindings } from "../src/index";
 import { localeMiddleware } from "../src/lib/locale";
 import { subscriptions } from "../src/routes/api.subscriptions";
+import { makeKv } from "./helpers/kv";
 
 const MIGRATIONS_DIR = join(__dirname, "../src/db/migrations");
 
@@ -90,6 +91,8 @@ beforeEach(() => {
 		.run(SLUG, "Willkommen", null, T0);
 	env = {
 		DB: makeD1(sqlite),
+		// The route resolves the confirmation-email caps through loadNumbers.
+		TREE_CACHE: makeKv(),
 		IP_HASH_SECRET: "s".repeat(32),
 		EMAIL_PROVIDER: "resend",
 		RESEND_API_KEY: "re_test",

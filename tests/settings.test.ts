@@ -338,6 +338,13 @@ describe("loadNumbers — defaults", () => {
 			// start deleting an operator's moderation history on the first cron tick
 			// after an upgrade. See src/db/audit-retention.ts.
 			audit_log_retention_days: 0,
+			// The confirmation-email ceiling. Unlike every other dial here these have
+			// no "off" value — 0 would be a ceiling that refuses all new
+			// subscriptions, so the clamp floor is 1. The daily default sits above
+			// Resend's free-tier 100/day deliberately, so the provider's limit is
+			// what a normal instance meets first. See src/lib/email-budget.ts.
+			confirm_send_burst_max: 20,
+			confirm_send_daily_max: 200,
 		});
 	});
 

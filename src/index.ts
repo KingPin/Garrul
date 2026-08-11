@@ -97,6 +97,15 @@ export type Bindings = {
 	SPAM_HONEYPOT_MIN_MS?: string;
 	SPAM_FIRST_COMMENT_MODERATE?: string;
 	SPAM_FORM_TS_SECRET?: string;
+	// Global ceiling on outbound subscription-confirmation email, counted in D1
+	// (src/lib/email-budget.ts). Env-var *default*; a `settings` row overrides at
+	// runtime (see src/lib/settings.ts). The windows stay constants — it's the
+	// caps operators retune, either upward when a busy post 429s a genuine
+	// subscriber or downward to stop before a small mail plan's own daily limit.
+	//   CONFIRM_SEND_BURST_MAX — sends allowed per 60s window.
+	//   CONFIRM_SEND_DAILY_MAX — sends allowed per 24h window.
+	CONFIRM_SEND_BURST_MAX?: string;
+	CONFIRM_SEND_DAILY_MAX?: string;
 	// Set to "1" or "true" to suppress the "Powered by Garrul" attribution
 	// rendered under the comment list. Unset = attribution shown.
 	BRANDING_HIDDEN?: string;

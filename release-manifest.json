@@ -1,5 +1,5 @@
 {
-  "version": "2.7.1",
+  "version": "2.8.0",
   "minPreviousVersion": "1.0.0",
   "renderer": {
     "version": 2,
@@ -172,6 +172,16 @@
       "name": "EMAIL_FROM",
       "required": false,
       "addedIn": "1.0.0"
+    },
+    {
+      "name": "CONFIRM_SEND_BURST_MAX",
+      "required": false,
+      "addedIn": "2.8.0"
+    },
+    {
+      "name": "CONFIRM_SEND_DAILY_MAX",
+      "required": false,
+      "addedIn": "2.8.0"
     },
     {
       "name": "TELEGRAM_BOT_USERNAME",

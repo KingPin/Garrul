@@ -50,7 +50,9 @@ export type NumberKey =
 	| "spam_link_threshold"
 	| "spam_honeypot_min_ms"
 	| "ip_hash_retention_days"
-	| "audit_log_retention_days";
+	| "audit_log_retention_days"
+	| "confirm_send_burst_max"
+	| "confirm_send_daily_max";
 
 export type ResolvedNumbers = Record<NumberKey, number>;
 
@@ -229,6 +231,28 @@ const NUMBERS: Record<
 		default: 0,
 		min: 0,
 		max: 3650,
+	},
+	// The global ceiling on outbound confirmation email (src/lib/email-budget.ts).
+	// Only the caps resolve here; the windows they divide stay constants, because
+	// what an operator needs to change is "how many", not "over what period" —
+	// and two dials are easier to reason about than four.
+	//
+	// min is 1, not 0, and that is the one place these differ from the retention
+	// dials above: 0 would resolve to a ceiling that denies every confirmation
+	// email, which reads as "off" but means "subscriptions are broken". There is
+	// no "off" for a ceiling — an operator who wants effectively-unlimited sets
+	// the max. The clamp therefore has no value that silently disables signups.
+	confirm_send_burst_max: {
+		env: "CONFIRM_SEND_BURST_MAX",
+		default: 20,
+		min: 1,
+		max: 10_000,
+	},
+	confirm_send_daily_max: {
+		env: "CONFIRM_SEND_DAILY_MAX",
+		default: 200,
+		min: 1,
+		max: 100_000,
 	},
 };
 

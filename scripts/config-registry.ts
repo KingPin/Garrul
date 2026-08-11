@@ -434,6 +434,30 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
 		example: "re_...",
 		addedIn: "1.0.0",
 	},
+	{
+		name: "CONFIRM_SEND_BURST_MAX",
+		kind: "var",
+		required: false,
+		group: "Email",
+		adminEditable: true,
+		hint: "confirmation emails allowed per minute (global)",
+		description:
+			"Ceiling on outbound subscription-confirmation email per 60-second window, counted atomically in D1 and applied **globally** rather than per identity — every per-identity key on that endpoint is either racy or attacker-supplied. Default `20`, range `[1, 10000]`. Raise it if `wrangler tail` shows `confirmation email budget exhausted` while a busy post is being subscribed to legitimately; the exhausted window 429s new subscriptions but never touches already-confirmed subscribers. See `docs/ANTISPAM.md`.",
+		example: "20",
+		addedIn: "2.8.0",
+	},
+	{
+		name: "CONFIRM_SEND_DAILY_MAX",
+		kind: "var",
+		required: false,
+		group: "Email",
+		adminEditable: true,
+		hint: "confirmation emails allowed per day (global)",
+		description:
+			"Ceiling on outbound subscription-confirmation email per 24-hour window, same global D1 counter as `CONFIRM_SEND_BURST_MAX`. Default `200`, range `[1, 100000]`. The default sits deliberately *above* Resend's free-tier 100/day so the provider's limit is what a normal instance meets first; lower it to `100` (or below) if you would rather Garrul stop sending before your mail plan does. See `docs/ANTISPAM.md`.",
+		example: "200",
+		addedIn: "2.8.0",
+	},
 
 	// ------------------------------------------------------------ webhooks
 	{

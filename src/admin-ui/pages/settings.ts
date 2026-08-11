@@ -143,6 +143,28 @@ const PRIVACY_NUMBER_META: { key: NumberKey; label: string; help: string }[] = [
 	},
 ];
 
+// The outbound confirmation-email ceiling (src/lib/email-budget.ts). Its own
+// card rather than folded into anti-spam heuristics above, because it is the one
+// dial on this page whose *default* an operator may need to raise: the heuristics
+// fail toward the moderation queue, whereas an exhausted send budget 429s a real
+// reader trying to subscribe. Labels say "global" out loud for that reason —
+// nothing here is per-reader, so one abusive burst does spend everyone's window.
+//
+// Windows aren't shown because they aren't settable; see the comment on
+// CONFIRM_BURST_WINDOW_SEC for why they stay constants.
+const EMAIL_NUMBER_META: { key: NumberKey; label: string; help: string }[] = [
+	{
+		key: "confirm_send_burst_max",
+		label: "Confirmation emails per minute (global)",
+		help: "Total subscription-confirmation emails this instance will send in any 60-second window, across all readers. Raise it if a post gets busy enough that genuine subscribers see \"too many requests\" — the log line to look for in `wrangler tail` is `confirmation email budget exhausted`. Cannot be set to 0: a 0 ceiling silently breaks all new subscriptions rather than disabling the check.",
+	},
+	{
+		key: "confirm_send_daily_max",
+		label: "Confirmation emails per day (global)",
+		help: "Same counter over a 24-hour window. The default 200 sits deliberately above Resend's free-tier 100/day, so your mail provider's limit is what a normal instance meets first. Lower it below 100 (minus your expected digest volume) if you'd rather Garrul stop sending before your provider starts rejecting.",
+	},
+];
+
 // Anti-spam heuristic dials. The classifier provider and its credentials stay
 // deploy-time (see the Configuration tab) — these three are the ones worth
 // retuning while watching the queue fill up.
@@ -250,6 +272,7 @@ export const renderSettings = (
 	const modNumberInputs = MOD_NUMBER_META.map(stepper).join("");
 	const spamNumberInputs = SPAM_NUMBER_META.map(stepper).join("");
 	const privacyNumberInputs = PRIVACY_NUMBER_META.map(stepper).join("");
+	const emailNumberInputs = EMAIL_NUMBER_META.map(stepper).join("");
 	const modToggles = MOD_FLAG_META.map((f) =>
 		renderSwitch({
 			name: f.key,
@@ -411,6 +434,19 @@ export const renderSettings = (
       <code>SPAM_FORM_TS_SECRET</code> to sign the form timestamp — without it an
       unsigned time is trivially forged, so the check is skipped. Set the secret
       with <code>wrangler secret put SPAM_FORM_TS_SECRET</code> and redeploy.</p>
+    </div>
+
+    <div class="card" x-show="tab === 'moderation'" x-cloak>
+      <h2>Confirmation-email ceiling</h2>
+      <p class="muted">A hard cap on how much subscription-confirmation mail this
+      instance will send, counted globally rather than per reader. It exists
+      because the other two limits on that endpoint can both be walked past by an
+      attacker cycling email addresses, so this is the one that holds — at the
+      cost of being shared: a spent window turns away genuine new subscribers
+      until it rolls. Already-confirmed subscribers and their digests are never
+      affected. Denials are logged, so watch <code>wrangler tail</code> before
+      assuming these need raising.</p>
+      ${emailNumberInputs}
     </div>
 
     <div class="card" x-show="tab === 'moderation'" x-cloak>
