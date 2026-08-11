@@ -45,9 +45,36 @@ export const es = {
 	"ui.subscribe.pending": "Revisa tu correo para confirmar la suscripción.",
 	"ui.subscribe.confirmed": "Suscripción confirmada.",
 
+	// Landing pages for the confirm/unsubscribe links in the email
+	"ui.subscribe.link_expired": "El enlace ha caducado o ya se ha usado.",
+	"ui.subscribe.confirmed_page":
+		"Has confirmado las notificaciones de comentarios en «{title}».",
+	"ui.subscribe.already_unsubscribed":
+		"Ya has cancelado las notificaciones de comentarios de «{title}».",
+	"ui.subscribe.unsubscribed":
+		"Has cancelado las notificaciones de comentarios de «{title}».",
+	"ui.subscribe.unsubscribe_confirm":
+		"¿Cancelar las notificaciones de comentarios de «{title}»?",
+	"ui.subscribe.unsubscribe_cta": "Sí, cancelar la suscripción",
+	"ui.subscribe.unsubscribe_note":
+		"Todavía no ha cambiado nada: sigues suscrito hasta que lo confirmes.",
+
 	// Transactional email
 	"email.confirm.subject": "Confirma tu suscripción a los comentarios de {title}",
+	"email.confirm.heading": "Confirma tu suscripción",
+	"email.confirm.intro":
+		"Se ha solicitado una suscripción a las notificaciones de respuestas de {title}.",
+	"email.confirm.ignore":
+		"Si no has sido tú, ignora este correo: sin el clic de confirmación de abajo no se enviará ningún otro mensaje a esta dirección para este hilo.",
+	"email.confirm.cta": "Confirmar suscripción",
+	"email.confirm.paste": "O pega este enlace en tu navegador:",
 	"email.digest.subject": "Nuevas respuestas en «{title}»",
+	"email.digest.heading": {
+		one: "{count} comentario nuevo en «{title}»",
+		other: "{count} comentarios nuevos en «{title}»",
+	},
+	"email.digest.permalink": "enlace permanente",
+	"email.digest.unsubscribe": "Cancelar las notificaciones de este hilo",
 
 	// Atom feed
 	"feed.title": "Comentarios en {title}",

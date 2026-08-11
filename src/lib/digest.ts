@@ -25,7 +25,7 @@ import {
 	markNotificationsSent,
 	updateSubscriptionLastNotified,
 } from "../db/queries";
-import { t } from "../i18n";
+import { DEFAULT_LOCALE, type Translator, tFor } from "../i18n";
 import { sendEmail } from "./email";
 import { sanitizeForEmail } from "./markdown";
 import { fillSubject, subjectTitle } from "./post-title";
@@ -50,21 +50,45 @@ const escapeHtml = (s: string | null | undefined): string => {
 		.replace(/"/g, "&quot;");
 };
 
+/**
+ * Fill `{title}` with an emphasized, escaped title.
+ *
+ * Emphasis lives here rather than in the string table so no locale file
+ * contains markup: a translator cannot open a tag they forget to close. The
+ * template is escaped first (it is repo content, but a stray `<` in a
+ * translation should render, not parse), then the one span of intentional
+ * markup is substituted in.
+ *
+ * The replacement-*function* form is deliberate, exactly as in `t()`'s own
+ * interpolate: a title containing `$&` or `` $` `` would otherwise be read as a
+ * replacement pattern. Do not simplify this to a string replacement.
+ */
+const fillTitle = (template: string, title: string): string =>
+	escapeHtml(template).replace("{title}", () => `<strong>${escapeHtml(title)}</strong>`);
+
+/**
+ * The translator is a parameter, not an import.
+ *
+ * Confirmation mail is rendered inside a request that already negotiated a
+ * locale; digests are rendered by a cron tick that has no request at all and
+ * reads the locale off the subscription row. Neither caller can rely on a
+ * module-level `t`, and a module-global "active locale" would leak between
+ * concurrent sends in the same isolate.
+ */
 export const renderConfirmEmailHtml = (params: {
 	postTitle: string;
 	confirmUrl: string;
+	t: Translator;
 }): string => {
+	const t = params.t;
 	return `<!doctype html><html><body style="font-family:system-ui,sans-serif;max-width:560px;margin:auto;padding:24px;color:#111827;">
-<h1 style="font-size:18px;margin:0 0 12px;">Confirm your subscription</h1>
-<p>You're being asked to confirm a subscription to reply notifications for
-<strong>${escapeHtml(params.postTitle)}</strong>.</p>
-<p>If this wasn't you, ignore this email — without the confirmation click
-below, no further messages will be sent to this address for this thread.</p>
+<h1 style="font-size:18px;margin:0 0 12px;">${escapeHtml(t("email.confirm.heading"))}</h1>
+<p>${fillTitle(t("email.confirm.intro"), params.postTitle)}</p>
+<p>${escapeHtml(t("email.confirm.ignore"))}</p>
 <p style="margin-top:20px;"><a href="${params.confirmUrl}"
    style="background:#111827;color:#fff;padding:10px 16px;border-radius:6px;
-   text-decoration:none;display:inline-block;">Confirm subscription</a></p>
-<p style="margin-top:20px;font-size:12px;color:#6b7280;">Or paste this link
-into your browser:<br>${escapeHtml(params.confirmUrl)}</p>
+   text-decoration:none;display:inline-block;">${escapeHtml(t("email.confirm.cta"))}</a></p>
+<p style="margin-top:20px;font-size:12px;color:#6b7280;">${escapeHtml(t("email.confirm.paste"))}<br>${escapeHtml(params.confirmUrl)}</p>
 </body></html>`;
 };
 
@@ -73,13 +97,15 @@ const renderDigestHtml = (params: {
 	publicBase: string;
 	unsubscribeUrl: string;
 	items: { author: string; commentId: string; html: string; createdAt: number }[];
+	t: Translator;
 }): string => {
+	const t = params.t;
 	const rows = params.items
 		.map(
 			(it) => `
 <tr><td style="padding:12px 0;border-bottom:1px solid #e5e7eb;">
   <div style="font-size:13px;color:#6b7280;">
-    ${escapeHtml(it.author)} · <a href="${params.publicBase}/c/${it.commentId}">permalink</a>
+    ${escapeHtml(it.author)} · <a href="${params.publicBase}/c/${it.commentId}">${escapeHtml(t("email.digest.permalink"))}</a>
   </div>
   <div style="margin-top:6px;font-size:14px;color:#111827;">${it.html}</div>
 </td></tr>`,
@@ -87,10 +113,10 @@ const renderDigestHtml = (params: {
 		.join("");
 	const count = params.items.length;
 	return `<!doctype html><html><body style="font-family:system-ui,sans-serif;max-width:560px;margin:auto;padding:24px;color:#111827;">
-<h1 style="font-size:18px;margin:0 0 12px;">${count} new comment${count === 1 ? "" : "s"} on "${escapeHtml(params.postTitle)}"</h1>
+<h1 style="font-size:18px;margin:0 0 12px;">${escapeHtml(t("email.digest.heading", { count, title: params.postTitle }))}</h1>
 <table style="width:100%;border-collapse:collapse;">${rows}</table>
 <p style="margin-top:24px;font-size:12px;color:#6b7280;">
-  <a href="${params.unsubscribeUrl}" style="color:#6b7280;">Unsubscribe from this thread</a>
+  <a href="${params.unsubscribeUrl}" style="color:#6b7280;">${escapeHtml(t("email.digest.unsubscribe"))}</a>
 </p>
 </body></html>`;
 };
@@ -152,11 +178,16 @@ export const runDigest = async (env: DigestEnv, now: number = Date.now()): Promi
 		// from an earlier version can still hold a title with a CR/LF in it, and
 		// a mail subject is a header value.
 		const title = subjectTitle(post?.title, d.post_slug);
+		// The subscriber's own locale. `tFor` whitelists against LOCALES and
+		// falls back to English, so a row carrying a tag from a locale that has
+		// since been removed degrades instead of throwing in the cron handler.
+		const t = tFor(d.locale ?? DEFAULT_LOCALE);
 		const html = renderDigestHtml({
 			postTitle: title,
 			publicBase,
 			unsubscribeUrl,
 			items,
+			t,
 		});
 
 		const ok = await sendEmail(env, {

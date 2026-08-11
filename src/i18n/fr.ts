@@ -44,9 +44,36 @@ export const fr = {
 	"ui.subscribe.pending": "Consultez votre boîte de réception pour confirmer votre abonnement.",
 	"ui.subscribe.confirmed": "Abonnement confirmé.",
 
+	// Landing pages for the confirm/unsubscribe links in the email
+	"ui.subscribe.link_expired": "Ce lien a expiré ou a déjà été utilisé.",
+	"ui.subscribe.confirmed_page":
+		"Vos notifications de commentaires pour « {title} » sont confirmées.",
+	"ui.subscribe.already_unsubscribed":
+		"Vous êtes déjà désabonné des notifications de commentaires pour « {title} ».",
+	"ui.subscribe.unsubscribed":
+		"Vous êtes désabonné des notifications de commentaires pour « {title} ».",
+	"ui.subscribe.unsubscribe_confirm":
+		"Se désabonner des notifications de commentaires pour « {title} » ?",
+	"ui.subscribe.unsubscribe_cta": "Oui, me désabonner",
+	"ui.subscribe.unsubscribe_note":
+		"Rien n'a encore changé — vous restez abonné jusqu'à confirmation.",
+
 	// Transactional email
 	"email.confirm.subject": "Confirmez votre abonnement aux commentaires de {title}",
+	"email.confirm.heading": "Confirmez votre abonnement",
+	"email.confirm.intro":
+		"Un abonnement aux notifications de réponses a été demandé pour {title}.",
+	"email.confirm.ignore":
+		"Si vous n'êtes pas à l'origine de cette demande, ignorez cet e-mail : sans le clic de confirmation ci-dessous, aucun autre message ne sera envoyé à cette adresse pour ce fil.",
+	"email.confirm.cta": "Confirmer l'abonnement",
+	"email.confirm.paste": "Ou collez ce lien dans votre navigateur :",
 	"email.digest.subject": "Nouvelles réponses sur « {title} »",
+	"email.digest.heading": {
+		one: "{count} nouveau commentaire sur « {title} »",
+		other: "{count} nouveaux commentaires sur « {title} »",
+	},
+	"email.digest.permalink": "lien permanent",
+	"email.digest.unsubscribe": "Se désabonner de ce fil",
 
 	// Atom feed
 	"feed.title": "Commentaires sur {title}",

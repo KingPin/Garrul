@@ -46,9 +46,36 @@ export const de = {
 	"ui.subscribe.pending": "Bitte im Posteingang das Abo bestätigen.",
 	"ui.subscribe.confirmed": "Abo bestätigt.",
 
+	// Landing pages for the confirm/unsubscribe links in the email
+	"ui.subscribe.link_expired": "Der Link ist abgelaufen oder wurde bereits verwendet.",
+	"ui.subscribe.confirmed_page":
+		"Benachrichtigungen zu Kommentaren bei „{title}“ sind jetzt bestätigt.",
+	"ui.subscribe.already_unsubscribed":
+		"Benachrichtigungen zu Kommentaren bei „{title}“ wurden bereits abbestellt.",
+	"ui.subscribe.unsubscribed":
+		"Benachrichtigungen zu Kommentaren bei „{title}“ wurden abbestellt.",
+	"ui.subscribe.unsubscribe_confirm":
+		"Benachrichtigungen zu Kommentaren bei „{title}“ abbestellen?",
+	"ui.subscribe.unsubscribe_cta": "Ja, abbestellen",
+	"ui.subscribe.unsubscribe_note":
+		"Es hat sich noch nichts geändert — das Abo bleibt bis zur Bestätigung bestehen.",
+
 	// Transactional email
 	"email.confirm.subject": "Abo für Kommentare zu {title} bestätigen",
+	"email.confirm.heading": "Abo bestätigen",
+	"email.confirm.intro":
+		"Für {title} wurde ein Abo für Antwortbenachrichtigungen angefragt.",
+	"email.confirm.ignore":
+		"Falls diese Anfrage nicht beabsichtigt war, kann diese E-Mail ignoriert werden — ohne Klick auf die Bestätigung unten werden keine weiteren Nachrichten zu diesem Thread an diese Adresse gesendet.",
+	"email.confirm.cta": "Abo bestätigen",
+	"email.confirm.paste": "Oder diesen Link im Browser öffnen:",
 	"email.digest.subject": "Neue Antworten zu „{title}“",
+	"email.digest.heading": {
+		one: "{count} neuer Kommentar zu „{title}“",
+		other: "{count} neue Kommentare zu „{title}“",
+	},
+	"email.digest.permalink": "Permalink",
+	"email.digest.unsubscribe": "Benachrichtigungen zu diesem Thread abbestellen",
 
 	// Atom feed
 	"feed.title": "Kommentare zu {title}",

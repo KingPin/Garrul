@@ -386,6 +386,7 @@ describe("renderSubscriptions", () => {
 		last_notified_at: null,
 		confirm_token: "ct",
 		confirmed_at: null,
+		locale: null,
 		...over,
 	});
 

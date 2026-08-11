@@ -165,7 +165,11 @@ describe("POST /subscribe/unsubscribe/:token", () => {
 	it("unsubscribes when submitted from the Worker's own origin", async () => {
 		const res = await submit(SELF);
 		expect(res.status).toBe(200);
-		expect(await res.text()).toContain("You're unsubscribed");
+		// The apostrophe arrives as an entity: the page copy is now a translated
+		// template, and templates are escaped before the title is spliced in.
+		expect(await res.text()).toContain(
+			"unsubscribed from comment notifications",
+		);
 		expect(unsubscribedAt()).not.toBeNull();
 	});
 

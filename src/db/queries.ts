@@ -1777,6 +1777,12 @@ export type Subscription = {
 	last_notified_at: number | null;
 	confirm_token: string | null;
 	confirmed_at: number | null;
+	/**
+	 * BCP-47 tag the subscriber signed up in, or NULL for rows written before
+	 * the column existed. Rendered by the cron digest, which has no request to
+	 * negotiate a locale from. See 0020_subscriptions_locale.sql.
+	 */
+	locale: string | null;
 };
 
 /**
@@ -1813,6 +1819,7 @@ export const upsertSubscription = async (
 	token: string,
 	confirm_token: string | null,
 	auto_confirm: boolean,
+	locale: string | null = null,
 ): Promise<Subscription> => {
 	const now = Date.now();
 	const id = ulid();
@@ -1822,8 +1829,8 @@ export const upsertSubscription = async (
 			`INSERT INTO subscriptions
 			   (id, post_slug, email, token, created_at,
 			    unsubscribed_at, last_notified_at,
-			    confirm_token, confirmed_at)
-			 VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?)
+			    confirm_token, confirmed_at, locale)
+			 VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?)
 			 ON CONFLICT(post_slug, email) DO UPDATE SET
 			   -- excluded.confirmed_at is non-NULL only on the auto_confirm path,
 			   -- i.e. only when the requester has proved they own this inbox. That
@@ -1850,7 +1857,18 @@ export const upsertSubscription = async (
 			                        -- opt-in, not a restore.
 			                        WHEN subscriptions.unsubscribed_at IS NOT NULL
 			                        THEN NULL
-			                        ELSE subscriptions.confirmed_at END`,
+			                        ELSE subscriptions.confirmed_at END,
+			   -- Same ownership rule as confirm_token: this endpoint is
+			   -- unauthenticated, so a stranger who guesses an address must not be
+			   -- able to switch a live subscriber's digest language. Only an
+			   -- inbox-proven request, or a row that can't receive digests anyway,
+			   -- may set it.
+			   locale        = CASE WHEN excluded.confirmed_at IS NOT NULL
+			                        THEN excluded.locale
+			                        WHEN subscriptions.confirmed_at IS NULL
+			                          OR subscriptions.unsubscribed_at IS NOT NULL
+			                        THEN excluded.locale
+			                        ELSE subscriptions.locale END`,
 		)
 		.bind(
 			id,
@@ -1860,13 +1878,14 @@ export const upsertSubscription = async (
 			now,
 			confirm_token,
 			confirmed_at_on_insert,
+			locale,
 		)
 		.run();
 	const row = await db
 		.prepare(
 			`SELECT id, post_slug, email, token, created_at,
 			        unsubscribed_at, last_notified_at,
-			        confirm_token, confirmed_at
+			        confirm_token, confirmed_at, locale
 			   FROM subscriptions
 			  WHERE post_slug = ? AND email = ?`,
 		)
@@ -1884,7 +1903,7 @@ export const getSubscriptionByToken = async (
 		.prepare(
 			`SELECT id, post_slug, email, token, created_at,
 			        unsubscribed_at, last_notified_at,
-			        confirm_token, confirmed_at
+			        confirm_token, confirmed_at, locale
 			   FROM subscriptions WHERE token = ?`,
 		)
 		.bind(token)
@@ -1899,7 +1918,7 @@ export const getSubscriptionByConfirmToken = async (
 		.prepare(
 			`SELECT id, post_slug, email, token, created_at,
 			        unsubscribed_at, last_notified_at,
-			        confirm_token, confirmed_at
+			        confirm_token, confirmed_at, locale
 			   FROM subscriptions WHERE confirm_token = ?`,
 		)
 		.bind(confirm_token)
@@ -1976,7 +1995,7 @@ export const listActiveSubscriptionsForPost = async (
 		.prepare(
 			`SELECT id, post_slug, email, token, created_at,
 			        unsubscribed_at, last_notified_at,
-			        confirm_token, confirmed_at
+			        confirm_token, confirmed_at, locale
 			   FROM subscriptions
 			  WHERE post_slug = ?
 			    AND unsubscribed_at IS NULL
@@ -2008,6 +2027,8 @@ export type PendingDigest = {
 	email: string;
 	token: string;
 	post_slug: string;
+	/** BCP-47 tag the subscriber signed up in, or NULL for pre-column rows. */
+	locale: string | null;
 	notification_ids: string[];
 	comment_ids: string[];
 };
@@ -2033,7 +2054,8 @@ export const listPendingDigests = async (
 			        s.id          AS subscription_id,
 			        s.email       AS email,
 			        s.token       AS token,
-			        s.post_slug   AS post_slug
+			        s.post_slug   AS post_slug,
+			        s.locale      AS locale
 			   FROM notifications n
 			   JOIN subscriptions s ON s.id = n.subscription_id
 			  WHERE n.sent_at IS NULL
@@ -2050,6 +2072,7 @@ export const listPendingDigests = async (
 			email: string;
 			token: string;
 			post_slug: string;
+			locale: string | null;
 		}>();
 	const groups = new Map<string, PendingDigest>();
 	for (const row of result.results ?? []) {
@@ -2060,6 +2083,7 @@ export const listPendingDigests = async (
 				email: row.email,
 				token: row.token,
 				post_slug: row.post_slug,
+				locale: row.locale,
 				notification_ids: [],
 				comment_ids: [],
 			};
@@ -2921,7 +2945,7 @@ export const adminListSubscriptions = async (
 	const sql = `
 		SELECT id, post_slug, email, token, created_at,
 		       unsubscribed_at, last_notified_at,
-		       confirm_token, confirmed_at
+		       confirm_token, confirmed_at, locale
 		  FROM subscriptions
 		 WHERE ${where.join(" AND ")}
 		 ORDER BY created_at DESC, id DESC
@@ -2942,7 +2966,7 @@ export const adminGetSubscription = async (
 		.prepare(
 			`SELECT id, post_slug, email, token, created_at,
 			        unsubscribed_at, last_notified_at,
-			        confirm_token, confirmed_at
+			        confirm_token, confirmed_at, locale
 			   FROM subscriptions WHERE id = ?`,
 		)
 		.bind(id)

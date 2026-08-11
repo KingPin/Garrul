@@ -165,7 +165,7 @@ import { runSeedDemo } from "../db/seed-demo";
 import { renderConfirmEmailHtml } from "../lib/digest";
 import { sendEmail } from "../lib/email";
 import { fillSubject, subjectTitle } from "../lib/post-title";
-import { t } from "../i18n";
+import { DEFAULT_LOCALE, tFor } from "../i18n";
 
 const admin = new Hono<{ Bindings: Bindings }>();
 
@@ -1959,14 +1959,20 @@ admin.post("/api/subscriptions/:id", async (c) => {
 	// an earlier version can still hold a title with a CR/LF in it, and a mail
 	// subject is a header value.
 	const title = subjectTitle(post?.title, sub.post_slug);
+	// The subscriber's language, not the operator's. This route is admin-facing
+	// but the mail it produces is not: it lands in the reader's inbox, and a
+	// resend arriving in a different language than the original would read as a
+	// phishing attempt rather than a helpful nudge.
+	const subT = tFor(sub.locale ?? DEFAULT_LOCALE);
 	const html = renderConfirmEmailHtml({
 		postTitle: title,
 		confirmUrl,
+		t: subT,
 	});
 	const sent = await sendEmail(c.env, {
 		to: sub.email,
 		from,
-		subject: fillSubject(t("email.confirm.subject"), title),
+		subject: fillSubject(subT("email.confirm.subject"), title),
 		html,
 	});
 	if (!sent) {

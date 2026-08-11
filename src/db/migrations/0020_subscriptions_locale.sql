@@ -1,0 +1,22 @@
+-- Remember which language a subscriber subscribed in.
+-- Forward-only. The migration runner records this as applied; never edit
+-- once shipped — make a 0021_*.sql instead.
+--
+-- A reader who subscribed from a German page and then receives an English
+-- digest is the exact failure the i18n work exists to fix. The widget already
+-- knows its locale at subscribe time and sends it on the request, so the only
+-- missing piece is somewhere to keep it: digests are rendered later by a cron
+-- tick that has no request context to negotiate from.
+--
+-- Nullable, and no default. NULL means "subscribed before this column existed"
+-- and renders English, which is what those rows have always received — writing
+-- a backfill of 'en' would claim we know something about them that we don't.
+--
+-- Not indexed: the column is only ever read alongside a row already located by
+-- another key, never used as a lookup or filter.
+--
+-- Not PII. It is the language of the page the subscribe button was on, which
+-- the operator can read off their own site; it says nothing about the person
+-- that their email address does not already say louder.
+
+ALTER TABLE subscriptions ADD COLUMN locale TEXT;

@@ -36,9 +36,49 @@ export const en = {
 	"ui.subscribe.pending": "Check your inbox to confirm your subscription.",
 	"ui.subscribe.confirmed": "Subscription confirmed.",
 
-	// Transactional email
+	// The pages an emailed confirm/unsubscribe link lands on. Rendered in the
+	// locale stored on the subscription — the reader arrived from a German mail,
+	// so an English page here would be the same break the mail avoided. When no
+	// row matches (expired or already-used token) there is nothing to read a
+	// locale off, so those fall back to the request's.
+	"ui.subscribe.link_expired": "Link expired or already used.",
+	"ui.subscribe.confirmed_page":
+		'You\'re confirmed for comment notifications on "{title}".',
+	"ui.subscribe.already_unsubscribed":
+		'You\'re already unsubscribed from comment notifications for "{title}".',
+	"ui.subscribe.unsubscribed":
+		'You\'re unsubscribed from comment notifications for "{title}".',
+	"ui.subscribe.unsubscribe_confirm":
+		'Unsubscribe from comment notifications for "{title}"?',
+	"ui.subscribe.unsubscribe_cta": "Yes, unsubscribe me",
+	"ui.subscribe.unsubscribe_note":
+		"Nothing has changed yet — you stay subscribed until you confirm.",
+
+	// Transactional email.
+	//
+	// Rendered in the locale the subscriber signed up in (subscriptions.locale),
+	// not the operator default and not the locale of whoever triggered the send:
+	// the reader chose a German page, so the mail that page produces is German.
+	// Rows predating that column have no locale and render English.
+	//
+	// No markup in these values. The `{title}` var arrives at the render site
+	// already HTML-escaped and already wrapped in whatever emphasis the layout
+	// wants, so a translation cannot open a tag it fails to close.
 	"email.confirm.subject": "Confirm your subscription to comments on {title}",
+	"email.confirm.heading": "Confirm your subscription",
+	"email.confirm.intro":
+		"You're being asked to confirm a subscription to reply notifications for {title}.",
+	"email.confirm.ignore":
+		"If this wasn't you, ignore this email — without the confirmation click below, no further messages will be sent to this address for this thread.",
+	"email.confirm.cta": "Confirm subscription",
+	"email.confirm.paste": "Or paste this link into your browser:",
 	"email.digest.subject": 'New replies on "{title}"',
+	"email.digest.heading": {
+		one: '{count} new comment on "{title}"',
+		other: '{count} new comments on "{title}"',
+	},
+	"email.digest.permalink": "permalink",
+	"email.digest.unsubscribe": "Unsubscribe from this thread",
 
 	// Atom feed. Rendered with the operator's default locale, never the
 	// requester's — the feed response is publicly cached (max-age=300), so

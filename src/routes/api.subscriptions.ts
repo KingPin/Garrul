@@ -56,13 +56,31 @@ import { renderConfirmEmailHtml } from "../lib/digest";
 import { sendEmail } from "../lib/email";
 import { fillSubject, subjectTitle } from "../lib/post-title";
 import { readSession } from "../lib/session";
-import { t } from "../i18n";
+import { DEFAULT_LOCALE, LOCALES, type Translator, tFor } from "../i18n";
+import type { LocaleVars } from "../lib/locale";
 
-const subscriptions = new Hono<{ Bindings: Bindings }>();
+const subscriptions = new Hono<{ Bindings: Bindings; Variables: LocaleVars }>();
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PENDING_PER_EMAIL_CAP = 5;
 const PROVIDER_VERIFIED = new Set(["github", "google"]);
+
+/**
+ * Which language a confirm/unsubscribe landing page renders in.
+ *
+ * The subscription's own locale first: the reader clicked through from mail
+ * that was written in it, and an English page on the other end of a German
+ * link is the same break the localized mail exists to avoid. Rows predating
+ * `subscriptions.locale` have none, and an expired token resolves no row at
+ * all, so both fall back to whatever the request negotiated.
+ *
+ * The final fallback covers this router being mounted without
+ * `localeMiddleware` — cheaper than rendering `lang="undefined"` to find out.
+ */
+const landingLocale = (
+	rowLocale: string | null | undefined,
+	requestLocale: string | undefined,
+): string => rowLocale ?? requestLocale ?? DEFAULT_LOCALE;
 
 const randomToken = (): string => {
 	const bytes = new Uint8Array(32);
@@ -71,6 +89,12 @@ const randomToken = (): string => {
 };
 
 subscriptions.post("/", async (c) => {
+	// Shadows the module-level English `t` for the whole handler, so every
+	// string below — errors, the JSON message, the confirmation email — comes
+	// out in the language of the page the reader subscribed from.
+	const t = c.get("t") ?? tFor(DEFAULT_LOCALE);
+	const locale = c.get("locale") ?? null;
+
 	// Rate-limit before any DB work. Subscribing is otherwise free for
 	// anyone with a valid email shape and a post slug, so without this
 	// the endpoint is an enumeration / spam vector.
@@ -168,6 +192,9 @@ subscriptions.post("/", async (c) => {
 		unsubscribeToken,
 		confirm_token,
 		autoConfirm,
+		// The digest cron has no request to negotiate from, so the language has
+		// to be recorded now or the reader gets English mail forever after.
+		locale,
 	);
 
 	// Send confirmation email only when actually needed. If the upsert
@@ -189,6 +216,7 @@ subscriptions.post("/", async (c) => {
 		const html = renderConfirmEmailHtml({
 			postTitle: title,
 			confirmUrl,
+			t,
 		});
 		const sent = await sendEmail(c.env, {
 			to: email,
@@ -234,7 +262,10 @@ subscriptions.get("/confirm/:token", async (c) => {
 
 	const sub = await getSubscriptionByConfirmToken(c.env.DB, token);
 	if (!sub) {
-		return c.html(pageHtml("Link expired or already used."));
+		const locale = landingLocale(null, c.get("locale"));
+		return c.html(
+			pageHtml(escapeHtml(tFor(locale)("ui.subscribe.link_expired")), locale),
+		);
 	}
 
 	// Idempotent by its WHERE clause, so no pre-read guard is needed: a mail
@@ -244,9 +275,11 @@ subscriptions.get("/confirm/:token", async (c) => {
 
 	const post = await getPost(c.env.DB, sub.post_slug);
 	const postLabel = post?.title ?? sub.post_slug;
+	const locale = landingLocale(sub.locale, c.get("locale"));
 	return c.html(
 		pageHtml(
-			`You're confirmed for comment notifications on "${escapeHtml(postLabel)}".`,
+			fillTitleHtml(tFor(locale)("ui.subscribe.confirmed_page"), postLabel),
+			locale,
 		),
 	);
 });
@@ -268,21 +301,27 @@ subscriptions.get("/unsubscribe/:token", async (c) => {
 
 	const sub = await getSubscriptionByToken(c.env.DB, token);
 	if (!sub) {
-		return c.html(pageHtml("Link expired or already used."));
+		const locale = landingLocale(null, c.get("locale"));
+		return c.html(
+			pageHtml(escapeHtml(tFor(locale)("ui.subscribe.link_expired")), locale),
+		);
 	}
 
 	const post = await getPost(c.env.DB, sub.post_slug);
-	const postLabel = escapeHtml(post?.title ?? sub.post_slug);
+	const postLabel = post?.title ?? sub.post_slug;
+	const locale = landingLocale(sub.locale, c.get("locale"));
+	const t = tFor(locale);
 
 	if (sub.unsubscribed_at != null) {
 		return c.html(
 			pageHtml(
-				`You're already unsubscribed from comment notifications for "${postLabel}".`,
+				fillTitleHtml(t("ui.subscribe.already_unsubscribed"), postLabel),
+				locale,
 			),
 		);
 	}
 
-	return c.html(confirmPageHtml(postLabel));
+	return c.html(confirmPageHtml(postLabel, locale, t));
 });
 
 subscriptions.post("/unsubscribe/:token", async (c) => {
@@ -291,7 +330,10 @@ subscriptions.post("/unsubscribe/:token", async (c) => {
 
 	const sub = await getSubscriptionByToken(c.env.DB, token);
 	if (!sub) {
-		return c.html(pageHtml("Link expired or already used."));
+		const locale = landingLocale(null, c.get("locale"));
+		return c.html(
+			pageHtml(escapeHtml(tFor(locale)("ui.subscribe.link_expired")), locale),
+		);
 	}
 
 	if (sub.unsubscribed_at == null) {
@@ -300,9 +342,11 @@ subscriptions.post("/unsubscribe/:token", async (c) => {
 
 	const post = await getPost(c.env.DB, sub.post_slug);
 	const postLabel = post?.title ?? sub.post_slug;
+	const locale = landingLocale(sub.locale, c.get("locale"));
 	return c.html(
 		pageHtml(
-			`You're unsubscribed from comment notifications for "${escapeHtml(postLabel)}".`,
+			fillTitleHtml(tFor(locale)("ui.subscribe.unsubscribed"), postLabel),
+			locale,
 		),
 	);
 });
@@ -315,9 +359,21 @@ const escapeHtml = (s: string): string =>
 		.replace(/"/g, "&quot;")
 		.replace(/'/g, "&#39;");
 
-const pageHtml = (message: string, extra = ""): string => `
+/**
+ * Fill a `{title}` template for HTML output.
+ *
+ * The template is escaped first — it is repo content, but a stray `<` in a
+ * translation should render as text rather than open a tag — and the title is
+ * escaped separately on the way in. The replacement-*function* form is the same
+ * rule `fillSubject` documents: a title containing `$&` or `` $` `` would
+ * otherwise splice the template back into itself.
+ */
+const fillTitleHtml = (template: string, title: string): string =>
+	escapeHtml(template).replace("{title}", () => escapeHtml(title));
+
+const pageHtml = (message: string, locale: string, extra = ""): string => `
 <!doctype html>
-<html lang="en">
+<html lang="${escapeHtml(locale)}"${LOCALES[locale]?.rtl ? ' dir="rtl"' : ""}>
 <head>
 <meta charset="utf-8">
 <title>Garrul</title>
@@ -340,18 +396,19 @@ ${extra}
  * current URL, so the token never has to be re-serialized (and can't be
  * mangled) on the way out.
  *
- * `postLabel` arrives already escaped — it is interpolated as text here.
+ * `postLabel` is raw — `fillTitleHtml` escapes it along with its template.
  */
-const confirmPageHtml = (postLabel: string): string =>
+const confirmPageHtml = (postLabel: string, locale: string, t: Translator): string =>
 	pageHtml(
-		`Unsubscribe from comment notifications for "${postLabel}"?`,
+		fillTitleHtml(t("ui.subscribe.unsubscribe_confirm"), postLabel),
+		locale,
 		`<form method="post">
   <button type="submit" style="font:inherit;padding:0.5rem 1rem;cursor:pointer">
-    Yes, unsubscribe me
+    ${escapeHtml(t("ui.subscribe.unsubscribe_cta"))}
   </button>
 </form>
 <p style="color:#6b7280;font-size:0.875rem">
-  Nothing has changed yet — you stay subscribed until you confirm.
+  ${escapeHtml(t("ui.subscribe.unsubscribe_note"))}
 </p>`,
 	);
 
