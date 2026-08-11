@@ -85,7 +85,7 @@ import {
 	type TreeAuthor,
 	type TreeNode,
 } from "../lib/tree";
-import { DEFAULT_LOCALE, tFor } from "../i18n";
+import { FALLBACK_LOCALE, tFor } from "../i18n";
 import type { LocaleVars } from "../lib/locale";
 
 type SessionVars = {
@@ -395,7 +395,7 @@ comments.post("/", async (c) => {
 	// Shadows the module-level English `t` for the whole handler. Every error
 	// below is rendered verbatim by the widget, so without this a German reader
 	// gets a German widget and an English "comment is too long".
-	const t = c.get("t") ?? tFor(DEFAULT_LOCALE);
+	const t = c.get("t") ?? tFor(FALLBACK_LOCALE);
 	const flags = await loadFlags(c.env);
 	if (!flags.comments_enabled) {
 		return c.json({ error: "comments_disabled" }, 403);
@@ -784,7 +784,7 @@ const decodeTopCursor = (raw: string | null): TopCursor | null => {
 };
 
 comments.get("/", async (c) => {
-	const t = c.get("t") ?? tFor(DEFAULT_LOCALE);
+	const t = c.get("t") ?? tFor(FALLBACK_LOCALE);
 	const slug = (c.req.query("slug") ?? "").trim();
 	if (!slug) return c.json({ error: t("err.post.required") }, 400);
 	if (!SLUG_RE.test(slug)) return c.json({ error: t("err.post.invalid") }, 400);
@@ -965,7 +965,7 @@ comments.get("/", async (c) => {
  * authorization surface — only the author, only while still editable.
  */
 comments.get("/:id/source", async (c) => {
-	const t = c.get("t") ?? tFor(DEFAULT_LOCALE);
+	const t = c.get("t") ?? tFor(FALLBACK_LOCALE);
 	const id = c.req.param("id");
 
 	// Session before the lookup, matching PATCH. The other order answered 404
@@ -1000,7 +1000,7 @@ comments.get("/:id/source", async (c) => {
 });
 
 comments.patch("/:id", async (c) => {
-	const t = c.get("t") ?? tFor(DEFAULT_LOCALE);
+	const t = c.get("t") ?? tFor(FALLBACK_LOCALE);
 	const id = c.req.param("id");
 
 	// Session and rate limit before the comment lookup, so an unauthenticated
@@ -1119,7 +1119,7 @@ comments.patch("/:id", async (c) => {
 });
 
 comments.delete("/:id", async (c) => {
-	const t = c.get("t") ?? tFor(DEFAULT_LOCALE);
+	const t = c.get("t") ?? tFor(FALLBACK_LOCALE);
 	const id = c.req.param("id");
 
 	// Same ordering as PATCH above: session, then budget, then the D1 read.

@@ -40,7 +40,7 @@ import { Hono } from "hono";
 import type { Bindings } from "../index";
 import { PROVIDERS, type ProviderId } from "../lib/oauth";
 import { loadSettings } from "../lib/settings";
-import { DEFAULT_LOCALE, LOCALES } from "../i18n";
+import { FALLBACK_LOCALE, LOCALES } from "../i18n";
 import { resolveLocale } from "../i18n/negotiate";
 import { WIDGET_TABLES } from "../i18n/widget";
 
@@ -77,7 +77,7 @@ config.get("/", async (c) => {
 	// locales get their own table only — missing keys fall back to English per
 	// key in the widget, which is what lets a partial translation ship.
 	const localized =
-		locale === DEFAULT_LOCALE
+		locale === FALLBACK_LOCALE
 			? {}
 			: {
 					strings: WIDGET_TABLES[locale] ?? {},

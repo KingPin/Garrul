@@ -29,7 +29,7 @@ import { isInactiveGhost, requireActiveUser } from "../lib/active-user";
 import { readSession } from "../lib/session";
 import { writeEvent } from "../lib/analytics";
 import { fireWebhook } from "../lib/webhook";
-import { DEFAULT_LOCALE, tFor } from "../i18n";
+import { FALLBACK_LOCALE, tFor } from "../i18n";
 import type { LocaleVars } from "../lib/locale";
 
 const reports = new Hono<{ Bindings: Bindings; Variables: LocaleVars }>();
@@ -43,7 +43,7 @@ reports.post("/:id/report", async (c) => {
 	// Shadows the module-level English `t` for the whole handler; the widget
 	// renders `json.error` verbatim, so this is what makes the error match the
 	// language the rest of the widget is in.
-	const t = c.get("t") ?? tFor(DEFAULT_LOCALE);
+	const t = c.get("t") ?? tFor(FALLBACK_LOCALE);
 	const id = c.req.param("id");
 
 	// Optional reason. A malformed/absent body is fine — reason just stays null.

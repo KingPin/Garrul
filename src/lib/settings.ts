@@ -257,6 +257,10 @@ const STRINGS: Record<
 	// through to the host page's `<html lang>` hint. An explicit `"en"` means the
 	// operator chose English and the hint is ignored. Collapsing the two would
 	// make "I want English no matter what the theme says" unexpressible.
+	//
+	// The end of that chain is `FALLBACK_LOCALE` in src/i18n — deliberately not
+	// named DEFAULT_LOCALE, so the constant and this env var can't be confused
+	// for each other in an import list.
 	default_locale: {
 		env: "DEFAULT_LOCALE",
 		default: AUTO_LOCALE,

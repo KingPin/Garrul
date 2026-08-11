@@ -162,7 +162,7 @@ import { runSeedDemo } from "../db/seed-demo";
 import { renderConfirmEmailHtml } from "../lib/digest";
 import { sendEmail } from "../lib/email";
 import { fillSubject, subjectTitle } from "../lib/post-title";
-import { DEFAULT_LOCALE, tFor } from "../i18n";
+import { FALLBACK_LOCALE, tFor } from "../i18n";
 
 const admin = new Hono<{ Bindings: Bindings }>();
 
@@ -1954,7 +1954,7 @@ admin.post("/api/subscriptions/:id", async (c) => {
 	// but the mail it produces is not: it lands in the reader's inbox, and a
 	// resend arriving in a different language than the original would read as a
 	// phishing attempt rather than a helpful nudge.
-	const subT = tFor(sub.locale ?? DEFAULT_LOCALE);
+	const subT = tFor(sub.locale ?? FALLBACK_LOCALE);
 	const html = renderConfirmEmailHtml({
 		postTitle: title,
 		confirmUrl,

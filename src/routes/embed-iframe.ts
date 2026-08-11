@@ -42,7 +42,7 @@
  * inject markup.
  */
 import { Hono } from "hono";
-import { DEFAULT_LOCALE } from "../i18n";
+import { FALLBACK_LOCALE } from "../i18n";
 import { matchLocale } from "../i18n/negotiate";
 import type { Bindings } from "../index";
 
@@ -370,7 +370,7 @@ iframe.get("/:slug", (c) => {
 	const lang = c.req.query("lang") ?? "";
 	// See the ?lang= note in the route doc above: `data-lang` forwards the raw
 	// request, `<html lang>` only ever claims a locale that exists.
-	const docLang = matchLocale(lang) ?? DEFAULT_LOCALE;
+	const docLang = matchLocale(lang) ?? FALLBACK_LOCALE;
 
 	// The postMessage target for the height protocol. Must be allowlisted —
 	// see safeParentOrigin. Callers pass ?parent_origin=https://yourblog.example.

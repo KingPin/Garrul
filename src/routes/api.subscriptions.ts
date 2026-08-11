@@ -56,7 +56,7 @@ import { renderConfirmEmailHtml } from "../lib/digest";
 import { sendEmail } from "../lib/email";
 import { fillSubject, subjectTitle } from "../lib/post-title";
 import { readSession } from "../lib/session";
-import { DEFAULT_LOCALE, LOCALES, type Translator, tFor } from "../i18n";
+import { FALLBACK_LOCALE, LOCALES, type Translator, tFor } from "../i18n";
 import { matchLocale } from "../i18n/negotiate";
 import type { LocaleVars } from "../lib/locale";
 
@@ -90,7 +90,7 @@ const PROVIDER_VERIFIED = new Set(["github", "google"]);
 const landingLocale = (
 	rowLocale: string | null | undefined,
 	requestLocale: string | undefined,
-): string => matchLocale(rowLocale) ?? matchLocale(requestLocale) ?? DEFAULT_LOCALE;
+): string => matchLocale(rowLocale) ?? matchLocale(requestLocale) ?? FALLBACK_LOCALE;
 
 const randomToken = (): string => {
 	const bytes = new Uint8Array(32);
@@ -102,7 +102,7 @@ subscriptions.post("/", async (c) => {
 	// Shadows the module-level English `t` for the whole handler, so every
 	// string below — errors, the JSON message, the confirmation email — comes
 	// out in the language of the page the reader subscribed from.
-	const t = c.get("t") ?? tFor(DEFAULT_LOCALE);
+	const t = c.get("t") ?? tFor(FALLBACK_LOCALE);
 	const locale = c.get("locale") ?? null;
 
 	// Rate-limit before any DB work. Subscribing is otherwise free for

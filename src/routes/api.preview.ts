@@ -16,7 +16,7 @@ import type { Bindings } from "../index";
 import { renderMarkdown, validateBody } from "../lib/markdown";
 import { requireIpHash } from "../lib/ip-hash";
 import { checkRateLimit } from "../lib/ratelimit";
-import { DEFAULT_LOCALE, tFor } from "../i18n";
+import { FALLBACK_LOCALE, tFor } from "../i18n";
 import type { LocaleVars } from "../lib/locale";
 
 const preview = new Hono<{ Bindings: Bindings; Variables: LocaleVars }>();
@@ -41,7 +41,7 @@ preview.post("/", async (c) => {
 	// Shadows the module-level English `t` for the whole handler; the widget
 	// renders `json.error` verbatim, so this is what makes the error match the
 	// language the rest of the widget is in.
-	const t = c.get("t") ?? tFor(DEFAULT_LOCALE);
+	const t = c.get("t") ?? tFor(FALLBACK_LOCALE);
 	const body = await c.req.json<PreviewBody>().catch(() => null);
 	if (!body) return c.json({ error: t("err.internal") }, 400);
 

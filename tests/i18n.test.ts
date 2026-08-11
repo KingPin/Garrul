@@ -11,7 +11,7 @@
  */
 import { describe, it, expect } from "vitest";
 import {
-	DEFAULT_LOCALE,
+	FALLBACK_LOCALE,
 	LOCALES,
 	isAutoSelectable,
 	isLocale,
@@ -93,8 +93,8 @@ describe("locale registry", () => {
 	});
 
 	it("registers the default locale", () => {
-		expect(isLocale(DEFAULT_LOCALE)).toBe(true);
-		expect(LOCALES[DEFAULT_LOCALE]?.status).toBe("source");
+		expect(isLocale(FALLBACK_LOCALE)).toBe(true);
+		expect(LOCALES[FALLBACK_LOCALE]?.status).toBe("source");
 	});
 
 	it("allows automatic selection of source and reviewed locales only", () => {

@@ -25,7 +25,7 @@ import {
 	markNotificationsSent,
 	updateSubscriptionLastNotified,
 } from "../db/queries";
-import { DEFAULT_LOCALE, type Translator, tFor } from "../i18n";
+import { FALLBACK_LOCALE, type Translator, tFor } from "../i18n";
 import { sendEmail } from "./email";
 import { sanitizeForEmail } from "./markdown";
 import { fillSubject, subjectTitle } from "./post-title";
@@ -181,7 +181,7 @@ export const runDigest = async (env: DigestEnv, now: number = Date.now()): Promi
 		// The subscriber's own locale. `tFor` whitelists against LOCALES and
 		// falls back to English, so a row carrying a tag from a locale that has
 		// since been removed degrades instead of throwing in the cron handler.
-		const t = tFor(d.locale ?? DEFAULT_LOCALE);
+		const t = tFor(d.locale ?? FALLBACK_LOCALE);
 		const html = renderDigestHtml({
 			postTitle: title,
 			publicBase,

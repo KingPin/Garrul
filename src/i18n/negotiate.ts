@@ -25,7 +25,7 @@
  * `<html lang>` is frequently untouched theme boilerplate, while an operator
  * who opened the settings page and picked a language meant it.
  */
-import { DEFAULT_LOCALE, LOCALES, isAutoSelectable } from "./index";
+import { FALLBACK_LOCALE, LOCALES, isAutoSelectable } from "./index";
 
 /**
  * Sentinel for "operator has not chosen" — deliberately not a valid tag, so it
@@ -89,5 +89,5 @@ export const resolveLocale = (sources: LocaleSources): string => {
 	const hint = matchLocale(sources.hostPage);
 	if (hint && isAutoSelectable(hint)) return hint;
 
-	return DEFAULT_LOCALE;
+	return FALLBACK_LOCALE;
 };

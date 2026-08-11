@@ -47,7 +47,17 @@ export interface LocaleMeta {
 	readonly maintainer?: string;
 }
 
-export const DEFAULT_LOCALE = "en";
+/**
+ * Where negotiation lands when nothing else matched, and what a handler binds
+ * its translator to when there is no per-request one.
+ *
+ * Named `FALLBACK_LOCALE`, not `DEFAULT_LOCALE`, because that name is already
+ * taken by the *env var* an operator sets to choose the site's language — and
+ * that one defaults to `auto`, not to English. Two constants a line apart in an
+ * import list, both plausibly "the default locale", meaning opposite things: one
+ * is the end of the chain, the other is a step near the front of it.
+ */
+export const FALLBACK_LOCALE = "en";
 
 /**
  * Every locale Garrul knows about.
@@ -179,11 +189,11 @@ const interpolate = (raw: string, vars?: Vars): string => {
  * locale" leaks across requests at every `await`.
  */
 export const tFor = (locale: string): Translator => {
-	const loc = isLocale(locale) ? locale : DEFAULT_LOCALE;
+	const loc = isLocale(locale) ? locale : FALLBACK_LOCALE;
 	const table = TABLES[loc] ?? en;
 	return (key, vars) => {
 		const raw =
-			selectForm(table[key], loc, vars) ?? selectForm(en[key], DEFAULT_LOCALE, vars) ?? key;
+			selectForm(table[key], loc, vars) ?? selectForm(en[key], FALLBACK_LOCALE, vars) ?? key;
 		return interpolate(raw, vars);
 	};
 };
@@ -195,4 +205,4 @@ export const tFor = (locale: string): Translator => {
  * design — the Telegram bot and the admin routes — can import it directly.
  * Request-scoped code should use `c.get("t")` instead (see src/lib/locale.ts).
  */
-export const t: Translator = tFor(DEFAULT_LOCALE);
+export const t: Translator = tFor(FALLBACK_LOCALE);
