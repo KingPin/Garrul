@@ -28,7 +28,7 @@ import {
 import { FALLBACK_LOCALE, type Translator, tFor } from "../i18n";
 import { sendEmail } from "./email";
 import { sanitizeForEmail } from "./markdown";
-import { fillSubject, subjectTitle } from "./post-title";
+import { fillSubject, subjectTitle, substituteTitle } from "./post-title";
 
 type DigestEnv = {
 	DB: D1Database;
@@ -59,12 +59,14 @@ const escapeHtml = (s: string | null | undefined): string => {
  * translation should render, not parse), then the one span of intentional
  * markup is substituted in.
  *
- * The replacement-*function* form is deliberate, exactly as in `t()`'s own
- * interpolate: a title containing `$&` or `` $` `` would otherwise be read as a
- * replacement pattern. Do not simplify this to a string replacement.
+ * Substitution goes through `substituteTitle` for the reasons documented there
+ * (replacement function, global pattern) — the escaping is what's local.
  */
 const fillTitle = (template: string, title: string): string =>
-	escapeHtml(template).replace("{title}", () => `<strong>${escapeHtml(title)}</strong>`);
+	substituteTitle(
+		escapeHtml(template),
+		() => `<strong>${escapeHtml(title)}</strong>`,
+	);
 
 /**
  * The translator is a parameter, not an import.

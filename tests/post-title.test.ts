@@ -16,6 +16,7 @@ import {
 	sanitizePostTitle,
 	subjectTitle,
 	fillSubject,
+	substituteTitle,
 	MAX_POST_TITLE,
 } from "../src/lib/post-title";
 import { upsertPost, getPost } from "../src/db/queries";
@@ -130,6 +131,41 @@ describe("fillSubject", () => {
 		expect(fillSubject(TEMPLATE, "$1 $$ done")).toBe(
 			"Confirm your subscription to $1 $$ done",
 		);
+	});
+});
+
+describe("substituteTitle", () => {
+	it("fills every occurrence, not just the first", () => {
+		// A string needle replaces once. A translation that names the post twice
+		// — normal in languages that resolve an English possessive into two
+		// clauses — would render its second {title} as literal braces, and only
+		// someone who reads that language would ever notice.
+		expect(substituteTitle("{title} — replies on {title}", () => "P")).toBe(
+			"P — replies on P",
+		);
+	});
+
+	it("leaves a template with no placeholder alone", () => {
+		expect(substituteTitle("No placeholder here", () => "P")).toBe(
+			"No placeholder here",
+		);
+	});
+
+	it("does not match a near-miss placeholder", () => {
+		// The parity test's placeholder check is what catches {Title}/{titel} in
+		// a translation; this one just documents that they don't silently fill.
+		expect(substituteTitle("{Title} {titel} {title}", () => "P")).toBe(
+			"{Title} {titel} P",
+		);
+	});
+
+	it("calls render once per occurrence", () => {
+		let calls = 0;
+		substituteTitle("{title} {title} {title}", () => {
+			calls += 1;
+			return "P";
+		});
+		expect(calls).toBe(3);
 	});
 });
 

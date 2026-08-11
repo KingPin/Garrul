@@ -54,7 +54,7 @@ import { requireIpHash } from "../lib/ip-hash";
 import { checkRateLimit } from "../lib/ratelimit";
 import { renderConfirmEmailHtml } from "../lib/digest";
 import { sendEmail } from "../lib/email";
-import { fillSubject, subjectTitle } from "../lib/post-title";
+import { fillSubject, subjectTitle, substituteTitle } from "../lib/post-title";
 import { readSession } from "../lib/session";
 import { FALLBACK_LOCALE, LOCALES, type Translator, tFor } from "../i18n";
 import { matchLocale } from "../i18n/negotiate";
@@ -374,12 +374,12 @@ const escapeHtml = (s: string): string =>
  *
  * The template is escaped first — it is repo content, but a stray `<` in a
  * translation should render as text rather than open a tag — and the title is
- * escaped separately on the way in. The replacement-*function* form is the same
- * rule `fillSubject` documents: a title containing `$&` or `` $` `` would
- * otherwise splice the template back into itself.
+ * escaped separately on the way in. Substitution goes through
+ * `substituteTitle`, which is where the replacement-function and global-pattern
+ * rules are documented.
  */
 const fillTitleHtml = (template: string, title: string): string =>
-	escapeHtml(template).replace("{title}", () => escapeHtml(title));
+	substituteTitle(escapeHtml(template), () => escapeHtml(title));
 
 const pageHtml = (message: string, locale: string, extra = ""): string => `
 <!doctype html>

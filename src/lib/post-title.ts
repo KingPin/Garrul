@@ -67,13 +67,32 @@ export const subjectTitle = (
 ): string => sanitizePostTitle(title) ?? fallbackSlug;
 
 /**
+ * Substitute every `{title}` in a template with whatever `render` returns.
+ *
+ * The one implementation of a substitution three surfaces need with different
+ * escaping (plain subject line, escaped HTML, HTML with the title wrapped in
+ * `<strong>`), because the two things that are easy to get wrong are the same
+ * everywhere:
+ *
+ *   - **A replacement function, not a string.** `String.prototype.replace`
+ *     honors `$&`, `$'`, `` $` `` and `$n` in a replacement *string*, so a
+ *     host-supplied title containing them would splice pieces of the template
+ *     back into the output. A function is exempt from that grammar.
+ *   - **A global pattern, not a string needle.** A string needle replaces the
+ *     first match only, so a translation that legitimately names the post twice
+ *     would render its second `{title}` as literal braces to readers — a
+ *     failure only someone who reads that language would ever see.
+ */
+export const substituteTitle = (
+	template: string,
+	render: () => string,
+): string => template.replace(/\{title\}/g, render);
+
+/**
  * Substitute a title into a `{title}` subject template.
  *
- * Exists because `String.prototype.replace` with a replacement *string* honors
- * the `$&`, `$'`, `` $` `` and `$n` patterns, so a host-supplied title
- * containing them would splice pieces of the template back into the subject. A
- * replacement *function* is exempt from that grammar. Pass a title already
- * through `subjectTitle` — callers need the same value for the mail body.
+ * Pass a title already through `subjectTitle` — callers need the same value for
+ * the mail body.
  */
 export const fillSubject = (template: string, safeTitle: string): string =>
-	template.replace("{title}", () => safeTitle);
+	substituteTitle(template, () => safeTitle);
