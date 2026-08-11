@@ -44,10 +44,15 @@ const makeKv = () => {
 	// colo, so the TTL is a quota decision worth pinning down in a test.
 	const putOpts = new Map<string, { expirationTtl?: number }>();
 	let deletes = 0;
+	// Total put() calls, not distinct keys: the account-wide write cap counts
+	// every write, so a test proving concurrent misses don't each write needs
+	// the call count rather than the resulting store size.
+	let puts = 0;
 	return {
 		store,
 		putOpts,
 		deletes: () => deletes,
+		puts: () => puts,
 		async get(key: string, type?: "json") {
 			const raw = store.get(key);
 			if (raw == null) return null;
@@ -58,6 +63,7 @@ const makeKv = () => {
 			value: string,
 			opts?: { expirationTtl?: number },
 		) {
+			puts++;
 			store.set(key, value);
 			putOpts.set(key, opts ?? {});
 		},
@@ -474,6 +480,34 @@ describe("settings cache — one entry for all groups", () => {
 		expect(kv.store.size).toBe(0);
 		expect(kv.deletes()).toBe(1);
 		await loadFlags(env);
+		expect(db.reads()).toBe(2);
+	});
+
+	it("collapses concurrent cold misses onto one derivation", async () => {
+		const { env, db, kv } = mkEnv({ comments_per_page: "10" });
+		const [a, b, c] = await Promise.all([
+			loadFlags(env),
+			loadNumbers(env),
+			loadStrings(env),
+		]);
+		// One D1 read and one KV write for three concurrent misses. Without the
+		// in-flight share this is 3 and 3 — the shape a cold colo under load
+		// takes, which is what makes it a write-quota problem.
+		expect(db.reads()).toBe(1);
+		expect(kv.puts()).toBe(1);
+		expect(a.comments_enabled).toBe(true);
+		expect(b.comments_per_page).toBe(10);
+		expect(c.default_locale).toBe("auto");
+	});
+
+	it("re-derives after the in-flight share settles", async () => {
+		const { env, db } = mkEnv({ comments_per_page: "10" });
+		await Promise.all([loadFlags(env), loadNumbers(env)]);
+		expect(db.reads()).toBe(1);
+		await bustSettingsCache(env);
+		// The share is per-derivation, not a second cache: once it settles a bust
+		// is honoured immediately.
+		await loadNumbers(env);
 		expect(db.reads()).toBe(2);
 	});
 

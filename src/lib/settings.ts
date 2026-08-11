@@ -434,6 +434,38 @@ const isResolvedSettings = (v: unknown): v is ResolvedSettings => {
 	);
 };
 
+/** Read D1, resolve every group, and populate the cache entry. */
+const deriveSettings = async (env: Bindings): Promise<ResolvedSettings> => {
+	const dbSettings = await getAllSettings(env.DB);
+	const resolved: ResolvedSettings = {
+		flags: resolve(env, dbSettings),
+		numbers: resolveNumbers(env, dbSettings),
+		strings: resolveStrings(env, dbSettings),
+	};
+	await env.TREE_CACHE.put(CACHE_KEY_RESOLVED, JSON.stringify(resolved), {
+		expirationTtl: CACHE_TTL_SEC,
+	}).catch(() => {});
+	return resolved;
+};
+
+/**
+ * The derivation currently in flight, if any.
+ *
+ * A cold entry under concurrent traffic is the other write amplifier: every
+ * request that arrives before the first `put` lands misses, queries D1 and
+ * writes. Since they all derive the identical object, they can share one
+ * derivation — so a cold colo costs one KV write rather than one per concurrent
+ * request. That is the difference between a burst costing 1 write and 50.
+ *
+ * Module state, but safe for the same reason the plural-rules cache in
+ * src/i18n/index.ts is: nothing request-scoped is stored, only derived settings
+ * that are identical for every caller. It is cleared as soon as the derivation
+ * settles, so a bust can only ever be masked for the width of one in-flight
+ * read — a window that already exists, since any request that read the cache
+ * just before a bust is holding pre-bust data too.
+ */
+let inFlight: Promise<ResolvedSettings> | null = null;
+
 /**
  * Resolve every setting (DB override > env > default), KV-cached as one entry.
  *
@@ -448,16 +480,12 @@ export const loadSettings = async (
 		() => null,
 	);
 	if (isResolvedSettings(cached)) return cached;
-	const dbSettings = await getAllSettings(env.DB);
-	const resolved: ResolvedSettings = {
-		flags: resolve(env, dbSettings),
-		numbers: resolveNumbers(env, dbSettings),
-		strings: resolveStrings(env, dbSettings),
-	};
-	await env.TREE_CACHE.put(CACHE_KEY_RESOLVED, JSON.stringify(resolved), {
-		expirationTtl: CACHE_TTL_SEC,
-	}).catch(() => {});
-	return resolved;
+	if (inFlight) return inFlight;
+	const pending = deriveSettings(env).finally(() => {
+		inFlight = null;
+	});
+	inFlight = pending;
+	return pending;
 };
 
 /** Resolved feature flags. */
