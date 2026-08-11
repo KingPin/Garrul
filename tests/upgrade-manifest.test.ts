@@ -384,6 +384,38 @@ describe("free-text sanitization", () => {
 		expect((m.kvNamespaces[0] as { description: string }).description).toBe("ef");
 	});
 
+	it("carries addedIn through on a breaking change", () => {
+		const m = validateManifest({
+			...JSON.parse(JSON.stringify(validRaw)),
+			breakingChanges: [
+				{ id: "bc-1", summary: "s", manualSteps: [], addedIn: "2.7.1" },
+			],
+		});
+		expect(m.breakingChanges[0]?.addedIn).toBe("2.7.1");
+	});
+
+	it("accepts a breaking change with no addedIn", () => {
+		// Every manifest published before 2.7.1 is like this, and `upgrade`
+		// parses the *installed* version's manifest off its tag — making the
+		// field required here would break planning for every existing install.
+		const m = validateManifest({
+			...JSON.parse(JSON.stringify(validRaw)),
+			breakingChanges: [{ id: "bc-1", summary: "s", manualSteps: [] }],
+		});
+		expect(m.breakingChanges[0]?.addedIn).toBeUndefined();
+	});
+
+	it("rejects a non-semver addedIn on a breaking change", () => {
+		expect(() =>
+			validateManifest({
+				...JSON.parse(JSON.stringify(validRaw)),
+				breakingChanges: [
+					{ id: "bc-1", summary: "s", manualSteps: [], addedIn: "soon" },
+				],
+			}),
+		).toThrow(ManifestError);
+	});
+
 	it("still rejects a control character in a structural field", () => {
 		// The sanitizer must stay out of requireString: a binding name with a
 		// newline has to fail the allowlist, not get quietly cleaned into one

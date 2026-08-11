@@ -72,6 +72,16 @@ export type BreakingChange = {
 	id: string;
 	summary: string;
 	manualSteps: string[];
+	/**
+	 * The release this became breaking in. Optional in the schema on purpose:
+	 * manifests published before 2.7.1 have no `addedIn` on any entry, and
+	 * `upgrade` parses the *installed* version's manifest straight off its tag.
+	 * Requiring it here would make every pre-2.7.1 install fail to plan at all.
+	 *
+	 * New entries are still required to carry it — `build-manifest.ts` enforces
+	 * that against this repo's own manifest, where the old tags can't reach.
+	 */
+	addedIn?: SemVer;
 };
 
 export type Manifest = {
@@ -389,11 +399,14 @@ const validateBreakingChange = (raw: unknown, i: number): BreakingChange => {
 			);
 		}
 	}
-	return {
+	const entry: BreakingChange = {
 		id: requireText(raw, "id", `breakingChanges[${i}]`),
 		summary: requireText(raw, "summary", `breakingChanges[${i}]`),
 		manualSteps: (steps as string[]).map(plainText),
 	};
+	const addedIn = optionalSemver(raw, "addedIn", `breakingChanges[${i}]`);
+	if (addedIn !== undefined) entry.addedIn = addedIn;
+	return entry;
 };
 
 export const validateManifest = (raw: unknown): Manifest => {
