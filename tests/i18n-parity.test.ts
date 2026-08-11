@@ -22,7 +22,7 @@
  * should land against a live gate rather than have one retro-fitted around it.
  */
 import { readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
 import { en as SERVER_EN } from "../src/i18n/en";
 import { LOCALES, TABLES as SERVER_TABLES } from "../src/i18n";
@@ -118,9 +118,46 @@ const sourceFiles = (dir: string): string[] =>
 			: [];
 	});
 
-const ALL_SOURCE = sourceFiles(SRC)
+/**
+ * The locale tables — definitions of keys, never uses of them.
+ *
+ * Excluding them is the whole reason the dead-key check below can report
+ * anything. Every key appears as `"key":` in the table that declares it, so a
+ * corpus containing the tables matches each key against its own definition and
+ * finds all 128 of them "used" no matter what src/ does. Derived from `LOCALES`
+ * so a newly registered locale file drops out of the corpus on arrival rather
+ * than quietly re-breaking the check.
+ */
+const isTableFile = (path: string): boolean => {
+	const rel = relative(SRC, path);
+	return (
+		rel === join("widget", "strings.ts") ||
+		Object.keys(LOCALES).some(
+			(locale) =>
+				rel === join("i18n", `${locale}.ts`) || rel === join("i18n", "widget", `${locale}.ts`),
+		)
+	);
+};
+
+/** Everything in `src/` that could actually render a key. */
+const CALL_SITES = sourceFiles(SRC)
+	.filter((path) => !isTableFile(path))
 	.map((path) => readFileSync(path, "utf8"))
 	.join("\n");
+
+/**
+ * Keys nothing in the corpus mentions.
+ *
+ * A substring match on the quoted key rather than a `("key")` call pattern,
+ * because a good number of real call sites never put the key next to the paren:
+ * `s(shown ? "w.lowscore.hide" : "w.lowscore.show")`, and the validator results
+ * shaped `{ key: "err.body.too_long" }` that reach `t()` as `t(check.key)`.
+ * Requiring the tighter shape would report those as dead and teach the next
+ * person to delete a live string. With the definitions gone from the corpus,
+ * any remaining match is a use.
+ */
+const unusedKeys = (keys: Iterable<string>, corpus: string): string[] =>
+	[...keys].filter((key) => !corpus.includes(`"${key}"`));
 
 describe("i18n parity", () => {
 	for (const { name, english, tables } of SURFACES) {
@@ -181,8 +218,9 @@ describe("i18n parity", () => {
 				// The bug this whole effort started from: 14 `ui.*` keys written
 				// "for the widget" that the widget never imported, sitting next to
 				// its hardcoded twins. Dead keys cost every translator real time.
-				const unused = [...englishKeys].filter((key) => !ALL_SOURCE.includes(`"${key}"`));
-				expect(unused, "keys defined but never rendered").toEqual([]);
+				expect(unusedKeys(englishKeys, CALL_SITES), "keys defined but never rendered").toEqual(
+					[],
+				);
 			});
 		});
 	}
@@ -251,6 +289,30 @@ describe("i18n parity", () => {
 			expect(
 				pluralGaps({ replies: { one: "{n} ответ", other: "{n} ответов" } }, english, "ru"),
 			).toContain("replies:few");
+		});
+
+		it("reports a key no call site names, and only that key", () => {
+			// The shape of the bug this check had on its first pass: it searched a
+			// corpus that included the tables, so every key matched its own
+			// `"key":` definition and nothing was reportable. Against a corpus of
+			// call sites only, a dead key has nowhere left to hide.
+			const corpus = 'const label = t("greet");\nconst other = s(n === 1 ? "replies" : "greet");';
+			expect(unusedKeys(["greet", "replies", "farewell"], corpus)).toEqual(["farewell"]);
+		});
+
+		it("holds every locale table out of the call-site corpus", () => {
+			// Guards the exclusion itself. If one table file ever rejoins the
+			// corpus the check above passes forever without reading src/ again,
+			// which is indistinguishable from working.
+			const excluded = sourceFiles(SRC).filter(isTableFile).map((path) => relative(SRC, path));
+			expect(excluded).toContain(join("i18n", "en.ts"));
+			expect(excluded).toContain(join("widget", "strings.ts"));
+			for (const locale of Object.keys(LOCALES)) {
+				if (locale === "en") continue;
+				expect(excluded, `${locale}'s server table is still in the corpus`).toContain(
+					join("i18n", `${locale}.ts`),
+				);
+			}
 		});
 	});
 
