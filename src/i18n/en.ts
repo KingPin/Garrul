@@ -10,13 +10,11 @@ export const en = {
 		"This thread is nested too deeply. Reply further up the thread instead.",
 	"err.name.required": "A display name is required.",
 	"err.name.too_long": "Display name is too long (max {max} characters).",
-	"err.email.invalid": "Email address is not valid.",
 	"err.turnstile.required": "Spam check failed. Refresh and try again.",
 	"err.turnstile.invalid": "Spam check failed. Refresh and try again.",
 	"err.ratelimit": "Too many comments — slow down and try again in a moment.",
 	"err.honeypot": "Comment rejected.",
 	"err.origin.forbidden": "Request blocked: origin not allowed.",
-	"err.session.required": "Sign in or set a name to comment.",
 	"err.session.expired": "Your session expired. Refresh and try again.",
 	"err.edit.window_expired": "Edit window has expired.",
 	"err.edit.not_author": "You can only edit your own comments.",
@@ -26,29 +24,67 @@ export const en = {
 	"err.thread_closed": "Comments are closed on this post.",
 	"err.internal": "Something went wrong. Try again.",
 
-	// UI strings (used later by widget templates)
-	"ui.placeholder.comment": "Add a comment…",
-	"ui.placeholder.name": "Your name",
-	"ui.placeholder.email": "Email (optional, never shown)",
-	"ui.submit": "Post",
-	"ui.cancel": "Cancel",
-	"ui.edit": "Edit",
-	"ui.delete": "Delete",
-	"ui.reply": "Reply",
-	"ui.subscribe": "Notify me of replies",
-	"ui.posted_just_now": "just now",
+	// Server-rendered UI strings.
+	//
+	// This block is deliberately small. Widget copy lives in
+	// src/widget/strings.ts, not here — tsconfig.widget.json cannot import
+	// this module, so the dependency is inverted and the server reads the
+	// widget's table instead. A previous version of this file carried 14
+	// `ui.*` keys "for widget templates" that the widget never imported while
+	// it kept its own hardcoded twins; they were pure decoys and are gone.
 	"ui.deleted": "[deleted]",
-	"ui.deleted_by_mod": "[removed by a moderator]",
-	"ui.pending": "Pending approval",
-	"ui.edited_suffix": "(edited)",
-	"ui.verified": "verified",
 	"ui.subscribe.pending": "Check your inbox to confirm your subscription.",
 	"ui.subscribe.confirmed": "Subscription confirmed.",
 
-	// Subscription confirmation email
+	// The pages an emailed confirm/unsubscribe link lands on. Rendered in the
+	// locale stored on the subscription — the reader arrived from a German mail,
+	// so an English page here would be the same break the mail avoided. When no
+	// row matches (expired or already-used token) there is nothing to read a
+	// locale off, so those fall back to the request's.
+	"ui.subscribe.link_expired": "Link expired or already used.",
+	"ui.subscribe.confirmed_page":
+		'You\'re confirmed for comment notifications on "{title}".',
+	"ui.subscribe.already_unsubscribed":
+		'You\'re already unsubscribed from comment notifications for "{title}".',
+	"ui.subscribe.unsubscribed":
+		'You\'re unsubscribed from comment notifications for "{title}".',
+	"ui.subscribe.unsubscribe_confirm":
+		'Unsubscribe from comment notifications for "{title}"?',
+	"ui.subscribe.unsubscribe_cta": "Yes, unsubscribe me",
+	"ui.subscribe.unsubscribe_note":
+		"Nothing has changed yet — you stay subscribed until you confirm.",
+
+	// Transactional email.
+	//
+	// Rendered in the locale the subscriber signed up in (subscriptions.locale),
+	// not the operator default and not the locale of whoever triggered the send:
+	// the reader chose a German page, so the mail that page produces is German.
+	// Rows predating that column have no locale and render English.
+	//
+	// No markup in these values. The `{title}` var arrives at the render site
+	// already HTML-escaped and already wrapped in whatever emphasis the layout
+	// wants, so a translation cannot open a tag it fails to close.
 	"email.confirm.subject": "Confirm your subscription to comments on {title}",
-	"email.confirm.preheader":
-		"Click the link inside to start receiving reply notifications.",
+	"email.confirm.heading": "Confirm your subscription",
+	"email.confirm.intro":
+		"You're being asked to confirm a subscription to reply notifications for {title}.",
+	"email.confirm.ignore":
+		"If this wasn't you, ignore this email — without the confirmation click below, no further messages will be sent to this address for this thread.",
+	"email.confirm.cta": "Confirm subscription",
+	"email.confirm.paste": "Or paste this link into your browser:",
+	"email.digest.subject": 'New replies on "{title}"',
+	"email.digest.heading": {
+		one: '{count} new comment on "{title}"',
+		other: '{count} new comments on "{title}"',
+	},
+	"email.digest.permalink": "permalink",
+	"email.digest.unsubscribe": "Unsubscribe from this thread",
+
+	// Atom feed. Rendered with the operator's default locale, never the
+	// requester's — the feed response is publicly cached (max-age=300), so
+	// varying it per request would serve one reader's language to the next.
+	"feed.title": "Comments on {title}",
+	"feed.entry_title": "{author} commented",
 
 	// Telegram operator bot (admin-facing; shown in the bot chat, not in logs)
 	"telegram.not_linked":

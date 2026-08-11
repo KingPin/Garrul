@@ -15,6 +15,9 @@
 import { Hono } from "hono";
 import type { Bindings } from "../index";
 import { getPost, listLatestApprovedComments } from "../db/queries";
+import { tFor } from "../i18n";
+import { resolveLocale } from "../i18n/negotiate";
+import { loadStrings } from "../lib/settings";
 
 const feed = new Hono<{ Bindings: Bindings }>();
 
@@ -77,12 +80,19 @@ feed.get("/:slug", async (c) => {
 	const post = await getPost(c.env.DB, slug);
 	const comments = await listLatestApprovedComments(c.env.DB, slug, 50);
 
+	// The operator's default only — no `?lang=`. This response is cached at the
+	// edge for 5 minutes under a URL that carries no locale, so honoring a
+	// per-request locale here would serve whichever language happened to warm
+	// the cache to everyone else. A feed also has one canonical URL per post by
+	// definition; a reader's copy is not the place to fork it.
+	const { default_locale: operatorDefault } = await loadStrings(c.env);
+	const locale = resolveLocale({ operatorDefault });
+	const t = tFor(locale);
+
 	const reqUrl = new URL(c.req.url);
 	const feedSelf = `${reqUrl.protocol}//${reqUrl.host}/feed/${encodeURIComponent(slug)}`;
 	const postLink = safeLink(post?.url, feedSelf);
-	const title = post?.title
-		? `Comments on ${post.title}`
-		: `Comments on ${slug}`;
+	const title = t("feed.title", { title: post?.title ?? slug });
 	const updated =
 		comments[0] != null
 			? new Date(comments[0].created_at).toISOString()
@@ -94,7 +104,7 @@ feed.get("/:slug", async (c) => {
 			const permalink = `${postLink}${postLink.includes("#") ? "&" : "#"}garrul-comment-${row.id}`;
 			return `<entry>
   <id>${xmlEscape(id)}</id>
-  <title>${xmlEscape(row.author_name)} commented</title>
+  <title>${xmlEscape(t("feed.entry_title", { author: row.author_name }))}</title>
   <author><name>${xmlEscape(row.author_name)}</name></author>
   <published>${new Date(row.created_at).toISOString()}</published>
   <updated>${new Date(row.edited_at ?? row.created_at).toISOString()}</updated>
@@ -105,7 +115,7 @@ feed.get("/:slug", async (c) => {
 		.join("\n");
 
 	const xml = `<?xml version="1.0" encoding="UTF-8"?>
-<feed xmlns="http://www.w3.org/2005/Atom">
+<feed xmlns="http://www.w3.org/2005/Atom" xml:lang="${xmlEscape(locale)}">
   <id>${xmlEscape(feedSelf)}</id>
   <title>${xmlEscape(title)}</title>
   <updated>${updated}</updated>

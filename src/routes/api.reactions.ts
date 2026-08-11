@@ -16,9 +16,10 @@ import { checkRateLimit } from "../lib/ratelimit";
 import { writeEvent } from "../lib/analytics";
 import { loadFlags } from "../lib/settings";
 import { bustTreeCache } from "../lib/tree-cache";
-import { t } from "../i18n";
+import { FALLBACK_LOCALE, tFor } from "../i18n";
+import type { LocaleVars } from "../lib/locale";
 
-const reactions = new Hono<{ Bindings: Bindings }>();
+const reactions = new Hono<{ Bindings: Bindings; Variables: LocaleVars }>();
 
 const ALLOWED_KINDS = new Set(["like", "love", "laugh", "hmm", "cry"]);
 
@@ -28,6 +29,10 @@ type ReactionBody = {
 };
 
 reactions.post("/", async (c) => {
+	// Shadows the module-level English `t` for the whole handler; the widget
+	// renders `json.error` verbatim, so this is what makes the error match the
+	// language the rest of the widget is in.
+	const t = c.get("t") ?? tFor(FALLBACK_LOCALE);
 	const flags = await loadFlags(c.env);
 	if (!flags.reactions_enabled) {
 		return c.json({ error: "reactions_disabled" }, 403);

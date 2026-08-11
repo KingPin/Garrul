@@ -22,6 +22,8 @@
  */
 import type { Bindings } from "../index";
 import { getAllSettings } from "../db/queries";
+import { LOCALES } from "../i18n";
+import { AUTO_LOCALE } from "../i18n/negotiate";
 import { MAX_DEPTH } from "./tree";
 
 export type FlagKey =
@@ -51,6 +53,10 @@ export type NumberKey =
 	| "audit_log_retention_days";
 
 export type ResolvedNumbers = Record<NumberKey, number>;
+
+export type StringSettingKey = "default_locale";
+
+export type ResolvedStrings = Record<StringSettingKey, string>;
 
 // Each flag's env-var source and hardcoded default. `votes_enabled` /
 // `downvotes_enabled` keep their legacy env names so existing wrangler.toml
@@ -228,6 +234,50 @@ const NUMBERS: Record<
 
 export const NUMBER_KEYS = Object.keys(NUMBERS) as NumberKey[];
 
+// String-valued settings. Same precedence chain as FLAGS/NUMBERS (DB > env >
+// default), but the safety property is different: a number is made safe by
+// clamping, whereas a string is made safe by being *one of a known set*. Every
+// entry therefore carries an `options` whitelist and anything outside it —
+// junk, hostile, or merely stale — resolves to the built-in default rather
+// than being escaped and passed along.
+//
+// `options` is a function rather than an array so the set is read at use time.
+// The locale registry is the source of truth for which locales exist, and a
+// snapshot taken at module load would silently go stale the moment locales are
+// registered somewhere other than at the top of the module graph.
+const STRINGS: Record<
+	StringSettingKey,
+	{ env: keyof Bindings; default: string; options: () => string[] }
+> = {
+	// The locale the widget, the feed and notification emails render in when the
+	// embed doesn't ask for one explicitly.
+	//
+	// The default is the `auto` sentinel, not `"en"`, and the difference is
+	// load-bearing: `auto` means "never configured", which lets negotiation fall
+	// through to the host page's `<html lang>` hint. An explicit `"en"` means the
+	// operator chose English and the hint is ignored. Collapsing the two would
+	// make "I want English no matter what the theme says" unexpressible.
+	//
+	// The end of that chain is `FALLBACK_LOCALE` in src/i18n — deliberately not
+	// named DEFAULT_LOCALE, so the constant and this env var can't be confused
+	// for each other in an import list.
+	default_locale: {
+		env: "DEFAULT_LOCALE",
+		default: AUTO_LOCALE,
+		options: () => [AUTO_LOCALE, ...Object.keys(LOCALES)],
+	},
+};
+
+export const STRING_KEYS = Object.keys(STRINGS) as StringSettingKey[];
+
+/** The accepted values for a string setting (used by the admin UI + save path). */
+export const stringOptions = (key: StringSettingKey): string[] =>
+	STRINGS[key].options();
+
+/** The built-in default for a string setting, for the admin UI's option list. */
+export const stringDefault = (key: StringSettingKey): string =>
+	STRINGS[key].default;
+
 /** Min/max clamp bounds for a numeric setting (used by the admin UI inputs). */
 export const numberBounds = (
 	key: NumberKey,
@@ -236,25 +286,31 @@ export const numberBounds = (
 	return { default: def, min, max };
 };
 
-const CACHE_KEY = "settings:flags";
-const CACHE_KEY_NUMBERS = "settings:numbers";
-// These resolve on the hot path (every comments GET reads numbers; config/counts
-// read flags). They're a fixed pair of KV keys, so a write happens at most once
-// per TTL window per edge colo — but on the free tier those add up. A longer TTL
-// cuts that steady-state KV write rate; it's safe because the admin save path
-// busts the key (bustFlagsCache/bustNumbersCache), so a real change still takes
-// effect promptly rather than waiting out the TTL.
+// One KV entry holds every resolved group. Flags, numbers and strings all derive
+// from the same two inputs — a single `getAllSettings` read plus `env` — so
+// splitting them across three keys bought nothing and cost three KV reads,
+// three D1 queries and three KV writes on any route needing more than one
+// group. `GET /api/v1/config`, hit on every widget mount, needs all three.
 //
-// The arithmetic behind the value: KV free tier is 1000 writes/day *account
-// wide*. At 300s these two keys re-populate 288 times/day per colo, so a
-// modest three-colo footprint was already spending ~576 of that budget doing
-// nothing but re-deriving settings that hadn't changed. At 3600s that's 24
-// per key per colo — ~48 for the same three colos.
+// Writes are what make this load-bearing. The KV free tier allows 1000
+// writes/day *account wide*, and an entry re-populates once per TTL window per
+// edge colo whether or not anything actually changed. At 3600s that is 24
+// writes per colo per day for one key; the three-key layout spent 72.
 //
-// The only cost is staleness on a path that *doesn't* bust: an operator
-// editing an env var and redeploying. A deploy doesn't clear KV, so the old
-// value can survive up to an hour. That's documented in AGENTS-OPERATE.md;
-// changing a setting through the admin UI is unaffected.
+// The name is deliberately new rather than a reuse of `settings:flags`. A
+// rolling deploy runs old and new isolates side by side, and an old
+// `loadNumbers` reading a merged blob would resolve every numeric setting to
+// `undefined`. Distinct names mean neither version can read the other's shape;
+// the superseded entries just expire.
+const CACHE_KEY_RESOLVED = "settings:resolved";
+// Staleness bound for the one path that does *not* bust the cache: an operator
+// editing an env var and redeploying, since a deploy doesn't clear KV. So a
+// stale value can survive up to an hour — documented in AGENTS-OPERATE.md.
+// Admin saves call `bustSettingsCache`, so those land on the next request.
+//
+// The arithmetic behind the value: at 300s the entry re-populated 288
+// times/day per colo, so even a three-colo footprint spent ~864 of the
+// 1000-write budget re-deriving settings that hadn't changed.
 const CACHE_TTL_SEC = 3600;
 
 // Defaults-on/off boolish parse: present + falsy → false; anything else
@@ -282,6 +338,43 @@ export const parseIntSetting = (
 	const n = Number.parseInt(v, 10);
 	if (!Number.isFinite(n)) return fallback;
 	return Math.min(max, Math.max(min, n));
+};
+
+/**
+ * Resolve a string setting against a whitelist. Anything not on the list —
+ * empty, junk, hostile, or a locale that used to exist and no longer does —
+ * falls back to `fallback`.
+ *
+ * Matching is case-insensitive and returns the *canonical* option, so an
+ * operator writing `DEFAULT_LOCALE="EN"` gets `en` rather than the default.
+ * It is deliberately not laxer than that: this is a whitelist, and a value
+ * that isn't on it must not be repaired into something that is.
+ */
+export const parseStringSetting = (
+	raw: string | undefined,
+	fallback: string,
+	options: readonly string[],
+): string => {
+	if (raw == null) return fallback;
+	const v = raw.trim().toLowerCase();
+	if (v === "") return fallback;
+	return options.find((opt) => opt.toLowerCase() === v) ?? fallback;
+};
+
+const resolveStrings = (
+	env: Bindings,
+	dbSettings: Record<string, string>,
+): ResolvedStrings => {
+	const out = {} as ResolvedStrings;
+	for (const key of STRING_KEYS) {
+		const spec = STRINGS[key];
+		const raw =
+			key in dbSettings
+				? dbSettings[key]
+				: (env[spec.env] as string | undefined);
+		out[key] = parseStringSetting(raw, spec.default, spec.options());
+	}
+	return out;
 };
 
 const resolveNumbers = (
@@ -317,41 +410,107 @@ const resolve = (
 	return out;
 };
 
+/** Every resolved settings group, as stored in the single cache entry. */
+export interface ResolvedSettings {
+	readonly flags: ResolvedFlags;
+	readonly numbers: ResolvedNumbers;
+	readonly strings: ResolvedStrings;
+}
+
 /**
- * Resolve all feature flags (DB override > env > default), KV-cached.
+ * Shape check on the cached blob.
+ *
+ * A `get(..., "json")` hit is only trusted if it carries all three groups. The
+ * key name makes a foreign shape unreachable today (see `CACHE_KEY_RESOLVED`),
+ * but a partial blob would otherwise resolve every setting in the missing group
+ * to `undefined` — a silent wrong answer, where a miss is merely a D1 read.
  */
-export const loadFlags = async (env: Bindings): Promise<ResolvedFlags> => {
-	const cached = await env.TREE_CACHE.get(CACHE_KEY, "json").catch(() => null);
-	if (cached) return cached as ResolvedFlags;
-	const dbSettings = await getAllSettings(env.DB);
-	const flags = resolve(env, dbSettings);
-	await env.TREE_CACHE.put(CACHE_KEY, JSON.stringify(flags), {
-		expirationTtl: CACHE_TTL_SEC,
-	}).catch(() => {});
-	return flags;
+const isResolvedSettings = (v: unknown): v is ResolvedSettings => {
+	if (typeof v !== "object" || v === null) return false;
+	const c = v as Partial<Record<keyof ResolvedSettings, unknown>>;
+	return (
+		typeof c.flags === "object" &&
+		c.flags !== null &&
+		typeof c.numbers === "object" &&
+		c.numbers !== null &&
+		typeof c.strings === "object" &&
+		c.strings !== null
+	);
 };
 
-/** Drop the cached resolved flags so the next read reflects a fresh save. */
-export const bustFlagsCache = (env: Bindings): Promise<void> =>
-	env.TREE_CACHE.delete(CACHE_KEY).catch(() => {});
+/** Read D1, resolve every group, and populate the cache entry. */
+const deriveSettings = async (env: Bindings): Promise<ResolvedSettings> => {
+	const dbSettings = await getAllSettings(env.DB);
+	const resolved: ResolvedSettings = {
+		flags: resolve(env, dbSettings),
+		numbers: resolveNumbers(env, dbSettings),
+		strings: resolveStrings(env, dbSettings),
+	};
+	await env.TREE_CACHE.put(CACHE_KEY_RESOLVED, JSON.stringify(resolved), {
+		expirationTtl: CACHE_TTL_SEC,
+	}).catch(() => {});
+	return resolved;
+};
 
 /**
- * Resolve all numeric display settings (DB override > env > default), KV-cached
- * under its own key so it doesn't disturb the boolean-flag cache entry/tests.
+ * The derivation currently in flight, if any.
+ *
+ * A cold entry under concurrent traffic is the other write amplifier: every
+ * request that arrives before the first `put` lands misses, queries D1 and
+ * writes. Since they all derive the identical object, they can share one
+ * derivation — so a cold colo costs one KV write rather than one per concurrent
+ * request. That is the difference between a burst costing 1 write and 50.
+ *
+ * Module state, but safe for the same reason the plural-rules cache in
+ * src/i18n/index.ts is: nothing request-scoped is stored, only derived settings
+ * that are identical for every caller. It is cleared as soon as the derivation
+ * settles, so a bust can only ever be masked for the width of one in-flight
+ * read — a window that already exists, since any request that read the cache
+ * just before a bust is holding pre-bust data too.
  */
-export const loadNumbers = async (env: Bindings): Promise<ResolvedNumbers> => {
-	const cached = await env.TREE_CACHE.get(CACHE_KEY_NUMBERS, "json").catch(
+let inFlight: Promise<ResolvedSettings> | null = null;
+
+/**
+ * Resolve every setting (DB override > env > default), KV-cached as one entry.
+ *
+ * Prefer this over the per-group helpers when a caller needs more than one
+ * group: it makes the single read and the single derivation explicit at the
+ * call site.
+ */
+export const loadSettings = async (
+	env: Bindings,
+): Promise<ResolvedSettings> => {
+	const cached = await env.TREE_CACHE.get(CACHE_KEY_RESOLVED, "json").catch(
 		() => null,
 	);
-	if (cached) return cached as ResolvedNumbers;
-	const dbSettings = await getAllSettings(env.DB);
-	const numbers = resolveNumbers(env, dbSettings);
-	await env.TREE_CACHE.put(CACHE_KEY_NUMBERS, JSON.stringify(numbers), {
-		expirationTtl: CACHE_TTL_SEC,
-	}).catch(() => {});
-	return numbers;
+	if (isResolvedSettings(cached)) return cached;
+	if (inFlight) return inFlight;
+	const pending = deriveSettings(env).finally(() => {
+		inFlight = null;
+	});
+	inFlight = pending;
+	return pending;
 };
 
-/** Drop the cached resolved numbers so the next read reflects a fresh save. */
-export const bustNumbersCache = (env: Bindings): Promise<void> =>
-	env.TREE_CACHE.delete(CACHE_KEY_NUMBERS).catch(() => {});
+/** Resolved feature flags. */
+export const loadFlags = async (env: Bindings): Promise<ResolvedFlags> =>
+	(await loadSettings(env)).flags;
+
+/** Resolved numeric display settings. */
+export const loadNumbers = async (env: Bindings): Promise<ResolvedNumbers> =>
+	(await loadSettings(env)).numbers;
+
+/**
+ * Resolved string settings.
+ *
+ * Deliberately *not* called from the per-request locale middleware: that runs
+ * on every `/api/*` request, and a KV read there would land on routes that read
+ * nothing else. The operator default is applied once, at `GET /api/v1/config`,
+ * and the widget echoes the resolved locale back on subsequent calls.
+ */
+export const loadStrings = async (env: Bindings): Promise<ResolvedStrings> =>
+	(await loadSettings(env)).strings;
+
+/** Drop the cached settings so the next read reflects a fresh save. */
+export const bustSettingsCache = (env: Bindings): Promise<void> =>
+	env.TREE_CACHE.delete(CACHE_KEY_RESOLVED).catch(() => {});

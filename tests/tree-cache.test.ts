@@ -18,17 +18,23 @@ afterEach(() => uninstallMockCaches());
 // bustTreeCache and the treeCacheKey assertions line up on the same origin.
 const REQ_URL = "http://localhost/";
 
-// Settings KV double: loadNumbers() reads `settings:numbers` first; returning a
-// warm value keeps the bust path off D1. DB is a stub for the fallback path.
+// Settings KV double: loadNumbers() reads `settings:resolved` first; returning a
+// warm value keeps the bust path off D1. All three groups have to be present —
+// the loader ignores a blob missing one rather than resolving it to undefined.
+// DB is a stub for the fallback path.
 const env = (pageSize = 25): Bindings =>
 	({
 		TREE_CACHE: {
 			get: async (k: string) =>
-				k === "settings:numbers"
+				k === "settings:resolved"
 					? {
-							comments_per_page: pageSize,
-							replies_per_thread: 3,
-							auto_collapse_depth: 3,
+							flags: {},
+							numbers: {
+								comments_per_page: pageSize,
+								replies_per_thread: 3,
+								auto_collapse_depth: 3,
+							},
+							strings: {},
 						}
 					: null,
 			put: async () => {},

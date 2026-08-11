@@ -31,9 +31,10 @@ import { checkRateLimit } from "../lib/ratelimit";
 import { readSession } from "../lib/session";
 import { writeEvent } from "../lib/analytics";
 import { loadFlags } from "../lib/settings";
-import { t } from "../i18n";
+import { FALLBACK_LOCALE, tFor } from "../i18n";
+import type { LocaleVars } from "../lib/locale";
 
-const pageEngagement = new Hono<{ Bindings: Bindings }>();
+const pageEngagement = new Hono<{ Bindings: Bindings; Variables: LocaleVars }>();
 
 const SLUG_RE = /^[a-zA-Z0-9_\-./]{1,200}$/;
 const ALLOWED_KINDS = new Set(["like", "love", "laugh", "hmm", "cry"]);
@@ -65,6 +66,10 @@ const reactionTotals = (
 // -- GET initial state -------------------------------------------------------
 
 pageEngagement.get("/", async (c) => {
+	// Shadows the module-level English `t` for the whole handler; the widget
+	// renders `json.error` verbatim, so this is what makes the error match the
+	// language the rest of the widget is in.
+	const t = c.get("t") ?? tFor(FALLBACK_LOCALE);
 	const slug = validateSlug(c.req.query("slug") ?? "");
 	if (!slug) return c.json({ error: t("err.post.invalid") }, 400);
 
@@ -99,6 +104,7 @@ pageEngagement.get("/", async (c) => {
 type ReactionBody = { slug?: string; kind?: string };
 
 pageEngagement.post("/reactions", async (c) => {
+	const t = c.get("t") ?? tFor(FALLBACK_LOCALE);
 	const flags = await loadFlags(c.env);
 	if (!flags.page_reactions_enabled) {
 		return c.json({ error: "page_reactions_disabled" }, 403);
@@ -147,6 +153,7 @@ pageEngagement.post("/reactions", async (c) => {
 type VoteBody = { slug?: string; value?: unknown };
 
 pageEngagement.post("/votes", async (c) => {
+	const t = c.get("t") ?? tFor(FALLBACK_LOCALE);
 	const flags = await loadFlags(c.env);
 	if (!flags.page_votes_enabled) {
 		return c.json({ error: "page_votes_disabled" }, 403);

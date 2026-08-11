@@ -89,6 +89,53 @@ export const renderStepper = ({ name, model, min, max, label, help }: StepperOpt
 </div>`;
 };
 
+export type SelectOption = { value: string; label: string };
+
+export type SelectOpts = {
+	name: string;
+	/** Alpine x-model expression, e.g. "strs.default_locale". */
+	model: string;
+	options: SelectOption[];
+	label: string;
+	help: string;
+};
+
+/**
+ * A label + help row with a native `<select>`, for settings whose value is one
+ * of a fixed set rather than a boolean or a number.
+ *
+ * Option *values* are escaped as HTML text, not held to the identifier
+ * allowlist: unlike `model`, they land in an attribute the browser reads as
+ * data, never in an Alpine expression. The server re-checks the submitted value
+ * against the same whitelist anyway — a `<select>` constrains a cooperating
+ * browser, not the request.
+ */
+export const renderSelect = ({
+	name,
+	model,
+	options,
+	label,
+	help,
+}: SelectOpts): string => {
+	assertSafeExpr("renderSelect", model);
+	const opts = options
+		.map(
+			(o) =>
+				`<option value="${escapeHtml(o.value)}">${escapeHtml(o.label)}</option>`,
+		)
+		.join("");
+	return `
+<div class="field-row">
+  <span class="field-control">
+    <select name="${escapeHtml(name)}" x-model="${model}">${opts}</select>
+  </span>
+  <span class="field-text">
+    <strong>${escapeHtml(label)}</strong>
+    <span class="muted">${escapeHtml(help)}</span>
+  </span>
+</div>`;
+};
+
 export type TabDef = { id: string; label: string };
 
 /**

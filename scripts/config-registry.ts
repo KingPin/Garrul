@@ -707,6 +707,18 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
 		addedIn: "1.10.0",
 	},
 	{
+		name: "DEFAULT_LOCALE",
+		kind: "var",
+		required: false,
+		group: "Display & pagination",
+		hint: "language for the widget, feed and emails (auto = follow the host page)",
+		description:
+			"Language the widget, the Atom feed and notification emails render in. `auto` (the default) means *not configured*, which lets the host page's `<html lang>` pick one; set an explicit tag to override the page. Accepts `auto` plus any locale Garrul ships — see the locale table in the README. An unknown tag falls back to `auto`. Machine-seeded translations are never selected from `<html lang>`; reaching one requires either this setting or `data-lang` on the embed. Comment text itself is never translated.",
+		example: "auto",
+		adminEditable: true,
+		addedIn: "2.7.0",
+	},
+	{
 		name: "AUTO_COLLAPSE_DEPTH",
 		kind: "var",
 		required: false,

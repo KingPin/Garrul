@@ -20,12 +20,30 @@
  *   ?title=...                        — passed through to data-title
  *   ?url=...                          — passed through to data-url
  *   ?theme=light|dark|auto            — host-page theme hint
+ *   ?lang=de                          — locale for the widget inside the frame.
+ *     Lands on both <html lang> and data-lang, and the two want different
+ *     things. `data-lang` stays raw: it is a request, and the server is what
+ *     whitelists it against the locale registry when the widget asks for its
+ *     strings. `<html lang>` is a claim about the document, read by assistive
+ *     tech and the browser's own UI, so it has to be a locale that will
+ *     actually be rendered — otherwise `?lang=xx` makes a screen reader switch
+ *     voice for a frame that came back in English. So it gets the *matched*
+ *     locale, or English when there is no match. It can still understate: this
+ *     route can't see the operator's `default_locale` without a KV read, so a
+ *     frame with no `?lang=` claims English even where the widget will resolve
+ *     to something else. The widget corrects the part that affects layout
+ *     (`dir` on its own host element) once `/api/v1/config` answers.
+ *
+ * The page is cached for 5 minutes, which is safe because every one of these
+ * params is part of the URL and therefore part of the cache key.
  *
  * Strings flowing into the HTML body are escaped (JSON.stringify for JS
  * literals, attribute escape for data-* values) so query params can't
  * inject markup.
  */
 import { Hono } from "hono";
+import { FALLBACK_LOCALE } from "../i18n";
+import { matchLocale } from "../i18n/negotiate";
 import type { Bindings } from "../index";
 
 const iframe = new Hono<{ Bindings: Bindings }>();
@@ -349,6 +367,10 @@ iframe.get("/:slug", (c) => {
 	const title = c.req.query("title") ?? "";
 	const pageUrl = c.req.query("url") ?? "";
 	const theme = c.req.query("theme") ?? "auto";
+	const lang = c.req.query("lang") ?? "";
+	// See the ?lang= note in the route doc above: `data-lang` forwards the raw
+	// request, `<html lang>` only ever claims a locale that exists.
+	const docLang = matchLocale(lang) ?? FALLBACK_LOCALE;
 
 	// The postMessage target for the height protocol. Must be allowlisted —
 	// see safeParentOrigin. Callers pass ?parent_origin=https://yourblog.example.
@@ -374,7 +396,7 @@ iframe.get("/:slug", (c) => {
 	].join("; ");
 
 	const html = `<!doctype html>
-<html lang="en">
+<html lang="${escapeAttr(docLang)}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -392,6 +414,7 @@ iframe.get("/:slug", (c) => {
   data-title="${escapeAttr(title)}"
   data-url="${escapeAttr(pageUrl)}"
   data-theme="${escapeAttr(theme)}"
+  data-lang="${escapeAttr(lang)}"
 ></div>
 <script src="${escapeAttr(apiBase)}/embed.js"></script>
 <script>

@@ -25,9 +25,10 @@ import { requireIpHash } from "../lib/ip-hash";
 import { checkRateLimit } from "../lib/ratelimit";
 import { writeEvent } from "../lib/analytics";
 import { loadFlags } from "../lib/settings";
-import { t } from "../i18n";
+import { FALLBACK_LOCALE, tFor } from "../i18n";
+import type { LocaleVars } from "../lib/locale";
 
-const votes = new Hono<{ Bindings: Bindings }>();
+const votes = new Hono<{ Bindings: Bindings; Variables: LocaleVars }>();
 
 type VoteBody = {
 	comment_id?: string;
@@ -45,6 +46,10 @@ const normalizeValue = (raw: unknown): VoteValue | null => {
 };
 
 votes.post("/", async (c) => {
+	// Shadows the module-level English `t` for the whole handler, so the error
+	// bodies below come out in the language of the page the reader is on — the
+	// widget renders `json.error` verbatim.
+	const t = c.get("t") ?? tFor(FALLBACK_LOCALE);
 	const flags = await loadFlags(c.env);
 	if (!flags.votes_enabled) {
 		return c.json({ error: "voting_disabled" }, 403);

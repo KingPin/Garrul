@@ -113,13 +113,14 @@ import { renderTelegram } from "../admin-ui/pages/telegram";
 import { issueTelegramLinkToken } from "./telegram";
 import { renderSettings } from "../admin-ui/pages/settings";
 import {
-	bustFlagsCache,
-	bustNumbersCache,
+	bustSettingsCache,
 	FLAG_KEYS,
-	loadFlags,
 	loadNumbers,
+	loadSettings,
 	NUMBER_KEYS,
 	numberBounds,
+	STRING_KEYS,
+	stringOptions,
 } from "../lib/settings";
 import { bustTreeCache } from "../lib/tree-cache";
 import { MAX_REPLY_DEPTH } from "../lib/tree";
@@ -161,7 +162,7 @@ import { runSeedDemo } from "../db/seed-demo";
 import { renderConfirmEmailHtml } from "../lib/digest";
 import { sendEmail } from "../lib/email";
 import { fillSubject, subjectTitle } from "../lib/post-title";
-import { t } from "../i18n";
+import { FALLBACK_LOCALE, tFor } from "../i18n";
 
 const admin = new Hono<{ Bindings: Bindings }>();
 
@@ -270,8 +271,7 @@ admin.get("/", async (c) => {
 		spamRate,
 		byHost,
 		updateInfo,
-		flags,
-		numbers,
+		{ flags, numbers },
 	] = await Promise.all([
 		adminStats(db),
 		adminTimeline(db, 30),
@@ -283,8 +283,7 @@ admin.get("/", async (c) => {
 		peekCachedLatestVersion(c.env),
 		// The anti-spam summary line reports the resolved heuristic dials, so it
 		// has to read them the same way evaluateSpam does.
-		loadFlags(c.env),
-		loadNumbers(c.env),
+		loadSettings(c.env),
 	]);
 	const body = renderDashboard(
 		{
@@ -794,16 +793,15 @@ admin.post("/api/telegram/digest", async (c) => {
 admin.get("/settings", async (c) => {
 	const user = await requireAdmin(c);
 	if (user instanceof Response) return user;
-	const [updateInfo, flags, numbers] = await Promise.all([
+	const [updateInfo, { flags, numbers, strings }] = await Promise.all([
 		peekCachedLatestVersion(c.env),
-		loadFlags(c.env),
-		loadNumbers(c.env),
+		loadSettings(c.env),
 	]);
 	return c.html(
 		renderPage(
 			c,
 			"Settings",
-			renderSettings(c.env, flags, numbers),
+			renderSettings(c.env, flags, numbers, strings),
 			user,
 			updateInfo,
 		),
@@ -812,13 +810,15 @@ admin.get("/settings", async (c) => {
 
 // Persist runtime settings overrides. Body is either
 //   { flags: { comments_enabled: bool, … },     — boolean feature toggles
-//     numbers: { comments_per_page: 25, … } }    — numeric display settings
+//     numbers: { comments_per_page: 25, … },     — numeric display settings
+//     strings: { default_locale: "de", … } }     — enumerated string settings
 //   { reset: true }                              — clear all overrides
-// flags and numbers are independent; either or both may be present.
+// The three groups are independent; any subset may be present.
 // Admin-only; same-origin CSRF check is enforced by the admin middleware.
 type SettingsBody = {
 	flags?: Record<string, unknown>;
 	numbers?: Record<string, unknown>;
+	strings?: Record<string, unknown>;
 	reset?: unknown;
 };
 
@@ -829,8 +829,12 @@ admin.post("/settings", async (c) => {
 	if (!body) return c.json({ error: "invalid_body" }, 400);
 
 	if (body.reset === true) {
-		await deleteSettings(c.env.DB, [...FLAG_KEYS, ...NUMBER_KEYS]);
-		await Promise.all([bustFlagsCache(c.env), bustNumbersCache(c.env)]);
+		await deleteSettings(c.env.DB, [
+			...FLAG_KEYS,
+			...NUMBER_KEYS,
+			...STRING_KEYS,
+		]);
+		await bustSettingsCache(c.env);
 		await adminInsertAudit(c.env.DB, {
 			admin_id: user.id,
 			action: "settings.update",
@@ -845,7 +849,9 @@ admin.post("/settings", async (c) => {
 		body.flags && typeof body.flags === "object" ? body.flags : null;
 	const numbersObj =
 		body.numbers && typeof body.numbers === "object" ? body.numbers : null;
-	if (!flagsObj && !numbersObj) {
+	const stringsObj =
+		body.strings && typeof body.strings === "object" ? body.strings : null;
+	if (!flagsObj && !numbersObj && !stringsObj) {
 		return c.json({ error: "settings_required" }, 400);
 	}
 
@@ -878,9 +884,25 @@ admin.post("/settings", async (c) => {
 		}
 	}
 
+	// Strings are whitelisted, not clamped: rejecting an off-list value outright
+	// (rather than quietly substituting the default the way the resolver does)
+	// means a stale admin page can't silently reset a locale the operator picked.
+	const writtenStrings: Record<string, string> = {};
+	if (stringsObj) {
+		for (const key of STRING_KEYS) {
+			const raw = stringsObj[key];
+			if (raw === undefined) continue;
+			if (typeof raw !== "string" || !stringOptions(key).includes(raw)) {
+				return c.json({ error: `invalid_string:${key}` }, 400);
+			}
+			writtenStrings[key] = raw;
+		}
+	}
+
 	if (
 		Object.keys(writtenFlags).length === 0 &&
-		Object.keys(writtenNumbers).length === 0
+		Object.keys(writtenNumbers).length === 0 &&
+		Object.keys(writtenStrings).length === 0
 	) {
 		return c.json({ error: "settings_required" }, 400);
 	}
@@ -891,19 +913,31 @@ admin.post("/settings", async (c) => {
 	for (const [key, value] of Object.entries(writtenNumbers)) {
 		await setSetting(c.env.DB, key, String(value));
 	}
-	const busts: Promise<void>[] = [];
-	if (Object.keys(writtenFlags).length > 0) busts.push(bustFlagsCache(c.env));
-	if (Object.keys(writtenNumbers).length > 0)
-		busts.push(bustNumbersCache(c.env));
-	await Promise.all(busts);
+	for (const [key, value] of Object.entries(writtenStrings)) {
+		await setSetting(c.env.DB, key, value);
+	}
+	// One cache entry holds all three groups, so a write to any of them
+	// invalidates it. Still conditional: a no-op save shouldn't spend a KV write.
+	const wrote =
+		Object.keys(writtenFlags).length > 0 ||
+		Object.keys(writtenNumbers).length > 0 ||
+		Object.keys(writtenStrings).length > 0;
+	if (wrote) {
+		await bustSettingsCache(c.env);
+	}
 	await adminInsertAudit(c.env.DB, {
 		admin_id: user.id,
 		action: "settings.update",
 		target_kind: "system",
 		target_id: "settings",
-		meta: { ...writtenFlags, ...writtenNumbers },
+		meta: { ...writtenFlags, ...writtenNumbers, ...writtenStrings },
 	});
-	return c.json({ ok: true, flags: writtenFlags, numbers: writtenNumbers });
+	return c.json({
+		ok: true,
+		flags: writtenFlags,
+		numbers: writtenNumbers,
+		strings: writtenStrings,
+	});
 });
 
 admin.get("/about", async (c) => {
@@ -1916,14 +1950,20 @@ admin.post("/api/subscriptions/:id", async (c) => {
 	// an earlier version can still hold a title with a CR/LF in it, and a mail
 	// subject is a header value.
 	const title = subjectTitle(post?.title, sub.post_slug);
+	// The subscriber's language, not the operator's. This route is admin-facing
+	// but the mail it produces is not: it lands in the reader's inbox, and a
+	// resend arriving in a different language than the original would read as a
+	// phishing attempt rather than a helpful nudge.
+	const subT = tFor(sub.locale ?? FALLBACK_LOCALE);
 	const html = renderConfirmEmailHtml({
 		postTitle: title,
 		confirmUrl,
+		t: subT,
 	});
 	const sent = await sendEmail(c.env, {
 		to: sub.email,
 		from,
-		subject: fillSubject(t("email.confirm.subject"), title),
+		subject: fillSubject(subT("email.confirm.subject"), title),
 		html,
 	});
 	if (!sent) {

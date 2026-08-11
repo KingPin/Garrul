@@ -29,9 +29,10 @@ import { isInactiveGhost, requireActiveUser } from "../lib/active-user";
 import { readSession } from "../lib/session";
 import { writeEvent } from "../lib/analytics";
 import { fireWebhook } from "../lib/webhook";
-import { t } from "../i18n";
+import { FALLBACK_LOCALE, tFor } from "../i18n";
+import type { LocaleVars } from "../lib/locale";
 
-const reports = new Hono<{ Bindings: Bindings }>();
+const reports = new Hono<{ Bindings: Bindings; Variables: LocaleVars }>();
 
 // Reason is a free-text hint from the reporter. Stored as plain text and
 // escaped on admin render; capped so a report can't be used as a storage
@@ -39,6 +40,10 @@ const reports = new Hono<{ Bindings: Bindings }>();
 const REASON_MAX = 300;
 
 reports.post("/:id/report", async (c) => {
+	// Shadows the module-level English `t` for the whole handler; the widget
+	// renders `json.error` verbatim, so this is what makes the error match the
+	// language the rest of the widget is in.
+	const t = c.get("t") ?? tFor(FALLBACK_LOCALE);
 	const id = c.req.param("id");
 
 	// Optional reason. A malformed/absent body is fine — reason just stays null.

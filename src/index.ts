@@ -26,6 +26,7 @@ import { log, requestLogger } from "./lib/log";
 import { corsAndCsrf } from "./lib/cors";
 import { jsonBodyLimit } from "./lib/body-limit";
 import { requireConfig } from "./lib/require-config";
+import { type LocaleVars, localeMiddleware } from "./lib/locale";
 import { sessionMiddleware } from "./lib/session";
 
 export type Bindings = {
@@ -162,6 +163,14 @@ export type Bindings = {
 	//                              days old. Swept by the cron; irreversible. The
 	//                              sweep refuses below 30 days.
 	AUDIT_LOG_RETENTION_DAYS?: string;
+	// Locale the widget, feed and notification emails render in when the embed
+	// doesn't request one. Env-var *default*; a `settings` row overrides at
+	// runtime (see src/lib/settings.ts).
+	//
+	// `auto` (the default) means "not configured", which lets the host page's
+	// `<html lang>` select a locale. An explicit `en` means English regardless
+	// of what the page says. Unknown values fall back to `auto`.
+	DEFAULT_LOCALE?: string;
 	// Optional: atomic, cross-colo-accurate rate limiting via a Durable
 	// Object. Unbound (the default) leaves the limiter on the edge Cache API —
 	// see docs/ANTISPAM.md § "Rate-limit accuracy" for what that costs.
@@ -181,7 +190,7 @@ export type Bindings = {
  */
 export { RateLimitShard } from "./lib/ratelimit-shard";
 
-const app = new Hono<{ Bindings: Bindings }>();
+const app = new Hono<{ Bindings: Bindings; Variables: LocaleVars }>();
 
 app.use("*", requestLogger());
 
@@ -268,6 +277,11 @@ app.use("*", jsonBodyLimit());
 
 app.use("/api/*", corsAndCsrf());
 app.use("/api/*", sessionMiddleware());
+// Resolves ?lang= / ?hl= into c.get("locale") and c.get("t"). Cheap and
+// allocation-light, so it runs for the whole API surface rather than being
+// wired per-route — an error body that misses the caller's locale is exactly
+// the case the widget renders verbatim.
+app.use("/api/*", localeMiddleware());
 
 app.route("/api/v1/health", health);
 app.route("/api/v1/comments", comments);

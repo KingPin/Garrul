@@ -178,6 +178,7 @@ Every attribute the widget reads from the `#garrul` host element
 | `data-title` | no       | Post title; sent on first comment create, surfaces in admin and notification emails.        |
 | `data-url`   | no       | Canonical permalink; sent on first comment create, used in RSS and notification emails.     |
 | `data-published` | no   | Article publish time (epoch ms or ISO 8601); sent on first comment create. Anchors age-based auto-close (`AUTO_CLOSE_DAYS`). Omit and Garrul falls back to the first-comment time, which closes the thread a bit later than intended. Only relevant if the operator enabled `AUTO_CLOSE_DAYS`. |
+| `data-lang`  | no       | BCP-47 tag pinning the widget's interface language (see "Language" below). Unrecognized tags fall back to English rather than erroring. |
 
 The host element MUST have `id="garrul"`; the widget looks it up by ID
 and mounts a Shadow DOM on it. One widget per page — multi-thread
@@ -206,6 +207,53 @@ Per-framework derivations:
   post slug). If permalinks churn, prefer the post ID instead.
 - **Plain HTML** — pick a short kebab-case string and never change it
   (e.g. `welcome`, `hello-world`, `2024-launch`).
+
+### Language (since v2.7.0)
+
+**The widget's language is a property of the site, not the reader.** A
+German speaker reading an English blog gets an English widget, because a
+German comment box under English prose reads as broken rather than
+helpful. `Accept-Language` and `navigator.language` are therefore never
+consulted — that is a design decision, not an omission.
+
+Which language a mount renders in, most specific first:
+
+1. `data-lang` on the `#garrul` element — explicit, per-embed, always
+   wins. The only mechanism that works when the host page's
+   `<html lang>` is wrong or missing.
+2. The operator's `default_locale` setting (`/admin/settings`).
+3. The host page's `<html lang>`, which the widget forwards as a hint.
+4. English.
+
+Only *reviewed* translations may be selected by (3). Machine-seeded
+ones require the explicit opt-in at (1) — so the only person who sees an
+unreviewed translation is an operator who typed the tag and therefore
+reads the language.
+
+```html
+<div id="garrul" data-slug="hello-world" data-api="{{INSTANCE_URL}}"
+  data-lang="de"></div>
+```
+
+Regional tags match their base language (`de-AT` → `de`), and anything
+unrecognized falls back to English rather than failing the mount.
+
+Notes for integrators:
+
+- **English costs nothing on the wire.** The English table is compiled
+  into `embed.js`; another language is fetched with the config the
+  widget already requests at boot, so there is no extra round-trip and
+  no English-then-translated flash.
+- **`/embed.js` is locale-free and must stay that way.** Don't append
+  `?lang=` to the `<script src>` — that URL is one shared edge object
+  across every embed on every site.
+- **Comment bodies are never translated.** Localization covers the
+  widget's own chrome; user-authored markdown is stored and served as
+  written.
+- **Dates stay locale-neutral** (`YYYY-MM-DD HH:MM`, UTC) in every
+  language.
+- The widget sets `lang` and `dir` on its own host element, so an RTL
+  host page and an LTR widget (or the reverse) lay out correctly.
 
 ### Voting and sorting
 
@@ -443,6 +491,18 @@ Worker `postMessage`s height updates to a known target instead of `"*"`.
 either. The iframe variant gives up host-page CSS-variable theming (the
 iframe is a separate document) but inherits everything else.
 
+`?lang=` is the iframe's equivalent of `data-lang` — it lands on both
+the frame's `<html lang>` and the widget inside it. There is no
+`<html lang>` to inherit here (the frame *is* the document), so pass it
+explicitly when the surrounding page isn't in English. The widget gets
+the tag verbatim; the frame's `<html lang>` gets the *matched* locale
+(`de-AT` → `de`, an unknown tag → `en`), so the document never claims a
+language it isn't rendering:
+
+```js
+src.searchParams.set("lang", "de");
+```
+
 ## 7. Authentication flow
 
 Garrul supports five OAuth providers: **GitHub**, **Google**,
@@ -679,8 +739,9 @@ both `data-api` and the `<script src>`.
   the Worker origin so the script's `currentScript.src` correctly
   infers the API base when `data-api` is absent.
 - Don't strip `data-*` attributes in build-step HTML minifiers. The
-  widget reads `data-slug`, `data-api`, `data-title`, `data-url`, and
-  `data-published` off the host element at runtime.
+  widget reads `data-slug`, `data-api`, `data-title`, `data-url`,
+  `data-published`, `data-theme`, and `data-lang` off the host element
+  at runtime.
 - Don't set `data-api` to a value without `https://`. The widget passes
   it through `new URL(...)` and uses the origin verbatim for CORS-cred
   requests; mixed-content or scheme-relative values will fail.

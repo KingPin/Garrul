@@ -23,15 +23,26 @@
  *   - community auto-collapse thresholds (community_min_votes,
  *     community_collapse_ratio): the widget folds heavily-downvoted comments
  *     client-side using these (see src/widget). 0 ratio = disabled.
+ *   - locale, and for anything but English a `strings` table and `rtl` flag.
+ *     This is where the widget learns which language it is in; it echoes the
+ *     answer back as `?lang=` on every later call so server error bodies match.
  *
  * The widget calls this once on mount. Missing or empty → widget renders
  * without a Turnstile challenge (and anonymous POSTs will be rejected
  * server-side as a result).
+ *
+ * **This response carries no cache headers, and that is load-bearing.** It
+ * varies by locale (and by session, for the provider list). Anyone adding
+ * `cache-control` here must put the locale in the cache key first — otherwise
+ * whichever language happened to warm the edge is the one every reader gets.
  */
 import { Hono } from "hono";
 import type { Bindings } from "../index";
 import { PROVIDERS, type ProviderId } from "../lib/oauth";
-import { loadFlags, loadNumbers } from "../lib/settings";
+import { loadSettings } from "../lib/settings";
+import { FALLBACK_LOCALE, LOCALES } from "../i18n";
+import { resolveLocale } from "../i18n/negotiate";
+import { WIDGET_TABLES } from "../i18n/widget";
 
 const config = new Hono<{ Bindings: Bindings }>();
 
@@ -46,13 +57,35 @@ config.get("/", async (c) => {
 		const cfg = PROVIDERS[p];
 		return !!env[cfg.client_id_env] && !!env[cfg.client_secret_env];
 	});
-	// Feature flags + numeric display settings, both resolved with
-	// DB-override > env > default precedence.
-	const [flags, numbers] = await Promise.all([
-		loadFlags(c.env),
-		loadNumbers(c.env),
-	]);
+	// Flags, numeric display settings and string settings, all resolved with
+	// DB-override > env > default precedence. One call rather than three
+	// per-group ones: this route needs every group, and they share a cache entry
+	// and a single D1 read — asking for them separately would just be three
+	// concurrent misses racing to derive the same object.
+	const { flags, numbers, strings } = await loadSettings(c.env);
+	// Full negotiation, including the operator's default_locale — which the
+	// /api/* locale middleware deliberately skips, since it would put a settings
+	// read on every API request to answer a question only this route asks. The
+	// widget takes the answer from here and echoes it as ?lang= afterwards, so
+	// the middleware still sees the resolved locale on every later call.
+	const locale = resolveLocale({
+		requested: c.req.query("lang"),
+		operatorDefault: strings.default_locale,
+		hostPage: c.req.query("hl"),
+	});
+	// English costs zero bytes: EN is compiled into the widget bundle. Other
+	// locales get their own table only — missing keys fall back to English per
+	// key in the widget, which is what lets a partial translation ship.
+	const localized =
+		locale === FALLBACK_LOCALE
+			? {}
+			: {
+					strings: WIDGET_TABLES[locale] ?? {},
+					rtl: LOCALES[locale]?.rtl === true,
+				};
 	return c.json({
+		locale,
+		...localized,
 		turnstile_site_key: c.env.TURNSTILE_SITE_KEY || null,
 		edit_window_minutes: numbers.edit_window_minutes,
 		providers,

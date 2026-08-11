@@ -142,6 +142,53 @@ describe("GET /embed/:slug", () => {
 		});
 	});
 
+	describe("?lang=", () => {
+		it("lands on both <html lang> and data-lang", async () => {
+			// Two consumers, not one: <html lang> is what assistive tech and the
+			// browser's own UI read, data-lang is what the widget negotiates with.
+			const res = await fetchPage("/embed/hello?lang=de");
+			const body = await res.text();
+			expect(body).toContain('<html lang="de">');
+			expect(body).toContain('data-lang="de"');
+		});
+
+		it("defaults <html lang> to en when absent", async () => {
+			const body = await fetchPage("/embed/hello").then((r) => r.text());
+			expect(body).toContain('<html lang="en">');
+			expect(body).toContain('data-lang=""');
+		});
+
+		it("narrows a regional tag to the locale that will render", async () => {
+			const body = await fetchPage("/embed/hello?lang=de-AT").then((r) =>
+				r.text(),
+			);
+			expect(body).toContain('<html lang="de">');
+			// The raw request still goes to the widget — the server matches it
+			// again, and a future de-AT registry entry should reach it intact.
+			expect(body).toContain('data-lang="de-AT"');
+		});
+
+		it("claims English in <html lang> for a tag that has no strings", async () => {
+			// Otherwise ?lang=xx tells a screen reader to switch voice for a frame
+			// that came back in English.
+			const body = await fetchPage("/embed/hello?lang=xx").then((r) => r.text());
+			expect(body).toContain('<html lang="en">');
+			expect(body).toContain('data-lang="xx"');
+		});
+
+		it("cannot break out of either attribute", async () => {
+			// <html lang> can only be a registry key now, so the payload can only
+			// reach data-lang — where the route's job is keeping it in its quotes.
+			const res = await fetchPage(
+				`/embed/hello?lang=${encodeURIComponent('"><script>alert(1)</script>')}`,
+			);
+			const body = await res.text();
+			expect(body).not.toContain("<script>alert(1)</script>");
+			expect(body).toContain('<html lang="en">');
+			expect(body).toContain("&quot;&gt;&lt;script&gt;");
+		});
+	});
+
 	it("keeps the ?api= override gated on the allowlist", async () => {
 		// Regression guard on the pattern parent_origin was modelled after: an
 		// unlisted override would load attacker-controlled JS into the frame,

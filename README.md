@@ -118,6 +118,47 @@ The iframe page posts content height to the parent via
 `postMessage({type:"garrul:height", height})`. See
 `examples/iframe/index.html` for a ~10-line auto-resize listener.
 
+### Language
+
+The widget's language is a property of **the site, not the reader**. A
+German visitor to an English blog gets an English comment box, because
+a German composer under English prose reads as broken. `Accept-Language`
+and `navigator.language` are deliberately never consulted.
+
+```html
+<div id="garrul" data-slug="my-post" data-lang="de"></div>
+```
+
+Resolution order: `data-lang` → the operator's `default_locale` setting
+→ your page's `<html lang>` → English. Unrecognized tags fall back to
+English rather than erroring, and English costs nothing on the wire —
+it's compiled into the bundle, so only non-English mounts download a
+string table. For the iframe variant, pass `?lang=de` on the embed URL.
+
+| Locale | | Status |
+| --- | --- | --- |
+| `en` | English | Source |
+| `de` | Deutsch | Machine-seeded — not reviewed |
+| `es` | Español | Machine-seeded — not reviewed |
+| `fr` | Français | Machine-seeded — not reviewed |
+
+**"Machine-seeded" means exactly that:** LLM output that no native
+speaker has checked. They ship anyway because holding translations
+until a volunteer appears is how a project ends up with none — but
+unreviewed locales are reachable **only** through an explicit
+`data-lang`, never picked up automatically from your `<html lang>`. So
+the only person who ever sees unreviewed German is an operator who
+typed `de` and therefore reads German.
+
+If you speak one of these, correcting it is a five-line PR and gets the
+locale promoted to reviewed (and auto-selectable). See
+[CONTRIBUTING.md](CONTRIBUTING.md#translations-wanted).
+
+Comment bodies are never translated — they're what your readers wrote.
+Timestamps render locale-neutral (`2026-08-10 14:30`) in every
+language. The admin UI is English-only by design; it's seen only by
+you.
+
 ### Per-platform integration snippets
 
 - [Astro](examples/astro/README.md) — content-collection slug + shared `<Comments>` component
