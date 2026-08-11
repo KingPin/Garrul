@@ -26,6 +26,7 @@ import { log, requestLogger } from "./lib/log";
 import { corsAndCsrf } from "./lib/cors";
 import { jsonBodyLimit } from "./lib/body-limit";
 import { requireConfig } from "./lib/require-config";
+import { type LocaleVars, localeMiddleware } from "./lib/locale";
 import { sessionMiddleware } from "./lib/session";
 
 export type Bindings = {
@@ -181,7 +182,7 @@ export type Bindings = {
  */
 export { RateLimitShard } from "./lib/ratelimit-shard";
 
-const app = new Hono<{ Bindings: Bindings }>();
+const app = new Hono<{ Bindings: Bindings; Variables: LocaleVars }>();
 
 app.use("*", requestLogger());
 
@@ -268,6 +269,11 @@ app.use("*", jsonBodyLimit());
 
 app.use("/api/*", corsAndCsrf());
 app.use("/api/*", sessionMiddleware());
+// Resolves ?lang= / ?hl= into c.get("locale") and c.get("t"). Cheap and
+// allocation-light, so it runs for the whole API surface rather than being
+// wired per-route — an error body that misses the caller's locale is exactly
+// the case the widget renders verbatim.
+app.use("/api/*", localeMiddleware());
 
 app.route("/api/v1/health", health);
 app.route("/api/v1/comments", comments);
