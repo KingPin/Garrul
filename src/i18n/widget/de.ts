@@ -91,7 +91,9 @@ export const de = {
 		other: "{n} weitere Antworten anzeigen",
 	},
 	"w.loading_comments": "Kommentare werden geladen",
-	"w.empty.open": "Schreib den ersten Kommentar.",
+	// Infinitive, not "Schreib" — the file's no-direct-address rule, and this
+	// was the one line that broke it with a du-imperative.
+	"w.empty.open": "Den ersten Kommentar schreiben.",
 	"w.empty.closed": "Noch keine Kommentare.",
 	"w.closed.post": "Kommentare sind für diesen Beitrag geschlossen.",
 	"w.closed.aged": "Dieser Thread wurde für neue Kommentare geschlossen.",
