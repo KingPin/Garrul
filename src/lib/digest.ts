@@ -25,9 +25,10 @@ import {
 	markNotificationsSent,
 	updateSubscriptionLastNotified,
 } from "../db/queries";
+import { t } from "../i18n";
 import { sendEmail } from "./email";
 import { sanitizeForEmail } from "./markdown";
-import { subjectTitle } from "./post-title";
+import { fillSubject, subjectTitle } from "./post-title";
 
 type DigestEnv = {
 	DB: D1Database;
@@ -161,7 +162,10 @@ export const runDigest = async (env: DigestEnv, now: number = Date.now()): Promi
 		const ok = await sendEmail(env, {
 			to: d.email,
 			from,
-			subject: `New replies on "${title}"`,
+			// fillSubject rather than t()'s own interpolation: both are
+			// $&-safe, but keeping every host-supplied title on one audited
+			// substitution path means there is only one place to check.
+			subject: fillSubject(t("email.digest.subject"), title),
 			html,
 		});
 

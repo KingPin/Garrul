@@ -10,13 +10,11 @@ export const en = {
 		"This thread is nested too deeply. Reply further up the thread instead.",
 	"err.name.required": "A display name is required.",
 	"err.name.too_long": "Display name is too long (max {max} characters).",
-	"err.email.invalid": "Email address is not valid.",
 	"err.turnstile.required": "Spam check failed. Refresh and try again.",
 	"err.turnstile.invalid": "Spam check failed. Refresh and try again.",
 	"err.ratelimit": "Too many comments — slow down and try again in a moment.",
 	"err.honeypot": "Comment rejected.",
 	"err.origin.forbidden": "Request blocked: origin not allowed.",
-	"err.session.required": "Sign in or set a name to comment.",
 	"err.session.expired": "Your session expired. Refresh and try again.",
 	"err.edit.window_expired": "Edit window has expired.",
 	"err.edit.not_author": "You can only edit your own comments.",
@@ -26,29 +24,27 @@ export const en = {
 	"err.thread_closed": "Comments are closed on this post.",
 	"err.internal": "Something went wrong. Try again.",
 
-	// UI strings (used later by widget templates)
-	"ui.placeholder.comment": "Add a comment…",
-	"ui.placeholder.name": "Your name",
-	"ui.placeholder.email": "Email (optional, never shown)",
-	"ui.submit": "Post",
-	"ui.cancel": "Cancel",
-	"ui.edit": "Edit",
-	"ui.delete": "Delete",
-	"ui.reply": "Reply",
-	"ui.subscribe": "Notify me of replies",
-	"ui.posted_just_now": "just now",
+	// Server-rendered UI strings.
+	//
+	// This block is deliberately small. Widget copy lives in
+	// src/widget/strings.ts, not here — tsconfig.widget.json cannot import
+	// this module, so the dependency is inverted and the server reads the
+	// widget's table instead. A previous version of this file carried 14
+	// `ui.*` keys "for widget templates" that the widget never imported while
+	// it kept its own hardcoded twins; they were pure decoys and are gone.
 	"ui.deleted": "[deleted]",
-	"ui.deleted_by_mod": "[removed by a moderator]",
-	"ui.pending": "Pending approval",
-	"ui.edited_suffix": "(edited)",
-	"ui.verified": "verified",
 	"ui.subscribe.pending": "Check your inbox to confirm your subscription.",
 	"ui.subscribe.confirmed": "Subscription confirmed.",
 
-	// Subscription confirmation email
+	// Transactional email
 	"email.confirm.subject": "Confirm your subscription to comments on {title}",
-	"email.confirm.preheader":
-		"Click the link inside to start receiving reply notifications.",
+	"email.digest.subject": 'New replies on "{title}"',
+
+	// Atom feed. Rendered with the operator's default locale, never the
+	// requester's — the feed response is publicly cached (max-age=300), so
+	// varying it per request would serve one reader's language to the next.
+	"feed.title": "Comments on {title}",
+	"feed.entry_title": "{author} commented",
 
 	// Telegram operator bot (admin-facing; shown in the bot chat, not in logs)
 	"telegram.not_linked":

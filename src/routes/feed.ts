@@ -15,6 +15,7 @@
 import { Hono } from "hono";
 import type { Bindings } from "../index";
 import { getPost, listLatestApprovedComments } from "../db/queries";
+import { t } from "../i18n";
 
 const feed = new Hono<{ Bindings: Bindings }>();
 
@@ -80,9 +81,7 @@ feed.get("/:slug", async (c) => {
 	const reqUrl = new URL(c.req.url);
 	const feedSelf = `${reqUrl.protocol}//${reqUrl.host}/feed/${encodeURIComponent(slug)}`;
 	const postLink = safeLink(post?.url, feedSelf);
-	const title = post?.title
-		? `Comments on ${post.title}`
-		: `Comments on ${slug}`;
+	const title = t("feed.title", { title: post?.title ?? slug });
 	const updated =
 		comments[0] != null
 			? new Date(comments[0].created_at).toISOString()
@@ -94,7 +93,7 @@ feed.get("/:slug", async (c) => {
 			const permalink = `${postLink}${postLink.includes("#") ? "&" : "#"}garrul-comment-${row.id}`;
 			return `<entry>
   <id>${xmlEscape(id)}</id>
-  <title>${xmlEscape(row.author_name)} commented</title>
+  <title>${xmlEscape(t("feed.entry_title", { author: row.author_name }))}</title>
   <author><name>${xmlEscape(row.author_name)}</name></author>
   <published>${new Date(row.created_at).toISOString()}</published>
   <updated>${new Date(row.edited_at ?? row.created_at).toISOString()}</updated>
