@@ -352,12 +352,13 @@
   "breakingChanges": [
     {
       "id": "node-24-minimum",
-      "summary": "Node.js 24 is now the minimum (since 1.20.0). Building or deploying on Node 22 fails at `npm ci`. Already on 1.20.0 or later? Nothing to do.",
+      "summary": "Node.js 24 is now the minimum. Building or deploying on Node 22 fails at `npm ci`.",
       "manualSteps": [
         "Upgrade your build/deploy host to Node.js 24 (`nvm install 24 && nvm use 24` — the repo's .nvmrc now reads 24).",
         "Re-run `npm ci` after switching; a stale node_modules built on Node 22 can carry incompatible native binaries.",
         "Rollback is just redeploying the prior tag: the Node floor added no D1 migrations and no required secrets."
-      ]
+      ],
+      "addedIn": "1.20.0"
     },
     {
       "id": "host-session-cookie",
@@ -366,7 +367,8 @@
         "Nothing to run. Expect a burst of re-logins right after the deploy, and tell moderators so they don't read it as an outage.",
         "The `__Host-` prefix requires Secure, Path=/ and no Domain attribute, all of which already held. If you terminate TLS in front of the Worker, confirm it still reaches browsers over HTTPS or the cookie will be rejected outright.",
         "Rolling back to the prior tag signs everyone out a second time."
-      ]
+      ],
+      "addedIn": "2.0.0"
     },
     {
       "id": "ipv6-hash-64",
@@ -374,7 +376,8 @@
       "manualSteps": [
         "Nothing to run. A returning anonymous IPv6 visitor gets a new ghost identity once, and could vote or report a second time on something they already acted on.",
         "This is the fix for one household being able to mint 2^64 distinct hashes — before it, rate limiting, vote dedup and report dedup were all unenforceable over IPv6."
-      ]
+      ],
+      "addedIn": "2.0.0"
     },
     {
       "id": "reply-depth-cap",
@@ -382,7 +385,8 @@
       "manualSteps": [
         "Nothing to run. The widget already hides the reply button below depth 4, so normal use never reaches the cap; imported Disqus threads are the realistic source of deep chains.",
         "The cap exists because an unbounded chain made the tree build O(N^2) and blow the Workers CPU limit, which returned Error 1102 to every reader of that page permanently."
-      ]
+      ],
+      "addedIn": "2.0.0"
     },
     {
       "id": "iframe-parent-origin-allowlist",
@@ -391,7 +395,8 @@
         "Add every site that iframe-embeds your instance to `ALLOWED_ORIGINS` in wrangler.toml, scheme and host, comma-separated (e.g. `https://blog.example.com,https://example.com`), then redeploy.",
         "The script-tag embed is unaffected; this only changes `/embed/*`.",
         "Check the browser console on a host page after upgrading: a blocked postMessage is the symptom."
-      ]
+      ],
+      "addedIn": "2.0.0"
     },
     {
       "id": "required-secrets-enforced",
@@ -400,7 +405,8 @@
         "Confirm both secrets are set: `wrangler secret list`. `npm run upgrade` also reports them as missing before it deploys.",
         "Set anything missing with `wrangler secret put IP_HASH_SECRET` / `wrangler secret put JWT_SECRET` (32+ random bytes each; `setup.sh` generates them).",
         "Do not rotate `IP_HASH_SECRET` on an existing instance — it re-keys future writes only and silently breaks dedup against every stored hash. See issue #50."
-      ]
+      ],
+      "addedIn": "2.0.0"
     },
     {
       "id": "client-ip-required",
@@ -408,7 +414,8 @@
       "manualSteps": [
         "Nothing to run if your instance is reached through Cloudflare, which is the documented setup.",
         "If you probe the Worker directly (health checks, synthetic monitors), point them at `/api/v1/health` — it is a GET and does not require the header."
-      ]
+      ],
+      "addedIn": "2.0.0"
     },
     {
       "id": "operator-script-guards",
@@ -417,7 +424,8 @@
         "Export `IP_HASH_SECRET` in the shell before running `npm run import-disqus` — the same value the deployed Worker uses, or imported comments get hashes that never match live traffic.",
         "Pass a `garrul-backup-*.sql` name to `npm run db:export`; that glob is what .gitignore covers, so a full dump of every email and comment can't land in a commit.",
         "Also note: the CLI Disqus importer silently did nothing before this release — it reported DONE with zero counters. If a past import looked like a no-op, it was; re-run it."
-      ]
+      ],
+      "addedIn": "2.0.0"
     },
     {
       "id": "renderer-2-rerender",
@@ -425,7 +433,8 @@
       "manualSteps": [
         "Run `npm run rerender` after deploying, or use Rerender on /admin/operator.",
         "Safe to defer — old comments render as before in the meantime — but they will not pick up the sanitizer hardening until you do."
-      ]
+      ],
+      "addedIn": "2.0.0"
     }
   ]
 }

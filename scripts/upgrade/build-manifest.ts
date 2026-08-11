@@ -82,6 +82,29 @@ export const assertRegistryMatchesBindings = (bindingNames: string[]): void => {
 	}
 };
 
+/**
+ * Every breaking change in *this repo's* manifest must say which release it
+ * landed in, so `upgrade` can stop showing it once an operator is past that
+ * version. The schema keeps `addedIn` optional — manifests published before
+ * 2.7.1 don't have it and still have to parse — so this is where the
+ * requirement is actually enforced, on the one manifest we can still edit.
+ */
+export const assertBreakingChangesVersioned = (
+	breakingChanges: Manifest["breakingChanges"],
+): void => {
+	const unversioned = breakingChanges
+		.filter((bc) => bc.addedIn === undefined)
+		.map((bc) => bc.id);
+	if (unversioned.length > 0) {
+		throw new Error(
+			`breakingChanges entries are missing \`addedIn\`: ${unversioned.join(", ")}\n` +
+				"Add the release each one became breaking in (e.g. \"addedIn\": \"2.7.1\"), " +
+				"then re-run `npm run manifest:build`.\n" +
+				"Without it `npm run upgrade` shows the entry to every operator forever.",
+		);
+	}
+};
+
 const readRendererVersion = (): number => {
 	const src = readFileSync(
 		join(REPO_ROOT, "src", "lib", "markdown.ts"),
@@ -205,6 +228,7 @@ export const buildManifest = (): Manifest => {
 
 	const bindings = parseBindings(readBindingsSource(REPO_ROOT));
 	assertRegistryMatchesBindings(bindings.strings);
+	assertBreakingChangesVersioned(existing?.breakingChanges ?? []);
 	const version = readVersion();
 
 	const candidate: Manifest = {

@@ -13,6 +13,7 @@ import {
 	ManifestError,
 	type Manifest,
 } from "../scripts/upgrade/manifest";
+import { assertBreakingChangesVersioned } from "../scripts/upgrade/build-manifest";
 
 const validRaw: Manifest = {
 	version: "0.0.2",
@@ -426,5 +427,32 @@ describe("free-text sanitization", () => {
 				kvNamespaces: [{ binding: "RATE\nLIMITS", required: true }],
 			}),
 		).toThrow(ManifestError);
+	});
+});
+
+describe("assertBreakingChangesVersioned", () => {
+	// The schema keeps `addedIn` optional so old published manifests still
+	// parse. That leaves this repo's own manifest as the only place the
+	// requirement can be enforced — `manifest:check` runs it in CI.
+	it("accepts entries that all declare addedIn", () => {
+		expect(() =>
+			assertBreakingChangesVersioned([
+				{ id: "a", summary: "s", manualSteps: [], addedIn: "2.0.0" },
+			]),
+		).not.toThrow();
+	});
+
+	it("names every entry missing addedIn", () => {
+		expect(() =>
+			assertBreakingChangesVersioned([
+				{ id: "ok", summary: "s", manualSteps: [], addedIn: "2.0.0" },
+				{ id: "forgot-one", summary: "s", manualSteps: [] },
+				{ id: "forgot-two", summary: "s", manualSteps: [] },
+			]),
+		).toThrow(/forgot-one, forgot-two/);
+	});
+
+	it("accepts an empty list", () => {
+		expect(() => assertBreakingChangesVersioned([])).not.toThrow();
 	});
 });
