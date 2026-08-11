@@ -7,6 +7,7 @@ import {
 	diffVars,
 	newVarsSince,
 	newSecretsSince,
+	breakingChangesSince,
 	diffKv,
 	diffD1,
 	diffMigrations,
@@ -21,6 +22,7 @@ import type {
 	VarEntry,
 	KvEntry,
 	D1Entry,
+	BreakingChange,
 } from "../scripts/upgrade/manifest";
 
 const secret = (name: string, required = true): SecretEntry => ({
@@ -251,6 +253,59 @@ describe("newSecretsSince", () => {
 	it("treats a secret with no addedIn as old", () => {
 		const bare: SecretEntry = { name: "MYSTERY", required: false };
 		expect(newSecretsSince([], "1.0.0", [bare])).toHaveLength(0);
+	});
+});
+
+describe("breakingChangesSince", () => {
+	const bc = (id: string, addedIn?: string): BreakingChange => ({
+		id,
+		summary: `${id} summary`,
+		manualSteps: ["do a thing"],
+		...(addedIn === undefined ? {} : { addedIn }),
+	});
+
+	// The bug this function exists for: `breakingChanges[]` is cumulative, so
+	// before it a 2.5.0 → 2.7.0 hop printed all nine historical entries —
+	// including the Node 24 floor from 1.20.0 and the eight from 2.0.0, none of
+	// which that operator can act on.
+	it("says nothing on a hop that crosses no breaking release", () => {
+		const target = [bc("node-24-minimum", "1.20.0"), bc("ipv6-hash-64", "2.0.0")];
+		expect(breakingChangesSince("2.5.0", target)).toHaveLength(0);
+	});
+
+	it("shows one the operator has not yet crossed", () => {
+		const target = [bc("node-24-minimum", "1.20.0"), bc("new-thing", "2.7.1")];
+		const r = breakingChangesSince("2.7.0", target);
+		expect(r.map((e) => e.id)).toEqual(["new-thing"]);
+	});
+
+	it("spans several releases on a long-deferred upgrade", () => {
+		// The 1.19.x operator who finally upgrades still gets the whole history.
+		const target = [
+			bc("node-24-minimum", "1.20.0"),
+			bc("ipv6-hash-64", "2.0.0"),
+			bc("new-thing", "2.7.1"),
+		];
+		const r = breakingChangesSince("1.19.0", target);
+		expect(r.map((e) => e.id)).toEqual([
+			"node-24-minimum",
+			"ipv6-hash-64",
+			"new-thing",
+		]);
+	});
+
+	it("stays quiet about the release the operator is already on", () => {
+		// Being *on* 2.0.0 means the 2.0.0 steps were done to get there.
+		const target = [bc("ipv6-hash-64", "2.0.0")];
+		expect(breakingChangesSince("2.0.0", target)).toHaveLength(0);
+	});
+
+	it("shows an entry with no addedIn rather than hiding it", () => {
+		// Opposite default to newVarsSince/newSecretsSince, deliberately: an
+		// unannounced breaking change costs a broken deploy, a redundant one
+		// costs a paragraph. Only reachable for manifests predating 2.7.1.
+		const bare = bc("mystery");
+		expect(breakingChangesSince("99.0.0", [bare])).toHaveLength(1);
 	});
 });
 

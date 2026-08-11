@@ -108,6 +108,30 @@ export const newSecretsSince = (
 	);
 };
 
+/**
+ * Breaking changes introduced after the release the operator is on.
+ *
+ * `breakingChanges[]` is cumulative — it is the project's whole history of
+ * manual-intervention releases, and every entry stays in the manifest forever
+ * so an operator on any supported version can still be told about it. Printing
+ * that list unfiltered meant a 2.5.0 → 2.7.0 hop demanded nine "manual steps
+ * required" blocks whose real answer was "nothing to do, that was 1.20.0".
+ * Nine irrelevant warnings is how an operator learns to skim past the section
+ * that will one day contain a real one.
+ *
+ * Direction on a missing `addedIn` is the opposite of `newVarsSince`: an entry
+ * without one is *shown*. An unannounced breaking change costs an operator a
+ * broken deploy; a redundant one costs them a paragraph. `build-manifest.ts`
+ * makes the missing case unreachable for anything added from 2.7.1 on.
+ */
+export const breakingChangesSince = (
+	currentVersion: SemVer,
+	target: Manifest["breakingChanges"],
+): Manifest["breakingChanges"] =>
+	target.filter(
+		(bc) => bc.addedIn === undefined || isNewer(bc.addedIn, currentVersion),
+	);
+
 export const diffKv = (
 	present: string[],
 	manifest: KvEntry[],
