@@ -13,8 +13,11 @@
  * translation ship instead of blocking a locale until it is complete.
  */
 import type { StringValue, WidgetKey } from "../../widget/strings";
+import { de } from "./de";
+import { es } from "./es";
+import { fr } from "./fr";
 
 /** A locale's overrides. Partial by design; missing keys render English. */
 export type WidgetTable = Partial<Record<WidgetKey, StringValue>>;
 
-export const WIDGET_TABLES: Record<string, WidgetTable> = {};
+export const WIDGET_TABLES: Record<string, WidgetTable> = { de, es, fr };

@@ -180,6 +180,16 @@ describe("GET /api/v1/config — locale", () => {
 		});
 	});
 
+	it("serves a real shipped locale end to end", async () => {
+		// Everything above runs on fakes so the suite says nothing about which
+		// languages happen to ship. This one deliberately does not: it is the
+		// check that the registry, the table and the route agree for a locale a
+		// reader can actually get.
+		const body = await getConfig("?lang=de");
+		expect(body.locale).toBe("de");
+		expect((body.strings as Record<string, string>)["w.reply"]).toBe("Antworten");
+	});
+
 	it("sets no cache headers, because the body varies by locale", async () => {
 		// If this ever fails, the locale has to enter the cache key first —
 		// otherwise whichever language warmed the edge is the one everyone gets.

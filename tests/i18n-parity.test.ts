@@ -187,6 +187,17 @@ describe("i18n parity", () => {
 		});
 	}
 
+	it("gives every registered locale both a widget and a server table", () => {
+		// Half-registration is the plausible mistake: a locale file exists and is
+		// listed in LOCALES, but one of the two registries never imported it, so
+		// the operator picks a language and half the product stays English.
+		for (const locale of Object.keys(LOCALES)) {
+			if (locale === "en") continue; // English is the source, not an override
+			expect(WIDGET_TABLES[locale], `${locale} has no widget table`).toBeDefined();
+			expect(SERVER_TABLES[locale], `${locale} has no server table`).toBeDefined();
+		}
+	});
+
 	describe("the gate itself", () => {
 		// Every check above currently runs over zero translations. These fixtures
 		// are what makes this commit a gate rather than a promise of one.

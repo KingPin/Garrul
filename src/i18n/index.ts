@@ -1,4 +1,7 @@
+import { de } from "./de";
 import { en, type StringKey } from "./en";
+import { es } from "./es";
+import { fr } from "./fr";
 
 export type { StringKey };
 
@@ -33,12 +36,35 @@ export interface LocaleMeta {
 	 * unreviewed translations honest.
 	 */
 	readonly status: LocaleStatus;
+	/**
+	 * GitHub handle of whoever vouches for this translation.
+	 *
+	 * Absent on machine-seeded locales, because nobody does yet — that is the
+	 * honest state, and filling it in is what promotes a locale to `reviewed`.
+	 * Unowned locale files are how comparable projects ended up with thirty of
+	 * them, half untouched since 2019.
+	 */
+	readonly maintainer?: string;
 }
 
 export const DEFAULT_LOCALE = "en";
 
+/**
+ * Every locale Garrul knows about.
+ *
+ * `de`/`es`/`fr` are machine-seeded: LLM output that no native speaker has
+ * checked. They ship because the alternative — holding translations until a
+ * volunteer appears — is how a project ends up with none, and because the
+ * `machine-seeded` status confines them to operators who explicitly asked for
+ * the language. What fails in machine translation of ~90 short UI strings is
+ * register and consistency, not comprehensibility: exactly what a native
+ * operator spots in thirty seconds and fixes in a five-line PR.
+ */
 export const LOCALES: Record<string, LocaleMeta> = {
 	en: { label: "English", endonym: "English", rtl: false, status: "source" },
+	de: { label: "German", endonym: "Deutsch", rtl: false, status: "machine-seeded" },
+	es: { label: "Spanish", endonym: "Español", rtl: false, status: "machine-seeded" },
+	fr: { label: "French", endonym: "Français", rtl: false, status: "machine-seeded" },
 };
 
 export type LocaleTable = Partial<Record<StringKey, Message>>;
@@ -51,7 +77,7 @@ export type LocaleTable = Partial<Record<StringKey, Message>>;
  * time someone adds a locale and forgets it, which is precisely the failure the
  * parity test exists to catch.
  */
-export const TABLES: Record<string, LocaleTable> = { en };
+export const TABLES: Record<string, LocaleTable> = { en, de, es, fr };
 
 /**
  * Whitelist check. Everything that reaches `tFor` from a request goes here.
