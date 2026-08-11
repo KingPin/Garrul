@@ -184,17 +184,24 @@ const mkApp = (flags: Record<string, boolean>) => {
 	const app = new Hono<{ Bindings: Record<string, unknown> }>();
 	app.route("/", pageEngagement);
 	const { db } = makeDb();
+	// Warm settings entry. Every group has to be present — the loader ignores a
+	// blob missing one rather than resolving that group to undefined — even
+	// though only the flags matter to these tests.
 	const flagCache = {
 		get: async (_k: string, type?: string) =>
 			type === "json"
 				? {
-						comments_enabled: true,
-						reactions_enabled: true,
-						votes_enabled: true,
-						downvotes_enabled: true,
-						page_reactions_enabled: false,
-						page_votes_enabled: false,
-						...flags,
+						flags: {
+							comments_enabled: true,
+							reactions_enabled: true,
+							votes_enabled: true,
+							downvotes_enabled: true,
+							page_reactions_enabled: false,
+							page_votes_enabled: false,
+							...flags,
+						},
+						numbers: {},
+						strings: {},
 					}
 				: null,
 		put: async () => {},

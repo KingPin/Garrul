@@ -95,13 +95,19 @@ beforeEach(() => {
 	env = {
 		DB: makeD1(sqlite),
 		// Warm settings so page size is a known 25 and the key is predictable.
+		// All three groups have to be present: the loader ignores a blob that is
+		// missing one rather than resolving that group to undefined.
 		TREE_CACHE: {
 			get: async (k: string) =>
-				k === "settings:numbers"
+				k === "settings:resolved"
 					? {
-							comments_per_page: PAGE_SIZE,
-							replies_per_thread: 3,
-							auto_collapse_depth: 3,
+							flags: {},
+							numbers: {
+								comments_per_page: PAGE_SIZE,
+								replies_per_thread: 3,
+								auto_collapse_depth: 3,
+							},
+							strings: {},
 						}
 					: null,
 			put: async () => {},

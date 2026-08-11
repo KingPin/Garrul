@@ -113,13 +113,10 @@ import { renderTelegram } from "../admin-ui/pages/telegram";
 import { issueTelegramLinkToken } from "./telegram";
 import { renderSettings } from "../admin-ui/pages/settings";
 import {
-	bustFlagsCache,
-	bustNumbersCache,
-	bustStringsCache,
+	bustSettingsCache,
 	FLAG_KEYS,
-	loadFlags,
 	loadNumbers,
-	loadStrings,
+	loadSettings,
 	NUMBER_KEYS,
 	numberBounds,
 	STRING_KEYS,
@@ -274,8 +271,7 @@ admin.get("/", async (c) => {
 		spamRate,
 		byHost,
 		updateInfo,
-		flags,
-		numbers,
+		{ flags, numbers },
 	] = await Promise.all([
 		adminStats(db),
 		adminTimeline(db, 30),
@@ -287,8 +283,7 @@ admin.get("/", async (c) => {
 		peekCachedLatestVersion(c.env),
 		// The anti-spam summary line reports the resolved heuristic dials, so it
 		// has to read them the same way evaluateSpam does.
-		loadFlags(c.env),
-		loadNumbers(c.env),
+		loadSettings(c.env),
 	]);
 	const body = renderDashboard(
 		{
@@ -798,11 +793,9 @@ admin.post("/api/telegram/digest", async (c) => {
 admin.get("/settings", async (c) => {
 	const user = await requireAdmin(c);
 	if (user instanceof Response) return user;
-	const [updateInfo, flags, numbers, strings] = await Promise.all([
+	const [updateInfo, { flags, numbers, strings }] = await Promise.all([
 		peekCachedLatestVersion(c.env),
-		loadFlags(c.env),
-		loadNumbers(c.env),
-		loadStrings(c.env),
+		loadSettings(c.env),
 	]);
 	return c.html(
 		renderPage(
@@ -841,11 +834,7 @@ admin.post("/settings", async (c) => {
 			...NUMBER_KEYS,
 			...STRING_KEYS,
 		]);
-		await Promise.all([
-			bustFlagsCache(c.env),
-			bustNumbersCache(c.env),
-			bustStringsCache(c.env),
-		]);
+		await bustSettingsCache(c.env);
 		await adminInsertAudit(c.env.DB, {
 			admin_id: user.id,
 			action: "settings.update",
@@ -927,13 +916,15 @@ admin.post("/settings", async (c) => {
 	for (const [key, value] of Object.entries(writtenStrings)) {
 		await setSetting(c.env.DB, key, value);
 	}
-	const busts: Promise<void>[] = [];
-	if (Object.keys(writtenFlags).length > 0) busts.push(bustFlagsCache(c.env));
-	if (Object.keys(writtenNumbers).length > 0)
-		busts.push(bustNumbersCache(c.env));
-	if (Object.keys(writtenStrings).length > 0)
-		busts.push(bustStringsCache(c.env));
-	await Promise.all(busts);
+	// One cache entry holds all three groups, so a write to any of them
+	// invalidates it. Still conditional: a no-op save shouldn't spend a KV write.
+	const wrote =
+		Object.keys(writtenFlags).length > 0 ||
+		Object.keys(writtenNumbers).length > 0 ||
+		Object.keys(writtenStrings).length > 0;
+	if (wrote) {
+		await bustSettingsCache(c.env);
+	}
 	await adminInsertAudit(c.env.DB, {
 		admin_id: user.id,
 		action: "settings.update",

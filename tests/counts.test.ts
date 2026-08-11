@@ -19,7 +19,7 @@ import {
 } from "./helpers/mock-caches";
 
 // The counts response cache lives in the edge Cache API now; the KV double
-// below still backs the settings:flags cache that the include gate reads.
+// below still backs the settings:resolved cache that the include gate reads.
 let mockCache: MockCache;
 beforeEach(() => {
 	mockCache = installMockCaches();
@@ -112,7 +112,7 @@ const makeDb = (seed: {
 	return { prepare: (sql: string) => stmt(sql) };
 };
 
-// Stateful KV: backs both the counts cache and settings:flags cache.
+// Stateful KV: backs both the counts cache and settings:resolved cache.
 const makeKv = () => {
 	const store = new Map<string, string>();
 	return {

@@ -17,11 +17,10 @@ import { Hono } from "hono";
 import type { Requestable } from "./helpers/app";
 import {
 	loadFlags,
-	bustFlagsCache,
 	loadNumbers,
-	bustNumbersCache,
+	loadSettings,
 	loadStrings,
-	bustStringsCache,
+	bustSettingsCache,
 	parseIntSetting,
 	parseStringSetting,
 	FLAG_KEYS,
@@ -37,12 +36,12 @@ import { comments } from "../src/routes/api.comments";
 import type { Bindings } from "../src/index";
 
 // In-memory KV double for TREE_CACHE. Tracks delete calls so a test can prove
-// bustFlagsCache() actually drops the resolved object.
+// bustSettingsCache() actually drops the resolved object.
 const makeKv = () => {
 	const store = new Map<string, string>();
 	// Options passed to put(), by key. KV's free tier caps writes at 1000/day
-	// *account wide*, and these two keys re-populate once per TTL window per
-	// edge colo, so the TTL is a quota decision worth pinning down in a test.
+	// *account wide*, and the entry re-populates once per TTL window per edge
+	// colo, so the TTL is a quota decision worth pinning down in a test.
 	const putOpts = new Map<string, { expirationTtl?: number }>();
 	let deletes = 0;
 	return {
@@ -215,7 +214,7 @@ describe("loadFlags — KV cache", () => {
 	it("populates the cache on a cold read", async () => {
 		const { env, kv } = mkEnv({ comments_enabled: "false" });
 		await loadFlags(env);
-		expect(kv.store.has("settings:flags")).toBe(true);
+		expect(kv.store.has("settings:resolved")).toBe(true);
 	});
 
 	it("serves a warm cache without touching D1", async () => {
@@ -234,36 +233,37 @@ describe("loadFlags — KV cache", () => {
 
 		// Simulate an admin save writing a new value straight to the stub's
 		// backing rows — without busting, the cache still wins.
+		const cached = JSON.parse(
+			kv.store.get("settings:resolved") as string,
+		) as Record<string, unknown>;
 		kv.store.set(
-			"settings:flags",
-			JSON.stringify({ ...before }), // unchanged cache entry
+			"settings:resolved",
+			JSON.stringify({ ...cached, flags: { ...before } }), // unchanged entry
 		);
 		const stillCached = await loadFlags(env);
 		expect(stillCached.comments_enabled).toBe(false);
 	});
 
-	// Both keys are on the hot path and re-populate once per TTL window per
-	// edge colo against a 1000-writes/day account-wide cap. At 300s a modest
-	// three-colo footprint spent ~576 of that budget re-deriving settings that
-	// hadn't changed. Freshness comes from bustFlagsCache/bustNumbersCache on
-	// save, not from the TTL, so shortening it back buys nothing and costs
-	// quota — assert the value so a future edit is a deliberate one.
-	it("writes both cache keys with a one-hour TTL", async () => {
+	// The entry is on the hot path and re-populates once per TTL window per edge
+	// colo against a 1000-writes/day account-wide cap. At 300s a modest
+	// three-colo footprint spent ~864 of that budget re-deriving settings that
+	// hadn't changed. Freshness comes from bustSettingsCache on save, not from
+	// the TTL, so shortening it back buys nothing and costs quota — assert the
+	// value so a future edit is a deliberate one.
+	it("writes the cache key with a one-hour TTL", async () => {
 		const { env, kv } = mkEnv({ comments_enabled: "false" });
 		await loadFlags(env);
-		await loadNumbers(env);
-		expect(kv.putOpts.get("settings:flags")?.expirationTtl).toBe(3600);
-		expect(kv.putOpts.get("settings:numbers")?.expirationTtl).toBe(3600);
+		expect(kv.putOpts.get("settings:resolved")?.expirationTtl).toBe(3600);
 	});
 });
 
-describe("bustFlagsCache", () => {
+describe("bustSettingsCache", () => {
 	it("deletes the cached resolved object", async () => {
 		const { env, kv } = mkEnv({ comments_enabled: "false" });
 		await loadFlags(env);
-		expect(kv.store.has("settings:flags")).toBe(true);
-		await bustFlagsCache(env);
-		expect(kv.store.has("settings:flags")).toBe(false);
+		expect(kv.store.has("settings:resolved")).toBe(true);
+		await bustSettingsCache(env);
+		expect(kv.store.has("settings:resolved")).toBe(false);
 		expect(kv.deletes()).toBe(1);
 	});
 
@@ -271,7 +271,7 @@ describe("bustFlagsCache", () => {
 		const { env, db } = mkEnv({ comments_enabled: "false" });
 		await loadFlags(env);
 		expect(db.reads()).toBe(1);
-		await bustFlagsCache(env);
+		await bustSettingsCache(env);
 		await loadFlags(env);
 		expect(db.reads()).toBe(2);
 	});
@@ -279,9 +279,8 @@ describe("bustFlagsCache", () => {
 
 // -- numeric display settings ------------------------------------------------
 //
-// loadNumbers() mirrors loadFlags()'s precedence (DB > env > default) and KV
-// cache, but resolves integers with a per-key [min,max] clamp. It caches under
-// its own key ("settings:numbers") so it never disturbs the flag cache entry.
+// loadNumbers() mirrors loadFlags()'s precedence (DB > env > default) and shares
+// its cache entry, but resolves integers with a per-key [min,max] clamp.
 
 describe("parseIntSetting — clamp + fallback", () => {
 	it("returns the fallback for undefined / empty / junk", () => {
@@ -405,13 +404,6 @@ describe("loadNumbers — DB row over env var", () => {
 });
 
 describe("loadNumbers — KV cache", () => {
-	it("caches under its own key, leaving the flag cache untouched", async () => {
-		const { env, kv } = mkEnv({ comments_per_page: "10" });
-		await loadNumbers(env);
-		expect(kv.store.has("settings:numbers")).toBe(true);
-		expect(kv.store.has("settings:flags")).toBe(false);
-	});
-
 	it("serves a warm cache without touching D1", async () => {
 		const { env, db } = mkEnv({ comments_per_page: "10" });
 		const first = await loadNumbers(env);
@@ -421,34 +413,85 @@ describe("loadNumbers — KV cache", () => {
 		expect(second).toEqual(first);
 	});
 
-	it("loadFlags and loadNumbers don't share a cache entry", async () => {
-		const { env } = mkEnv({ comments_enabled: "false", comments_per_page: "10" });
-		const flags = await loadFlags(env);
-		const numbers = await loadNumbers(env);
-		expect(flags.comments_enabled).toBe(false);
-		expect(numbers.comments_per_page).toBe(10);
-	});
-});
-
-describe("bustNumbersCache", () => {
-	it("deletes only the numbers cache entry", async () => {
-		const { env, kv } = mkEnv({ comments_per_page: "10" });
-		await loadFlags(env);
-		await loadNumbers(env);
-		expect(kv.store.has("settings:numbers")).toBe(true);
-		await bustNumbersCache(env);
-		expect(kv.store.has("settings:numbers")).toBe(false);
-		// The flag cache survives an independent numbers bust.
-		expect(kv.store.has("settings:flags")).toBe(true);
-	});
-
-	it("forces a fresh D1 read on the next load", async () => {
+	it("forces a fresh D1 read after a bust", async () => {
 		const { env, db } = mkEnv({ comments_per_page: "10" });
 		await loadNumbers(env);
 		expect(db.reads()).toBe(1);
-		await bustNumbersCache(env);
+		await bustSettingsCache(env);
 		await loadNumbers(env);
 		expect(db.reads()).toBe(2);
+	});
+});
+
+// -- one entry, every group --------------------------------------------------
+//
+// Flags, numbers and strings all derive from the same `getAllSettings` read plus
+// `env`, so they share a single KV entry. That is a write-quota decision: KV's
+// free tier allows 1000 writes/day *account wide*, and each key re-populates
+// once per TTL window per edge colo. Three keys spent 72 writes/colo/day; one
+// spends 24. These tests pin the consequences so a future split is deliberate.
+describe("settings cache — one entry for all groups", () => {
+	it("uses a single KV key", async () => {
+		const { env, kv } = mkEnv({ comments_per_page: "10" });
+		await loadNumbers(env);
+		expect([...kv.store.keys()]).toEqual(["settings:resolved"]);
+	});
+
+	it("resolves every group from one D1 read", async () => {
+		const { env, db } = mkEnv({
+			comments_enabled: "false",
+			comments_per_page: "10",
+			default_locale: "de",
+		});
+		const { flags, numbers, strings } = await loadSettings(env);
+		expect(flags.comments_enabled).toBe(false);
+		expect(numbers.comments_per_page).toBe(10);
+		expect(strings.default_locale).toBe("de");
+		expect(db.reads()).toBe(1);
+	});
+
+	it("warms every group, whichever one asked first", async () => {
+		const { env, db } = mkEnv({
+			comments_enabled: "false",
+			comments_per_page: "10",
+		});
+		const flags = await loadFlags(env);
+		expect(db.reads()).toBe(1);
+		// Numbers and strings ride the entry that loadFlags() populated.
+		const numbers = await loadNumbers(env);
+		const strings = await loadStrings(env);
+		expect(db.reads()).toBe(1);
+		expect(flags.comments_enabled).toBe(false);
+		expect(numbers.comments_per_page).toBe(10);
+		expect(strings.default_locale).toBe("auto");
+	});
+
+	it("a bust drops every group at once", async () => {
+		const { env, kv, db } = mkEnv({ comments_per_page: "10" });
+		await loadSettings(env);
+		expect(db.reads()).toBe(1);
+		await bustSettingsCache(env);
+		expect(kv.store.size).toBe(0);
+		expect(kv.deletes()).toBe(1);
+		await loadFlags(env);
+		expect(db.reads()).toBe(2);
+	});
+
+	// A blob missing a group would otherwise resolve every setting in it to
+	// `undefined` — a silent wrong answer, where a miss is merely a D1 read.
+	// Reachable today only via a hand-written entry, which is exactly what a
+	// stale deploy or a test fixture is.
+	it("ignores a cached blob that is missing a group", async () => {
+		const { env, kv, db } = mkEnv({ comments_per_page: "10" });
+		const { flags, numbers } = await loadSettings(env);
+		expect(db.reads()).toBe(1);
+		kv.store.set(
+			"settings:resolved",
+			JSON.stringify({ flags, numbers }), // no `strings`
+		);
+		const strings = await loadStrings(env);
+		expect(db.reads()).toBe(2); // fell through to D1 rather than trusting it
+		expect(strings.default_locale).toBe("auto");
 	});
 });
 
@@ -461,7 +504,12 @@ describe("bustNumbersCache", () => {
 
 const mkGatedEnv = (cachedFlags: Partial<Record<FlagKey, boolean>>) => {
 	const kv = makeKv();
-	kv.store.set("settings:flags", JSON.stringify(cachedFlags));
+	// A full-shaped entry: the loader rejects a blob missing a group, so the
+	// other two have to be present even when only the flags matter here.
+	kv.store.set(
+		"settings:resolved",
+		JSON.stringify({ flags: cachedFlags, numbers: {}, strings: {} }),
+	);
 	return {
 		TREE_CACHE: kv,
 		// DB present but should never be queried on the 403 path.
@@ -730,21 +778,20 @@ describe("loadStrings", () => {
 		expect((await loadStrings(env)).default_locale).toBe("auto");
 	});
 
-	it("caches under its own key and skips D1 while warm", async () => {
+	it("skips D1 while warm", async () => {
 		const { env, db, kv } = mkEnv({ default_locale: "en" });
 		await loadStrings(env);
 		expect(db.reads()).toBe(1);
 		await loadStrings(env);
 		expect(db.reads()).toBe(1);
-		// Its own key, so it can't collide with the flags/numbers entries.
-		expect([...kv.store.keys()]).toEqual(["settings:strings"]);
-		expect(kv.putOpts.get("settings:strings")?.expirationTtl).toBe(3600);
+		expect([...kv.store.keys()]).toEqual(["settings:resolved"]);
+		expect(kv.putOpts.get("settings:resolved")?.expirationTtl).toBe(3600);
 	});
 
-	it("bustStringsCache forces the next read back to D1", async () => {
+	it("a bust forces the next read back to D1", async () => {
 		const { env, db } = mkEnv({ default_locale: "en" });
 		await loadStrings(env);
-		await bustStringsCache(env);
+		await bustSettingsCache(env);
 		await loadStrings(env);
 		expect(db.reads()).toBe(2);
 	});

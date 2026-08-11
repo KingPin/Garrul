@@ -282,26 +282,31 @@ export const numberBounds = (
 	return { default: def, min, max };
 };
 
-const CACHE_KEY = "settings:flags";
-const CACHE_KEY_NUMBERS = "settings:numbers";
-const CACHE_KEY_STRINGS = "settings:strings";
-// These resolve on the hot path (every comments GET reads numbers; config/counts
-// read flags). They're a fixed pair of KV keys, so a write happens at most once
-// per TTL window per edge colo — but on the free tier those add up. A longer TTL
-// cuts that steady-state KV write rate; it's safe because the admin save path
-// busts the key (bustFlagsCache/bustNumbersCache), so a real change still takes
-// effect promptly rather than waiting out the TTL.
+// One KV entry holds every resolved group. Flags, numbers and strings all derive
+// from the same two inputs — a single `getAllSettings` read plus `env` — so
+// splitting them across three keys bought nothing and cost three KV reads,
+// three D1 queries and three KV writes on any route needing more than one
+// group. `GET /api/v1/config`, hit on every widget mount, needs all three.
 //
-// The arithmetic behind the value: KV free tier is 1000 writes/day *account
-// wide*. At 300s these two keys re-populate 288 times/day per colo, so a
-// modest three-colo footprint was already spending ~576 of that budget doing
-// nothing but re-deriving settings that hadn't changed. At 3600s that's 24
-// per key per colo — ~48 for the same three colos.
+// Writes are what make this load-bearing. The KV free tier allows 1000
+// writes/day *account wide*, and an entry re-populates once per TTL window per
+// edge colo whether or not anything actually changed. At 3600s that is 24
+// writes per colo per day for one key; the three-key layout spent 72.
 //
-// The only cost is staleness on a path that *doesn't* bust: an operator
-// editing an env var and redeploying. A deploy doesn't clear KV, so the old
-// value can survive up to an hour. That's documented in AGENTS-OPERATE.md;
-// changing a setting through the admin UI is unaffected.
+// The name is deliberately new rather than a reuse of `settings:flags`. A
+// rolling deploy runs old and new isolates side by side, and an old
+// `loadNumbers` reading a merged blob would resolve every numeric setting to
+// `undefined`. Distinct names mean neither version can read the other's shape;
+// the superseded entries just expire.
+const CACHE_KEY_RESOLVED = "settings:resolved";
+// Staleness bound for the one path that does *not* bust the cache: an operator
+// editing an env var and redeploying, since a deploy doesn't clear KV. So a
+// stale value can survive up to an hour — documented in AGENTS-OPERATE.md.
+// Admin saves call `bustSettingsCache`, so those land on the next request.
+//
+// The arithmetic behind the value: at 300s the entry re-populated 288
+// times/day per colo, so even a three-colo footprint spent ~864 of the
+// 1000-write budget re-deriving settings that hadn't changed.
 const CACHE_TTL_SEC = 3600;
 
 // Defaults-on/off boolish parse: present + falsy → false; anything else
@@ -401,68 +406,79 @@ const resolve = (
 	return out;
 };
 
+/** Every resolved settings group, as stored in the single cache entry. */
+export interface ResolvedSettings {
+	readonly flags: ResolvedFlags;
+	readonly numbers: ResolvedNumbers;
+	readonly strings: ResolvedStrings;
+}
+
 /**
- * Resolve all feature flags (DB override > env > default), KV-cached.
+ * Shape check on the cached blob.
+ *
+ * A `get(..., "json")` hit is only trusted if it carries all three groups. The
+ * key name makes a foreign shape unreachable today (see `CACHE_KEY_RESOLVED`),
+ * but a partial blob would otherwise resolve every setting in the missing group
+ * to `undefined` — a silent wrong answer, where a miss is merely a D1 read.
  */
-export const loadFlags = async (env: Bindings): Promise<ResolvedFlags> => {
-	const cached = await env.TREE_CACHE.get(CACHE_KEY, "json").catch(() => null);
-	if (cached) return cached as ResolvedFlags;
-	const dbSettings = await getAllSettings(env.DB);
-	const flags = resolve(env, dbSettings);
-	await env.TREE_CACHE.put(CACHE_KEY, JSON.stringify(flags), {
-		expirationTtl: CACHE_TTL_SEC,
-	}).catch(() => {});
-	return flags;
+const isResolvedSettings = (v: unknown): v is ResolvedSettings => {
+	if (typeof v !== "object" || v === null) return false;
+	const c = v as Partial<Record<keyof ResolvedSettings, unknown>>;
+	return (
+		typeof c.flags === "object" &&
+		c.flags !== null &&
+		typeof c.numbers === "object" &&
+		c.numbers !== null &&
+		typeof c.strings === "object" &&
+		c.strings !== null
+	);
 };
 
-/** Drop the cached resolved flags so the next read reflects a fresh save. */
-export const bustFlagsCache = (env: Bindings): Promise<void> =>
-	env.TREE_CACHE.delete(CACHE_KEY).catch(() => {});
-
 /**
- * Resolve all numeric display settings (DB override > env > default), KV-cached
- * under its own key so it doesn't disturb the boolean-flag cache entry/tests.
+ * Resolve every setting (DB override > env > default), KV-cached as one entry.
+ *
+ * Prefer this over the per-group helpers when a caller needs more than one
+ * group: it makes the single read and the single derivation explicit at the
+ * call site.
  */
-export const loadNumbers = async (env: Bindings): Promise<ResolvedNumbers> => {
-	const cached = await env.TREE_CACHE.get(CACHE_KEY_NUMBERS, "json").catch(
+export const loadSettings = async (
+	env: Bindings,
+): Promise<ResolvedSettings> => {
+	const cached = await env.TREE_CACHE.get(CACHE_KEY_RESOLVED, "json").catch(
 		() => null,
 	);
-	if (cached) return cached as ResolvedNumbers;
+	if (isResolvedSettings(cached)) return cached;
 	const dbSettings = await getAllSettings(env.DB);
-	const numbers = resolveNumbers(env, dbSettings);
-	await env.TREE_CACHE.put(CACHE_KEY_NUMBERS, JSON.stringify(numbers), {
+	const resolved: ResolvedSettings = {
+		flags: resolve(env, dbSettings),
+		numbers: resolveNumbers(env, dbSettings),
+		strings: resolveStrings(env, dbSettings),
+	};
+	await env.TREE_CACHE.put(CACHE_KEY_RESOLVED, JSON.stringify(resolved), {
 		expirationTtl: CACHE_TTL_SEC,
 	}).catch(() => {});
-	return numbers;
+	return resolved;
 };
 
-/** Drop the cached resolved numbers so the next read reflects a fresh save. */
-export const bustNumbersCache = (env: Bindings): Promise<void> =>
-	env.TREE_CACHE.delete(CACHE_KEY_NUMBERS).catch(() => {});
+/** Resolved feature flags. */
+export const loadFlags = async (env: Bindings): Promise<ResolvedFlags> =>
+	(await loadSettings(env)).flags;
+
+/** Resolved numeric display settings. */
+export const loadNumbers = async (env: Bindings): Promise<ResolvedNumbers> =>
+	(await loadSettings(env)).numbers;
 
 /**
- * Resolve all string settings (DB override > env > default), KV-cached under
- * its own key.
+ * Resolved string settings.
  *
  * Deliberately *not* called from the per-request locale middleware: that runs
- * on every `/api/*` request, and a third settings key there would add a KV
- * read to routes that read nothing else. The operator default is applied once,
- * at `GET /api/v1/config` (which already loads flags and numbers), and the
- * widget echoes the resolved locale back on subsequent calls.
+ * on every `/api/*` request, and a KV read there would land on routes that read
+ * nothing else. The operator default is applied once, at `GET /api/v1/config`,
+ * and the widget echoes the resolved locale back on subsequent calls.
  */
-export const loadStrings = async (env: Bindings): Promise<ResolvedStrings> => {
-	const cached = await env.TREE_CACHE.get(CACHE_KEY_STRINGS, "json").catch(
-		() => null,
-	);
-	if (cached) return cached as ResolvedStrings;
-	const dbSettings = await getAllSettings(env.DB);
-	const strings = resolveStrings(env, dbSettings);
-	await env.TREE_CACHE.put(CACHE_KEY_STRINGS, JSON.stringify(strings), {
-		expirationTtl: CACHE_TTL_SEC,
-	}).catch(() => {});
-	return strings;
-};
+export const loadStrings = async (env: Bindings): Promise<ResolvedStrings> =>
+	(await loadSettings(env)).strings;
 
-/** Drop the cached resolved strings so the next read reflects a fresh save. */
-export const bustStringsCache = (env: Bindings): Promise<void> =>
-	env.TREE_CACHE.delete(CACHE_KEY_STRINGS).catch(() => {});
+/** Drop the cached settings so the next read reflects a fresh save. */
+export const bustSettingsCache = (env: Bindings): Promise<void> =>
+	env.TREE_CACHE.delete(CACHE_KEY_RESOLVED).catch(() => {});

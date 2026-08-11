@@ -145,7 +145,7 @@ const settingWrites = (runs: { sql: string; binds: unknown[] }[]) =>
 		.map((r) => [r.binds[0], r.binds[1]] as [string, string]);
 
 describe("POST /admin/settings — numeric writes", () => {
-	it("stores an in-range number as text and busts only the numbers cache", async () => {
+	it("stores an in-range number as text and busts the settings cache", async () => {
 		const { env, kv, runs } = mkEnv();
 		const res = await postSettings(env, { numbers: { comments_per_page: 10 } });
 		expect(res.status).toBe(200);
@@ -153,9 +153,8 @@ describe("POST /admin/settings — numeric writes", () => {
 		expect(json.numbers.comments_per_page).toBe(10);
 
 		expect(settingWrites(runs)).toContainEqual(["comments_per_page", "10"]);
-		// Independent cache entries: numbers busted, flags untouched.
-		expect(kv.deletedKeys).toContain("settings:numbers");
-		expect(kv.deletedKeys).not.toContain("settings:flags");
+		// One entry holds every group, so any write invalidates all of it.
+		expect(kv.deletedKeys).toContain("settings:resolved");
 	});
 
 	it("clamps an over-max value before storing", async () => {
@@ -263,7 +262,7 @@ describe("POST /admin/settings — numeric writes", () => {
 });
 
 describe("POST /admin/settings — string writes", () => {
-	it("stores a whitelisted value and busts only the strings cache", async () => {
+	it("stores a whitelisted value and busts the settings cache", async () => {
 		const { env, kv, runs } = mkEnv();
 		const res = await postSettings(env, { strings: { default_locale: "en" } });
 		expect(res.status).toBe(200);
@@ -271,9 +270,7 @@ describe("POST /admin/settings — string writes", () => {
 		expect(json.strings.default_locale).toBe("en");
 
 		expect(settingWrites(runs)).toContainEqual(["default_locale", "en"]);
-		expect(kv.deletedKeys).toContain("settings:strings");
-		expect(kv.deletedKeys).not.toContain("settings:flags");
-		expect(kv.deletedKeys).not.toContain("settings:numbers");
+		expect(kv.deletedKeys).toEqual(["settings:resolved"]);
 	});
 
 	it("stores the auto sentinel, which is distinct from an explicit locale", async () => {
@@ -328,9 +325,7 @@ describe("POST /admin/settings — reset", () => {
 		expect(del!.binds).toContain("auto_collapse_depth");
 		expect(del!.binds).toContain("default_locale");
 
-		expect(kv.deletedKeys).toContain("settings:flags");
-		expect(kv.deletedKeys).toContain("settings:numbers");
-		expect(kv.deletedKeys).toContain("settings:strings");
+		expect(kv.deletedKeys).toContain("settings:resolved");
 	});
 });
 

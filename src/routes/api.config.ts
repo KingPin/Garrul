@@ -39,7 +39,7 @@
 import { Hono } from "hono";
 import type { Bindings } from "../index";
 import { PROVIDERS, type ProviderId } from "../lib/oauth";
-import { loadFlags, loadNumbers, loadStrings } from "../lib/settings";
+import { loadSettings } from "../lib/settings";
 import { DEFAULT_LOCALE, LOCALES } from "../i18n";
 import { resolveLocale } from "../i18n/negotiate";
 import { WIDGET_TABLES } from "../i18n/widget";
@@ -57,13 +57,12 @@ config.get("/", async (c) => {
 		const cfg = PROVIDERS[p];
 		return !!env[cfg.client_id_env] && !!env[cfg.client_secret_env];
 	});
-	// Feature flags + numeric display settings, both resolved with
-	// DB-override > env > default precedence.
-	const [flags, numbers, strings] = await Promise.all([
-		loadFlags(c.env),
-		loadNumbers(c.env),
-		loadStrings(c.env),
-	]);
+	// Flags, numeric display settings and string settings, all resolved with
+	// DB-override > env > default precedence. One call rather than three
+	// per-group ones: this route needs every group, and they share a cache entry
+	// and a single D1 read — asking for them separately would just be three
+	// concurrent misses racing to derive the same object.
+	const { flags, numbers, strings } = await loadSettings(c.env);
 	// Full negotiation, including the operator's default_locale — which the
 	// /api/* locale middleware deliberately skips, since it would put a settings
 	// read on every API request to answer a question only this route asks. The
