@@ -34,6 +34,14 @@ import { loadErrorMessage } from "./load-error";
 import { watchForSignIn } from "./auth-recovery";
 import { autoSizeTextarea } from "./autosize";
 import { createTurnstileGate, type TurnstileGate } from "./turnstile-gate";
+import { makeS, type WidgetKey } from "./strings";
+
+// The widget's translator. A module singleton is correct only because init()
+// binds exactly one `#garrul` element per page; a multi-mount widget would have
+// to carry this on WidgetCtx instead. Read through `s(...)` at render time
+// rather than captured into module constants, so a locale swap after the
+// /api/v1/config fetch takes effect on the first render.
+const { s, sAround } = makeS();
 
 // Mirrors lib/tree.ts's TreeAuthor. No `is_admin`: the API stopped sending it
 // (it let anyone enumerate privileged accounts) and nothing here rendered it.
@@ -759,27 +767,39 @@ const applyMarkdown = (ta: HTMLTextAreaElement, fmt: MdFormat): void => {
 	ta.dispatchEvent(new Event("input", { bubbles: true }));
 };
 
-// Toolbar buttons, left to right. `label` is the visible glyph; `title` is the
-// tooltip / aria-label.
-const TOOLBAR: { label: string; title: string; fmt: MdFormat }[] = [
-	{ label: "B", title: "Bold", fmt: { before: "**", after: "**", placeholder: "bold" } },
-	{ label: "I", title: "Italic", fmt: { before: "_", after: "_", placeholder: "italic" } },
-	{ label: "🔗", title: "Link", fmt: { before: "[", after: "](https://)", placeholder: "text" } },
-	{ label: "</>", title: "Inline code", fmt: { before: "`", after: "`", placeholder: "code" } },
-	{ label: "❝", title: "Quote", fmt: { linePrefix: "> " } },
-	{ label: "•", title: "Bulleted list", fmt: { linePrefix: "- " } },
+// Toolbar buttons, left to right. `label` is the visible glyph — untranslated,
+// because B/I/❝/• read as icons the way a word processor's do. `title` names the
+// string key for the tooltip / aria-label; `ph` names the key for the sample
+// text inserted when nothing is selected. Both are resolved at build time, not
+// module-init time, so the locale is already known.
+const TOOLBAR: {
+	label: string;
+	title: WidgetKey;
+	ph?: WidgetKey;
+	fmt: MdFormat;
+}[] = [
+	{ label: "B", title: "w.md.bold", ph: "w.md.ph.bold", fmt: { before: "**", after: "**" } },
+	{ label: "I", title: "w.md.italic", ph: "w.md.ph.italic", fmt: { before: "_", after: "_" } },
+	{ label: "🔗", title: "w.md.link", ph: "w.md.ph.link", fmt: { before: "[", after: "](https://)" } },
+	{ label: "</>", title: "w.md.code", ph: "w.md.ph.code", fmt: { before: "`", after: "`" } },
+	{ label: "❝", title: "w.md.quote", fmt: { linePrefix: "> " } },
+	{ label: "•", title: "w.md.list", fmt: { linePrefix: "- " } },
 ];
 
 const buildToolbar = (ta: HTMLTextAreaElement): HTMLElement => {
 	const bar = el("div", "gr-toolbar");
 	bar.setAttribute("role", "toolbar");
-	bar.setAttribute("aria-label", "Formatting");
+	bar.setAttribute("aria-label", s("w.toolbar"));
 	for (const item of TOOLBAR) {
 		const btn = el("button", "gr-toolbar-btn", item.label);
 		btn.type = "button";
-		btn.title = item.title;
-		btn.setAttribute("aria-label", item.title);
-		btn.addEventListener("click", () => applyMarkdown(ta, item.fmt));
+		const title = s(item.title);
+		btn.title = title;
+		btn.setAttribute("aria-label", title);
+		const fmt: MdFormat = item.ph
+			? { ...item.fmt, placeholder: s(item.ph) }
+			: item.fmt;
+		btn.addEventListener("click", () => applyMarkdown(ta, fmt));
 		bar.appendChild(btn);
 	}
 	return bar;
@@ -802,11 +822,11 @@ const buildWritePreview = (
 	const wrap = el("div", compact ? "gr-compose gr-compose-nested" : "gr-compose");
 	const tabs = el("div", "gr-tabs");
 	tabs.setAttribute("role", "tablist");
-	const writeTab = el("button", "gr-tab gr-tab-active", "Write");
+	const writeTab = el("button", "gr-tab gr-tab-active", s("w.tab.write"));
 	writeTab.type = "button";
 	writeTab.setAttribute("role", "tab");
 	writeTab.setAttribute("aria-selected", "true");
-	const previewTab = el("button", "gr-tab", "Preview");
+	const previewTab = el("button", "gr-tab", s("w.tab.preview"));
 	previewTab.type = "button";
 	previewTab.setAttribute("role", "tab");
 	previewTab.setAttribute("aria-selected", "false");
@@ -817,7 +837,7 @@ const buildWritePreview = (
 	// this is the one place that has to grow the box while the author types.
 	// applyMarkdown re-fires `input`, so toolbar insertions size too.
 	textarea.addEventListener("input", () => autoSize(textarea));
-	const hint = el("span", "gr-md-hint", "Styling with Markdown is supported");
+	const hint = el("span", "gr-md-hint", s("w.md_hint"));
 	const pane = el("div", "gr-preview");
 	pane.hidden = true;
 
@@ -843,10 +863,10 @@ const buildWritePreview = (
 		pane.hidden = false;
 		const body = textarea.value.trim();
 		if (!body) {
-			pane.textContent = "Nothing to preview yet.";
+			pane.textContent = s("w.preview.empty");
 			return;
 		}
-		pane.textContent = "Loading preview…";
+		pane.textContent = s("w.preview.loading");
 		try {
 			const res = await fetch(`${apiBase}/api/v1/preview`, {
 				method: "POST",
@@ -859,7 +879,7 @@ const buildWritePreview = (
 			pane.textContent = "";
 			pane.appendChild(parseTrustedHtml(data.html ?? ""));
 		} catch {
-			pane.textContent = "Preview failed. Try again.";
+			pane.textContent = s("w.preview.failed");
 		}
 	};
 
@@ -882,7 +902,7 @@ const buildSkeleton = (): DocumentFragment => {
 	const root = el("div", "gr-root");
 	const list = el("div", "gr-list");
 	list.setAttribute("aria-busy", "true");
-	list.setAttribute("aria-label", "Loading comments");
+	list.setAttribute("aria-label", s("w.loading_comments"));
 	for (let i = 0; i < 3; i++) {
 		const row = el("div", "gr-comment");
 		const avatarWrap = el("div", "gr-avatar");
@@ -1082,7 +1102,7 @@ const mountTurnstileFrame = (
 
 	const frame = el("iframe") as HTMLIFrameElement;
 	frame.className = "gr-turnstile-frame";
-	frame.title = "Anti-spam check";
+	frame.title = s("w.ts.title");
 	frame.setAttribute("scrolling", "no");
 	frame.setAttribute(
 		"sandbox",
@@ -1200,7 +1220,7 @@ const buildVotes = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 
 	const up = el("button", "gr-vote");
 	up.type = "button";
-	up.setAttribute("aria-label", "Upvote");
+	up.setAttribute("aria-label", s("w.vote.up"));
 	up.appendChild(document.createTextNode("▲"));
 	if (n.my_vote === 1) up.dataset.mine = "1";
 
@@ -1208,7 +1228,7 @@ const buildVotes = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 
 	const down = el("button", "gr-vote");
 	down.type = "button";
-	down.setAttribute("aria-label", "Downvote");
+	down.setAttribute("aria-label", s("w.vote.down"));
 	down.appendChild(document.createTextNode("▼"));
 	if (n.my_vote === -1) down.dataset.mine = "1";
 
@@ -1422,15 +1442,15 @@ const buildPageEngagement = (ctx: WidgetCtx): HTMLElement => {
 
 	if (ctx.pageVotesEnabled) {
 		const voteWrap = el("div", "gr-page-votes");
-		const label = el("span", "gr-page-vote-label", "Was this helpful?");
+		const label = el("span", "gr-page-vote-label", s("w.page.helpful"));
 		up = el("button", "gr-vote");
 		up.type = "button";
-		up.setAttribute("aria-label", "Upvote this page");
+		up.setAttribute("aria-label", s("w.page.up"));
 		up.appendChild(document.createTextNode("▲"));
 		scoreEl = el("span", "gr-vote-score", "0");
 		down = el("button", "gr-vote");
 		down.type = "button";
-		down.setAttribute("aria-label", "Downvote this page");
+		down.setAttribute("aria-label", s("w.page.down"));
 		down.appendChild(document.createTextNode("▼"));
 		if (!ctx.downvotesEnabled) down.hidden = true;
 		up.addEventListener("click", () => void castVote(myVote === 1 ? 0 : 1));
@@ -1472,7 +1492,7 @@ const buildActions = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): HTMLEleme
 	// survives only as the fallback for edge-cached payloads that predate the field.
 	const canReply = n.can_reply ?? n.depth < 4;
 	if (ctx.acceptingComments && canReply && n.status !== "deleted") {
-		const replyBtn = el("button", undefined, "Reply");
+		const replyBtn = el("button", undefined, s("w.reply"));
 		replyBtn.type = "button";
 		replyBtn.addEventListener("click", () => {
 			// Editor forms share the `gr-reply-form` class (and styling) but tag
@@ -1490,7 +1510,7 @@ const buildActions = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): HTMLEleme
 		ctx.me != null && n.author.id === ctx.me.id && n.status !== "deleted";
 	const withinWindow = Date.now() - n.created_at < ctx.editWindowMs;
 	if (isOwn && withinWindow) {
-		const editBtn = el("button", undefined, "Edit");
+		const editBtn = el("button", undefined, s("w.edit"));
 		editBtn.type = "button";
 		editBtn.addEventListener("click", () => {
 			openEditor(n, ctx, main);
@@ -1498,12 +1518,12 @@ const buildActions = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): HTMLEleme
 		row.appendChild(editBtn);
 	}
 	if (isOwn) {
-		const delBtn = el("button", undefined, "Delete");
+		const delBtn = el("button", undefined, s("w.delete"));
 		delBtn.type = "button";
 		delBtn.addEventListener("click", async () => {
 			// Plain confirm is the smallest robust UX; the widget doesn't
 			// ship its own modal layer to keep the bundle small.
-			if (!window.confirm("Delete this comment?")) return;
+			if (!window.confirm(s("w.delete_confirm"))) return;
 			try {
 				const res = await fetch(
 					`${ctx.apiBase}/api/v1/comments/${encodeURIComponent(n.id)}`,
@@ -1524,7 +1544,7 @@ const buildActions = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): HTMLEleme
 	// the viewer's own (reporting yourself is meaningless).
 	const isOwnComment = ctx.me != null && n.author.id === ctx.me.id;
 	if (n.status !== "deleted" && !isOwnComment) {
-		const reportBtn = el("button", "gr-report", "Report");
+		const reportBtn = el("button", "gr-report", s("w.report"));
 		reportBtn.type = "button";
 		reportBtn.addEventListener("click", async () => {
 			reportBtn.disabled = true;
@@ -1551,7 +1571,7 @@ const buildActions = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): HTMLEleme
 				// Replace the button with a non-interactive confirmation so a
 				// reader can't report-bomb one comment from the UI. (Server-side
 				// dedup + rate-limit are the real guard; this is just UX.)
-				reportBtn.replaceWith(el("span", "gr-reported", "Reported, thanks"));
+				reportBtn.replaceWith(el("span", "gr-reported", s("w.reported")));
 			} else {
 				// A real refusal (429 rate-limit, 4xx/5xx, or a dropped network
 				// call) — don't claim success; re-enable so the reader can retry.
@@ -1574,12 +1594,12 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 	wrap.setAttribute("data-mode", "edit");
 	const ta = el("textarea");
 	ta.value = "";
-	ta.placeholder = "Loading…";
+	ta.placeholder = s("w.loading");
 	ta.required = true;
 	const actions = el("div", "gr-reply-actions");
-	const save = el("button", undefined, "Save");
+	const save = el("button", undefined, s("w.save"));
 	save.type = "submit";
-	const cancel = el("button", undefined, "Cancel");
+	const cancel = el("button", undefined, s("w.cancel"));
 	cancel.type = "button";
 	cancel.addEventListener("click", () => wrap.remove());
 	actions.append(save, cancel);
@@ -1606,7 +1626,7 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 			if (!ta.isConnected) return;
 			ta.disabled = false;
 			save.disabled = false;
-			ta.placeholder = "Edit your comment…";
+			ta.placeholder = s("w.edit_ph");
 			// The whole point of issue #52: the box opens showing the comment, not
 			// a 3-line window onto it. Has to run here, after the prefill lands.
 			autoSize(ta);
@@ -1641,7 +1661,7 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	prefetchFormToken(ctx.apiBase);
 	const wrap = el("form", "gr-reply-form");
 	const ta = el("textarea");
-	ta.placeholder = `Reply to @${parent.author.name}…`;
+	ta.placeholder = s("w.reply_ph", { name: parent.author.name });
 	ta.required = true;
 	const dkey = attachDraft(ta, draftKey(ctx.slug, parent.id));
 
@@ -1649,7 +1669,7 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	if (!ctx.me) {
 		nameInput = el("input");
 		nameInput.type = "text";
-		nameInput.placeholder = "Your name";
+		nameInput.placeholder = s("w.name_ph");
 		nameInput.required = true;
 		wrap.appendChild(nameInput);
 	}
@@ -1678,9 +1698,9 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	if (tsSlot) wrap.appendChild(tsSlot);
 
 	const actions = el("div", "gr-reply-actions");
-	const submit = el("button", undefined, "Post reply");
+	const submit = el("button", undefined, s("w.post_reply"));
 	submit.type = "submit";
-	const cancel = el("button", undefined, "Cancel");
+	const cancel = el("button", undefined, s("w.cancel"));
 	cancel.type = "button";
 	actions.append(submit, cancel);
 	wrap.appendChild(actions);
@@ -1720,7 +1740,7 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 				submit.disabled = true;
 				showStatus(
 					errBox,
-					"Anti-spam check failed to load. Reload the page; if it keeps failing the site owner should check that https://challenges.cloudflare.com is reachable.",
+					s("w.ts.failed"),
 				);
 			},
 		});
@@ -1765,25 +1785,21 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 		let waitedToken = "";
 		if (tsGate) {
 			const label = submit.textContent ?? "";
-			submit.textContent = "Checking…";
+			submit.textContent = s("w.ts.checking");
 			const waited = await tsGate.wait();
 			submit.textContent = label;
 			if (!waited.ok) {
 				switch (waited.reason) {
 					case "interactive":
-						notice("Complete the anti-spam check above, then post again.");
+						notice(s("w.ts.interactive"));
 						return;
 					case "timeout":
-						notice(
-							"The anti-spam check didn't load. Check your connection or reload the page.",
-						);
+						notice(s("w.ts.timeout"));
 						return;
 					case "retrying":
 						// Recoverable by construction: the gate has already asked the
 						// frame to re-challenge, so the next attempt has a real chance.
-						notice(
-							"The anti-spam check hit a snag and is retrying. Post again in a moment.",
-						);
+						notice(s("w.ts.retrying"));
 						return;
 					case "failed":
 						// onFailed already wrote the message and disabled the button.
@@ -1804,7 +1820,7 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 				waitedToken ||
 				"";
 			if (tsGate && !turnstileToken) {
-				notice("Complete the anti-spam check above, then post again.");
+				notice(s("w.ts.interactive"));
 				return;
 			}
 			const res = await fetch(`${ctx.apiBase}/api/v1/comments`, {
@@ -1882,22 +1898,21 @@ const buildComment = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	const meta = el("div", "gr-meta");
 	meta.appendChild(el("span", "gr-name", n.author.name));
 	if (n.author.provider !== "anon") {
-		meta.appendChild(el("span", "gr-verified", "verified"));
+		meta.appendChild(el("span", "gr-verified", s("w.verified")));
 	}
 	meta.appendChild(el("span", "gr-time", fmtTime(n.created_at)));
-	if (n.edited_at) meta.appendChild(el("span", "gr-edited", "· edited"));
+	if (n.edited_at) meta.appendChild(el("span", "gr-edited", s("w.edited")));
 	// Author-only signal: the list endpoint returns the viewer's own queued
 	// comments, so this badge is only ever seen by the author themselves.
 	if (n.status === "pending") {
-		meta.appendChild(el("span", "gr-pending", "Pending approval"));
+		meta.appendChild(el("span", "gr-pending", s("w.pending")));
 	}
 
 	const body = el("div", "gr-body");
 	if (n.status === "deleted") {
-		const label =
-			n.deleted_by === "moderator"
-				? "[removed by a moderator]"
-				: "[deleted]";
+		const label = s(
+			n.deleted_by === "moderator" ? "w.removed_by_mod" : "w.deleted",
+		);
 		const p = el("p", "gr-deleted", label);
 		body.appendChild(p);
 	} else {
@@ -1922,9 +1937,7 @@ const buildComment = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 		let shown = false;
 		const apply = () => {
 			body.hidden = !shown;
-			toggle.textContent = shown
-				? "Hide comment"
-				: "Comment hidden (low score) — show";
+			toggle.textContent = s(shown ? "w.lowscore.hide" : "w.lowscore.show");
 			toggle.setAttribute("aria-expanded", String(shown));
 		};
 		toggle.addEventListener("click", () => {
@@ -1954,9 +1967,6 @@ const countDescendants = (n: TreeNode): number => {
 	return total;
 };
 
-const plural = (n: number, one: string, many: string): string =>
-	`${n} ${n === 1 ? one : many}`;
-
 /**
  * Collapse/expand control for a node's replies. Hides/shows the replies
  * container in place (all replies are already in the DOM). `startCollapsed`
@@ -1972,7 +1982,9 @@ const buildCollapseToggle = (
 	let collapsed = startCollapsed;
 	const apply = () => {
 		repliesEl.style.display = collapsed ? "none" : "";
-		btn.textContent = `${collapsed ? "▸" : "▾"} ${plural(count, "reply", "replies")}`;
+		// The disclosure triangle is a glyph, not a word, so it stays outside the
+		// string — the count and its noun do not.
+		btn.textContent = `${collapsed ? "▸" : "▾"} ${s("w.replies", { n: count })}`;
 		btn.setAttribute("aria-expanded", String(!collapsed));
 	};
 	btn.addEventListener("click", () => {
@@ -2002,7 +2014,7 @@ const renderReplyList = (
 		const hidden = replies.slice(initial);
 		const more = el("button", "gr-showmore") as HTMLButtonElement;
 		more.type = "button";
-		more.textContent = `Show ${plural(hidden.length, "more reply", "more replies")}`;
+		more.textContent = s("w.more_replies", { n: hidden.length });
 		more.addEventListener("click", () => {
 			for (const r of hidden) {
 				container.insertBefore(buildThread(r, ctx), more);
@@ -2061,12 +2073,17 @@ const buildAuthBlock = (
 ): HTMLElement | null => {
 	if (me) {
 		const wrap = el("div", "gr-signed");
-		wrap.appendChild(el("span", undefined, "Posting as "));
+		// The name renders in its own styled span, so the sentence is split around
+		// the slot rather than cut into two half-sentences — a translator can move
+		// {name} to wherever their language puts it and the styling follows.
+		const [before, after] = sAround("w.posting_as", "name");
+		if (before) wrap.appendChild(el("span", undefined, before));
 		wrap.appendChild(el("span", "gr-signed-name", `@${me.name}`));
+		if (after) wrap.appendChild(el("span", undefined, after));
 		if (me.provider !== "anon") {
-			wrap.appendChild(el("span", "gr-verified", "verified"));
+			wrap.appendChild(el("span", "gr-verified", s("w.verified")));
 		}
-		const out = el("button", undefined, "Sign out");
+		const out = el("button", undefined, s("w.sign_out"));
 		out.type = "button";
 		out.addEventListener("click", async () => {
 			out.disabled = true;
@@ -2093,7 +2110,7 @@ const buildAuthBlock = (
 
 	const wrap = el("div", "gr-signin");
 	wrap.appendChild(
-		el("span", "gr-signin-label", "Sign in to get a verified badge:"),
+		el("span", "gr-signin-label", s("w.signin_prompt")),
 	);
 	for (const p of providers) {
 		const btn = el("button", undefined, PROVIDER_LABELS[p]);
@@ -2118,7 +2135,7 @@ const buildForm = (
 		name.className = "gr-name-input";
 		name.name = "name";
 		name.type = "text";
-		name.placeholder = "Your name";
+		name.placeholder = s("w.name_ph");
 		name.required = true;
 		form.appendChild(name);
 	}
@@ -2126,7 +2143,7 @@ const buildForm = (
 	const body = el("textarea");
 	body.className = "gr-body-input";
 	body.name = "body";
-	body.placeholder = "Add a comment…";
+	body.placeholder = s("w.body_ph");
 	body.required = true;
 	form.appendChild(buildWritePreview(body, apiBase));
 
@@ -2151,7 +2168,9 @@ const buildForm = (
 	notifyCb.type = "checkbox";
 	notifyCb.className = "gr-notify-cb";
 	notifyCb.name = "notify";
-	const notifyText = document.createTextNode(" Email me on new replies");
+	// The leading space separates the label from its checkbox; it's layout, not
+	// copy, so it stays out of the string table.
+	const notifyText = document.createTextNode(` ${s("w.notify")}`);
 	notifyWrap.append(notifyCb, notifyText);
 	form.appendChild(notifyWrap);
 
@@ -2160,7 +2179,7 @@ const buildForm = (
 		emailInput.className = "gr-email-input";
 		emailInput.name = "email";
 		emailInput.type = "email";
-		emailInput.placeholder = "you@example.com";
+		emailInput.placeholder = s("w.email_ph");
 		emailInput.autocomplete = "email";
 		emailInput.hidden = true;
 		notifyCb.addEventListener("change", () => {
@@ -2184,7 +2203,7 @@ const buildForm = (
 		form.appendChild(el("div", "gr-turnstile"));
 	}
 
-	const submit = el("button", undefined, "Post comment");
+	const submit = el("button", undefined, s("w.post_comment"));
 	submit.type = "submit";
 
 	const errBox = statusBox("gr-error is-inline");
@@ -2323,7 +2342,7 @@ const renderError = (root: ShadowRoot, err: unknown) => {
 	const style = el("style");
 	style.textContent = STYLE_CSS;
 	const wrap = el("div", "gr-root");
-	wrap.appendChild(el("div", "gr-error", loadErrorMessage(err)));
+	wrap.appendChild(el("div", "gr-error", loadErrorMessage(err, s)));
 	root.append(style, wrap);
 };
 
@@ -2410,15 +2429,17 @@ const setSort = (root: ShadowRoot, sort: SortKey): void => {
 // Closed-state notice copy, picked from the server's closed_reason enum so the
 // reader sees *why* the thread is frozen rather than a generic line.
 const closedNotice = (reason: ListResponse["closed_reason"]): string => {
+	// The switch is logic and stays; each branch names its own key so a
+	// translator sees four independent sentences rather than one to disambiguate.
 	switch (reason) {
 		case "post_closed":
-			return "Comments are closed on this post.";
+			return s("w.closed.post");
 		case "aged_out":
-			return "This thread has been closed to new comments.";
+			return s("w.closed.aged");
 		case "sunset":
-			return "Commenting has ended.";
+			return s("w.closed.sunset");
 		default:
-			return "Comments are closed.";
+			return s("w.closed.other");
 	}
 };
 
@@ -2575,7 +2596,7 @@ const loadOnce = async (
 			el(
 				"p",
 				"gr-empty",
-				acceptingComments ? "Be the first to comment." : "No comments yet.",
+				s(acceptingComments ? "w.empty.open" : "w.empty.closed"),
 			),
 		);
 	} else {
@@ -2594,17 +2615,21 @@ const loadOnce = async (
 	// Sort selector only when voting is on (no scores to rank without it).
 	if (votingEnabled) {
 		const sortWrap = el("div", "gr-sort");
-		const label = el("label", undefined, "Sort by ");
+		const label = el("label");
 		const sel = el("select") as HTMLSelectElement;
 		const newOpt = el("option") as HTMLOptionElement;
 		newOpt.value = "new";
-		newOpt.textContent = "Newest";
+		newOpt.textContent = s("w.sort.new");
 		const topOpt = el("option") as HTMLOptionElement;
 		topOpt.value = "top";
-		topOpt.textContent = "Top";
+		topOpt.textContent = s("w.sort.top");
 		sel.append(newOpt, topOpt);
 		sel.value = sort;
-		label.appendChild(sel);
+		// The control sits inside the label, so the label text is split around it
+		// rather than hard-coded as a "Sort by " prefix — languages that put the
+		// control first (or wrap it) can say so in the string.
+		const [beforeSel, afterSel] = sAround("w.sort_by", "control");
+		label.append(beforeSel, sel, afterSel);
 		sortWrap.appendChild(label);
 		sel.addEventListener("change", () => {
 			const v = sel.value === "top" ? "top" : "new";
@@ -2617,7 +2642,7 @@ const loadOnce = async (
 	wrap.appendChild(list);
 
 	if (data.next_cursor) {
-		const more = el("button", "gr-loadmore", "Load older comments");
+		const more = el("button", "gr-loadmore", s("w.load_more"));
 		more.type = "button";
 		let cursor: string | null = data.next_cursor;
 		more.addEventListener("click", async () => {
@@ -2634,7 +2659,11 @@ const loadOnce = async (
 				}
 			} catch (err) {
 				more.disabled = false;
-				const errBox = el("div", "gr-error", `Could not load more: ${String(err)}`);
+				const errBox = el(
+					"div",
+					"gr-error",
+					s("w.load_more_failed", { detail: String(err) }),
+				);
 				more.insertAdjacentElement("afterend", errBox);
 			}
 		});
@@ -2643,13 +2672,14 @@ const loadOnce = async (
 
 	if (!brandingHidden) {
 		const attr = el("p", "gr-attribution");
-		attr.appendChild(document.createTextNode("Powered by "));
 		const link = document.createElement("a");
 		link.href = "https://garrul.com";
 		link.target = "_blank";
 		link.rel = "noopener noreferrer";
+		// The product name is never translated; only the sentence around it is.
 		link.textContent = "Garrul";
-		attr.appendChild(link);
+		const [beforeLink, afterLink] = sAround("w.powered_by", "link");
+		attr.append(beforeLink, link, afterLink);
 		wrap.appendChild(attr);
 	}
 
@@ -2704,7 +2734,7 @@ const loadOnce = async (
 				if (errEl) {
 					showStatus(
 						errEl,
-						"Anti-spam check failed to load. Reload the page; if it keeps failing the site owner should check that https://challenges.cloudflare.com is reachable.",
+						s("w.ts.failed"),
 					);
 				}
 			},
@@ -2778,25 +2808,21 @@ const submit = async (
 	let waitedToken = "";
 	if (ts) {
 		const label = submitBtn?.textContent ?? "";
-		if (submitBtn) submitBtn.textContent = "Checking…";
+		if (submitBtn) submitBtn.textContent = s("w.ts.checking");
 		const waited = await ts.gate.wait();
 		if (submitBtn) submitBtn.textContent = label;
 		if (!waited.ok) {
 			switch (waited.reason) {
 				case "interactive":
-					notice("Complete the anti-spam check above, then post again.");
+					notice(s("w.ts.interactive"));
 					return;
 				case "timeout":
-					notice(
-						"The anti-spam check didn't load. Check your connection or reload the page.",
-					);
+					notice(s("w.ts.timeout"));
 					return;
 				case "retrying":
 					// Recoverable by construction: the gate has already asked the
 					// frame to re-challenge, so the next attempt has a real chance.
-					notice(
-						"The anti-spam check hit a snag and is retrying. Post again in a moment.",
-					);
+					notice(s("w.ts.retrying"));
 					return;
 				case "failed":
 					// `onFailed` already wrote the message and disabled the button.
@@ -2828,7 +2854,7 @@ const submit = async (
 		) as HTMLInputElement | null;
 		const turnstileToken = tokenInput?.value || waitedToken || "";
 		if (ts && !turnstileToken) {
-			notice("Complete the anti-spam check above, then post again.");
+			notice(s("w.ts.interactive"));
 			return;
 		}
 		const res = await fetch(`${apiBase}/api/v1/comments`, {
