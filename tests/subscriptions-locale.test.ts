@@ -174,4 +174,26 @@ describe("the pages the emailed links land on", () => {
 		expect(html).toContain('<html lang="en"');
 		expect(html).toContain("Link expired or already used.");
 	});
+
+	it("does not advertise a language the row stored but the registry lost", async () => {
+		// A row outlives the registry that validated its locale on the way in, so
+		// retiring a locale leaves live subscriptions pointing at a tag `tFor`
+		// no longer carries. The page must not claim `lang="zz"` over the English
+		// copy it actually renders — a mismatch only assistive tech reports.
+		await subscribe("?lang=de");
+		sqlite.prepare("UPDATE subscriptions SET locale = ? WHERE email = ?").run("zz", EMAIL);
+		const html = await (await landing(`confirm/${row().confirm_token}`)).text();
+		expect(html).toContain('<html lang="en"');
+		expect(html).toContain("confirmed for comment notifications on");
+	});
+
+	it("still honours a stored regional tag the registry resolves", async () => {
+		// The flip side: canonicalizing must not throw away a usable locale.
+		// `de-AT` is not a registry key but negotiates onto `de`.
+		await subscribe("?lang=de");
+		sqlite.prepare("UPDATE subscriptions SET locale = ? WHERE email = ?").run("de-AT", EMAIL);
+		const html = await (await landing(`confirm/${row().confirm_token}`)).text();
+		expect(html).toContain('<html lang="de"');
+		expect(html).toContain("Benachrichtigungen zu Kommentaren bei");
+	});
 });

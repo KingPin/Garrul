@@ -57,6 +57,7 @@ import { sendEmail } from "../lib/email";
 import { fillSubject, subjectTitle } from "../lib/post-title";
 import { readSession } from "../lib/session";
 import { DEFAULT_LOCALE, LOCALES, type Translator, tFor } from "../i18n";
+import { matchLocale } from "../i18n/negotiate";
 import type { LocaleVars } from "../lib/locale";
 
 const subscriptions = new Hono<{ Bindings: Bindings; Variables: LocaleVars }>();
@@ -76,11 +77,20 @@ const PROVIDER_VERIFIED = new Set(["github", "google"]);
  *
  * The final fallback covers this router being mounted without
  * `localeMiddleware` — cheaper than rendering `lang="undefined"` to find out.
+ *
+ * Both sources go through `matchLocale` because the return value becomes the
+ * document's `lang` (and its `dir`), not just the translator's key. The stored
+ * locale is negotiated-and-canonical at write time, but the row outlives the
+ * registry that validated it: retire a locale and every subscription holding it
+ * still resolves. Passed through verbatim that row would render `lang="de"`
+ * over English copy, since `tFor` falls back to English for a tag it doesn't
+ * carry — a mismatch a screen reader announces and a reader cannot see.
+ * Canonicalizing collapses that to "unusable, use the next source".
  */
 const landingLocale = (
 	rowLocale: string | null | undefined,
 	requestLocale: string | undefined,
-): string => rowLocale ?? requestLocale ?? DEFAULT_LOCALE;
+): string => matchLocale(rowLocale) ?? matchLocale(requestLocale) ?? DEFAULT_LOCALE;
 
 const randomToken = (): string => {
 	const bytes = new Uint8Array(32);
