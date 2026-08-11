@@ -41,8 +41,17 @@ export const LOCALES: Record<string, LocaleMeta> = {
 	en: { label: "English", endonym: "English", rtl: false, status: "source" },
 };
 
-/** Server-side string tables. English is the source; others may be partial. */
-const TABLES: Record<string, Partial<Record<StringKey, Message>>> = { en };
+export type LocaleTable = Partial<Record<StringKey, Message>>;
+
+/**
+ * Server-side string tables. English is the source; others may be partial.
+ *
+ * Exported so `tests/i18n-parity.test.ts` can check every registered locale
+ * without a hand-maintained list of them — a list that would go stale the first
+ * time someone adds a locale and forgets it, which is precisely the failure the
+ * parity test exists to catch.
+ */
+export const TABLES: Record<string, LocaleTable> = { en };
 
 /**
  * Whitelist check. Everything that reaches `tFor` from a request goes here.
