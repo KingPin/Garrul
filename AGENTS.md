@@ -494,7 +494,10 @@ iframe is a separate document) but inherits everything else.
 `?lang=` is the iframe's equivalent of `data-lang` — it lands on both
 the frame's `<html lang>` and the widget inside it. There is no
 `<html lang>` to inherit here (the frame *is* the document), so pass it
-explicitly when the surrounding page isn't in English:
+explicitly when the surrounding page isn't in English. The widget gets
+the tag verbatim; the frame's `<html lang>` gets the *matched* locale
+(`de-AT` → `de`, an unknown tag → `en`), so the document never claims a
+language it isn't rendering:
 
 ```js
 src.searchParams.set("lang", "de");

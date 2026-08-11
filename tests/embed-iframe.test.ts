@@ -158,14 +158,33 @@ describe("GET /embed/:slug", () => {
 			expect(body).toContain('data-lang=""');
 		});
 
+		it("narrows a regional tag to the locale that will render", async () => {
+			const body = await fetchPage("/embed/hello?lang=de-AT").then((r) =>
+				r.text(),
+			);
+			expect(body).toContain('<html lang="de">');
+			// The raw request still goes to the widget — the server matches it
+			// again, and a future de-AT registry entry should reach it intact.
+			expect(body).toContain('data-lang="de-AT"');
+		});
+
+		it("claims English in <html lang> for a tag that has no strings", async () => {
+			// Otherwise ?lang=xx tells a screen reader to switch voice for a frame
+			// that came back in English.
+			const body = await fetchPage("/embed/hello?lang=xx").then((r) => r.text());
+			expect(body).toContain('<html lang="en">');
+			expect(body).toContain('data-lang="xx"');
+		});
+
 		it("cannot break out of either attribute", async () => {
-			// Unknown tags are the server's problem when the widget asks for its
-			// strings; this route's only job is keeping the value in its quotes.
+			// <html lang> can only be a registry key now, so the payload can only
+			// reach data-lang — where the route's job is keeping it in its quotes.
 			const res = await fetchPage(
 				`/embed/hello?lang=${encodeURIComponent('"><script>alert(1)</script>')}`,
 			);
 			const body = await res.text();
 			expect(body).not.toContain("<script>alert(1)</script>");
+			expect(body).toContain('<html lang="en">');
 			expect(body).toContain("&quot;&gt;&lt;script&gt;");
 		});
 	});
