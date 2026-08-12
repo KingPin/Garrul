@@ -88,4 +88,5 @@ useful for a single demo page.
   `&include=votes,reactions`. The response then gains
   `votes: { slug: { score_up, score_down } }` and
   `reactions: { slug: { kind: count } }` for the enabled features —
-  e.g. render "12 💬 · 30 👍".
+  e.g. render "12 💬 · 30 🔥" from `reactions[slug].fire`. (The 👍 `like`
+  kind became 🔥 `fire` in v2.10.0.)
