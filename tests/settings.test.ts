@@ -593,7 +593,7 @@ describe("route gating — reactions", () => {
 		const env = mkGatedEnv({ reactions_enabled: false });
 		const res = await postJson(app, env, {
 			comment_id: "01HC000000000000000000ABCD",
-			kind: "like",
+			kind: "fire",
 		});
 		expect(res.status).toBe(403);
 		expect(((await res.json()) as { error: string }).error).toBe(

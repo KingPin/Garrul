@@ -37,8 +37,9 @@ export type ReactionKind = { kind: string; emoji: string };
  * migration, not an edit. `emoji` is presentation and can change freely.
  */
 export const REACTION_KINDS: readonly ReactionKind[] = [
-	{ kind: "like", emoji: "👍" },
+	{ kind: "fire", emoji: "🔥" },
 	{ kind: "love", emoji: "❤️" },
+	{ kind: "wow", emoji: "😮" },
 	{ kind: "laugh", emoji: "😂" },
 	{ kind: "hmm", emoji: "🤔" },
 	{ kind: "cry", emoji: "😢" },
@@ -48,6 +49,29 @@ export const REACTION_KINDS: readonly ReactionKind[] = [
 export const REACTION_KIND_SET: ReadonlySet<string> = new Set(
 	REACTION_KINDS.map((r) => r.kind),
 );
+
+/**
+ * Kinds this build still accepts on the wire but no longer renders.
+ *
+ * `like` 👍 was renamed to `fire` 🔥 in v2.10.0 — 👍 sat directly above an
+ * up-vote button and meant the same thing twice. Migration 0022 rewrites the
+ * stored rows, but a deploy and a migration are two events with a gap between
+ * them, and whichever lands second leaves a window: old code writing `like`
+ * after the rewrite would create rows no build can display. Accepting the old
+ * spelling and normalizing it on the way in closes the window in both
+ * directions.
+ *
+ * Removable once no deployment can still be running a pre-2.10.0 bundle.
+ */
+const DEPRECATED_KINDS: Readonly<Record<string, string>> = { like: "fire" };
+
+/**
+ * Map a wire value to the kind to store. Unknown kinds pass through unchanged
+ * for the caller's own membership check to reject — this must never be the
+ * thing that decides whether a kind is allowed.
+ */
+export const normalizeReactionKind = (kind: string): string =>
+	DEPRECATED_KINDS[kind] ?? kind;
 
 /**
  * Fold a toggle response back into a comment's reaction list.

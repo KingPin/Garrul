@@ -238,7 +238,7 @@ const post = (
 describe("page reactions — flag gating", () => {
 	it("403s when page_reactions_enabled is off", async () => {
 		const { app, env } = mkApp({ page_reactions_enabled: false });
-		const res = await post(app, env, "/reactions", { slug: "p", kind: "like" });
+		const res = await post(app, env, "/reactions", { slug: "p", kind: "fire" });
 		expect(res.status).toBe(403);
 		expect(((await res.json()) as { error: string }).error).toBe(
 			"page_reactions_disabled",
@@ -249,21 +249,21 @@ describe("page reactions — flag gating", () => {
 describe("page reactions — toggle/dedup", () => {
 	it("adds then removes on a repeat click from the same IP", async () => {
 		const { app, env } = mkApp({ page_reactions_enabled: true });
-		const r1 = await post(app, env, "/reactions", { slug: "p", kind: "like" });
+		const r1 = await post(app, env, "/reactions", { slug: "p", kind: "fire" });
 		const b1 = (await r1.json()) as {
 			added: boolean;
 			reactions: Record<string, number>;
 		};
 		expect(b1.added).toBe(true);
-		expect(b1.reactions.like).toBe(1);
+		expect(b1.reactions.fire).toBe(1);
 
-		const r2 = await post(app, env, "/reactions", { slug: "p", kind: "like" });
+		const r2 = await post(app, env, "/reactions", { slug: "p", kind: "fire" });
 		const b2 = (await r2.json()) as {
 			added: boolean;
 			reactions: Record<string, number>;
 		};
 		expect(b2.added).toBe(false);
-		expect(b2.reactions.like ?? 0).toBe(0);
+		expect(b2.reactions.fire ?? 0).toBe(0);
 	});
 
 	it("rejects an unknown reaction kind with 400", async () => {
@@ -272,11 +272,23 @@ describe("page reactions — toggle/dedup", () => {
 		expect(res.status).toBe(400);
 	});
 
+	it("counts the deprecated `like` as `fire`", async () => {
+		// Same alias as the comment-level route: an old cached bundle keeps working
+		// and lands its row under the kind this build renders. The article bar and
+		// the comment rows share one vocabulary, so they have to share this too.
+		const { app, env } = mkApp({ page_reactions_enabled: true });
+		const res = await post(app, env, "/reactions", { slug: "p", kind: "like" });
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { reactions: Record<string, number> };
+		expect(body.reactions.fire).toBe(1);
+		expect(body.reactions.like).toBeUndefined();
+	});
+
 	it("rejects a bad slug with 400", async () => {
 		const { app, env } = mkApp({ page_reactions_enabled: true });
 		const res = await post(app, env, "/reactions", {
 			slug: "bad slug!",
-			kind: "like",
+			kind: "fire",
 		});
 		expect(res.status).toBe(400);
 	});

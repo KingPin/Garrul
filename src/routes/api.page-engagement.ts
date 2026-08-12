@@ -34,7 +34,7 @@ import { loadFlags } from "../lib/settings";
 import { FALLBACK_LOCALE, tFor } from "../i18n";
 import type { LocaleVars } from "../lib/locale";
 // Shared with the comment-level route and the widget — see ../widget/reactions.
-import { REACTION_KIND_SET } from "../widget/reactions";
+import { REACTION_KIND_SET, normalizeReactionKind } from "../widget/reactions";
 
 const pageEngagement = new Hono<{ Bindings: Bindings; Variables: LocaleVars }>();
 
@@ -116,7 +116,9 @@ pageEngagement.post("/reactions", async (c) => {
 
 	const slug = validateSlug(body.slug ?? "");
 	if (!slug) return c.json({ error: t("err.post.invalid") }, 400);
-	const kind = (body.kind ?? "").trim();
+	// Normalize before the membership test, never instead of it: unknown kinds
+	// come back unchanged and are rejected below.
+	const kind = normalizeReactionKind((body.kind ?? "").trim());
 	if (!REACTION_KIND_SET.has(kind))
 		return c.json({ error: "invalid_kind" }, 400);
 
