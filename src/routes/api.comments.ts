@@ -22,6 +22,7 @@ import { Hono } from "hono";
 import type { Bindings } from "../index";
 import {
 	adminInsertSpamVerdict,
+	enqueueModeratorNotification,
 	enqueueNotification,
 	getOrCreateGhost,
 	getComment,
@@ -680,6 +681,20 @@ comments.post("/", async (c) => {
 		// extra ms beats silent data loss.
 		if (c.executionCtx) c.executionCtx.waitUntil(fanout);
 		else await fanout;
+	} else if (flags.moderator_email_enabled) {
+		// The exact inverse of the branch above, and that is the whole design:
+		// a comment either reaches readers or reaches the queue, so subscribers
+		// and moderators are never notified about the same event. Gated on the
+		// flag so an instance with moderator email off writes no rows at all
+		// rather than filling a queue nothing drains.
+		//
+		// Same waitUntil-or-await reasoning as the fan-out: without an
+		// executionCtx the runtime may cancel the promise once the response
+		// settles, and a lost row here means a spam comment sits in the queue
+		// with nobody told about it.
+		const notify = enqueueModeratorNotification(c.env.DB, inserted.id, "pending");
+		if (c.executionCtx) c.executionCtx.waitUntil(notify);
+		else await notify;
 	}
 
 	return c.json({ comment: serializeComment(inserted, author) }, 201);

@@ -124,7 +124,17 @@ describe("loadFlags — defaults", () => {
 			page_votes_enabled: false,
 			show_deleted_placeholders: false,
 			spam_first_comment_moderate: false,
+			moderator_email_enabled: false,
 		});
+	});
+
+	it("moderator email defaults OFF", async () => {
+		// Outbound mail an upgrade never asked for is the failure this default
+		// prevents: an existing install that lands this version keeps its queue
+		// silent until an operator opts in, so nobody's Resend quota or sending
+		// reputation gets spent on their behalf.
+		const { env } = mkEnv();
+		expect((await loadFlags(env)).moderator_email_enabled).toBe(false);
 	});
 
 	it("page-level features default OFF", async () => {

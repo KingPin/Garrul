@@ -234,6 +234,16 @@
       "addedIn": "1.8.0"
     },
     {
+      "name": "MODERATOR_EMAIL_ENABLED",
+      "required": false,
+      "addedIn": "2.9.0"
+    },
+    {
+      "name": "MODERATOR_NOTIFY_EMAILS",
+      "required": false,
+      "addedIn": "2.9.0"
+    },
+    {
       "name": "PAGE_REACTIONS_ENABLED",
       "required": false,
       "addedIn": "1.10.0"
@@ -357,7 +367,8 @@
     "0017_subscriptions_email_index.sql",
     "0018_email_send_budget.sql",
     "0019_audit_log_pii.sql",
-    "0020_subscriptions_locale.sql"
+    "0020_subscriptions_locale.sql",
+    "0021_moderator_notifications.sql"
   ],
   "breakingChanges": [
     {

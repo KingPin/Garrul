@@ -426,12 +426,20 @@ describe("confirmSendBudgets — operator-settable caps (issue #69)", () => {
 		// `scope` is the table's primary key, seeded by the migration — a rename
 		// here would silently take every budget down the fail-open path (no row →
 		// no ceiling) rather than erroring.
-		const seeded = sqlite
-			.prepare("SELECT scope FROM email_send_budget ORDER BY scope")
-			.all() as { scope: string }[];
-		expect(seeded.map((r) => r.scope)).toEqual(
-			DEFAULT_BUDGETS.map((b) => b.scope).sort(),
+		//
+		// A containment check, not an equality one: the table is shared, and
+		// migration 0021 seeds `moderator:*` rows into it for moderator mail. What
+		// this pins is that every scope *this* module names has a row.
+		const seeded = new Set(
+			(
+				sqlite.prepare("SELECT scope FROM email_send_budget").all() as {
+					scope: string;
+				}[]
+			).map((r) => r.scope),
 		);
+		for (const budget of DEFAULT_BUDGETS) {
+			expect(seeded.has(budget.scope)).toBe(true);
+		}
 	});
 
 	it("enforces an operator-lowered burst cap end to end", async () => {

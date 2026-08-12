@@ -65,6 +65,13 @@ OAUTH_CALLBACK_BASE = "https://comments.example.com"
 # Keep deleted comments in the thread as a placeholder ("[deleted]" /
 # "[removed by a moderator]") instead of pruning leaf deletions (default off):
 # SHOW_DELETED_PLACEHOLDERS = "false"
+# Email you when comments land in the moderation queue or get reported
+# (default off — one debounced digest per cron tick, never one mail per
+# comment). Needs the email block above; silently does nothing without it.
+# Recipients default to ADMIN_EMAILS; set the second var only if the alerts
+# belong somewhere else, such as a shared moderation@ alias.
+# MODERATOR_EMAIL_ENABLED = "false"
+# MODERATOR_NOTIFY_EMAILS = "moderation@example.com"
 # Display & pagination (all optional; clamped server-side). Also editable at
 # runtime from the admin Settings page. Top-level comments per initial load /
 # "Load older" click (default 25, range 1-200 — set 100 for pre-v1.10 behavior):

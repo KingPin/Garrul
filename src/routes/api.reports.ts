@@ -22,7 +22,12 @@
  */
 import { Hono } from "hono";
 import type { Bindings } from "../index";
-import { getComment, insertReport } from "../db/queries";
+import {
+	enqueueModeratorNotification,
+	getComment,
+	insertReport,
+} from "../db/queries";
+import { loadFlags } from "../lib/settings";
 import { requireIpHash } from "../lib/ip-hash";
 import { checkRateLimit } from "../lib/ratelimit";
 import { isInactiveGhost, requireActiveUser } from "../lib/active-user";
@@ -122,6 +127,17 @@ reports.post("/:id/report", async (c) => {
 			user_id: target.user_id,
 			ts: Date.now(),
 		});
+		// Inside the isNew branch on purpose: a duplicate report is a no-op
+		// everywhere else here, and a second email about a comment the moderator
+		// has already been told about is exactly the noise that gets moderator
+		// mail filtered away. The queue row is deduped a second time in the
+		// database (partial UNIQUE on comment_id + reason, migration 0021), which
+		// is what actually bounds a brigade — `isNew` is per reporting network.
+		if ((await loadFlags(c.env)).moderator_email_enabled) {
+			const notify = enqueueModeratorNotification(c.env.DB, id, "reported");
+			if (c.executionCtx) c.executionCtx.waitUntil(notify);
+			else await notify;
+		}
 	}
 
 	return c.json({ ok: true });

@@ -34,7 +34,8 @@ export type FlagKey =
 	| "page_reactions_enabled"
 	| "page_votes_enabled"
 	| "show_deleted_placeholders"
-	| "spam_first_comment_moderate";
+	| "spam_first_comment_moderate"
+	| "moderator_email_enabled";
 
 export type ResolvedFlags = Record<FlagKey, boolean>;
 
@@ -85,6 +86,19 @@ const FLAGS: Record<FlagKey, { env: keyof Bindings; default: boolean }> = {
 	// true), which only ever turns a previously-ignored value like "yes" on.
 	spam_first_comment_moderate: {
 		env: "SPAM_FIRST_COMMENT_MODERATE",
+		default: false,
+	},
+	// Email the operator when a comment lands in the queue or gets reported
+	// (src/lib/moderator-digest.ts). Default OFF for the usual upgrade reason,
+	// with an extra one behind it: this is *outbound mail*, so an install that
+	// silently started sending on upgrade would spend someone's Resend quota and
+	// their sending domain's reputation without being asked.
+	//
+	// The flag also gates the enqueue, not just the send — with it off, an
+	// instance writes no moderator_notifications rows at all rather than
+	// accumulating a queue nobody drains.
+	moderator_email_enabled: {
+		env: "MODERATOR_EMAIL_ENABLED",
 		default: false,
 	},
 };
