@@ -60,7 +60,11 @@ export const EN = {
 	"w.name_ph": "Your name",
 	"w.body_ph": "Add a comment…",
 	"w.email_ph": "you@example.com",
-	"w.notify": "Email me on new replies",
+	// A subscription is UNIQUE (post_slug, email) — it follows the thread, not
+	// your own comment, so every new comment on the post is delivered. The old
+	// wording ("on new replies") promised per-reply scoping the schema does not
+	// have; say what actually arrives rather than under-deliver on the label.
+	"w.notify": "Email me about new comments",
 	"w.post_comment": "Post comment",
 	"w.post_reply": "Post reply",
 	"w.reply_ph": "Reply to @{name}…",

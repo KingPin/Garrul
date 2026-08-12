@@ -42,7 +42,7 @@ export const de = {
 	// example.com is the RFC-2606 reserved example domain; a translated
 	// lookalike would be somebody's real domain.
 	"w.email_ph": "name@example.com",
-	"w.notify": "Bei neuen Antworten benachrichtigen",
+	"w.notify": "Bei neuen Kommentaren benachrichtigen",
 	"w.post_comment": "Kommentar posten",
 	"w.post_reply": "Antwort posten",
 	"w.reply_ph": "Antwort an @{name}…",
