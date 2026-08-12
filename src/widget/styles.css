@@ -112,6 +112,143 @@
    the host has pinned a theme — a dark-OS reader on a data-theme="light" widget
    would get a dark <select> popup floating over a light thread. */
 :host([data-theme="light"]) { color-scheme: light; }
+
+/* ---- Presets ----------------------------------------------------------
+   Named palettes selected with `data-preset` on the #garrul element, next to
+   data-slug and data-theme. Zero JS, same as data-theme.
+
+   THEMING.md exposed 21 variables and no worked examples, which is a fine
+   contract and a bad first impression: the answer to "can it look like my
+   site" was "here are 21 variables, write your own CSS". These are that CSS,
+   shipped.
+
+   Three rules per preset, in this order, and the order is load-bearing:
+     1. the light palette, unconditional;
+     2. the same preset under a dark OS, unless the host pinned light;
+     3. the same preset under a forced data-theme="dark".
+   Rules 2 and 3 carry two attribute selectors to rule 1's one, so they win on
+   specificity as well as source order. All of it sits after the base theme
+   blocks above, so a preset beats the built-in palette — and every value still
+   chains through its public --garrul-* var, so a host override beats the
+   preset. Precedence end to end: host override > preset > theme > light.
+
+   Adding a preset is non-breaking. Renaming or removing one is not — the
+   attribute values are as public as the variable names (docs/THEMING.md). */
+
+/* Monochrome and flat: the accent collapses onto the text color, the shadow
+   goes, corners go nearly square. Needs no dark twin — every value is
+   expressed in terms of another --gr-* token, so it inherits whichever palette
+   is active instead of hard-coding one. */
+:host([data-preset="minimal"]) {
+	--gr-accent: var(--garrul-accent, var(--gr-fg));
+	--gr-accent-fg: var(--garrul-accent-fg, var(--gr-input-bg));
+	--gr-accent-hover: var(--garrul-accent-hover, var(--gr-muted));
+	--gr-link: var(--garrul-link, var(--gr-fg));
+	--gr-radius: var(--garrul-radius, 3px);
+	--gr-shadow: var(--garrul-shadow, none);
+	/* --gr-surface is deliberately left alone. Flattening it to transparent
+	   reads well on the composer card and erases code blocks and inline code,
+	   which are backed by the same token. */
+	--gr-badge-bg: var(--garrul-badge-bg, var(--gr-hover));
+	--gr-badge-fg: var(--garrul-badge-fg, var(--gr-fg));
+}
+
+/* Rounded, violet, gently tinted surfaces — the "friendly blog" end. */
+:host([data-preset="soft"]) {
+	--gr-radius: var(--garrul-radius, 12px);
+	--gr-accent: var(--garrul-accent, #7c3aed);
+	--gr-accent-hover: var(--garrul-accent-hover, #6d28d9);
+	--gr-link: var(--garrul-link, #6d28d9);
+	--gr-border: var(--garrul-border, #e0d8f2);
+	--gr-surface: var(--garrul-surface, #faf8ff);
+	--gr-hover: var(--garrul-hover, #f1ebff);
+	--gr-badge-bg: var(--garrul-badge-bg, #ede4ff);
+	--gr-badge-fg: var(--garrul-badge-fg, #4c1d95);
+	--gr-shadow: var(--garrul-shadow, 0 2px 8px rgba(76,29,149,.10));
+}
+@media (prefers-color-scheme: dark) {
+	:host([data-preset="soft"]:not([data-theme="light"])) {
+		--gr-accent: var(--garrul-accent, #a78bfa);
+		--gr-accent-hover: var(--garrul-accent-hover, #8b5cf6);
+		--gr-accent-fg: var(--garrul-accent-fg, #1a1024);
+		--gr-link: var(--garrul-link, #c4b5fd);
+		--gr-border: var(--garrul-border, #38304a);
+		--gr-input-bg: var(--garrul-input-bg, #1c1a24);
+		--gr-surface: var(--garrul-surface, #1c1a24);
+		--gr-hover: var(--garrul-hover, #262030);
+		--gr-badge-bg: var(--garrul-badge-bg, #2c2440);
+		--gr-badge-fg: var(--garrul-badge-fg, #ddd0ff);
+	}
+}
+:host([data-preset="soft"][data-theme="dark"]) {
+	--gr-accent: var(--garrul-accent, #a78bfa);
+	--gr-accent-hover: var(--garrul-accent-hover, #8b5cf6);
+	--gr-accent-fg: var(--garrul-accent-fg, #1a1024);
+	--gr-link: var(--garrul-link, #c4b5fd);
+	--gr-border: var(--garrul-border, #38304a);
+	--gr-input-bg: var(--garrul-input-bg, #1c1a24);
+	--gr-surface: var(--garrul-surface, #1c1a24);
+	--gr-hover: var(--garrul-hover, #262030);
+	--gr-badge-bg: var(--garrul-badge-bg, #2c2440);
+	--gr-badge-fg: var(--garrul-badge-fg, #ddd0ff);
+}
+
+/* Maximum legibility: black-on-white (or the inverse), hard borders, no
+   shadow, near-square corners. For documentation sites and anyone with a
+   contrast floor to meet — every pair here clears WCAG AA at body size. */
+:host([data-preset="contrast"]) {
+	--gr-radius: var(--garrul-radius, 2px);
+	--gr-fg: var(--garrul-fg, #000);
+	--gr-muted: var(--garrul-muted, #3f3f46);
+	--gr-border: var(--garrul-border, #52525b);
+	--gr-accent: var(--garrul-accent, #0b3d91);
+	--gr-accent-hover: var(--garrul-accent-hover, #062a67);
+	--gr-link: var(--garrul-link, #0b3d91);
+	--gr-error: var(--garrul-error, #991b1b);
+	--gr-notice: var(--garrul-notice, #14507a);
+	--gr-surface: var(--garrul-surface, #f4f4f5);
+	--gr-hover: var(--garrul-hover, #e4e4e7);
+	--gr-badge-bg: var(--garrul-badge-bg, #e4e4e7);
+	--gr-badge-fg: var(--garrul-badge-fg, #000);
+	--gr-shadow: var(--garrul-shadow, none);
+}
+@media (prefers-color-scheme: dark) {
+	:host([data-preset="contrast"]:not([data-theme="light"])) {
+		--gr-fg: var(--garrul-fg, #fff);
+		--gr-muted: var(--garrul-muted, #d4d4d8);
+		--gr-border: var(--garrul-border, #a1a1aa);
+		--gr-input-bg: var(--garrul-input-bg, #000);
+		--gr-accent: var(--garrul-accent, #9ec5ff);
+		--gr-accent-fg: var(--garrul-accent-fg, #000);
+		--gr-accent-hover: var(--garrul-accent-hover, #c7ddff);
+		--gr-link: var(--garrul-link, #9ec5ff);
+		--gr-error: var(--garrul-error, #ff9f9f);
+		--gr-notice: var(--garrul-notice, #8ecbf5);
+		--gr-surface: var(--garrul-surface, #0a0a0a);
+		--gr-hover: var(--garrul-hover, #27272a);
+		--gr-badge-bg: var(--garrul-badge-bg, #27272a);
+		--gr-badge-fg: var(--garrul-badge-fg, #fff);
+		--gr-skel: var(--garrul-skel, #3f3f46);
+	}
+}
+:host([data-preset="contrast"][data-theme="dark"]) {
+	--gr-fg: var(--garrul-fg, #fff);
+	--gr-muted: var(--garrul-muted, #d4d4d8);
+	--gr-border: var(--garrul-border, #a1a1aa);
+	--gr-input-bg: var(--garrul-input-bg, #000);
+	--gr-accent: var(--garrul-accent, #9ec5ff);
+	--gr-accent-fg: var(--garrul-accent-fg, #000);
+	--gr-accent-hover: var(--garrul-accent-hover, #c7ddff);
+	--gr-link: var(--garrul-link, #9ec5ff);
+	--gr-error: var(--garrul-error, #ff9f9f);
+	--gr-notice: var(--garrul-notice, #8ecbf5);
+	--gr-surface: var(--garrul-surface, #0a0a0a);
+	--gr-hover: var(--garrul-hover, #27272a);
+	--gr-badge-bg: var(--garrul-badge-bg, #27272a);
+	--gr-badge-fg: var(--garrul-badge-fg, #fff);
+	--gr-skel: var(--garrul-skel, #3f3f46);
+}
+
 * { box-sizing: border-box; }
 .gr-root { display: flex; flex-direction: column; gap: 1rem; }
 .gr-form { display: flex; flex-direction: column; gap: 0.5rem; }

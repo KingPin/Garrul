@@ -435,6 +435,32 @@ ancestor.
 | `--garrul-shadow`     | `0 1px 2px rgba(0,0,0,.06)`                              | Box-shadow on raised surfaces          |
 | `--garrul-motion`     | `120ms`                                                  | Transition duration; `0ms` opts out    |
 
+### Presets (since v2.9.0)
+
+For a different look without picking colors by hand, set `data-preset`
+on the host element:
+
+```html
+<div id="garrul" data-slug="hello-world" data-api="{{INSTANCE_URL}}"
+  data-preset="soft"></div>
+```
+
+| `data-preset` | Look                                                     |
+| ------------- | -------------------------------------------------------- |
+| absent        | Default palette — blue accent, 6px corners, soft shadow  |
+| `minimal`     | Monochrome, no shadow, near-square corners               |
+| `soft`        | Rounded 12px, violet accent, tinted surfaces             |
+| `contrast`    | High contrast, hard borders, no shadow (WCAG AA pairs)   |
+
+Each preset has a light and a dark half, so it composes with `data-theme`
+and with `prefers-color-scheme` rather than replacing them. Any
+`--garrul-*` override you set still wins over the preset. Precedence:
+**host override > preset > `data-theme` > OS preference > light**.
+
+The iframe fallback (§6) takes the same thing as `?preset=` on the frame
+URL — which is the only styling available there, since a host page cannot
+reach into another document's custom properties.
+
 ### Dark mode
 
 The widget ships with a **built-in dark palette**, so hosts no longer have to

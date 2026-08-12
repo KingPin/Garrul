@@ -59,6 +59,38 @@ Or in a stylesheet:
 | `--garrul-shadow`         | `0 1px 2px rgba(0,0,0,.06)`              | Box-shadow on raised surfaces         |
 | `--garrul-motion`         | `120ms`                                  | Duration of every hover/press/state transition. Set `0ms` to opt out; a reader's `prefers-reduced-motion` overrides it either way |
 
+## Presets
+
+If you want a different look and don't want to pick 21 colors, set
+`data-preset` on the mount element:
+
+```html
+<div id="garrul" data-slug="hello-world" data-preset="soft"></div>
+```
+
+| `data-preset` | Look |
+| ------------- | ---- |
+| absent        | The default palette — blue accent, 6px corners, soft shadow |
+| `minimal`     | Monochrome. The accent collapses onto the text color, the shadow goes, corners go nearly square. Defined entirely in terms of the other tokens, so it tracks light/dark on its own |
+| `soft`        | Rounded (12px), violet accent, gently tinted surfaces |
+| `contrast`    | Black on white (or the inverse), hard borders, no shadow, near-square corners — every pair clears WCAG AA at body size |
+
+Presets are palettes, not themes: each one has a light and a dark half and
+composes with `data-theme` and with `prefers-color-scheme`. `data-preset="soft"
+data-theme="dark"` is the dark violet palette; the same preset with no
+`data-theme` follows the reader's OS.
+
+Your own `--garrul-*` overrides still win — a preset is a starting point you
+can keep editing, not a replacement for the variables. Full precedence:
+
+**host override > preset > `data-theme` > OS preference > light default**
+
+For the [iframe embed](../examples/iframe), where the host page can't reach the
+widget's variables at all, pass `?preset=soft` on the frame URL instead.
+
+Preset names are as public as the variable names: adding one is
+non-breaking, renaming or removing one is a MAJOR bump.
+
 ## Dark mode
 
 The widget ships with a built-in dark palette — hosts no longer have to
