@@ -599,7 +599,11 @@ providers (MailChannels, Postmark) can be wired by swapping the
 implementation. `EMAIL_PROVIDER` selects; only `resend` is implemented
 in v1.
 
-To enable digests:
+For the operator-facing overview — which channel notifies whom, and what
+a reader actually experiences — see `docs/notifications.md`. This section
+is the mechanism and the limits.
+
+To enable outbound email:
 
 1. Set `EMAIL_PROVIDER = "resend"` in `wrangler.toml`.
 2. Set `EMAIL_FROM` to a sender on a Resend-verified domain.
@@ -610,8 +614,8 @@ To enable digests:
 
 If `EMAIL_PROVIDER` or `RESEND_API_KEY` is unset, `sendEmail` returns
 `false`, the caller logs a warning, and the request continues.
-Operators who don't want digests can leave both unset and remove the
-`[triggers]` block to avoid registering the cron at all.
+Operators who don't want Garrul sending mail at all can leave both unset
+and remove the `[triggers]` block to avoid registering the cron.
 
 Triggers (events that produce a send):
 

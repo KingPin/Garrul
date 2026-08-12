@@ -252,9 +252,9 @@ out-of-band (e.g. via DevTools) without hitting `/signout`, the KV row
 lingers until its TTL expires (≤30 days); call `/signout` to revoke it
 now.
 
-## Email digests
+## Reply notification emails
 
-### Nothing happens after 15 minutes
+### A reader subscribed but nothing arrives after 15 minutes
 
 Check, in order:
 
@@ -262,11 +262,12 @@ Check, in order:
 2. `RESEND_API_KEY` is set as a secret (`wrangler secret list`).
 3. `EMAIL_FROM` is set, and the from-address domain is verified in
    the Resend dashboard.
-4. `PUBLIC_BASE_URL` is set — the digest needs it for permalinks.
+4. `PUBLIC_BASE_URL` is set — the email needs it for permalinks and for
+   the confirm/unsubscribe links.
 5. The cron trigger is configured: `[triggers] crons = ["*/15 * * * *"]`
    in `wrangler.toml`. View runs in the dashboard under your worker.
 
-### Digest emails arrive but links go to wrong URL
+### Notification emails arrive but links go to the wrong URL
 
 `PUBLIC_BASE_URL` should point at the **worker**, not the blog. The
 `/c/:id` redirect lives on the worker and bounces to the post's URL

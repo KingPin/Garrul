@@ -28,8 +28,9 @@ tag's docs rather than `main`.
 | Doc | Covers |
 | --- | --- |
 | [`../AGENTS-OPERATE.md`](../AGENTS-OPERATE.md) | The operator manual: vars vs. secrets, `ALLOWED_ORIGINS`, Turnstile, OAuth providers, email, day-to-day operation, backups, upgrades. |
-| [`troubleshooting.md`](troubleshooting.md) | Symptom-by-symptom fixes across setup, embedding, OAuth, cookies/sessions, digests, and performance. |
+| [`troubleshooting.md`](troubleshooting.md) | Symptom-by-symptom fixes across setup, embedding, OAuth, cookies/sessions, notification email, and performance. |
 | [`ANTISPAM.md`](ANTISPAM.md) | What's always on, which optional layers to enable, and how to work the moderation queue. |
+| [`notifications.md`](notifications.md) | **Which channel notifies whom.** Reply notifications by email are built in — the reader flow, the queue-and-cron mechanism, the three settings that turn it on, and how it degrades when you don't. Plus where webhooks and the Telegram bot fit. |
 | [`webhooks.md`](webhooks.md) | Outbound payload format, signature verification, retries and auto-disable, Slack/Discord/Telegram adapters. |
 | [`telegram.md`](telegram.md) | Operator bot: bot creation, secrets, webhook registration, notifications, commands, daily digest. |
 | [`ip-hashing.md`](ip-hashing.md) | What `ip_hash` is, the three places it's stored, how long it's kept, what a leaked `IP_HASH_SECRET` exposes, and what rotation does and doesn't fix. Read before publishing a privacy policy or sharing a D1 export. |

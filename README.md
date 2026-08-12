@@ -25,7 +25,7 @@ dashboard page); every other integration is optional.
 - **Reply notifications by email**, built in — readers opt in from the
   widget, confirm by double-opt-in, and get a debounced digest when new
   comments land. No webhook or external pipeline required; bring a
-  Resend key
+  Resend key — [`docs/notifications.md`](docs/notifications.md)
 - **RSS feeds**, comment counts, permalinks
 - **Admin UI** for moderation queue + user management
 - **Webhook out** on every comment event — generic, Slack, Discord, or Telegram

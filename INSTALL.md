@@ -24,7 +24,7 @@ spent waiting for DNS and clicking through OAuth consent screens.
     optional): GitHub, Google, Facebook, X, Discord
   - Cloudflare Turnstile site + secret keys (required for anonymous
     commenting)
-  - Resend API key (optional, for email digests)
+  - Resend API key (optional, for reply notifications by email)
 
 ## 1. Authenticate `wrangler`
 
@@ -139,7 +139,7 @@ Have these handy either way:
 | `GH_CLIENT_SECRET`    | From step 2 (GitHub)                               |
 | `GOOGLE_CLIENT_ID`    | From step 2 (Google)                               |
 | `GOOGLE_CLIENT_SECRET`| From step 2 (Google)                               |
-| `RESEND_API_KEY`      | <https://resend.com/api-keys> (only if using digests) |
+| `RESEND_API_KEY`      | <https://resend.com/api-keys> (only for email notifications) |
 | `WEBHOOK_URL`         | Optional — fire-and-forget POST on comment events  |
 
 Those are the common ones; `secrets.example.env` has the full set,
@@ -160,7 +160,7 @@ ALLOWED_ORIGINS = "https://yourblog.example.com"   # comma-separated
 ADMIN_EMAILS    = "you@example.com"                # comma-separated
 PUBLIC_BASE_URL     = "https://comments.example.com"
 OAUTH_CALLBACK_BASE = "https://comments.example.com"
-EMAIL_PROVIDER = "resend"                          # remove if not using digests
+EMAIL_PROVIDER = "resend"                          # remove if you don't want email
 EMAIL_FROM     = "Garrul <comments@example.com>"   # must be a verified Resend sender
 ```
 
@@ -228,13 +228,19 @@ Drop the widget into a page on your blog:
 Post a comment as a signed-in user and as a guest (the guest path
 exercises Turnstile + rate-limit + sanitizer).
 
-## Cron / digest emails
+## Cron / reply notification emails
 
 `wrangler.example.toml` ships with a cron trigger that runs every
-15 minutes to deliver email digests. The cron fires automatically
-on deploy. If `EMAIL_PROVIDER`/`RESEND_API_KEY` are unset, the job
-no-ops cleanly. Remove the `[triggers]` block if you don't want
-the cron registered at all.
+15 minutes and delivers reply notifications to readers who subscribed
+to a thread. It fires automatically on deploy. The cron is what
+*debounces* the sends — a burst of replies coalesces into one email per
+subscriber instead of N — not what schedules them; the send is caused by
+the comment. If `EMAIL_PROVIDER`/`RESEND_API_KEY` are unset, the job
+no-ops cleanly. Remove the `[triggers]` block if you don't want the cron
+registered at all.
+
+Full picture — reader flow, the other notification channels, and what to
+check when mail doesn't arrive: [`docs/notifications.md`](docs/notifications.md).
 
 ## Configuration reference
 
@@ -251,7 +257,7 @@ goes — is section 5 of `AGENTS-OPERATE.md`, generated from
 | ------------------------------ | -------------------- | ----- |
 | `ALLOWED_ORIGINS`              | yes                  | Comma-separated origins allowed to embed and POST. No trailing slash. |
 | `ADMIN_EMAILS`                 | yes                  | Comma-separated; matching OAuth signups auto-admin. |
-| `PUBLIC_BASE_URL`              | yes                  | Public URL of this worker; used in permalinks and digests. |
+| `PUBLIC_BASE_URL`              | yes                  | Public URL of this worker; used in permalinks and notification emails. |
 | `OAUTH_CALLBACK_BASE`          | if OAuth enabled     | Same value as `PUBLIC_BASE_URL` in most setups. |
 | `IP_HASH_SECRET`               | yes                  | HMAC-SHA-256 pepper. Never store raw IPs. |
 | `TURNSTILE_SITE_KEY` / `_SECRET` | for anon commenting | From the Turnstile dashboard. |
@@ -260,9 +266,9 @@ goes — is section 5 of `AGENTS-OPERATE.md`, generated from
 | `FACEBOOK_CLIENT_ID` / `_SECRET` | for Facebook sign-in | From your Facebook app (developers.facebook.com). |
 | `TWITTER_CLIENT_ID` / `_SECRET` | for X sign-in        | X OAuth 2.0 credentials; provider slug is `twitter`. X returns no email. |
 | `DISCORD_CLIENT_ID` / `_SECRET` | for Discord sign-in  | From discord.com/developers → OAuth2. |
-| `EMAIL_PROVIDER`               | for digests          | Set to `resend`. |
-| `RESEND_API_KEY`               | for digests          | Sender domain must be verified in Resend. |
-| `EMAIL_FROM`                   | for digests          | e.g. `Garrul <comments@example.com>`. |
+| `EMAIL_PROVIDER`               | for reply notifications | Set to `resend`. |
+| `RESEND_API_KEY`               | for reply notifications | Sender domain must be verified in Resend. |
+| `EMAIL_FROM`                   | for reply notifications | e.g. `Garrul <comments@example.com>`. |
 | `WEBHOOK_URL`                  | optional             | Fire-and-forget POST on comment events. |
 | `EDIT_WINDOW_MINUTES`          | optional             | Default 15; `0` disables editing. Overridable at runtime from Admin → Settings. |
 | `JWT_SECRET`                   | required             | HMAC key for the signed OAuth state cookie. Sign-in fails without it. Generated by `setup.sh`. |
