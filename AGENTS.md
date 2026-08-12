@@ -358,6 +358,14 @@ what you preview is byte-identical to what gets posted, with no
 client-side markdown library and no XSS divergence. The endpoint is
 public but rate-limited; no auth required.
 
+### Deleting your own comment (since v2.9.0)
+
+Delete asks for confirmation **in place**: the button becomes
+"Delete this comment? [Delete] [Cancel]" in the same row. Focus lands on
+Cancel, and `Escape` backs out. Before v2.9.0 this was `window.confirm()`,
+which is suppressed entirely in some webviews and in cross-origin iframes
+without user activation — where the button appeared to do nothing.
+
 ### Comment length (since v2.9.0)
 
 A comment body is capped at **10,000 characters**. This is a constant, not

@@ -1214,19 +1214,57 @@ const buildActions = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): HTMLEleme
 	if (isOwn) {
 		const delBtn = el("button", undefined, s("w.delete"));
 		delBtn.type = "button";
-		delBtn.addEventListener("click", async () => {
-			// Plain confirm is the smallest robust UX; the widget doesn't
-			// ship its own modal layer to keep the bundle small.
-			if (!window.confirm(s("w.delete_confirm"))) return;
-			try {
-				const res = await fetch(
-					apiUrl(ctx.apiBase, `/api/v1/comments/${encodeURIComponent(n.id)}`),
-					{ method: "DELETE", credentials: "include" },
-				);
-				if (res.ok) ctx.reload();
-			} catch {
-				// no-op; reload not triggered
-			}
+		delBtn.addEventListener("click", () => {
+			// Two steps in place, not window.confirm(). A native dialog is
+			// unstyleable, says the *page's* origin rather than the site's name,
+			// and is suppressed outright in some webviews and in cross-origin
+			// iframes with no user-activation — where the old code silently did
+			// nothing at all. This is the same in-place replacement the Report
+			// button already does, so it needs no modal layer.
+			const confirmWrap = el("span", "gr-confirm");
+			const yes = el("button", "gr-confirm-yes", s("w.delete"));
+			yes.type = "button";
+			const no = el("button", undefined, s("w.cancel"));
+			no.type = "button";
+			confirmWrap.append(el("span", undefined, s("w.delete_confirm")), yes, no);
+			delBtn.replaceWith(confirmWrap);
+			// Replacing the focused button drops focus to <body>, stranding a
+			// keyboard user mid-thread. Land on Cancel: for a destructive action
+			// the safe option is the one a stray Enter should hit.
+			no.focus();
+
+			const dismiss = (): void => {
+				confirmWrap.replaceWith(delBtn);
+				delBtn.focus();
+			};
+			no.addEventListener("click", dismiss);
+			confirmWrap.addEventListener("keydown", (e) => {
+				if (e.key !== "Escape") return;
+				e.preventDefault();
+				e.stopPropagation();
+				dismiss();
+			});
+
+			yes.addEventListener("click", async () => {
+				yes.disabled = true;
+				no.disabled = true;
+				try {
+					const res = await fetch(
+						apiUrl(ctx.apiBase, `/api/v1/comments/${encodeURIComponent(n.id)}`),
+						{ method: "DELETE", credentials: "include" },
+					);
+					if (res.ok) {
+						ctx.reload();
+						return;
+					}
+				} catch {
+					// Network failure — same handling as a refusal below.
+				}
+				// The delete did not happen, so do not leave the row looking like
+				// it is mid-flight. Back out to the button the reader started
+				// from; a second attempt is one click away.
+				dismiss();
+			});
 		});
 		row.appendChild(delBtn);
 	}
