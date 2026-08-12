@@ -971,13 +971,18 @@ const buildReactions = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 		const btn = el("button", "gr-reaction");
 		btn.type = "button";
 		btn.dataset.kind = kind;
-		// The label is the accessible name rather than visible text here: six
-		// labelled cells per comment would be more chrome than the comment. A
-		// screen reader otherwise announces the raw emoji, and on a couple of
-		// them ("crying face") that reads as the wrong sentiment entirely.
-		btn.setAttribute("aria-label", s(labelKey));
+		// The label is hidden text rather than visible text: six labelled cells per
+		// comment would be more chrome than the comment. Hidden *in the tree*
+		// though, never an aria-label — that would become the whole accessible
+		// name and drop the count child, so a screen reader announced "Funny, not
+		// pressed" and never the number the button exists to report. The emoji is
+		// taken out of the name for the reason the label is needed at all: on a
+		// couple of them ("crying face") the glyph's own name reads as the wrong
+		// sentiment entirely.
 		btn.title = s(labelKey);
-		btn.appendChild(el("span", "gr-reaction-emoji", emoji));
+		const emojiSpan = el("span", "gr-reaction-emoji", emoji);
+		emojiSpan.setAttribute("aria-hidden", "true");
+		btn.append(el("span", "gr-sr", s(labelKey)), emojiSpan);
 		const count = el("span", "gr-reaction-count", "");
 		btn.appendChild(count);
 		cells.set(kind, { btn, count });

@@ -427,6 +427,22 @@ button:active:not([disabled]) { opacity: 0.75; }
 	overflow: hidden;
 	clip-path: inset(50%);
 }
+/* Visible only to assistive tech. The rule above collapses a live region while
+   keeping it announceable; this one hides content permanently, for text that
+   belongs in an element's accessible name but not on screen. `clip-path` rather
+   than `display: none`, which takes it out of the a11y tree and so defeats the
+   point. No offsets are set, so it stays at its static position and cannot
+   extend the page. */
+.gr-sr {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	padding: 0;
+	border: 0;
+	overflow: hidden;
+	white-space: nowrap;
+	clip-path: inset(50%);
+}
 .gr-error.is-notice { color: var(--gr-notice); }
 /* Composer submit errors are inline (text only) — a box-in-a-box reads too
    heavy next to the composer. The :not(.is-notice) guard keeps the boxed
@@ -575,7 +591,8 @@ button:active:not([disabled]) { opacity: 0.75; }
 }
 /* Article-bar cells only: emoji + count on one line, label under it. Six of
    these per *comment* would be more chrome than the comment, so the per-comment
-   row keeps the compact pill and carries the label as its accessible name. */
+   row keeps the compact pill and carries the same label as hidden text (.gr-sr)
+   inside the button instead. */
 .gr-reaction-labelled {
 	display: inline-flex;
 	flex-direction: column;
