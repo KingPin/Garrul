@@ -12,7 +12,7 @@ Self-hosted comment system on Cloudflare Workers + D1 + KV + Turnstile. This fil
 - **Never put a per-request write on KV.** The free tier allows 1000 writes/day *account-wide*, so any unauthenticated endpoint that writes KV per request is an account-wide outage primitive. Counters and response caches belong on the Cache API; KV is for sessions, OAuth state and settings.
 - **Anti-spam**: Cloudflare Turnstile.
 - **Email**: Resend only (`src/lib/email.ts`). The `EMAIL_PROVIDER` env var leaves room for more adapters, but Resend is the sole implementation today (MailChannels dropped its free Workers plan). Additional adapters are future work.
-- **Widget**: vanilla TypeScript, no framework. Built with esbuild. Bundle budget: `embed.js` ≤ 20KB gzipped.
+- **Widget**: vanilla TypeScript, no framework. Built with esbuild. Bundle budget: `embed.js` ≤ 30KB gzipped. Widget CSS lives in `src/widget/styles.css` and is minified into `styles.gen.ts` at build time — comments there cost the source nothing and readers nothing.
 - **Admin UI**: server-rendered HTML (Hono JSX) + Alpine.js for interactivity.
 - **Tests**: Vitest in the plain `node` pool. D1/KV are hand-rolled in-memory stubs, *not* Miniflare — see `vitest.config.ts`.
 
@@ -106,7 +106,7 @@ Never commit `wrangler.toml` (gitignored — `wrangler.example.toml` is the temp
 Two string layers, deliberately separate:
 
 - **Server** — `src/i18n/`. `tFor(locale)` returns a translator; `t` is the pre-bound English one. API error bodies, email and feed templates go through it. **Never reintroduce a module-global "active locale"** — one Worker isolate serves concurrent requests, so a mutable module-level locale leaks across requests at every `await`. Locale arrives per-request via `c.get("t")` (see `src/lib/locale.ts`); route handlers open with `const t = c.get("t") ?? tFor(DEFAULT_LOCALE);`, which shadows the module-level English `t` for the whole handler. Reach for the module-level `t` only for a string that gets **persisted** — `lib/moderation.ts` writes `t("ui.deleted")` into `users.name`, and localizing that would freeze the acting admin's language into every reader's view of the row.
-- **Widget** — `src/widget/strings.ts`. `tsconfig.widget.json` includes only `src/widget/**/*`, so the widget *cannot* import `src/i18n/`; the dependency is inverted instead — the server imports `EN` from the widget and serializes the merged table into `/api/v1/config`. English ships inlined in the bundle as the per-key fallback; other locales are served, never bundled (20 KB gz budget).
+- **Widget** — `src/widget/strings.ts`. `tsconfig.widget.json` includes only `src/widget/**/*`, so the widget *cannot* import `src/i18n/`; the dependency is inverted instead — the server imports `EN` from the widget and serializes the merged table into `/api/v1/config`. English ships inlined in the bundle as the per-key fallback; other locales are served, never bundled (30 KB gz budget).
 
 Locale is a property of the **site**, not the reader: `data-lang` → operator `default_locale` → host page `<html lang>` (auto-selectable locales only) → `en` (`resolveLocale` in `src/i18n/negotiate.ts` is the one implementation). `Accept-Language` and `navigator.language` are deliberately not consulted — a German reader on an English blog should see an English widget.
 
