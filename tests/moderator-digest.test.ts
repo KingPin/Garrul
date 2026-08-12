@@ -107,6 +107,27 @@ const pendingRows = () =>
 		)
 		.all() as { id: string; comment_id: string; reason: string; sent_at: number | null }[];
 
+/** Slots spent in the moderator burst window. */
+const burstSpent = (): number =>
+	(
+		sqlite
+			.prepare("SELECT sent FROM email_send_budget WHERE scope = ?")
+			.get("moderator:burst") as { sent: number }
+	).sent;
+
+/**
+ * Put `sent` slots on the moderator burst counter, inside the window the tick
+ * will reserve against. The cap is 10, so `spendBurst(10)` denies outright and
+ * `spendBurst(9)` leaves exactly one slot — the state that used to split a
+ * multi-recipient fan-out in half.
+ */
+const spendBurst = (n: number) =>
+	sqlite
+		.prepare(
+			"UPDATE email_send_budget SET sent = ?, window_start = ? WHERE scope = 'moderator:burst'",
+		)
+		.run(n, AFTER_DEBOUNCE);
+
 beforeEach(() => {
 	sent = [];
 	resendStatus = 200;
@@ -351,10 +372,24 @@ describe("runModeratorDigest — send failure", () => {
 		await enqueueModeratorNotification(env.DB, addComment("c1", "pending"), "pending");
 		await runModeratorDigest(env, AFTER_DEBOUNCE);
 
-		const burst = sqlite
-			.prepare("SELECT sent FROM email_send_budget WHERE scope = 'moderator:burst'")
-			.get() as { sent: number };
-		expect(burst.sent).toBe(0);
+		expect(burstSpent()).toBe(0);
+	});
+
+	it("names the addresses that failed but still clears the batch", async () => {
+		// One bad address must not hold the queue: the retry would re-mail everyone
+		// who already got it, every tick, for as long as that address bounces.
+		env.MODERATOR_NOTIFY_EMAILS = "good@example.com, bad@example.com";
+		vi.stubGlobal("fetch", async (_url: string, init: RequestInit) => {
+			const body = JSON.parse(String(init.body));
+			if (body.to.includes("bad@example.com")) return new Response("{}", { status: 422 });
+			sent.push(body);
+			return new Response("{}", { status: 200 });
+		});
+		await enqueueModeratorNotification(env.DB, addComment("c1", "pending"), "pending");
+		await runModeratorDigest(env, AFTER_DEBOUNCE);
+
+		expect(sent.map((s) => s.to).flat()).toEqual(["good@example.com"]);
+		expect(pendingRows()[0]!.sent_at).not.toBeNull();
 	});
 
 	it("never touches the confirmation budget", async () => {
@@ -369,6 +404,41 @@ describe("runModeratorDigest — send failure", () => {
 			.prepare("SELECT sent FROM email_send_budget WHERE scope = 'confirm:daily'")
 			.get() as { sent: number };
 		expect(confirm.sent).toBe(0);
+	});
+});
+
+describe("runModeratorDigest — the send budget", () => {
+	it("costs one slot per digest, not one per recipient", async () => {
+		env.MODERATOR_NOTIFY_EMAILS = "a@example.com, b@example.com, c@example.com";
+		await enqueueModeratorNotification(env.DB, addComment("c1", "pending"), "pending");
+		await runModeratorDigest(env, AFTER_DEBOUNCE);
+
+		expect(sent).toHaveLength(3);
+		expect(burstSpent()).toBe(1);
+	});
+
+	it("does not split a fan-out across a cap that runs out midway", async () => {
+		// The regression this pins. Reserving a slot per recipient made the batch
+		// divisible: with one slot left and two moderators, the first was mailed,
+		// the second was not, and the rows were marked sent for both — so the
+		// second never heard about those comments, on that tick or any later one.
+		spendBurst(9);
+		env.MODERATOR_NOTIFY_EMAILS = "a@example.com, b@example.com";
+		await enqueueModeratorNotification(env.DB, addComment("c1", "pending"), "pending");
+		await runModeratorDigest(env, AFTER_DEBOUNCE);
+
+		expect(sent.flatMap((s) => s.to)).toEqual(["a@example.com", "b@example.com"]);
+		expect(pendingRows()[0]!.sent_at).not.toBeNull();
+	});
+
+	it("mails nobody and holds the rows when the cap is already spent", async () => {
+		spendBurst(10);
+		env.MODERATOR_NOTIFY_EMAILS = "a@example.com, b@example.com";
+		await enqueueModeratorNotification(env.DB, addComment("c1", "pending"), "pending");
+		await runModeratorDigest(env, AFTER_DEBOUNCE);
+
+		expect(sent).toHaveLength(0);
+		expect(pendingRows()[0]!.sent_at).toBeNull();
 	});
 });
 

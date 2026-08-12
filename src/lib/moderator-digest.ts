@@ -53,6 +53,9 @@ const MAX_ITEMS_PER_TICK = 25;
 /**
  * The moderator mail ceiling. Its own scopes, seeded by migration 0021.
  *
+ * Counted **per digest, not per recipient** — see the reservation in
+ * `runModeratorDigest` for why the fan-out has to be indivisible.
+ *
  * Fixed rather than operator-settable, unlike the confirmation caps. Those are
  * tunable because a busy post can legitimately push a real subscriber into the
  * 429; there is no equivalent here. Volume is already bounded by the cron
@@ -203,28 +206,53 @@ export const runModeratorDigest = async (
 			? "1 comment needs review"
 			: `${items.length} comments need review`;
 
-	// One send per recipient, each reserving its own slot: the budget counts what
-	// actually leaves the instance, and a three-person moderation team costs three.
+	// One reservation for the whole fan-out, not one per recipient.
+	//
+	// The rows below are marked sent for *everyone* at once — they are a queue of
+	// comments, not of deliveries — so the fan-out has to be indivisible or the
+	// mark is a lie. Reserving per recipient made it divisible: a cap that ran out
+	// midway through the list mailed the recipients before it, marked the batch
+	// sent, and left everyone after it never hearing about those comments at all.
+	//
+	// Charging the budget per digest is also the honest accounting for what it is
+	// bounding. The cap exists to catch a runaway — a cron misfire, a retry loop —
+	// and a runaway is counted in ticks. The recipient list is operator-controlled
+	// and small, so per-address charging only made the ceiling depend on how many
+	// moderators there are, which is the one variable it has no reason to track.
+	const reservation = await reserveSend(
+		env.DB,
+		MODERATOR_SEND_BUDGETS,
+		now,
+		"moderator",
+	);
+	// Nothing goes out and nothing is marked: the rows stay pending and the next
+	// tick tries again, exactly as it does for a send failure.
+	if (!reservation.ok) return;
+
 	let anySent = false;
+	let undelivered = 0;
 	for (const to of recipients) {
-		const reservation = await reserveSend(
-			env.DB,
-			MODERATOR_SEND_BUDGETS,
-			now,
-			"moderator",
-		);
-		if (!reservation.ok) break;
-		const ok = await sendEmail(env, { to, from, subject, html });
-		if (ok) anySent = true;
-		// Hand the slot back on failure so a provider outage doesn't also spend the
-		// day's ceiling — the same reason the subscribe path releases.
-		else await reservation.release();
+		if (await sendEmail(env, { to, from, subject, html })) anySent = true;
+		else undelivered++;
 	}
 
 	if (anySent) {
+		// A single address failing is not a reason to hold the batch. The retry
+		// would re-mail everyone who already got it, and against an address that
+		// hard-bounces that repeats every tick forever. Name it instead, so the
+		// operator can fix the address rather than watch duplicates arrive.
+		if (undelivered > 0) {
+			log.warn("moderator digest partially undelivered", {
+				undelivered,
+				recipients: recipients.length,
+			});
+		}
 		await markModeratorNotificationsSent(env.DB, ids);
 		return;
 	}
+	// Hand the slot back so a provider outage doesn't also spend the day's ceiling
+	// — the same reason the subscribe path releases.
+	await reservation.release();
 	// Nothing went out. Leave every row pending for the next tick, and say so
 	// once — a silent failure here means an operator believes their queue is
 	// empty because nothing is telling them otherwise.

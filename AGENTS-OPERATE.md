@@ -735,6 +735,12 @@ counter rows, seeded by migration `0021`:
 | `moderator:burst` | 10 sends | 60 s |
 | `moderator:daily` | 500 sends | 24 h |
 
+Counted **per digest, not per recipient**: one tick spends one slot
+whether it mails one moderator or six, so growing the list never brings
+the cap closer. A tick that cannot reserve mails nobody and leaves its
+rows queued for the next one — the fan-out is all-or-nothing, so an
+exhausted cap can never mail half the team and mark the batch handled.
+
 Fixed, not settable, unlike the confirmation caps. Those are tunable
 because a busy post can legitimately 429 a real subscriber; there is no
 equivalent here — volume is bounded by the cron cadence (one digest per

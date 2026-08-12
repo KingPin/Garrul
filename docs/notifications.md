@@ -161,7 +161,11 @@ Same shape as the reader digest, and the same cron:
   Telegram bot.
 
 Its send budget is separate from the confirmation one (`moderator:burst`, 10/60 s;
-`moderator:daily`, 500/24 h — fixed, not settable). That separation is the point:
+`moderator:daily`, 500/24 h — fixed, not settable, and counted **per digest, not
+per recipient**, so adding a moderator to the list never brings the cap closer).
+A tick that can't reserve mails nobody and leaves its rows queued for the next
+one: the fan-out is all-or-nothing, so a cap can never mail half your team and
+mark the batch handled. That separation is the point:
 a spam flood filling your queue can't spend the budget that lets new subscribers
 confirm, and an attack on `/api/v1/subscribe` can't silence the flood alert.
 A tripped cap logs `moderator email budget exhausted` in `wrangler tail`.
