@@ -37,7 +37,11 @@ import { watchForSignIn } from "./auth-recovery";
 import { autoSizeTextarea } from "./autosize";
 import { createTurnstileGate, type TurnstileGate } from "./turnstile-gate";
 import { makeS, type StringTable, type WidgetKey } from "./strings";
-import { type ReactionCount, mergeReactionTotals } from "./reactions";
+import {
+	type ReactionCount,
+	REACTION_KINDS,
+	mergeReactionTotals,
+} from "./reactions";
 import { absoluteTime, isoTime, relativeTime } from "./time";
 // Generated from styles.css by scripts/build-styles.ts (gitignored, rebuilt by
 // build:assets). Edit styles.css, never the .gen file.
@@ -834,14 +838,6 @@ const mountTurnstileFrame = (
 		destroy: () => ac.abort(),
 	};
 };
-
-const REACTION_KINDS: { kind: string; emoji: string }[] = [
-	{ kind: "like", emoji: "👍" },
-	{ kind: "love", emoji: "❤️" },
-	{ kind: "laugh", emoji: "😂" },
-	{ kind: "hmm", emoji: "🤔" },
-	{ kind: "cry", emoji: "😢" },
-];
 
 const reactionsByKind = (rs: ReactionCount[]): Map<string, ReactionCount> => {
 	const m = new Map<string, ReactionCount>();

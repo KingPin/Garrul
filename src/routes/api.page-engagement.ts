@@ -33,11 +33,12 @@ import { writeEvent } from "../lib/analytics";
 import { loadFlags } from "../lib/settings";
 import { FALLBACK_LOCALE, tFor } from "../i18n";
 import type { LocaleVars } from "../lib/locale";
+// Shared with the comment-level route and the widget — see ../widget/reactions.
+import { REACTION_KIND_SET } from "../widget/reactions";
 
 const pageEngagement = new Hono<{ Bindings: Bindings; Variables: LocaleVars }>();
 
 const SLUG_RE = /^[a-zA-Z0-9_\-./]{1,200}$/;
-const ALLOWED_KINDS = new Set(["like", "love", "laugh", "hmm", "cry"]);
 
 const normalizeValue = (raw: unknown): VoteValue | null => {
 	if (raw === 1 || raw === -1 || raw === 0) return raw;
@@ -116,7 +117,8 @@ pageEngagement.post("/reactions", async (c) => {
 	const slug = validateSlug(body.slug ?? "");
 	if (!slug) return c.json({ error: t("err.post.invalid") }, 400);
 	const kind = (body.kind ?? "").trim();
-	if (!ALLOWED_KINDS.has(kind)) return c.json({ error: "invalid_kind" }, 400);
+	if (!REACTION_KIND_SET.has(kind))
+		return c.json({ error: "invalid_kind" }, 400);
 
 	const ipHash = await requireIpHash(c);
 	if (ipHash instanceof Response) return ipHash;

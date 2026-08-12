@@ -22,10 +22,11 @@ import { loadFlags } from "../lib/settings";
 import { bustTreeCache } from "../lib/tree-cache";
 import { FALLBACK_LOCALE, tFor } from "../i18n";
 import type { LocaleVars } from "../lib/locale";
+// The vocabulary is the widget's, imported rather than restated: a hand-copied
+// set here is a set that silently disagrees with the buttons the reader sees.
+import { REACTION_KIND_SET } from "../widget/reactions";
 
 const reactions = new Hono<{ Bindings: Bindings; Variables: LocaleVars }>();
-
-const ALLOWED_KINDS = new Set(["like", "love", "laugh", "hmm", "cry"]);
 
 type ReactionBody = {
 	comment_id?: string;
@@ -48,7 +49,7 @@ reactions.post("/", async (c) => {
 	const comment_id = (body.comment_id ?? "").trim();
 	const kind = (body.kind ?? "").trim();
 	if (!comment_id) return c.json({ error: t("err.not_found") }, 400);
-	if (!ALLOWED_KINDS.has(kind)) {
+	if (!REACTION_KIND_SET.has(kind)) {
 		return c.json({ error: "invalid_kind" }, 400);
 	}
 
