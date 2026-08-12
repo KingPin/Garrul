@@ -6,6 +6,7 @@ dist/
 build/
 *.tsbuildinfo
 src/widget/embed.bundled.ts
+src/widget/styles.gen.ts
 src/agents.bundled.ts
 src/lib/version.gen.ts
 
