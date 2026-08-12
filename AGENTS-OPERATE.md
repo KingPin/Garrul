@@ -629,6 +629,18 @@ Triggers (events that produce a send):
   (see `src/lib/digest.ts`). Subscriptions are thread-scoped, so a
   subscriber hears about every new comment on the post, not only
   direct replies to their own.
+- **Moderator digest** — a comment lands in the moderation queue, or a
+  reader files the first report on one. Also first-class built-in email,
+  also no webhook required, and the exact inverse of the reply
+  notification: readers hear when a comment is approved, you hear when
+  it isn't, so no comment ever notifies both. Off by default; turn it on
+  with `MODERATOR_EMAIL_ENABLED` or *Settings → Moderation → Email me
+  about the queue*. Recipients default to `ADMIN_EMAILS`;
+  `MODERATOR_NOTIFY_EMAILS` overrides for a shared alias. Same
+  5-minute debounce (`src/lib/moderator-digest.ts`), capped at 25
+  comments per tick, English-only like the admin UI and the bot.
+  Anything you handled inside the debounce window is dropped rather than
+  mailed. Silent no-op if email isn't configured.
 - **Subscription confirmation** — a reader subscribes to a thread
   (double-opt-in). This is the only send an unauthenticated caller can
   trigger, so it has its own ceiling — see below. A signed-in reader
@@ -708,6 +720,29 @@ Operator notes:
 - Full threat-model write-up: `docs/ANTISPAM.md` §"The
   confirmation-email ceiling".
 
+### The moderator-email ceiling
+
+Moderator mail runs through the same D1 machinery with its **own**
+counter rows, seeded by migration `0021`:
+
+| Budget | Cap | Window |
+| --- | --- | --- |
+| `moderator:burst` | 10 sends | 60 s |
+| `moderator:daily` | 500 sends | 24 h |
+
+Fixed, not settable, unlike the confirmation caps. Those are tunable
+because a busy post can legitimately 429 a real subscriber; there is no
+equivalent here — volume is bounded by the cron cadence (one digest per
+tick whatever the queue depth) and the recipient list is yours, so the
+only thing left for a cap to catch is a runaway.
+
+Separate scopes are the load-bearing part, not a tidiness choice: a spam
+flood filling your moderation queue cannot spend the budget that lets
+new subscribers confirm, and an attack on `/api/v1/subscribe` cannot
+silence the flood alert. Grep `wrangler tail` for `moderator email
+budget exhausted`; the queue rows stay pending and the next tick
+retries, so a tripped cap delays the mail rather than losing it.
+
 The unsubscribe link is a two-step flow: the `GET` from the email only
 renders a "Yes, unsubscribe me" button, and the `POST` behind that
 button does the write. Mail clients, link scanners and corporate
@@ -744,6 +779,9 @@ tracked by the `_migrations` table. Current set:
 - `0016_user_erasure.sql` — `users.erased_at`, for the admin erase-personal-data path
 - `0017_subscriptions_email_index.sql` — `subscriptions(email, confirmed_at)`; the per-email pending cap was a full table scan on every subscribe
 - `0018_email_send_budget.sql` — `email_send_budget`, the atomic global ceiling on outbound confirmation email (seeds its own counter rows)
+- `0019_audit_log_pii.sql` — trims PII out of the audit log
+- `0020_subscriptions_locale.sql` — `subscriptions.locale`, so each digest renders in the subscriber's own language
+- `0021_moderator_notifications.sql` — `moderator_notifications`, the queue behind moderator email (seeds its own `moderator:*` budget rows)
 
 Run with `npm run migrate` (local Miniflare) or
 `npm run migrate -- --remote` (production D1). Idempotent. Never edit a
@@ -1495,6 +1533,17 @@ bodies interpolate the offending field into a free-text `message`, so a
 recipients are your subscribers. Log lines are not a safe place for
 that. If the code alone isn't enough to diagnose a delivery problem, the
 Resend dashboard has the full message against the specific send.
+
+**Moderator email never arrives.** Everything above applies first — it
+uses the same provider and the same cron. Then check the switch: it is
+**off by default** and off *silently*, so an instance whose reader
+digests work fine will still send you nothing until
+`MODERATOR_EMAIL_ENABLED` (or *Settings → Moderation → Email me about
+the queue*) is on. Note the flag gates the **enqueue** as well as the
+send, so turning it on won't retroactively mail you about a queue that
+built up while it was off. Also confirm `ADMIN_EMAILS` is populated, or
+`MODERATOR_NOTIFY_EMAILS` if you set one — with neither, the pass
+returns without sending.
 
 **`*.workers.dev` in production.** Works just enough to be tempting,
 then breaks sign-in for Safari/Brave users. Map a custom subdomain
