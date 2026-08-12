@@ -44,7 +44,9 @@ Before running a single command, the user needs:
 - A **domain on Cloudflare DNS**. Required for `custom_domain = true`.
   If DNS is elsewhere, move it first or accept `*.workers.dev` (which
   has third-party-cookie issues in Safari/Brave — not recommended).
-- **Node.js >= 22** and `npm`. The repo's `.nvmrc` pins the version.
+- **Node.js >= 24** and `npm`. The repo's `.nvmrc` pins the version.
+  Node 22 fails at `npm ci` — see the `node-24-minimum` entry in
+  `release-manifest.json`.
 - A clone of the repo: `git clone https://github.com/KingPin/Garrul.git`.
 - `wrangler` (installed via `npm install` as a dev dep; no global needed).
 - **Optional credentials**: GitHub OAuth app (GitHub sign-in), Google
@@ -611,13 +613,24 @@ If `EMAIL_PROVIDER` or `RESEND_API_KEY` is unset, `sendEmail` returns
 Operators who don't want digests can leave both unset and remove the
 `[triggers]` block to avoid registering the cron at all.
 
-Triggers (events that produce a send): a subscriber to a thread sees a
-new reply land (digest email); a reader subscribes to a thread
-(double-opt-in confirmation email — the one transactional send, and the
-only one an unauthenticated caller can trigger, so it has its own
-ceiling below); an unsubscribe-link click (opens a confirmation page, no
-send). No transactional sends per comment; reply notification flows
-through the debounced cron.
+Triggers (events that produce a send):
+
+- **Reply notification** — a new comment lands on a thread someone has
+  subscribed to. This is a first-class, built-in email notification. It
+  does *not* require a webhook, and it is not merely a periodic
+  roundup: the send is caused by the comment. What the cron buys is
+  debouncing — a burst of replies coalesces into one email instead of N
+  (see `src/lib/digest.ts`). Subscriptions are thread-scoped, so a
+  subscriber hears about every new comment on the post, not only
+  direct replies to their own.
+- **Subscription confirmation** — a reader subscribes to a thread
+  (double-opt-in). This is the only send an unauthenticated caller can
+  trigger, so it has its own ceiling — see below.
+- An unsubscribe-link click opens a confirmation page and sends nothing.
+
+Nothing sends *inline* on the request path: every notification is
+queued to D1 and flushed by the cron, so a slow or failing Resend never
+delays or fails a reader's comment.
 
 ### The confirmation-email ceiling
 
