@@ -4,8 +4,16 @@ End-to-end guide to deploying Garrul to production on Cloudflare
 Workers. If you just want to poke at it locally, see the
 [local development](#local-development) section at the bottom.
 
-Estimated time: **20–30 minutes** the first time, most of it
-spent waiting for DNS and clicking through OAuth consent screens.
+Estimated time: **a few minutes** to get a live instance on
+`*.workers.dev`, or **20–30 minutes** for the full production setup —
+most of that spent waiting on DNS and clicking through OAuth consent
+screens.
+
+You don't have to decide up front. `*.workers.dev` is a real
+deployment on the same free tier, not a sandbox, and moving to a
+custom domain later is one config block and a redeploy — no data
+migration. Every step below works on both paths; only
+[step 5](#5-configure-wranglertoml) differs.
 
 > **Using an AI assistant for install?** `AGENTS-OPERATE.md` at the
 > repo root is purpose-built for AI coding assistants helping you
@@ -14,11 +22,12 @@ spent waiting for DNS and clicking through OAuth consent screens.
 ## Prerequisites
 
 - A **Cloudflare account** (free plan is fine for small operators).
-- A **domain on Cloudflare DNS**. The custom-domain route needs the
-  zone to be on Cloudflare; if your DNS is elsewhere, move it first
-  or skip the custom domain (not recommended — see
-  [Custom domain](#5-configure-wranglertoml) below).
 - **Node.js ≥ 24** and `npm`. The repo's `.nvmrc` pins the version.
+- **Optional: a domain on Cloudflare DNS.** Only the custom-domain
+  route needs it, and only because `custom_domain = true` requires the
+  zone to be on Cloudflare. Skip it and you deploy to `*.workers.dev`
+  instead — see [step 5](#5-configure-wranglertoml) for what that
+  costs you.
 - A few external credentials, gathered as you go:
   - OAuth apps for whichever sign-in providers you want (all
     optional): GitHub, Google, Facebook, X, Discord
@@ -164,7 +173,16 @@ EMAIL_PROVIDER = "resend"                          # remove if you don't want em
 EMAIL_FROM     = "Garrul <comments@example.com>"   # must be a verified Resend sender
 ```
 
-**Custom domain (strongly recommended).** Uncomment the `routes`
+Then pick where the Worker answers requests. Both options are real
+deployments on the same free tier; the only difference is sign-in.
+
+**Trying it out — `*.workers.dev`.** Leave the `routes` block
+commented out and deploy. Cloudflare hands you a
+`garrul.<your-subdomain>.workers.dev` URL, which `wrangler deploy`
+prints in step 7. Set `PUBLIC_BASE_URL`, `OAUTH_CALLBACK_BASE` and
+`ALLOWED_ORIGINS` to match once you have it.
+
+**Running it for real — a custom subdomain.** Uncomment the `routes`
 block and point it at your subdomain:
 
 ```toml
@@ -177,9 +195,15 @@ routes = [
 on Cloudflare DNS. Wrangler creates the proxied subdomain record
 for you on first deploy.
 
-Workers on `*.workers.dev` work but trigger third-party-cookie
-blocks in Safari and Brave — sign-in breaks for those users. Use a
-real subdomain in production.
+**Why production wants the subdomain.** The embed's session cookie is
+set from wherever the Worker lives, so on `*.workers.dev` it is a
+third-party cookie for every host page — and Safari and Brave block
+those, so sign-in silently fails for those readers. Anonymous
+commenting, moderation and the admin UI are unaffected.
+
+Switching from the first to the second is this config block plus a
+redeploy. The D1 database, KV namespaces and every comment in them
+stay exactly where they are.
 
 ## 6. Apply migrations to the production D1
 
@@ -200,9 +224,16 @@ Wrangler uploads the worker, builds the embed bundle, and (if a
 custom domain is configured) provisions the DNS record. The first
 deploy can take ~30 seconds while the certificate is issued.
 
+Wrangler prints the live URL when it finishes. On the `*.workers.dev`
+path that URL is the one you didn't know yet in step 5 — put it into
+`PUBLIC_BASE_URL` and `OAUTH_CALLBACK_BASE` now and deploy once more.
+(`ALLOWED_ORIGINS` is unaffected: it lists the sites that embed the
+widget, not the Worker itself.)
+
 ## 8. Verify
 
-Smoke test the deploy:
+Smoke test the deploy (substitute your `*.workers.dev` URL if you
+haven't set up a custom domain):
 
 ```bash
 curl -fsSL https://comments.example.com/api/v1/health

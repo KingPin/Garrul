@@ -41,9 +41,14 @@ is the maintainer's instance — don't assume the user wants to use it.
 Before running a single command, the user needs:
 
 - A **Cloudflare account** (free plan is sufficient).
-- A **domain on Cloudflare DNS**. Required for `custom_domain = true`.
-  If DNS is elsewhere, move it first or accept `*.workers.dev` (which
-  has third-party-cookie issues in Safari/Brave — not recommended).
+- **Optional: a domain on Cloudflare DNS.** Required for
+  `custom_domain = true`, and for nothing else. Without it the Worker
+  deploys to `*.workers.dev`, which is a real deployment on the same
+  free tier — fine for evaluating Garrul, not for production, because
+  the session cookie is third-party there and Safari/Brave block it
+  (sign-in fails; anonymous commenting and the admin UI still work).
+  Moving to a custom domain later is a `wrangler.toml` edit plus a
+  redeploy, with no data migration — so don't gate the install on it.
 - **Node.js >= 24** and `npm`. The repo's `.nvmrc` pins the version.
   Node 22 fails at `npm ci` — see the `node-24-minimum` entry in
   `release-manifest.json`.

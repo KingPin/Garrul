@@ -73,8 +73,9 @@ confirm_route() {
 		*)
 			echo
 			echo "✓ staying on *.workers.dev — leave [[routes]] commented out."
-			echo "  After your first deploy, set PUBLIC_BASE_URL, OAUTH_CALLBACK_BASE"
-			echo "  and ALLOWED_ORIGINS to the workers.dev URL wrangler prints."
+			echo "  After your first deploy, set PUBLIC_BASE_URL and"
+			echo "  OAUTH_CALLBACK_BASE to the workers.dev URL wrangler prints."
+			echo "  ALLOWED_ORIGINS stays the site that embeds the widget."
 			;;
 	esac
 }
