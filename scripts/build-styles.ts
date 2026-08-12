@@ -12,7 +12,9 @@
  * esbuild does the minifying rather than a hand-rolled regex on purpose: it
  * parses the CSS, so it will not mangle a `content:` string or a data URI.
  *
- * Called from build:assets, before build:embed. Output is gitignored.
+ * Wired as `prebuild:embed` rather than as one more step in build:assets, so
+ * that a bare `npm run build:embed` on a fresh checkout still resolves the
+ * generated import instead of failing on it. Output is gitignored.
  */
 import { transform } from "esbuild";
 import { readFileSync, writeFileSync } from "node:fs";
