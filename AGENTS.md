@@ -77,6 +77,21 @@ currently ~13 KB gzipped, against a CI-enforced 30 KB ceiling; run
 The script is `defer`red and the widget only mounts on
 `DOMContentLoaded`, so it never blocks rendering of the host page.
 
+**Layout stability (since v2.9.0).** Because the widget mounts after the
+page has painted, `#garrul` goes from 0px to the height of the loading
+skeleton, pushing whatever sits below the thread down the page. A
+non-deferred `<script>` gets this handled for you — the bundle reserves
+the skeleton's height the moment it executes. With `defer` (the
+recommendation above) it cannot: the script does not run until parsing
+is done. Reserve the space from the host page instead:
+
+```css
+#garrul { min-height: 220px; }
+```
+
+`min-height`, not `height` — the thread grows past it, and the widget
+releases its own reservation once real comments render.
+
 ### Per-framework wiring
 
 The host snippet above is the same on every stack — only the templating

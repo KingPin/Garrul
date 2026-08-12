@@ -146,6 +146,19 @@ comments narrower or wider, size the mount element:
 #garrul { max-width: 1100px; margin: 0 auto; }
 ```
 
+**Reserved height.** The widget mounts after the page paints, so `#garrul`
+goes from 0px to the loading skeleton's height and shoves everything below the
+thread down. With a non-deferred `<script>` the bundle reserves that height
+itself, the moment it runs; with `defer` it can't, because it doesn't run until
+parsing is finished. Claim the box from your own stylesheet instead:
+
+```css
+#garrul { min-height: 220px; }
+```
+
+Use `min-height`, never `height` — the thread grows past it. Anything you set
+here wins: the widget only reserves height when you haven't.
+
 **Composer height.** Composers open at a sensible minimum and grow to fit
 their content as you type, capped at 60% of the viewport so the
 Save/Cancel row stays on screen. Drag the resize grip and the widget stops

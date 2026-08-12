@@ -502,6 +502,18 @@ const buildAvatar = (a: TreeAuthor): HTMLElement => {
 		const img = el("img");
 		img.setAttribute("src", a.avatar_url);
 		img.setAttribute("alt", "");
+		// The 40px wrapper already reserves the box, so these buy no layout
+		// stability — they buy the network. A long thread is a long thread of
+		// provider avatars, every one of them a separate cross-origin request
+		// fired eagerly and decoded on the main thread while the reader is still
+		// looking at the first comment.
+		img.setAttribute("width", "40");
+		img.setAttribute("height", "40");
+		img.setAttribute("loading", "lazy");
+		img.setAttribute("decoding", "async");
+		// Provider CDNs get no referrer: which post someone is reading is not
+		// GitHub's or Google's business.
+		img.setAttribute("referrerpolicy", "no-referrer");
 		wrap.appendChild(img);
 	} else if (a.avatar_svg) {
 		wrap.appendChild(parseTrustedHtml(a.avatar_svg));
@@ -1979,7 +1991,44 @@ const init = () => {
 	style.textContent = STYLE_CSS;
 	root.append(style, buildSkeleton());
 
-	void load(root, slug, apiBase, host);
+	// Hand the height back as soon as there is real content to measure. Holding
+	// the reservation would leave a short thread — "be the first to comment"
+	// plus a composer — sitting in 220px of dead space forever.
+	void load(root, slug, apiBase, host).finally(() => {
+		host.style.minHeight = "";
+	});
+};
+
+/**
+ * Claim the widget's eventual height before the document finishes parsing.
+ *
+ * A plain (non-deferred) <script> in the body executes during parse, but
+ * init() waits for DOMContentLoaded. In between, #garrul is 0px tall — and
+ * then it jumps to the skeleton's height, shoving the footer and everything
+ * else below the thread down the page. Claiming the box at execution time
+ * turns that jump into nothing moving at all.
+ *
+ * Two shifts this cannot fix, so the docs cover them instead:
+ * - With the recommended `defer`, this runs in the same tick as init() and
+ *   buys nothing. Reserving space before a deferred script runs is the host
+ *   page's job — AGENTS.md §3 and docs/THEMING.md say so.
+ * - The skeleton → real thread swap. Nobody can size a thread they have not
+ *   fetched.
+ *
+ * `min-height`, so a longer thread outgrows it rather than being clipped, and
+ * only when the host has not sized the element themselves — this writes an
+ * inline style, which would otherwise silently beat their stylesheet.
+ */
+const reserveSpace = () => {
+	// Absent when the <script> sits above the mount element. Nothing to reserve
+	// yet, and init() will find it on DOMContentLoaded either way.
+	const host = document.getElementById("garrul");
+	if (!host) return;
+	const existing = getComputedStyle(host).minHeight;
+	if (existing && existing !== "0px" && existing !== "auto") return;
+	// Three skeleton rows and their gaps. Deliberately not the loaded widget's
+	// height: over-reserving trades one shift for a page-length hole.
+	host.style.minHeight = "220px";
 };
 
 const renderError = (root: ShadowRoot, err: unknown) => {
@@ -2616,6 +2665,9 @@ const submit = async (
 		ts?.gate.clear();
 	}
 };
+
+// Runs now, at script-execution time — that is the whole point of it.
+reserveSpace();
 
 if (document.readyState === "loading") {
 	document.addEventListener("DOMContentLoaded", init);
