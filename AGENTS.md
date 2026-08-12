@@ -358,6 +358,21 @@ what you preview is byte-identical to what gets posted, with no
 client-side markdown library and no XSS divergence. The endpoint is
 public but rate-limited; no auth required.
 
+### Composer keyboard shortcuts (since v2.9.0)
+
+Inside any composer — top-level, reply, or edit:
+
+| Keys                 | Does                                            |
+| -------------------- | ----------------------------------------------- |
+| `Cmd`/`Ctrl` + `Enter` | Posts the form you are in.                    |
+| `Escape`             | Closes a reply or edit box, discarding its draft. The top-level composer has nothing to back out to and ignores it. |
+
+Bound on the form, so they work from the name and email fields too, not
+just the textarea. Both are suppressed while an IME composition is
+active. `Escape` does not propagate to the host page — closing a reply
+box will not also close a lightbox or drawer you have open around it.
+The hint under the box is hidden on touch devices.
+
 ### Composer sizing (since v2.0.3)
 
 Composers open at a minimum height and **grow to fit their content** —

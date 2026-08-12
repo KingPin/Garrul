@@ -379,6 +379,39 @@ const buildToolbar = (ta: HTMLTextAreaElement): HTMLElement => {
 };
 
 /**
+ * The two keyboard shortcuts every comment box a reader has already used has:
+ * Cmd/Ctrl+Enter posts, Escape backs out. The widget shipped with no keydown
+ * handler at all, so a keyboard user had to tab past the preview tab, the six
+ * toolbar buttons and the captcha to reach Post.
+ *
+ * Bound on the form, not the textarea, so it works from the name field and the
+ * notify checkbox too.
+ */
+const bindComposerKeys = (form: HTMLFormElement, onCancel?: () => void): void => {
+	form.addEventListener("keydown", (e) => {
+		// An IME candidate window owns both keys while composing; Enter picks a
+		// candidate and Escape cancels the composition. Posting half a word of
+		// Japanese because the widget grabbed the keystroke is the failure mode.
+		if (e.isComposing) return;
+		if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+			e.preventDefault();
+			// requestSubmit(), not submit(): submit() skips the submit event, and
+			// the submit event is where every form in this widget does its work.
+			form.requestSubmit();
+			return;
+		}
+		if (e.key === "Escape" && onCancel) {
+			e.preventDefault();
+			// The host page may run its own Escape handler (lightbox, drawer,
+			// modal). Closing a reply box should not also close whatever the
+			// reader has open around it.
+			e.stopPropagation();
+			onCancel();
+		}
+	});
+};
+
+/**
  * Wrap a composer textarea in a GitHub-style "Write | Preview" tab strip.
  * Returns a container that should be inserted where the textarea would have
  * gone; the textarea is moved inside it.
@@ -410,7 +443,13 @@ const buildWritePreview = (
 	// this is the one place that has to grow the box while the author types.
 	// applyMarkdown re-fires `input`, so toolbar insertions size too.
 	textarea.addEventListener("input", () => autoSize(textarea));
-	const hint = el("span", "gr-md-hint", s("w.md_hint"));
+	// One row under the box: what you can write on the left, how to send it on
+	// the right. The whole row hides together in Preview mode.
+	const hint = el("div", "gr-md-hint");
+	hint.append(
+		el("span", undefined, s("w.md_hint")),
+		el("span", "gr-kbd-hint", s("w.kbd_hint")),
+	);
 	const pane = el("div", "gr-preview");
 	pane.hidden = true;
 
@@ -1232,7 +1271,12 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 	save.type = "submit";
 	const cancel = el("button", undefined, s("w.cancel"));
 	cancel.type = "button";
-	cancel.addEventListener("click", () => wrap.remove());
+	// One dismissal path for the button and for Escape. An abandoned edit keeps
+	// nothing: the original body is still on the node, and the box was never a
+	// draft surface (attachDraft is only on the reply and top-level composers).
+	const dismiss = (): void => wrap.remove();
+	cancel.addEventListener("click", dismiss);
+	bindComposerKeys(wrap, dismiss);
 	actions.append(save, cancel);
 
 	// Prefill with the original markdown source. The tree payload only carries
@@ -1390,12 +1434,18 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 		});
 	}
 
-	cancel.addEventListener("click", () => {
+	// Escape and the Cancel button are the same act, so they run the same
+	// teardown — dropping the draft, disposing the Turnstile gate and removing
+	// the form. An Escape that only hid the box would leak the gate's global
+	// message listener for the rest of the page's life.
+	const dismiss = (): void => {
 		clearDraft(dkey);
 		tsGate?.dispose();
 		tsHandle?.destroy();
 		wrap.remove();
-	});
+	};
+	cancel.addEventListener("click", dismiss);
+	bindComposerKeys(wrap, dismiss);
 
 	// Same precedence as the top-level composer: the Turnstile failure message
 	// is sticky, so nothing here overwrites it or hands the button back.
@@ -2524,6 +2574,10 @@ const loadOnce = async (
 		e.preventDefault();
 		void submit(form, root, slug, apiBase, host);
 	});
+
+	// No cancel handler: the top-level composer is the page's resting state, so
+	// Escape has nothing to back out to. Cmd/Ctrl+Enter still posts.
+	bindComposerKeys(form);
 };
 
 const submit = async (

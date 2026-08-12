@@ -54,6 +54,10 @@ export const EN = {
 	"w.tab.write": "Write",
 	"w.tab.preview": "Preview",
 	"w.md_hint": "Styling with Markdown is supported",
+	// Both modifiers named, because the widget cannot tell which one this
+	// reader has: navigator.platform is deprecated and userAgentData is
+	// Chromium-only. The CSS hides this line entirely on a coarse pointer.
+	"w.kbd_hint": "⌘/Ctrl + Enter to post",
 	"w.preview.empty": "Nothing to preview yet.",
 	"w.preview.loading": "Loading preview…",
 	"w.preview.failed": "Preview failed. Try again.",

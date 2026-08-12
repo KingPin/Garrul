@@ -360,8 +360,12 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
    bare text button alike and moves no layout — no transform, so there is
    nothing for the reduced-motion block to undo. */
 button:active:not([disabled]) { opacity: 0.75; }
-.gr-md-hint { font-size: 0.8em; color: var(--gr-muted); }
+.gr-md-hint { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.5rem; font-size: 0.8em; color: var(--gr-muted); }
+/* Must stay after the rule above: same specificity, so source order is what
+   lets Preview mode hide the row. */
 .gr-md-hint[hidden] { display: none; }
+/* A keyboard hint is noise on a phone, and this row is already tight there. */
+@media (pointer: coarse) { .gr-kbd-hint { display: none; } }
 .gr-preview p { margin: 0.3em 0; }
 .gr-preview a { color: var(--gr-link); }
 /* Physical left, deliberately: top is what keeps this out of scrollable
