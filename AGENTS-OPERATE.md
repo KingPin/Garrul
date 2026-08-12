@@ -1142,29 +1142,31 @@ you want the blast radius frozen while you work.
 npm run db:export -- garrul-backup-pre-purge.sql
 
 # 2. Purge. --remote hits production; drop it to rehearse against local.
-npx wrangler d1 execute garrul-db --remote --command \
+npx wrangler d1 execute DB --remote --command \
   "UPDATE comments SET ip_hash = NULL, user_agent = NULL
    WHERE (ip_hash IS NOT NULL OR user_agent IS NOT NULL);"
 
-npx wrangler d1 execute garrul-db --remote --command \
+npx wrangler d1 execute DB --remote --command \
   "UPDATE reports SET reporter_ip_hash = NULL WHERE reporter_ip_hash IS NOT NULL;"
 
 # 3. Anonymous ghost identities. See the warning below BEFORE running this.
-npx wrangler d1 execute garrul-db --remote --command \
+npx wrangler d1 execute DB --remote --command \
   "UPDATE users SET provider_id = NULL WHERE provider = 'anon' AND provider_id IS NOT NULL;"
 
 # 4. Rotate the secret.
 npx wrangler secret put IP_HASH_SECRET
 
 # 5. Confirm nothing survived.
-npx wrangler d1 execute garrul-db --remote --command \
+npx wrangler d1 execute DB --remote --command \
   "SELECT (SELECT COUNT(*) FROM comments
              WHERE (ip_hash IS NOT NULL OR user_agent IS NOT NULL)) AS comments,
           (SELECT COUNT(*) FROM reports WHERE reporter_ip_hash IS NOT NULL) AS reports,
           (SELECT COUNT(*) FROM users WHERE provider = 'anon' AND provider_id IS NOT NULL) AS ghosts;"
 ```
 
-Substitute your own `database_name` from `wrangler.toml` for `garrul-db`.
+`DB` there is the *binding*, not the database name — `wrangler d1
+execute` takes either, and the binding is the same on every install
+whatever you called the database. Nothing to substitute.
 
 **Step 3 is the destructive one.** Clearing a ghost's `provider_id`
 deletes the anonymous identity, not just a hash. Consequences, all

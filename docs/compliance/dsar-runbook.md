@@ -178,9 +178,9 @@ Their data is one `subscriptions` row (address, tokens, post slug) plus any queu
   the address. Deleting the address is SQL:
 
   ```bash
-  npx wrangler d1 execute garrul-db --remote --command \
+  npx wrangler d1 execute DB --remote --command \
     "DELETE FROM notifications WHERE subscription_id IN (SELECT id FROM subscriptions WHERE email = 'them@example.com')"
-  npx wrangler d1 execute garrul-db --remote --command \
+  npx wrangler d1 execute DB --remote --command \
     "DELETE FROM subscriptions WHERE email = 'them@example.com'"
   ```
 

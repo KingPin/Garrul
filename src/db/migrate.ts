@@ -4,7 +4,18 @@
  * the _migrations table, in lexicographic order. Idempotent.
  *
  * Invoked via `npm run migrate`. Reads --remote/--local from argv;
- * defaults to --local. Database name is read from wrangler.toml.
+ * defaults to --local.
+ *
+ * Addresses D1 by its *binding*, not by `database_name`. `wrangler d1
+ * execute` accepts either ("The name or binding of the DB"), and the
+ * binding is the half this repo owns — `src/index.ts` requires `DB` or
+ * the Worker does not run. `database_name` is the operator's to pick:
+ * `npm run setup` suggests `garrul-db` but nothing enforces it, and a
+ * Deploy-to-Cloudflare-style flow lets the user rename it outright. This
+ * script used to hard-code `garrul-db` while its own docblock claimed the
+ * name came from wrangler.toml, so anyone who chose a different one got
+ * "database not found" from a script that looked like it had read their
+ * config.
  *
  * Usage:
  *   npm run migrate              # local (Miniflare)
@@ -17,7 +28,7 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const MIGRATIONS_DIR = join(__dirname, "migrations");
-const DB_NAME = "garrul-db";
+const DB_BINDING = "DB";
 
 const remoteFlag = process.argv.includes("--remote") ? "--remote" : "--local";
 
@@ -28,10 +39,10 @@ const wrangler = (args: string[]): string =>
 	});
 
 const d1Exec = (sql: string): string =>
-	wrangler(["d1", "execute", DB_NAME, remoteFlag, "--json", "--command", sql]);
+	wrangler(["d1", "execute", DB_BINDING, remoteFlag, "--json", "--command", sql]);
 
 const d1File = (file: string): string =>
-	wrangler(["d1", "execute", DB_NAME, remoteFlag, "--json", "--file", file]);
+	wrangler(["d1", "execute", DB_BINDING, remoteFlag, "--json", "--file", file]);
 
 const ensureMigrationsTable = () => {
 	d1Exec(

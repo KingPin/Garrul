@@ -169,15 +169,22 @@ export const putSecret = (name: string): void => {
 	wrangler(["secret", "put", name], { inheritStdio: true });
 };
 
+/**
+ * `database` is a name *or* a binding — `wrangler d1 execute` accepts
+ * either. Callers pass the binding: it is the half this repo owns, while
+ * `database_name` is whatever the operator typed at setup. A wrong value
+ * here does not throw, it falls into the `catch` and reports zero applied
+ * migrations, which makes the upgrade plan offer to re-run all of them.
+ */
 export const queryAppliedMigrations = (
-	databaseName: string,
+	database: string,
 	remote: boolean,
 ): string[] => {
 	try {
 		const out = wrangler([
 			"d1",
 			"execute",
-			databaseName,
+			database,
 			remote ? "--remote" : "--local",
 			"--json",
 			"--command",

@@ -211,7 +211,8 @@ const computePlan = (
 ): Plan => {
 	const toml = wrangler.parseWranglerToml(REPO_ROOT);
 	const presentSecrets = wrangler.listSecrets();
-	const targetDb = target.d1Databases[0]?.databaseName ?? "garrul-db";
+	// By binding, not by database_name: the operator names their own D1.
+	const targetDb = target.d1Databases[0]?.binding ?? "DB";
 	const applied = wrangler.queryAppliedMigrations(targetDb, true);
 
 	return {
