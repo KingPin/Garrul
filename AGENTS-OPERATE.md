@@ -625,7 +625,9 @@ Triggers (events that produce a send):
   direct replies to their own.
 - **Subscription confirmation** — a reader subscribes to a thread
   (double-opt-in). This is the only send an unauthenticated caller can
-  trigger, so it has its own ceiling — see below.
+  trigger, so it has its own ceiling — see below. A signed-in reader
+  whose provider verified their address (GitHub, Google) is confirmed
+  on the spot instead, so this send never happens for them.
 - An unsubscribe-link click opens a confirmation page and sends nothing.
 
 Nothing sends *inline* on the request path: every notification is
@@ -634,7 +636,7 @@ delays or fails a reader's comment.
 
 ### The confirmation-email ceiling
 
-`POST /api/v1/subscriptions` sends one confirmation email per accepted
+`POST /api/v1/subscribe` sends one confirmation email per accepted
 request, which makes it the only endpoint where an unauthenticated
 caller spends your Resend quota and your domain's sending reputation.
 The rate limiter is not a hard ceiling there — on the default Cache API

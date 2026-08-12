@@ -1,5 +1,5 @@
 /**
- * POST /api/v1/subscribe                { post_slug, email }
+ * POST /api/v1/subscribe                { post_slug, email? }
  * GET  /api/v1/subscribe/confirm/:token
  * GET  /api/v1/subscribe/unsubscribe/:token
  *
@@ -17,8 +17,10 @@
  *   - `confirm_token` + `confirmed_at` columns gate the row from receiving
  *     digests. POST stores `confirmed_at = NULL` and emails the confirm
  *     link. GET /confirm/:token sets `confirmed_at = now`.
- *   - Fast path: when a logged-in user submits their own email AND the
+ *   - Fast path: when a logged-in user subscribes their own email AND the
  *     session user is provider-verified (github/google), we auto-confirm.
+ *     A signed-in caller may omit `email` entirely — the session supplies
+ *     it, which is what the widget relies on.
  *     The user already proved control of the inbox to the provider, so a
  *     second loop adds friction without security.
  *   - A per-email pending cap (5) prevents amplifying the confirmation
@@ -129,32 +131,44 @@ subscriptions.post("/", async (c) => {
 	if (!body) return c.json({ error: t("err.internal") }, 400);
 
 	const post_slug = (body.post_slug ?? "").trim();
-	const email = (body.email ?? "").trim().toLowerCase();
 	if (!post_slug || post_slug.length > 200) {
 		return c.json({ error: t("err.not_found") }, 400);
 	}
+
+	// Session first, because it can supply the address. requireActiveUser,
+	// not getUser: a banned user must not get the skip-the-confirmation-email
+	// fast path below, and shouldn't be subscribing under their account at all.
+	const session = await readSession(c);
+	const user = session
+		? await requireActiveUser(c.env.DB, session.user_id)
+		: null;
+	if (session && !user) return c.json({ error: t("err.banned") }, 403);
+
+	// `email` is optional for a signed-in caller, and that is not a
+	// convenience — it is the only way the widget's opt-in works for them.
+	// The composer renders an email field only for anonymous visitors
+	// ("Signed-in: we already have their email so just the box",
+	// src/widget/embed.ts), so an OAuth reader ticking the box posts no
+	// address at all. Before this fallback the request was never sent, the
+	// checkbox was a silent no-op for every signed-in reader, and the
+	// auto-confirm path below was unreachable from the widget.
+	//
+	// Anonymous callers are unchanged: no session, no fallback, a missing
+	// address is still a 400.
+	const email = ((body.email ?? "").trim() || (user?.email ?? ""))
+		.trim()
+		.toLowerCase();
 	if (!EMAIL_RE.test(email) || email.length > 320) {
 		return c.json({ error: "invalid_email" }, 400);
 	}
 
-	// Fast-path auto-confirm: logged-in user submitting their own
+	// Fast-path auto-confirm: logged-in user subscribing their own
 	// provider-verified email. Provider already vouched for inbox control.
-	let autoConfirm = false;
-	const session = await readSession(c);
-	if (session) {
-		// requireActiveUser, not getUser: a banned user must not get the
-		// skip-the-confirmation-email fast path, and shouldn't be subscribing
-		// under their account at all.
-		const user = await requireActiveUser(c.env.DB, session.user_id);
-		if (!user) return c.json({ error: t("err.banned") }, 403);
-		if (
-			user.email &&
-			user.email.toLowerCase() === email &&
-			PROVIDER_VERIFIED.has(user.provider)
-		) {
-			autoConfirm = true;
-		}
-	}
+	const autoConfirm =
+		user != null &&
+		user.email != null &&
+		user.email.toLowerCase() === email &&
+		PROVIDER_VERIFIED.has(user.provider);
 
 	// Bound never-confirmed rows per email to keep the confirmation email
 	// itself from being weaponized as a mailbomb. The cap is generous so

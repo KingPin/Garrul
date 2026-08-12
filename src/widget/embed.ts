@@ -2517,13 +2517,20 @@ const submit = async (
 		const notifyCb = form.querySelector(".gr-notify-cb") as HTMLInputElement | null;
 		const emailInput = form.querySelector(".gr-email-input") as HTMLInputElement | null;
 		if (notifyCb?.checked) {
+			// Field presence encodes `!signedIn` (see buildForm), the same way
+			// the Turnstile slot does. A signed-in visitor has no field to read,
+			// so the address is omitted and the server fills it from the
+			// session. Guarding on a non-empty `email` alone made the checkbox
+			// a silent no-op for every signed-in reader.
 			const email = emailInput?.value.trim() ?? "";
-			if (email) {
+			if (email || !emailInput) {
 				void fetch(apiUrl(apiBase, "/api/v1/subscribe"), {
 					method: "POST",
 					credentials: "include",
 					headers: { "content-type": "application/json" },
-					body: JSON.stringify({ post_slug: slug, email }),
+					body: JSON.stringify(
+						email ? { post_slug: slug, email } : { post_slug: slug },
+					),
 				}).catch(() => {});
 			}
 		}

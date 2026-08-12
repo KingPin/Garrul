@@ -1,7 +1,7 @@
 /**
  * A non-racy global ceiling on outbound confirmation email, counted in D1.
  *
- * The problem (issue #64). POST /api/v1/subscriptions sends one confirmation
+ * The problem (issue #64). POST /api/v1/subscribe sends one confirmation
  * email per accepted request. Two controls sat in front of it and neither
  * bounded an attacker who cycles addresses:
  *
