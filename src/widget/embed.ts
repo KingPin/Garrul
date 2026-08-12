@@ -2306,7 +2306,17 @@ const loadOnce = async (
 	if (window.location.hash.startsWith("#garrul-comment-")) {
 		const target = root.getElementById(window.location.hash.slice(1));
 		if (target) {
-			target.scrollIntoView({ block: "center", behavior: "smooth" });
+			// The CSS half of the reduced-motion promise lives in styles.css;
+			// scroll behavior is set here, so it has to be honored here too.
+			// `matchMedia` is guarded because the widget also runs under the
+			// iframe route and in test DOMs that don't implement it.
+			const still = window.matchMedia?.(
+				"(prefers-reduced-motion: reduce)",
+			)?.matches;
+			target.scrollIntoView({
+				block: "center",
+				behavior: still ? "auto" : "smooth",
+			});
 		}
 	}
 

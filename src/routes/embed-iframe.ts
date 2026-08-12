@@ -366,7 +366,11 @@ iframe.get("/:slug", (c) => {
 
 	const title = c.req.query("title") ?? "";
 	const pageUrl = c.req.query("url") ?? "";
-	const theme = c.req.query("theme") ?? "auto";
+	// Validated against the vocabulary, not merely escaped: it reaches a CSS
+	// declaration below, where escapeAttr buys nothing. Same three values the
+	// Turnstile route accepts; anything else is "auto" (follow the OS).
+	const themeRaw = c.req.query("theme") ?? "auto";
+	const theme = themeRaw === "light" || themeRaw === "dark" ? themeRaw : "auto";
 	const lang = c.req.query("lang") ?? "";
 	// See the ?lang= note in the route doc above: `data-lang` forwards the raw
 	// request, `<html lang>` only ever claims a locale that exists.
@@ -402,7 +406,7 @@ iframe.get("/:slug", (c) => {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Comments</title>
 <style>
-  html, body { margin: 0; padding: 0; background: transparent; }
+  html, body { margin: 0; padding: 0; background: transparent; color-scheme: ${theme === "auto" ? "light dark" : theme}; }
   body { font-family: system-ui, -apple-system, Segoe UI, sans-serif; }
 </style>
 </head>

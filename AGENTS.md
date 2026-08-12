@@ -440,6 +440,11 @@ Host `--garrul-*` overrides still win at every theme level, so the table above
 remains the supported customization surface. For the full reference and
 stability policy, see `docs/THEMING.md`.
 
+The resolved theme also sets `color-scheme`, so browser-painted UI inside the
+widget — `<select>` popups, scrollbars, caret and focus rings — follows it
+rather than staying light on a dark page. The iframe route does the same from
+its `?theme=` parameter.
+
 ### Code blocks in comments (since v2.5.1)
 
 Fenced code blocks render as a tinted box filled with `--garrul-surface`, and a

@@ -80,6 +80,13 @@ regardless of OS preference:
 | `light`                 | Always light                                |
 | `dark`                  | Always dark                                 |
 
+Whichever way the theme resolves, it is also declared to the browser as
+`color-scheme`. That covers the parts of the UI Garrul does not paint —
+`<select>` popups, scrollbars, the text caret, default focus rings — which
+would otherwise stay light inside a dark widget. A pinned `data-theme` wins
+over the OS preference here too, so `data-theme="light"` on a dark-OS reader
+does not leave them a dark dropdown over a light thread.
+
 **Precedence (highest wins):**
 
 1. An explicit `--garrul-*` override you set on the host or an ancestor.

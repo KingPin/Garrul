@@ -15,6 +15,12 @@
 :host {
 	all: initial;
 	display: block;
+	/* Native UI is painted by the UA, not by our --gr-* vars: <select> popups,
+	   scrollbars, focus rings, the text-field caret. Without this they stay
+	   light while everything around them goes dark. `light dark` means "follow
+	   the OS", which is what the @media block below does for our own colors —
+	   the two forced-theme rules further down override both together. */
+	color-scheme: light dark;
 	/* Private theme layer. Every rule below uses these --gr-* vars; each one
 	   chains through the public, semver-protected --garrul-* contract var (so a
 	   host's explicit override always wins) down to a light default. Dark mode
@@ -77,6 +83,7 @@
 	}
 }
 :host([data-theme="dark"]) {
+	color-scheme: dark;
 	--gr-fg: var(--garrul-fg, #e6e8eb);
 	--gr-input-bg: var(--garrul-input-bg, #1b1f24);
 	--gr-border: var(--garrul-border, #2e353d);
@@ -94,6 +101,12 @@
 	--gr-accent-hover: var(--garrul-accent-hover, #2563eb);
 	--gr-shadow: var(--garrul-shadow, 0 1px 2px rgba(0,0,0,.5));
 }
+/* The light half of the forced-theme pair. There is no --gr-* block here
+   because light is already the :host default; only the UA half needs saying.
+   `color-scheme: light dark` up top follows the OS, which is exactly wrong once
+   the host has pinned a theme — a dark-OS reader on a data-theme="light" widget
+   would get a dark <select> popup floating over a light thread. */
+:host([data-theme="light"]) { color-scheme: light; }
 * { box-sizing: border-box; }
 .gr-root { display: flex; flex-direction: column; gap: 1rem; }
 .gr-form { display: flex; flex-direction: column; gap: 0.5rem; }
@@ -488,6 +501,14 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
 @keyframes gr-pulse {
 	0%, 100% { opacity: 1; }
 	50% { opacity: 0.45; }
+}
+/* An infinite opacity animation is the textbook trigger for this query — for
+   readers with vestibular disorders it is not a stylistic preference. The
+   skeleton still reads as "loading": it keeps its distinct --gr-skel fill and
+   its shape, it just stops breathing. Permalink scrolling is the other moving
+   part and is set in JS; see the matching check in embed.ts. */
+@media (prefers-reduced-motion: reduce) {
+	.gr-skel { animation: none; }
 }
 .gr-attribution {
 	font-size: 0.8em;
