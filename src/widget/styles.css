@@ -48,6 +48,11 @@
 	--gr-accent-hover: var(--garrul-accent-hover, #1d4ed8);
 	--gr-vote-active: var(--garrul-vote-active, var(--gr-badge-bg));
 	--gr-shadow: var(--garrul-shadow, 0 1px 2px rgba(0,0,0,.06));
+	/* Duration for every state transition in the widget. Short on purpose:
+	   long enough to read as a transition, short enough that a fast clicker
+	   never waits on it. Set --garrul-motion: 0ms to opt out entirely; the
+	   prefers-reduced-motion block below overrides both. */
+	--gr-motion: var(--garrul-motion, 120ms);
 	font-family: var(--gr-font);
 	color: var(--gr-fg);
 	background: var(--gr-bg);
@@ -199,6 +204,25 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
 	outline: 2px solid var(--gr-accent);
 	outline-offset: 2px;
 }
+/* Motion. There were no transitions anywhere in this file, so every hover,
+   vote, sort and collapse snapped between two states. One token drives all of
+   them, which is what lets the reduced-motion block at the bottom switch the
+   whole widget off by redefining a single variable rather than hunting rules.
+   Paint properties only — never `all`, which would sweep in height and animate
+   the composer's autosize into a rubber band. */
+.gr-toolbar-btn, .gr-form button, .gr-actions button, .gr-low-score,
+.gr-vote, .gr-sort select, .gr-loadmore, .gr-collapse, .gr-showmore,
+.gr-signin button, .gr-signed button, .gr-attribution a {
+	transition: background-color var(--gr-motion), border-color var(--gr-motion),
+		color var(--gr-motion), opacity var(--gr-motion);
+}
+/* Press feedback. Nothing acknowledged a press: the widget went from normal to
+   hover to "request finished", and a touch device never produces hover at all,
+   so a tap on a vote button looked like nothing had happened until the count
+   moved. A brief dim is the one signal that reads on a filled button and a
+   bare text button alike and moves no layout — no transform, so there is
+   nothing for the reduced-motion block to undo. */
+button:active:not([disabled]) { opacity: 0.75; }
 .gr-md-hint { font-size: 0.8em; color: var(--gr-muted); }
 .gr-md-hint[hidden] { display: none; }
 .gr-preview p { margin: 0.3em 0; }
@@ -508,6 +532,10 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
    its shape, it just stops breathing. Permalink scrolling is the other moving
    part and is set in JS; see the matching check in embed.ts. */
 @media (prefers-reduced-motion: reduce) {
+	/* Zeroing the token switches off every transition in the file at once, and
+	   deliberately ignores a host's --garrul-motion: an accessibility setting
+	   the reader chose in their OS outranks a preference the site author had. */
+	:host { --gr-motion: 0ms; }
 	.gr-skel { animation: none; }
 }
 .gr-attribution {

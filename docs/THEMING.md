@@ -57,6 +57,7 @@ Or in a stylesheet:
 | `--garrul-accent-hover`   | `#1d4ed8`                                | Submit button hover background        |
 | `--garrul-vote-active`    | `--garrul-badge-bg`                      | Active vote / reaction highlight (defaults to the badge background) |
 | `--garrul-shadow`         | `0 1px 2px rgba(0,0,0,.06)`              | Box-shadow on raised surfaces         |
+| `--garrul-motion`         | `120ms`                                  | Duration of every hover/press/state transition. Set `0ms` to opt out; a reader's `prefers-reduced-motion` overrides it either way |
 
 ## Dark mode
 

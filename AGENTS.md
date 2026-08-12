@@ -425,6 +425,7 @@ ancestor.
 | `--garrul-accent-hover` | `#1d4ed8`                                              | Submit button hover background         |
 | `--garrul-vote-active` | `--garrul-badge-bg`                                     | Active vote / reaction highlight (defaults to the badge background) |
 | `--garrul-shadow`     | `0 1px 2px rgba(0,0,0,.06)`                              | Box-shadow on raised surfaces          |
+| `--garrul-motion`     | `120ms`                                                  | Transition duration; `0ms` opts out    |
 
 ### Dark mode
 
