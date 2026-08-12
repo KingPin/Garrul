@@ -2106,6 +2106,10 @@ const init = () => {
 
 	const slug = host.dataset.slug;
 	if (!slug) {
+		// Release before returning: nothing else in this file ever will, and a
+		// one-line error message marooned in 220px of reserved space is a worse
+		// diagnostic than the message on its own.
+		releaseSpace(host);
 		host.textContent = "[garrul] missing data-slug";
 		return;
 	}
@@ -2129,9 +2133,20 @@ const init = () => {
 	// the reservation would leave a short thread — "be the first to comment"
 	// plus a composer — sitting in 220px of dead space forever.
 	void load(root, slug, apiBase, host).finally(() => {
-		host.style.minHeight = "";
+		releaseSpace(host);
 	});
 };
+
+/**
+ * Did `reserveSpace` actually write the inline `min-height`?
+ *
+ * Load-bearing, because `releaseSpace` clears an inline style rather than
+ * restoring one. A host that sized #garrul inline themselves sends
+ * `reserveSpace` down its early return — and clearing unconditionally once the
+ * thread arrived would then delete *their* value, collapsing the element at the
+ * exact moment it filled up. Only what we wrote is ours to take back.
+ */
+let reservedHeight = false;
 
 /**
  * Claim the widget's eventual height before the document finishes parsing.
@@ -2163,6 +2178,18 @@ const reserveSpace = () => {
 	// Three skeleton rows and their gaps. Deliberately not the loaded widget's
 	// height: over-reserving trades one shift for a page-length hole.
 	host.style.minHeight = "220px";
+	reservedHeight = true;
+};
+
+/**
+ * Hand the reservation back. Every exit from init() has to reach this: the
+ * value is inline and nothing else ever clears it, so a path that skips it
+ * leaves 220px of dead space under the widget for the life of the page.
+ */
+const releaseSpace = (host: HTMLElement) => {
+	if (!reservedHeight) return;
+	host.style.minHeight = "";
+	reservedHeight = false;
 };
 
 const renderError = (root: ShadowRoot, err: unknown) => {
