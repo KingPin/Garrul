@@ -615,6 +615,11 @@ type WidgetCtx = {
 	downvotesEnabled: boolean;
 	pageReactionsEnabled: boolean;
 	pageVotesEnabled: boolean;
+	// Whether this install can send mail at all (EMAIL_FROM + PUBLIC_BASE_URL,
+	// derived server-side). Gates both subscribe affordances — the bell and the
+	// composer's notify checkbox — because POST /api/v1/subscribe 503s without
+	// them, and an opt-in that cannot possibly deliver is worse than no opt-in.
+	subscriptionsEnabled: boolean;
 	// Reply-collapse tuning (server config). repliesPerThread: replies shown
 	// under a parent before a "Show N more" button (0 = all). autoCollapseDepth:
 	// a comment at depth >= this starts with its replies collapsed (0 = never).
@@ -1192,6 +1197,120 @@ const buildPageEngagement = (ctx: WidgetCtx): HTMLElement => {
 		}
 	})();
 
+	return wrap;
+};
+
+/**
+ * Subscribe-to-thread bell for the thread toolbar.
+ *
+ * Until this existed, the only way to subscribe was the composer's notify
+ * checkbox — so a reader who wanted replies by email but had nothing to say
+ * could not subscribe at all. No new endpoint: `POST /api/v1/subscribe` already
+ * accepts a standalone `{post_slug, email?}` with double opt-in, a per-address
+ * pending cap and a global send budget.
+ *
+ * **This is an action, never a state toggle, and that is a security property
+ * rather than a simplification.** The endpoint deliberately returns a constant
+ * shape unless the caller proved they own the inbox, because mirroring the
+ * stored `confirmed_at` would make it a subscription oracle — an unauthenticated
+ * prober could learn "this address already follows this post", from a branch
+ * that sends no mail, so the victim would never see it. A bell that rendered
+ * subscribed-vs-not would have to ask that question. So: no state query, no
+ * localStorage marker, and no unsubscribe here (unsubscribing is token-based via
+ * the emailed link, which is the only way to do it without the oracle).
+ *
+ * Repeat clicks are therefore fine by design — the upsert is non-destructive and
+ * refunds send budget when no mail actually goes out.
+ */
+const buildSubscribeBell = (
+	apiBase: string,
+	slug: string,
+	signedIn: boolean,
+): HTMLElement => {
+	const wrap = el("div", "gr-subscribe");
+	const btn = el("button", "gr-subscribe-btn");
+	btn.type = "button";
+	btn.setAttribute("aria-label", s("w.subscribe"));
+	btn.title = s("w.subscribe");
+	btn.appendChild(el("span", "gr-reaction-emoji", "🔔"));
+	const status = el("span", "gr-subscribe-status");
+	// Announce the outcome: the click's only visible result is this text, and a
+	// reader on a screen reader would otherwise get nothing back at all.
+	status.setAttribute("role", "status");
+	status.hidden = true;
+
+	const say = (msg: string): void => {
+		status.textContent = msg;
+		status.hidden = false;
+	};
+
+	// Anonymous readers need to supply an address; a signed-in reader's comes
+	// from the session (and auto-confirms when the provider vouched for it), so
+	// asking would be a worse experience *and* would let them subscribe an inbox
+	// that isn't theirs. Declared before `send` because `send` hides it on
+	// success.
+	const form = el("form", "gr-subscribe-form");
+	form.hidden = true;
+	const emailInput = el("input") as HTMLInputElement;
+
+	// `message` is already localized by the server (it negotiates from ?lang=).
+	// Rendered via textContent — as every server string in this widget is — so a
+	// future message containing markup is text, not markup.
+	const send = async (email: string): Promise<void> => {
+		btn.disabled = true;
+		try {
+			const res = await fetch(apiUrl(apiBase, "/api/v1/subscribe"), {
+				method: "POST",
+				credentials: "include",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify(email ? { post_slug: slug, email } : { post_slug: slug }),
+			});
+			const body = (await res.json().catch(() => null)) as {
+				message?: string;
+			} | null;
+			if (!res.ok) {
+				// The server's own message where there is one — it distinguishes a
+				// rate limit from a bad address, and inventing a generic failure
+				// would throw that away.
+				say(body?.message ?? s("w.subscribe.failed"));
+				return;
+			}
+			say(body?.message ?? s("w.subscribe.done"));
+			form.hidden = true;
+			btn.hidden = true;
+		} catch {
+			say(s("w.subscribe.failed"));
+		} finally {
+			btn.disabled = false;
+		}
+	};
+
+	if (!signedIn) {
+		emailInput.className = "gr-email-input";
+		emailInput.type = "email";
+		emailInput.required = true;
+		emailInput.placeholder = s("w.email_ph");
+		emailInput.autocomplete = "email";
+		const submit = el("button", "gr-subscribe-submit", s("w.subscribe.submit"));
+		submit.type = "submit";
+		form.append(emailInput, submit);
+		form.addEventListener("submit", (e) => {
+			e.preventDefault();
+			const email = emailInput.value.trim();
+			if (email) void send(email);
+		});
+	}
+
+	btn.addEventListener("click", () => {
+		if (signedIn) {
+			void send("");
+			return;
+		}
+		form.hidden = !form.hidden;
+		if (!form.hidden) emailInput.focus();
+	});
+
+	wrap.append(btn, form, status);
 	return wrap;
 };
 
@@ -1889,6 +2008,7 @@ const buildForm = (
 	apiBase: string,
 	siteKey: string | null,
 	signedIn: boolean,
+	subscriptionsEnabled: boolean,
 ): HTMLFormElement => {
 	const form = document.createElement("form");
 	form.className = "gr-form";
@@ -1927,30 +2047,38 @@ const buildForm = (
 
 	// Notify-me opt-in. Anonymous: an email field appears alongside the
 	// checkbox. Signed-in: we already have their email so just the box.
-	const notifyWrap = el("label", "gr-notify");
-	const notifyCb = el("input") as HTMLInputElement;
-	notifyCb.type = "checkbox";
-	notifyCb.className = "gr-notify-cb";
-	notifyCb.name = "notify";
-	// The leading space separates the label from its checkbox; it's layout, not
-	// copy, so it stays out of the string table.
-	const notifyText = document.createTextNode(` ${s("w.notify")}`);
-	notifyWrap.append(notifyCb, notifyText);
-	form.appendChild(notifyWrap);
+	//
+	// Skipped entirely on an install with no outbound mail configured. The
+	// endpoint 503s there, so the checkbox was an opt-in that could never
+	// deliver — the reader ticked it, posted, and simply never heard anything.
+	// The submit handler reads the checkbox out of the DOM, so its absence is
+	// also what stops the POST being attempted.
+	if (subscriptionsEnabled) {
+		const notifyWrap = el("label", "gr-notify");
+		const notifyCb = el("input") as HTMLInputElement;
+		notifyCb.type = "checkbox";
+		notifyCb.className = "gr-notify-cb";
+		notifyCb.name = "notify";
+		// The leading space separates the label from its checkbox; it's layout, not
+		// copy, so it stays out of the string table.
+		const notifyText = document.createTextNode(` ${s("w.notify")}`);
+		notifyWrap.append(notifyCb, notifyText);
+		form.appendChild(notifyWrap);
 
-	if (!signedIn) {
-		const emailInput = el("input") as HTMLInputElement;
-		emailInput.className = "gr-email-input";
-		emailInput.name = "email";
-		emailInput.type = "email";
-		emailInput.placeholder = s("w.email_ph");
-		emailInput.autocomplete = "email";
-		emailInput.hidden = true;
-		notifyCb.addEventListener("change", () => {
-			emailInput.hidden = !notifyCb.checked;
-			emailInput.required = notifyCb.checked;
-		});
-		form.appendChild(emailInput);
+		if (!signedIn) {
+			const emailInput = el("input") as HTMLInputElement;
+			emailInput.className = "gr-email-input";
+			emailInput.name = "email";
+			emailInput.type = "email";
+			emailInput.placeholder = s("w.email_ph");
+			emailInput.autocomplete = "email";
+			emailInput.hidden = true;
+			notifyCb.addEventListener("change", () => {
+				emailInput.hidden = !notifyCb.checked;
+				emailInput.required = notifyCb.checked;
+			});
+			form.appendChild(emailInput);
+		}
 	}
 
 	// Turnstile only renders for anonymous posts. Signed-in posts skip it
@@ -2335,6 +2463,10 @@ const loadOnce = async (
 	let downvotesEnabled = true;
 	let pageReactionsEnabled = false;
 	let pageVotesEnabled = false;
+	// True by default, and read below as `!== false`, so a server older than this
+	// bundle — which sends no such field — keeps offering the notify checkbox it
+	// has always offered. Only an explicit `false` hides the subscribe UI.
+	let subscriptionsEnabled = true;
 	// Defaults mirror the server (src/lib/settings.ts) so a failed/absent
 	// config fetch degrades gracefully to the same behavior.
 	let repliesPerThread = 3;
@@ -2368,6 +2500,7 @@ const loadOnce = async (
 				downvotes_enabled?: boolean;
 				page_reactions_enabled?: boolean;
 				page_votes_enabled?: boolean;
+				subscriptions_enabled?: boolean;
 				replies_per_thread?: number;
 				auto_collapse_depth?: number;
 				community_min_votes?: number;
@@ -2410,6 +2543,7 @@ const loadOnce = async (
 			downvotesEnabled = cfg.downvotes_enabled !== false;
 			pageReactionsEnabled = cfg.page_reactions_enabled === true;
 			pageVotesEnabled = cfg.page_votes_enabled === true;
+			subscriptionsEnabled = cfg.subscriptions_enabled !== false;
 			if (typeof cfg.replies_per_thread === "number")
 				repliesPerThread = cfg.replies_per_thread;
 			if (typeof cfg.auto_collapse_depth === "number")
@@ -2475,6 +2609,7 @@ const loadOnce = async (
 		downvotesEnabled,
 		pageReactionsEnabled,
 		pageVotesEnabled,
+		subscriptionsEnabled,
 		repliesPerThread,
 		autoCollapseDepth,
 		communityMinVotes,
@@ -2489,7 +2624,7 @@ const loadOnce = async (
 	// The composer is always built (its submit/Turnstile wiring lives further
 	// down) but only mounted when comments are enabled. When disabled, existing
 	// comments stay visible (read-only) and we show a "closed" notice instead.
-	const form = buildForm(apiBase, siteKey, me != null);
+	const form = buildForm(apiBase, siteKey, me != null, subscriptionsEnabled);
 	// Restore/persist the top-level composer draft (cleared on successful post
 	// in submit()). Reply-form drafts are wired separately in buildReplyForm.
 	const composer = form.querySelector(
@@ -2520,31 +2655,43 @@ const loadOnce = async (
 		wrap.appendChild(el("p", "gr-empty", closedNotice(closedReason)));
 	}
 
-	// Sort selector only when voting is on (no scores to rank without it).
-	if (votingEnabled) {
-		const sortWrap = el("div", "gr-sort");
-		const label = el("label");
-		const sel = el("select") as HTMLSelectElement;
-		const newOpt = el("option") as HTMLOptionElement;
-		newOpt.value = "new";
-		newOpt.textContent = s("w.sort.new");
-		const topOpt = el("option") as HTMLOptionElement;
-		topOpt.value = "top";
-		topOpt.textContent = s("w.sort.top");
-		sel.append(newOpt, topOpt);
-		sel.value = sort;
-		// The control sits inside the label, so the label text is split around it
-		// rather than hard-coded as a "Sort by " prefix — languages that put the
-		// control first (or wrap it) can say so in the string.
-		const [beforeSel, afterSel] = sAround("w.sort_by", "control");
-		label.append(beforeSel, sel, afterSel);
-		sortWrap.appendChild(label);
-		sel.addEventListener("change", () => {
-			const v = sel.value === "top" ? "top" : "new";
-			setSort(root, v);
-			reload();
-		});
-		wrap.appendChild(sortWrap);
+	// Thread toolbar: sort on the left, subscribe bell on the right. This row
+	// used to exist only to hold the sort selector, hence the generalization
+	// rather than a second row — the bell wants exactly this slot, immediately
+	// above the list.
+	if (votingEnabled || subscriptionsEnabled) {
+		const bar = el("div", "gr-threadbar");
+		// Sort selector still only when voting is on: there are no scores to rank
+		// by without it.
+		if (votingEnabled) {
+			const sortWrap = el("div", "gr-sort");
+			const label = el("label");
+			const sel = el("select") as HTMLSelectElement;
+			const newOpt = el("option") as HTMLOptionElement;
+			newOpt.value = "new";
+			newOpt.textContent = s("w.sort.new");
+			const topOpt = el("option") as HTMLOptionElement;
+			topOpt.value = "top";
+			topOpt.textContent = s("w.sort.top");
+			sel.append(newOpt, topOpt);
+			sel.value = sort;
+			// The control sits inside the label, so the label text is split around it
+			// rather than hard-coded as a "Sort by " prefix — languages that put the
+			// control first (or wrap it) can say so in the string.
+			const [beforeSel, afterSel] = sAround("w.sort_by", "control");
+			label.append(beforeSel, sel, afterSel);
+			sortWrap.appendChild(label);
+			sel.addEventListener("change", () => {
+				const v = sel.value === "top" ? "top" : "new";
+				setSort(root, v);
+				reload();
+			});
+			bar.appendChild(sortWrap);
+		}
+		if (subscriptionsEnabled) {
+			bar.appendChild(buildSubscribeBell(apiBase, slug, me != null));
+		}
+		wrap.appendChild(bar);
 	}
 
 	wrap.appendChild(list);

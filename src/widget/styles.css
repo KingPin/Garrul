@@ -260,7 +260,8 @@
    harmless in the light theme only because a UA textarea is white and so is the
    default --garrul-input-bg; in dark mode it was a white box with black text. */
 .gr-form input, .gr-form textarea,
-.gr-reply-form input, .gr-reply-form textarea {
+.gr-reply-form input, .gr-reply-form textarea,
+.gr-subscribe-form input {
 	font: inherit; color: inherit;
 	background: var(--gr-input-bg);
 	border: 1px solid var(--gr-border);
@@ -613,7 +614,49 @@ button:active:not([disabled]) { opacity: 0.75; }
 }
 .gr-vote[disabled] { opacity: 0.6; cursor: progress; }
 .gr-vote-score { font-variant-numeric: tabular-nums; min-width: 1.2em; text-align: center; }
-.gr-sort { display: flex; gap: 0.4rem; align-items: center; font-size: 0.85em; color: var(--gr-muted); margin-top: 0.5rem; }
+/* Thread toolbar: sort on the left, subscribe bell on the right. The row
+   predates the bell, when it held nothing but the selector — hence the
+   margin-top moving here from .gr-sort, which now has no reason to own it. */
+.gr-threadbar {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: space-between;
+	gap: 0.5rem;
+	margin-top: 0.5rem;
+}
+.gr-sort { display: flex; gap: 0.4rem; align-items: center; font-size: 0.85em; color: var(--gr-muted); }
+/* margin-inline-start:auto keeps the bell right-aligned when it is the row's
+   only child — space-between alone would park it on the left. */
+.gr-subscribe { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; margin-inline-start: auto; }
+.gr-subscribe-btn {
+	font: inherit;
+	background: none;
+	border: 0;
+	padding: 0.1em 0.3em;
+	line-height: 1;
+	cursor: pointer;
+	border-radius: var(--gr-radius);
+}
+.gr-subscribe-btn:hover { background: var(--gr-input-bg); }
+.gr-subscribe-form { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; }
+/* Smaller than the composer's submit — this is an inline confirmation, not the
+   primary action on the page. */
+.gr-subscribe-form input { padding: 0.3rem 0.5rem; font-size: 0.9em; }
+.gr-subscribe-submit {
+	font: inherit;
+	font-size: 0.9em;
+	background: var(--gr-accent);
+	color: var(--gr-accent-fg);
+	border: none;
+	border-radius: var(--gr-radius);
+	padding: 0.35rem 0.7rem;
+	cursor: pointer;
+}
+.gr-subscribe-submit:hover { background: var(--gr-accent-hover); }
+.gr-subscribe-form[hidden] { display: none; }
+.gr-subscribe-status { font-size: 0.85em; color: var(--gr-muted); }
+.gr-subscribe-status[hidden] { display: none; }
 .gr-sort select {
 	font: inherit;
 	background: var(--gr-input-bg);
