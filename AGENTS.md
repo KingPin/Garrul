@@ -257,8 +257,15 @@ Notes for integrators:
 - **Comment bodies are never translated.** Localization covers the
   widget's own chrome; user-authored markdown is stored and served as
   written.
-- **Dates stay locale-neutral** (`YYYY-MM-DD HH:MM`, UTC) in every
-  language.
+- **Comment timestamps follow the widget locale** (since v2.9.0). Each
+  one renders as a relative label — "2 hours ago", "yesterday", "last
+  month" — formatted by `Intl.RelativeTimeFormat` in the resolved
+  locale. Before v2.9.0 they were `YYYY-MM-DD HH:MM` in **UTC** for
+  every reader regardless of where they were. The markup is a `<time>`
+  element: `datetime` carries the exact ISO instant, `title` the
+  reader's own local date and time. Style it with `.gr-time` as before.
+  Everything else numeric — vote counts, comment counts — stays
+  locale-neutral.
 - The widget sets `lang` and `dir` on its own host element, so an RTL
   host page and an LTR widget (or the reverse) lay out correctly.
 

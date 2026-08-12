@@ -37,6 +37,7 @@ import { watchForSignIn } from "./auth-recovery";
 import { autoSizeTextarea } from "./autosize";
 import { createTurnstileGate, type TurnstileGate } from "./turnstile-gate";
 import { makeS, type StringTable, type WidgetKey } from "./strings";
+import { absoluteTime, isoTime, relativeTime } from "./time";
 // Generated from styles.css by scripts/build-styles.ts (gitignored, rebuilt by
 // build:assets). Edit styles.css, never the .gen file.
 import { STYLE_CSS } from "./styles.gen";
@@ -144,8 +145,18 @@ type Me = {
 } | null;
 
 
-const fmtTime = (ts: number): string =>
-	new Date(ts).toISOString().replace("T", " ").slice(0, 16);
+/**
+ * The `<time>` element behind a comment's timestamp. The visible label is
+ * relative ("2 hours ago"), the `datetime` attribute keeps the exact ISO value
+ * for machines and copy-paste, and `title` carries the reader's local wall
+ * clock — so nothing that used to be readable off the old UTC string is lost.
+ */
+const buildTime = (ts: number): HTMLTimeElement => {
+	const e = el("time", "gr-time", relativeTime(ts, Date.now(), locale));
+	e.dateTime = isoTime(ts);
+	e.title = absoluteTime(ts, locale);
+	return e;
+};
 
 const el = <K extends keyof HTMLElementTagNameMap>(
 	tag: K,
@@ -1460,7 +1471,7 @@ const buildComment = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	if (n.author.provider !== "anon") {
 		meta.appendChild(el("span", "gr-verified", s("w.verified")));
 	}
-	meta.appendChild(el("span", "gr-time", fmtTime(n.created_at)));
+	meta.appendChild(buildTime(n.created_at));
 	if (n.edited_at) meta.appendChild(el("span", "gr-edited", s("w.edited")));
 	// Author-only signal: the list endpoint returns the viewer's own queued
 	// comments, so this badge is only ever seen by the author themselves.

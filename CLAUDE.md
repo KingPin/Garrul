@@ -110,7 +110,7 @@ Two string layers, deliberately separate:
 
 Locale is a property of the **site**, not the reader: `data-lang` → operator `default_locale` → host page `<html lang>` (auto-selectable locales only) → `en` (`resolveLocale` in `src/i18n/negotiate.ts` is the one implementation). `Accept-Language` and `navigator.language` are deliberately not consulted — a German reader on an English blog should see an English widget.
 
-Plurals use `Intl.PluralRules` with the value shape `{ one, other, … }`; the fallback chain is selected category → `other` → `one` → English. Dates and numbers are deliberately **not** localized (timestamps stay ISO) — see the plan in `docs/`.
+Plurals use `Intl.PluralRules` with the value shape `{ one, other, … }`; the fallback chain is selected category → `other` → `one` → English. Numbers are deliberately **not** localized. Timestamps stay ISO everywhere they are *data* — API responses, feeds, email, and the `datetime` attribute — with exactly one exception: the widget's reader-facing comment timestamp, which renders a relative label ("2 hours ago") via `Intl.RelativeTimeFormat` in the site's resolved locale, with the exact ISO value preserved in `datetime` and the reader's local wall clock in `title` (`src/widget/time.ts`). That surface was the one place the rule produced a wrong answer rather than a neutral one — it showed UTC to every reader on earth with no timezone label.
 
 The admin UI and Telegram bot are English-only by design and out of scope.
 
