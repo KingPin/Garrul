@@ -195,10 +195,29 @@ describe("checkRateLimit on the Durable Object backend", () => {
 			// argument pins the 2s value, so shortening it here cannot hide a
 			// change to it. Fake timers are not an option: vitest's do not drive
 			// `AbortSignal.timeout`, which is a host timer.
+			//
+			// `deadlines` is load-bearing, not debug residue. Node holds a
+			// timeout signal WEAKLY — the docs are explicit that a caller must
+			// keep a strong reference or the timer may be collected before it
+			// elapses — and production hands the signal straight to `new
+			// Request(...)`, which does not root it either, so without this
+			// array nothing in the chain roots it at all. That is one of the two
+			// weak references that made this test order-dependent, and it timed
+			// out at 5s whenever the 1000-identity distribution test above had
+			// allocated enough to collect inside the deadline window. The other
+			// weak reference is the parked request itself, rooted in
+			// tests/helpers/do.ts. Both are node object-lifetime artifacts of the
+			// harness; neither was a node-vs-workerd semantic gap, which is what
+			// this failure was previously recorded as.
 			const real = AbortSignal.timeout.bind(AbortSignal);
+			const deadlines: AbortSignal[] = [];
 			const timeout = vi
 				.spyOn(AbortSignal, "timeout")
-				.mockImplementation(() => real(5));
+				.mockImplementation(() => {
+					const signal = real(5);
+					deadlines.push(signal);
+					return signal;
+				});
 			vi.spyOn(console, "log").mockImplementation(() => {});
 
 			const { env } = envWith({ hang: true });
@@ -206,6 +225,10 @@ describe("checkRateLimit on the Durable Object backend", () => {
 
 			expect(r).toEqual({ ok: true, degraded: true });
 			expect(timeout).toHaveBeenCalledWith(2_000);
+			// Reads `deadlines` after the await so the reference is live across
+			// it and cannot be optimised away.
+			expect(deadlines).toHaveLength(1);
+			expect(deadlines[0]?.aborted).toBe(true);
 		});
 
 		it("never fails CLOSED on a wrong-shaped verdict", async () => {
