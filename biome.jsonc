@@ -9,6 +9,7 @@
 			"!node_modules",
 			// Generated at build time (see .gitignore).
 			"!src/widget/embed.bundled.ts",
+			"!src/widget/styles.gen.ts",
 			"!src/agents.bundled.ts",
 			"!src/lib/version.gen.ts",
 			// Host-site integration snippets. They are written to be pasted into

@@ -3,9 +3,15 @@
  * Fails if dist/embed.js is larger than the configured gzipped ceiling.
  *
  * We want the embed.js bundle to stay small enough that a host page is
- * never punished for adding comments. 20KB gzipped is the published cap.
+ * never punished for adding comments. 30KB gzipped is the published cap.
  * Run `npm run size` for the current figure rather than trusting a
  * number in a comment — this one drifted for several releases.
+ *
+ * The cap is a backstop, not a target. It was raised from 20KB in #79,
+ * on the reasoning that the queued widget backlog would otherwise force
+ * feature-vs-bytes decisions mid-PR. The number that actually keeps the
+ * bundle honest is the per-PR delta (scripts/bundle-delta.ts), not this
+ * ceiling — headroom is for absorbing features, not for spending.
  *
  * Run after `npm run build:embed`. CI invokes it via `npm run size`.
  */
@@ -18,7 +24,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, "..");
 const BUNDLE = join(ROOT, "dist/embed.js");
 
-const LIMIT_GZ_BYTES = 20 * 1024;
+const LIMIT_GZ_BYTES = 30 * 1024;
 
 try {
 	statSync(BUNDLE);
@@ -34,9 +40,12 @@ const gz = gzipSync(raw, { level: 9 });
 
 const kb = (n: number) => (n / 1024).toFixed(2);
 
+const pct = ((gz.length / LIMIT_GZ_BYTES) * 100).toFixed(1);
+
 console.log(`[size] embed.js          ${kb(raw.length)} KB`);
 console.log(`[size] embed.js (gzip)   ${kb(gz.length)} KB`);
 console.log(`[size] ceiling (gzip)    ${kb(LIMIT_GZ_BYTES)} KB`);
+console.log(`[size] consumed          ${pct}% of ceiling`);
 
 if (gz.length > LIMIT_GZ_BYTES) {
 	console.error(

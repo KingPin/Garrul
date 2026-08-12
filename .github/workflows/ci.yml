@@ -28,6 +28,10 @@ jobs:
       # by whoever controls the action repo (CVE-2025-30066). Dependabot keeps
       # these fresh; update the trailing version comment with the SHA.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history so the bundle-delta step can build the PR's base
+          # commit in a worktree. Shallow clones have no origin/<base> ref.
+          fetch-depth: 0
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .nvmrc
@@ -50,3 +54,13 @@ jobs:
       - run: npm run config:check
       - run: npm run build
       - run: npm run size
+      # Informational, never a gate: `npm run size` above is the gate. This
+      # builds the PR's base commit in a throwaway worktree and reports the
+      # gzip delta to the step summary, so a feature's weight is visible while
+      # it can still be weighed rather than at the ceiling. The script exits 0
+      # on every failure path; continue-on-error covers the unexpected ones.
+      # Reads only $GITHUB_BASE_REF (the base branch, not attacker-controlled)
+      # and passes it to git via execFile, never a shell.
+      - if: github.event_name == 'pull_request'
+        run: npm run size:delta
+        continue-on-error: true

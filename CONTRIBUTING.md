@@ -72,7 +72,9 @@ satisfy a coverage gate.
   `src/lib/markdown.ts` if you genuinely need new tags, and add a
   sanitizer test for the new tag.
 - No PII (names, emails, comment bodies) in logs.
-- Bundle budget: `embed.js` ≤ 20KB gzipped. CI enforces.
+- Bundle budget: `embed.js` ≤ 30KB gzipped. CI enforces, and prints
+  the gzip delta against the base branch on every PR — treat a growth
+  line as something to justify in review, not just a number to clear.
 - One file per logical surface in `src/routes/`. Don't create
   `utils.ts` grab-bags.
 

@@ -6,7 +6,13 @@
  * and serves it under GET /embed.js (see src/routes/embed.ts).
  *
  * Targets ES2020 — broad enough for every browser shipping in 2026,
- * narrow enough to skip class-fields polyfills.
+ * narrow enough to skip class-fields polyfills. Raising it buys nothing:
+ * measured at es2021/es2022/es2023, the output is byte-for-byte identical,
+ * so the target is a compatibility promise only, not a size lever (#79).
+ *
+ * Also emits a per-module composition table and dist/embed.meta.json. The
+ * table is the thing that makes size work evidence-based — it answers
+ * "what is actually big" before anyone starts optimizing on a hunch.
  */
 import { build } from "esbuild";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -18,10 +24,11 @@ const ROOT = join(__dirname, "..");
 const OUT_DIR = join(ROOT, "dist");
 const OUT_FILE = join(OUT_DIR, "embed.js");
 const EMBED_TS = join(ROOT, "src/widget/embed.bundled.ts");
+const META_FILE = join(OUT_DIR, "embed.meta.json");
 
 mkdirSync(OUT_DIR, { recursive: true });
 
-await build({
+const result = await build({
 	entryPoints: [join(ROOT, "src/widget/embed.ts")],
 	outfile: OUT_FILE,
 	bundle: true,
@@ -31,8 +38,32 @@ await build({
 	target: ["es2020"],
 	sourcemap: true,
 	legalComments: "none",
+	metafile: true,
 	logLevel: "info",
 });
+
+writeFileSync(META_FILE, JSON.stringify(result.metafile, null, 2));
+
+// Per-input contribution to the bundle, largest first. These are minified
+// bytes, not gzipped — gzip shares a dictionary across the whole file, so
+// there is no honest way to attribute compressed bytes to one module.
+const output = Object.values(result.metafile.outputs).find((o) => o.entryPoint);
+if (output) {
+	const rows = Object.entries(output.inputs)
+		.map(([file, v]) => ({ file, bytes: v.bytesInOutput }))
+		.filter((r) => r.bytes > 0)
+		.sort((a, b) => b.bytes - a.bytes);
+	const total = rows.reduce((sum, r) => sum + r.bytes, 0);
+
+	console.log("[build-embed] composition (minified bytes, pre-gzip):");
+	for (const { file, bytes } of rows) {
+		const pct = total > 0 ? ((bytes / total) * 100).toFixed(1) : "0.0";
+		console.log(
+			`  ${String(bytes).padStart(7)}  ${pct.padStart(5)}%  ${file}`,
+		);
+	}
+	console.log(`  ${String(total).padStart(7)}  100.0%  total`);
+}
 
 // Re-emit the bundle as a TS string export so the worker imports it as a
 // regular module — no wrangler text-loader rule required of self-hosters.
