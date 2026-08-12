@@ -651,6 +651,19 @@ Triggers (events that produce a send):
   trigger, so it has its own ceiling — see below. A signed-in reader
   whose provider verified their address (GitHub, Google) is confirmed
   on the spot instead, so this send never happens for them.
+
+  Since v2.10.0 there are **two** ways a reader reaches this: the
+  composer's "Email me about new comments" checkbox, and a 🔔 in the
+  thread toolbar for someone who wants replies but has nothing to say.
+  Same endpoint and same limits — expect roughly the same confirmation
+  volume from a somewhat larger share of your readers. Both affordances
+  are hidden unless `EMAIL_FROM` **and** `PUBLIC_BASE_URL` are set
+  (`subscriptions_enabled` in `/api/v1/config`), since `POST
+  /api/v1/subscribe` fails closed with 503 without them — previously the
+  checkbox was offered on installs that could never deliver. Note this is
+  deliberately *not* gated on `RESEND_API_KEY`: a widget that went dark
+  when only the secret was missing would hide that misconfiguration
+  instead of surfacing it in the logs.
 - An unsubscribe-link click opens a confirmation page and sends nothing.
 
 Nothing sends *inline* on the request path: every notification is
