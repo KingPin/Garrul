@@ -1282,7 +1282,7 @@ The 12 steps (each prints `→ name… OK`):
 1. **Preflight** — `wrangler --version` ≥ 4, clean working tree (unless `--allow-dirty`)
 2. **Resolve target** — `--version vX.Y.Z` or GitHub latest release; exit 0 if already there
 3. **Fetch manifests** — local from disk, remote from `raw.githubusercontent.com`; refuses if `target.minPreviousVersion > current`
-4. **Drift detection** (read-only): secrets via `wrangler secret list`; `[vars]`, KV and D1 by parsing `wrangler.toml`; migrations via `SELECT name FROM _migrations`; renderer via `CURRENT_RENDERER_VERSION` vs `target.renderer.version`
+4. **Drift detection** (read-only): secrets via `wrangler secret list`; `[vars]`, KV and D1 by parsing `wrangler.toml`; migrations via `SELECT name FROM _migrations`; renderer via `CURRENT_RENDERER_VERSION` vs `target.renderer.version`. Also compares each `[vars]` *value* against the placeholder the target ships — see *Unedited placeholders* below
 5. **Print plan** grouped as config drift / migrations / breaking changes
 6. **Confirm** (`Proceed? [y/N]`) unless `--yes`
 7. **Checkout** the target tag, then verify the `release-manifest.json` in
@@ -1306,7 +1306,7 @@ version requires:
 | `renderer.version`   | Current `CURRENT_RENDERER_VERSION`                          |
 | `renderer.eagerRerender` | If `true`, the orchestrator runs the rerender by default |
 | `secrets[]`          | Each `wrangler secret` name + `required` flag               |
-| `vars[]`             | Each `wrangler.toml` `[vars]` name + `required` flag        |
+| `vars[]`             | Each `wrangler.toml` `[vars]` name + `required` flag, plus `placeholder` for the four that ship one |
 | `kvNamespaces[]`     | Each KV binding name                                        |
 | `d1Databases[]`      | Each D1 binding + database name                             |
 | `analyticsDatasets[]` | Workers Analytics Engine datasets                          |
@@ -1339,6 +1339,36 @@ non-interactively, but `[vars]` live in `wrangler.toml`, which is the
 operator's file and is never rewritten in place. It also lists
 `[vars]` a new release introduced that you haven't set — all optional,
 all defaulted, shown so a new flag isn't invisible.
+
+### Unedited placeholders
+
+The plan opens with any `[vars]` still set to the value
+`wrangler.example.toml` ships them as — `ALLOWED_ORIGINS`,
+`ADMIN_EMAILS`, `PUBLIC_BASE_URL`, `OAUTH_CALLBACK_BASE`:
+
+```
+Still set to the example value shipped in wrangler.example.toml:
+  • PUBLIC_BASE_URL = "https://comments.example.com" — public URL of this Worker…
+```
+
+Nothing else in the upgrade path can catch these. Every var is
+`required: false` by design, so `diffVars` never reports one — and these
+are *set*, just set to `example.com`. A deploy with untouched example
+values passes every check here and then fails at runtime with the two
+most-reported errors in `docs/troubleshooting.md`: CORS rejections and
+`redirect_uri_mismatch`. Neither error message points back at
+`wrangler.toml`.
+
+It is a warning, never a blocker. An operator whose domain really is
+`example.com` must still be able to upgrade.
+
+The placeholder strings live in `wrangler.example.toml` and nowhere
+else. `npm run manifest:build` reads them out of that file and into
+`vars[].placeholder`, and fails loudly if a var the registry marks
+`mustEdit` has no string value there — the check going quiet is the
+failure this is built to avoid. They travel in the manifest so an old
+install is checked against the *target's* placeholders, not its own
+checkout's.
 
 ### What the upgrade trusts
 

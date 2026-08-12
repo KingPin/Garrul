@@ -38,6 +38,16 @@ export type VarEntry = {
 	required: boolean;
 	description?: string;
 	addedIn?: SemVer;
+	/**
+	 * The value this var ships as in `wrangler.example.toml` — a stand-in the
+	 * operator is expected to replace. Present only for the handful of vars
+	 * that ship one (`mustEdit` in the config registry).
+	 *
+	 * It travels in the manifest rather than being read from the local
+	 * checkout so that an old install upgrading to a new release is checked
+	 * against the *target's* placeholders, the same way `newVarsSince` works.
+	 */
+	placeholder?: string;
 };
 
 export type KvEntry = {
@@ -311,6 +321,8 @@ const validateVar = (raw: unknown, i: number): VarEntry => {
 	if (desc !== undefined) entry.description = desc;
 	const addedIn = optionalSemver(raw, "addedIn", `vars[${i}]`);
 	if (addedIn !== undefined) entry.addedIn = addedIn;
+	const placeholder = optionalText(raw, "placeholder", `vars[${i}]`);
+	if (placeholder !== undefined) entry.placeholder = placeholder;
 	return entry;
 };
 

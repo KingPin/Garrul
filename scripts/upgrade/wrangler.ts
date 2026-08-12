@@ -9,6 +9,8 @@
 import { spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync, appendFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import { parseTomlVars } from "./toml-vars";
+import type { TomlVars } from "./toml-vars";
 
 type RunOpts = { cwd?: string; inheritStdio?: boolean };
 
@@ -64,6 +66,8 @@ export type WranglerToml = {
 	 * naming a setting the operator has already set in an env block.
 	 */
 	varNames: string[];
+	/** The same table with its values, for the shipped-placeholder check. */
+	vars: TomlVars;
 	raw: string;
 };
 
@@ -90,33 +94,14 @@ export const parseWranglerToml = (repoRoot: string): WranglerToml => {
 		}
 		return out;
 	};
-	// Keys of the `[vars]` table: every assignment between the `[vars]` header
-	// and the next `[section]` line (or end of file). Walked line by line
-	// rather than matched with a lookahead — JS has no end-of-string anchor
-	// that pairs with `^\[` under /m, and `\Z` is not one: it parses as a
-	// literal "Z" and would truncate the block at the first capital Z.
-	// Commented-out keys don't count as set.
-	const grabVarNames = (): string[] => {
-		const out: string[] = [];
-		let inVars = false;
-		for (const line of raw.split("\n")) {
-			const trimmed = line.trim();
-			if (trimmed.startsWith("[")) {
-				inVars = /^\[vars\]/.test(trimmed);
-				continue;
-			}
-			if (!inVars) continue;
-			const m = /^([A-Za-z_][A-Za-z0-9_]*)\s*=/.exec(trimmed);
-			if (m) out.push(m[1] as string);
-		}
-		return out;
-	};
+	const vars = parseTomlVars(raw);
 
 	return {
 		kvBindings: grabBindings("kv_namespaces"),
 		d1Bindings: grabBindings("d1_databases"),
 		analyticsBindings: grabBindings("analytics_engine_datasets"),
-		varNames: grabVarNames(),
+		varNames: Object.keys(vars),
+		vars,
 		raw,
 	};
 };

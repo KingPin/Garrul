@@ -131,12 +131,14 @@
     {
       "name": "ALLOWED_ORIGINS",
       "required": false,
-      "addedIn": "1.0.0"
+      "addedIn": "1.0.0",
+      "placeholder": "https://yourblog.example.com"
     },
     {
       "name": "ADMIN_EMAILS",
       "required": false,
-      "addedIn": "1.0.0"
+      "addedIn": "1.0.0",
+      "placeholder": "you@example.com"
     },
     {
       "name": "EDIT_WINDOW_MINUTES",
@@ -146,7 +148,8 @@
     {
       "name": "PUBLIC_BASE_URL",
       "required": false,
-      "addedIn": "1.0.0"
+      "addedIn": "1.0.0",
+      "placeholder": "https://comments.example.com"
     },
     {
       "name": "CANONICAL_URL",
@@ -156,7 +159,8 @@
     {
       "name": "OAUTH_CALLBACK_BASE",
       "required": false,
-      "addedIn": "1.0.0"
+      "addedIn": "1.0.0",
+      "placeholder": "https://comments.example.com"
     },
     {
       "name": "BRANDING_HIDDEN",

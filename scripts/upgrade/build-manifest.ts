@@ -34,8 +34,14 @@ import {
 	type D1Entry,
 	type AnalyticsEntry,
 } from "./manifest";
-import { CONFIG_REGISTRY, SECRETS, VARS } from "../config-registry";
+import {
+	CONFIG_REGISTRY,
+	MUST_EDIT_VARS,
+	SECRETS,
+	VARS,
+} from "../config-registry";
 import { parseBindings, readBindingsSource } from "../bindings";
+import { parseTomlVars } from "./toml-vars";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, "..", "..");
@@ -158,14 +164,48 @@ const buildSecrets = (existing: Manifest | null): SecretEntry[] =>
 		return entry;
 	});
 
-const buildVars = (existing: Manifest | null): VarEntry[] =>
-	VARS.map((e) => {
+/**
+ * The value each `mustEdit` var ships as in wrangler.example.toml, read from
+ * that file rather than restated in the registry.
+ *
+ * One source, so the two cannot disagree: the registry says *which* vars ship
+ * a placeholder, the template says *what* it is, and this is where they meet.
+ * A `mustEdit` var whose key isn't a plain string in the template is an error
+ * rather than a silent skip — that is the case where the check quietly stops
+ * covering a var, which is the failure mode `mustEdit` was added to prevent
+ * (issue #46).
+ */
+const readPlaceholders = (): Record<string, string> => {
+	const vars = parseTomlVars(
+		readFileSync(join(REPO_ROOT, "wrangler.example.toml"), "utf8"),
+	);
+	const out: Record<string, string> = {};
+	for (const e of MUST_EDIT_VARS) {
+		const value = vars[e.name];
+		if (typeof value !== "string") {
+			throw new Error(
+				`${e.name} is marked mustEdit in scripts/config-registry.ts but has no ` +
+					"string value under [vars] in wrangler.example.toml.\n" +
+					"Add the placeholder there, or drop `mustEdit` from the registry entry.",
+			);
+		}
+		out[e.name] = value;
+	}
+	return out;
+};
+
+const buildVars = (existing: Manifest | null): VarEntry[] => {
+	const placeholders = readPlaceholders();
+	return VARS.map((e) => {
 		const prev = findEntry(existing?.vars, "name", e.name);
 		const entry: VarEntry = { name: e.name, required: e.required };
 		if (prev?.description !== undefined) entry.description = prev.description;
 		entry.addedIn = e.addedIn;
+		const placeholder = placeholders[e.name];
+		if (placeholder !== undefined) entry.placeholder = placeholder;
 		return entry;
 	});
+};
 
 const buildKv = (
 	existing: Manifest | null,

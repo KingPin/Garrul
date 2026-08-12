@@ -24,6 +24,19 @@ const fakeTargetManifest: Manifest = {
 	vars: [
 		{ name: "ENV", required: false, addedIn: "1.0.0" },
 		{ name: "NEW_FLAG", required: false, addedIn: "1.2.0" },
+		// Two `mustEdit` vars: the operator has edited one and not the other.
+		{
+			name: "PUBLIC_BASE_URL",
+			required: false,
+			addedIn: "1.0.0",
+			placeholder: "https://comments.example.com",
+		},
+		{
+			name: "ALLOWED_ORIGINS",
+			required: false,
+			addedIn: "1.0.0",
+			placeholder: "https://yourblog.example.com",
+		},
 	],
 	kvNamespaces: [
 		{ binding: "RATE_LIMITS", required: true },
@@ -59,7 +72,12 @@ const makeWranglerMock = (): typeof wranglerModule => ({
 		kvBindings: ["RATE_LIMITS"],
 		d1Bindings: ["DB"],
 		analyticsBindings: [],
-		varNames: ["ENV"],
+		varNames: ["ENV", "PUBLIC_BASE_URL", "ALLOWED_ORIGINS"],
+		vars: {
+			ENV: "production",
+			PUBLIC_BASE_URL: "https://comments.example.com",
+			ALLOWED_ORIGINS: "https://mysite.dev",
+		},
 		raw: "",
 	})),
 	queryAppliedMigrations: vi.fn(() => [
@@ -264,6 +282,32 @@ describe("upgrade dry-run", () => {
 		const end = after.findIndex((l) => !l.startsWith("  • "));
 		const requiredBullets = end === -1 ? after : after.slice(0, end);
 		expect(requiredBullets).toEqual(["  • NEW_SECRET"]);
+	});
+
+	it("warns about vars still set to the shipped example value", async () => {
+		// The gap this closes: every var is `required: false`, so drift detection
+		// can never flag one — and these are *set*, just set to the template's
+		// value. Nothing else in the upgrade path looks at values at all.
+		await main(["--dry-run"], {
+			wrangler: wranglerMock,
+			git: gitMock,
+			fetchLatest,
+			fetchReleaseForTag,
+			fetchTargetManifest,
+			loadLocal,
+		});
+
+		const output: string = logSpy.mock.calls
+			.map((c: unknown[]) => c.join(" "))
+			.join("\n");
+		expect(output).toMatch(/Still set to the example value/);
+		expect(output).toMatch(/• PUBLIC_BASE_URL = "https:\/\/comments\.example\.com"/);
+		// Edited to a real origin — silence is the whole point of comparing
+		// against the value rather than against presence.
+		expect(output).not.toMatch(/• ALLOWED_ORIGINS/);
+		// Warning, not blocker: the plan still printed and the run reached the
+		// dry-run exit rather than the "refusing to apply" path.
+		expect(output).toMatch(/\(dry-run; no changes applied\)/);
 	});
 
 	it("prints only the breaking changes the operator has not crossed", async () => {

@@ -44,6 +44,7 @@ import {
 	diffVars,
 	newVarsSince,
 	newSecretsSince,
+	placeholderVars,
 	breakingChangesSince,
 	diffKv,
 	diffD1,
@@ -222,6 +223,7 @@ const computePlan = (
 			current.version,
 			target.secrets,
 		),
+		placeholders: placeholderVars(toml.vars, target.vars),
 		kv: diffKv(toml.kvBindings, target.kvNamespaces),
 		d1: diffD1(toml.d1Bindings, target.d1Databases),
 		migrations: diffMigrations(applied, target.migrations),
@@ -238,6 +240,27 @@ const printPlan = (current: Manifest, target: Manifest, plan: Plan): void => {
 	console.log(`Plan: ${current.version} → ${target.version}`);
 	console.log("");
 
+	if (plan.placeholders.length > 0) {
+		// First, not last: this is a "your instance is misconfigured right now"
+		// warning rather than anything about the upgrade, and burying it under
+		// the new-optional-settings list is how it goes unread. Printed before
+		// the confirm prompt either way — see plain-text.ts.
+		console.log(
+			"Still set to the example value shipped in wrangler.example.toml:",
+		);
+		for (const v of plan.placeholders) {
+			const desc = v.description ? ` — ${v.description}` : "";
+			console.log(`  • ${v.name} = "${v.value}"${desc}`);
+		}
+		console.log(
+			"  (a deploy with these will pass every check here and then fail at",
+		);
+		console.log(
+			"   runtime — CORS rejections and redirect_uri_mismatch. Not blocking:",
+		);
+		console.log("   ignore this if example.com really is your domain.)");
+		console.log("");
+	}
 	if (plan.secrets.missing.length > 0) {
 		console.log("Missing required secrets:");
 		for (const s of plan.secrets.missing) {

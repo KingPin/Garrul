@@ -33,6 +33,11 @@ comma-separated list of full origins, no trailing slash, no path:
 ALLOWED_ORIGINS = "https://yourblog.example.com,https://staging.example.com"
 ```
 
+On a fresh install the usual cause is that the line is still the one
+`wrangler.example.toml` ships — `https://yourblog.example.com`, which
+is nobody's blog. `npm run upgrade -- --dry-run` lists every var still
+set to its shipped placeholder.
+
 Cloudflare caches the previous CORS response — redeploy and hard-reload.
 
 ### Widget renders but submitting fails with `err.origin.forbidden`
@@ -206,6 +211,12 @@ one case — X uses `twitter`:
 GitHub OAuth apps allow exactly one callback URL. For staging +
 production, register two OAuth apps and switch credentials per
 deployment.
+
+First thing to check on a fresh install: that `OAUTH_CALLBACK_BASE` in
+`wrangler.toml` is still not `https://comments.example.com`. It is one
+of four values that ship as placeholders, and leaving one set produces
+exactly this error with no hint about where it came from.
+`npm run upgrade -- --dry-run` lists any you missed.
 
 ### Supported providers / why no Instagram
 
