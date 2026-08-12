@@ -137,14 +137,20 @@ export const EN = {
 	"w.sort.new": "Newest",
 	"w.sort.top": "Top",
 	// Subscribing without commenting. `w.subscribe` is the bell's accessible name
-	// and tooltip; the visible glyph is 🔔. The two outcome strings are fallbacks
-	// only — the server sends an already-localized `message` — but they have to
-	// exist, because a server older than this bundle sends no message at all and
-	// silence after a click reads as a broken button.
+	// and tooltip; the visible glyph is 🔔.
+	//
+	// Only `w.subscribe.done` is a fallback — the server sends an already-localized
+	// `message` on success, and this covers a server older than this bundle, where
+	// silence after a click reads as a broken button. The two failure strings are
+	// not fallbacks but the only copy there is: error responses carry `error`, not
+	// `message`, and `error` is prose on some paths and a machine code on others,
+	// so the widget picks its own words off the status code.
 	"w.subscribe": "Email me about new comments on this post",
 	"w.subscribe.submit": "Subscribe",
 	"w.subscribe.done": "Check your email to confirm.",
 	"w.subscribe.failed": "Could not subscribe. Try again.",
+	// Never "try again" — a 429 retry cannot succeed and pushes the window out.
+	"w.subscribe.ratelimit": "Too many requests. Try again later.",
 	"w.load_more": "Load older comments",
 	"w.load_more_failed": "Could not load more: {detail}",
 

@@ -1293,10 +1293,16 @@ const buildSubscribeBell = (
 				message?: string;
 			} | null;
 			if (!res.ok) {
-				// The server's own message where there is one — it distinguishes a
-				// rate limit from a bad address, and inventing a generic failure
-				// would throw that away.
-				say(body?.message ?? s("w.subscribe.failed"));
+				// A rate limit is the one failure where "try again" is actively bad
+				// advice: the retry cannot succeed and each one pushes the window
+				// further out. Every other status keeps the generic message, which
+				// is honest — the widget cannot tell a bad address from an outage.
+				//
+				// Deliberately not rendering `body.error`: on some paths the server
+				// puts localized prose there, on others a machine code
+				// ("invalid_email"), and there is no way to tell them apart from
+				// here. Only `message`, on success, is contracted to be prose.
+				say(res.status === 429 ? s("w.subscribe.ratelimit") : s("w.subscribe.failed"));
 				return;
 			}
 			say(body?.message ?? s("w.subscribe.done"));

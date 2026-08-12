@@ -110,6 +110,7 @@ export const fr = {
 	"w.subscribe.submit": "S'abonner",
 	"w.subscribe.done": "Vérifiez votre e-mail pour confirmer.",
 	"w.subscribe.failed": "Impossible de s'abonner. Veuillez réessayer.",
+	"w.subscribe.ratelimit": "Trop de requêtes. Veuillez réessayer plus tard.",
 	"w.load_more": "Charger les commentaires plus anciens",
 	"w.load_more_failed": "Impossible d'en charger davantage : {detail}",
 
