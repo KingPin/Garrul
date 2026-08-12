@@ -26,7 +26,7 @@ import {
 	CONFIRM_BURST_WINDOW_SEC,
 	CONFIRM_DAILY_WINDOW_SEC,
 	confirmSendBudgets,
-	reserveConfirmSend,
+	reserveSend,
 	type SendBudget,
 } from "../src/lib/email-budget";
 import { numberBounds } from "../src/lib/settings";
@@ -180,7 +180,7 @@ const readBudget = (scope: string) =>
 		.prepare("SELECT window_start, sent FROM email_send_budget WHERE scope = ?")
 		.get(scope) as { window_start: number; sent: number } | undefined;
 
-describe("reserveConfirmSend — atomic under concurrency", () => {
+describe("reserveSend — atomic under concurrency", () => {
 	it("lets exactly `max` through when N concurrent callers race one window", async () => {
 		// The limiter's failure mode is that all N get through and the bucket
 		// advances by one. Here the cap lives in the UPDATE's own WHERE clause, so
@@ -192,7 +192,7 @@ describe("reserveConfirmSend — atomic under concurrency", () => {
 		const N = 12;
 
 		const results = await Promise.all(
-			Array.from({ length: N }, () => reserveConfirmSend(db, budgets, NOW)),
+			Array.from({ length: N }, () => reserveSend(db, budgets, NOW)),
 		);
 
 		expect(results.filter((r) => r.ok)).toHaveLength(3);
@@ -208,8 +208,8 @@ describe("reserveConfirmSend — atomic under concurrency", () => {
 			{ scope: "confirm:burst", max: 1, windowSec: 60 },
 		];
 		const db = makeD1(sqlite);
-		expect((await reserveConfirmSend(db, budgets, NOW)).ok).toBe(true);
-		const denied = await reserveConfirmSend(db, budgets, NOW);
+		expect((await reserveSend(db, budgets, NOW)).ok).toBe(true);
+		const denied = await reserveSend(db, budgets, NOW);
 		expect(denied.ok).toBe(false);
 		expect(denied.reason).toBe("confirm:burst");
 	});
@@ -219,14 +219,14 @@ describe("reserveConfirmSend — atomic under concurrency", () => {
 			{ scope: "confirm:burst", max: 2, windowSec: 60 },
 		];
 		const db = makeD1(sqlite);
-		await reserveConfirmSend(db, budgets, NOW);
-		await reserveConfirmSend(db, budgets, NOW);
-		expect((await reserveConfirmSend(db, budgets, NOW)).ok).toBe(false);
+		await reserveSend(db, budgets, NOW);
+		await reserveSend(db, budgets, NOW);
+		expect((await reserveSend(db, budgets, NOW)).ok).toBe(false);
 
 		// One tick past the window: the reserve statement resets the count itself,
 		// so nothing has to sweep expired rows.
 		const later = NOW + 60_001;
-		expect((await reserveConfirmSend(db, budgets, later)).ok).toBe(true);
+		expect((await reserveSend(db, budgets, later)).ok).toBe(true);
 		expect(readBudget("confirm:burst")).toEqual({
 			window_start: later,
 			sent: 1,
@@ -239,12 +239,12 @@ describe("reserveConfirmSend — atomic under concurrency", () => {
 			{ scope: "confirm:daily", max: 1, windowSec: 86_400 },
 		];
 		const db = makeD1(sqlite);
-		expect((await reserveConfirmSend(db, budgets, NOW)).ok).toBe(true);
-		const denied = await reserveConfirmSend(db, budgets, NOW);
+		expect((await reserveSend(db, budgets, NOW)).ok).toBe(true);
+		const denied = await reserveSend(db, budgets, NOW);
 		expect(denied.ok).toBe(false);
 		expect(denied.reason).toBe("confirm:daily");
 		// The burst grant is deliberately not handed back on a denial — see the
-		// note on reserveConfirmSend. It over-counts by one, in the strict
+		// note on reserveSend. It over-counts by one, in the strict
 		// direction, rather than adding a write to an attacker-driven path.
 		expect(readBudget("confirm:burst")?.sent).toBe(2);
 	});
@@ -254,11 +254,11 @@ describe("reserveConfirmSend — atomic under concurrency", () => {
 			{ scope: "confirm:burst", max: 1, windowSec: 60 },
 		];
 		const db = makeD1(sqlite);
-		const held = await reserveConfirmSend(db, budgets, NOW);
+		const held = await reserveSend(db, budgets, NOW);
 		expect(held.ok).toBe(true);
 		await held.release();
 		expect(readBudget("confirm:burst")?.sent).toBe(0);
-		expect((await reserveConfirmSend(db, budgets, NOW)).ok).toBe(true);
+		expect((await reserveSend(db, budgets, NOW)).ok).toBe(true);
 	});
 
 	it("release declines to decrement a window that has already rolled", async () => {
@@ -266,22 +266,22 @@ describe("reserveConfirmSend — atomic under concurrency", () => {
 			{ scope: "confirm:burst", max: 5, windowSec: 60 },
 		];
 		const db = makeD1(sqlite);
-		const held = await reserveConfirmSend(db, budgets, NOW);
+		const held = await reserveSend(db, budgets, NOW);
 		// A later request rolls the window. The stale release must not spend a
 		// slot out of the new one.
-		await reserveConfirmSend(db, budgets, NOW + 60_001);
+		await reserveSend(db, budgets, NOW + 60_001);
 		await held.release();
 		expect(readBudget("confirm:burst")?.sent).toBe(1);
 	});
 });
 
-describe("reserveConfirmSend — fails open on infrastructure trouble", () => {
+describe("reserveSend — fails open on infrastructure trouble", () => {
 	it("allows the send when the budget table is missing", async () => {
 		// An install that somehow never applied 0018 must degrade to the old
 		// behaviour, not refuse every subscription.
 		sqlite.exec("DROP TABLE email_send_budget");
 		const warn = vi.spyOn(console, "log").mockImplementation(() => {});
-		const r = await reserveConfirmSend(makeD1(sqlite), DEFAULT_BUDGETS, NOW);
+		const r = await reserveSend(makeD1(sqlite), DEFAULT_BUDGETS, NOW);
 		expect(r.ok).toBe(true);
 		warn.mockRestore();
 	});
@@ -289,7 +289,7 @@ describe("reserveConfirmSend — fails open on infrastructure trouble", () => {
 	it("allows the send when a budget row was never seeded", async () => {
 		sqlite.exec("DELETE FROM email_send_budget WHERE scope = 'confirm:burst'");
 		const warn = vi.spyOn(console, "log").mockImplementation(() => {});
-		const r = await reserveConfirmSend(makeD1(sqlite), DEFAULT_BUDGETS, NOW);
+		const r = await reserveSend(makeD1(sqlite), DEFAULT_BUDGETS, NOW);
 		expect(r.ok).toBe(true);
 		warn.mockRestore();
 	});
@@ -301,7 +301,7 @@ describe("reserveConfirmSend — fails open on infrastructure trouble", () => {
 			},
 		};
 		const warn = vi.spyOn(console, "log").mockImplementation(() => {});
-		const r = await reserveConfirmSend(broken, DEFAULT_BUDGETS, NOW);
+		const r = await reserveSend(broken, DEFAULT_BUDGETS, NOW);
 		expect(r.ok).toBe(true);
 		warn.mockRestore();
 	});
@@ -426,12 +426,20 @@ describe("confirmSendBudgets — operator-settable caps (issue #69)", () => {
 		// `scope` is the table's primary key, seeded by the migration — a rename
 		// here would silently take every budget down the fail-open path (no row →
 		// no ceiling) rather than erroring.
-		const seeded = sqlite
-			.prepare("SELECT scope FROM email_send_budget ORDER BY scope")
-			.all() as { scope: string }[];
-		expect(seeded.map((r) => r.scope)).toEqual(
-			DEFAULT_BUDGETS.map((b) => b.scope).sort(),
+		//
+		// A containment check, not an equality one: the table is shared, and
+		// migration 0021 seeds `moderator:*` rows into it for moderator mail. What
+		// this pins is that every scope *this* module names has a row.
+		const seeded = new Set(
+			(
+				sqlite.prepare("SELECT scope FROM email_send_budget").all() as {
+					scope: string;
+				}[]
+			).map((r) => r.scope),
 		);
+		for (const budget of DEFAULT_BUDGETS) {
+			expect(seeded.has(budget.scope)).toBe(true);
+		}
 	});
 
 	it("enforces an operator-lowered burst cap end to end", async () => {

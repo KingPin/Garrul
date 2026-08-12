@@ -20,7 +20,8 @@ import {
 import { MAX_REPLY_DEPTH } from "../src/lib/tree";
 import { ulid } from "../src/lib/ulid";
 
-const DB_NAME = "garrul-db";
+// The binding, not `database_name` — see the docblock in src/db/migrate.ts.
+const DB_BINDING = "DB";
 const isRemote = process.argv.includes("--remote");
 const remoteFlag = isRemote ? "--remote" : "--local";
 if (!isRemote) {
@@ -46,7 +47,7 @@ const d1Execute = (sql: string): void => {
 	runWrangler([
 		"d1",
 		"execute",
-		DB_NAME,
+		DB_BINDING,
 		remoteFlag,
 		"--command",
 		sql,
@@ -119,7 +120,7 @@ const insertSeedUser = (name: string, now: number): string => {
 	const lookup = runWrangler([
 		"d1",
 		"execute",
-		DB_NAME,
+		DB_BINDING,
 		remoteFlag,
 		"--json",
 		"--command",

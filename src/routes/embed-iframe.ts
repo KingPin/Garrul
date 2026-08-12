@@ -20,6 +20,10 @@
  *   ?title=...                        — passed through to data-title
  *   ?url=...                          — passed through to data-url
  *   ?theme=light|dark|auto            — host-page theme hint
+ *   ?preset=minimal|soft|contrast     — named palette (docs/THEMING.md). The
+ *     iframe path can't set CSS variables on the widget — the host page is a
+ *     different document — so a preset is the only styling an iframe embedder
+ *     gets. Composes with ?theme: each preset has a light and a dark half.
  *   ?lang=de                          — locale for the widget inside the frame.
  *     Lands on both <html lang> and data-lang, and the two want different
  *     things. `data-lang` stays raw: it is a request, and the server is what
@@ -56,6 +60,9 @@ const escapeAttr = (s: string): string =>
 		.replace(/>/g, "&gt;");
 
 const TURNSTILE_ORIGIN = "https://challenges.cloudflare.com";
+
+/** Named palettes shipped in src/widget/styles.css. Keep the two in step. */
+const PRESETS = new Set(["minimal", "soft", "contrast"]);
 
 const allowedOriginSet = (env: Bindings): Set<string> => {
 	const list = (env.ALLOWED_ORIGINS ?? "")
@@ -366,7 +373,16 @@ iframe.get("/:slug", (c) => {
 
 	const title = c.req.query("title") ?? "";
 	const pageUrl = c.req.query("url") ?? "";
-	const theme = c.req.query("theme") ?? "auto";
+	// Validated against the vocabulary, not merely escaped: it reaches a CSS
+	// declaration below, where escapeAttr buys nothing. Same three values the
+	// Turnstile route accepts; anything else is "auto" (follow the OS).
+	const themeRaw = c.req.query("theme") ?? "auto";
+	const theme = themeRaw === "light" || themeRaw === "dark" ? themeRaw : "auto";
+	// Validated against the same closed vocabulary as the CSS: an unknown value
+	// becomes no preset at all, so a typo degrades to the default palette rather
+	// than emitting an attribute nothing matches.
+	const presetRaw = c.req.query("preset") ?? "";
+	const preset = PRESETS.has(presetRaw) ? presetRaw : "";
 	const lang = c.req.query("lang") ?? "";
 	// See the ?lang= note in the route doc above: `data-lang` forwards the raw
 	// request, `<html lang>` only ever claims a locale that exists.
@@ -402,7 +418,7 @@ iframe.get("/:slug", (c) => {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Comments</title>
 <style>
-  html, body { margin: 0; padding: 0; background: transparent; }
+  html, body { margin: 0; padding: 0; background: transparent; color-scheme: ${theme === "auto" ? "light dark" : theme}; }
   body { font-family: system-ui, -apple-system, Segoe UI, sans-serif; }
 </style>
 </head>
@@ -413,7 +429,7 @@ iframe.get("/:slug", (c) => {
   data-api="${escapeAttr(apiBase)}"
   data-title="${escapeAttr(title)}"
   data-url="${escapeAttr(pageUrl)}"
-  data-theme="${escapeAttr(theme)}"
+  data-theme="${escapeAttr(theme)}"${preset ? `\n  data-preset="${escapeAttr(preset)}"` : ""}
   data-lang="${escapeAttr(lang)}"
 ></div>
 <script src="${escapeAttr(apiBase)}/embed.js"></script>

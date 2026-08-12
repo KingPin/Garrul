@@ -31,7 +31,8 @@ import { readFileSync } from "node:fs";
 
 import { runDisqusImport } from "../src/lib/disqus-import";
 
-const DB_NAME = "garrul-db";
+// The binding, not `database_name` — see the docblock in src/db/migrate.ts.
+const DB_BINDING = "DB";
 
 const args = process.argv.slice(2);
 const positional = args.filter((a) => !a.startsWith("--"));
@@ -77,7 +78,7 @@ const sqlEsc = (s: string): string => s.replace(/'/g, "''");
 const runWrangler = (sql: string): string =>
 	execFileSync(
 		"wrangler",
-		["d1", "execute", DB_NAME, remoteFlag, "--command", sql],
+		["d1", "execute", DB_BINDING, remoteFlag, "--command", sql],
 		{ encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
 	);
 

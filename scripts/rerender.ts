@@ -22,7 +22,8 @@ import {
 	renderMarkdown,
 } from "../src/lib/markdown";
 
-const DB_NAME = "garrul-db";
+// The binding, not `database_name` — see the docblock in src/db/migrate.ts.
+const DB_BINDING = "DB";
 const PAGE_SIZE = 100;
 const isRemote = process.argv.includes("--remote");
 const remoteFlag = isRemote ? "--remote" : "--local";
@@ -50,7 +51,7 @@ const d1Json = (sql: string): unknown => {
 	const out = wrangler([
 		"d1",
 		"execute",
-		DB_NAME,
+		DB_BINDING,
 		remoteFlag,
 		"--json",
 		"--command",

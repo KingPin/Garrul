@@ -62,7 +62,10 @@ Fill these in per page:
 | `data-url`   | The canonical permalink — reflected in RSS and email.       |
 
 `data-api` is the same on every page; the host element and the
-`<script src>` must agree on the Worker origin.
+`<script src>` must agree on the Worker origin. Omitting it falls back to
+the origin the bundle was served from, which is the same answer — but
+keep it in the snippet: it is the one attribute that makes the wiring
+readable to whoever maintains the page next.
 
 **Script tag vs. iframe — which to use:** default to the script tag.
 It's smaller, themable via CSS custom properties, and integrates with
@@ -72,10 +75,25 @@ inline scripts, or the integrator wants hard origin isolation.
 
 **Weight:** `embed.js` is a single self-contained bundle — no runtime
 dependencies, no framework, no second request for CSS or strings. It is
-currently ~13 KB gzipped, against a CI-enforced 30 KB ceiling; run
+currently ~15 KB gzipped, against a CI-enforced 30 KB ceiling; run
 `npm run size` for the live figure rather than trusting this sentence.
 The script is `defer`red and the widget only mounts on
 `DOMContentLoaded`, so it never blocks rendering of the host page.
+
+**Layout stability (since v2.9.0).** Because the widget mounts after the
+page has painted, `#garrul` goes from 0px to the height of the loading
+skeleton, pushing whatever sits below the thread down the page. A
+non-deferred `<script>` gets this handled for you — the bundle reserves
+the skeleton's height the moment it executes. With `defer` (the
+recommendation above) it cannot: the script does not run until parsing
+is done. Reserve the space from the host page instead:
+
+```css
+#garrul { min-height: 220px; }
+```
+
+`min-height`, not `height` — the thread grows past it, and the widget
+releases its own reservation once real comments render.
 
 ### Per-framework wiring
 
@@ -257,8 +275,15 @@ Notes for integrators:
 - **Comment bodies are never translated.** Localization covers the
   widget's own chrome; user-authored markdown is stored and served as
   written.
-- **Dates stay locale-neutral** (`YYYY-MM-DD HH:MM`, UTC) in every
-  language.
+- **Comment timestamps follow the widget locale** (since v2.9.0). Each
+  one renders as a relative label — "2 hours ago", "yesterday", "last
+  month" — formatted by `Intl.RelativeTimeFormat` in the resolved
+  locale. Before v2.9.0 they were `YYYY-MM-DD HH:MM` in **UTC** for
+  every reader regardless of where they were. The markup is a `<time>`
+  element: `datetime` carries the exact ISO instant, `title` the
+  reader's own local date and time. Style it with `.gr-time` as before.
+  Everything else numeric — vote counts, comment counts — stays
+  locale-neutral.
 - The widget sets `lang` and `dir` on its own host element, so an RTL
   host page and an LTR widget (or the reverse) lay out correctly.
 
@@ -287,6 +312,14 @@ host-page wiring:
 - **Anonymous viewers can vote.** They use the same IP-hashed ghost
   identity as anonymous comments — one vote per identity per comment.
   Authors cannot vote on their own comments.
+- **Comment reactions patch in place** (since v2.9.0). Toggling an emoji
+  on a comment (`POST /api/v1/reactions` `{comment_id, kind}`, `kind` ∈
+  `like|love|laugh|hmm|cry`) no longer re-fetches and re-renders the
+  thread — the response carries `{ok, added, reactions}` where
+  `reactions` is `{kind: count}` for that one comment, and the widget
+  updates just that row. Scroll position, open reply composers and typed
+  drafts survive a reaction now. Zero-count kinds are absent from
+  `reactions`, matching the list payload.
 - **Sorting** defaults to `new` (newest top-level threads first). `top`
   orders top-level threads by net score (`score_up - score_down`,
   newer-first on ties); replies inside a thread always stay
@@ -324,6 +357,38 @@ Preview renders server-side via `POST /api/v1/preview` `{body}` →
 what you preview is byte-identical to what gets posted, with no
 client-side markdown library and no XSS divergence. The endpoint is
 public but rate-limited; no auth required.
+
+### Deleting your own comment (since v2.9.0)
+
+Delete asks for confirmation **in place**: the button becomes
+"Delete this comment? [Delete] [Cancel]" in the same row. Focus lands on
+Cancel, and `Escape` backs out. Before v2.9.0 this was `window.confirm()`,
+which is suppressed entirely in some webviews and in cross-origin iframes
+without user activation — where the button appeared to do nothing.
+
+### Comment length (since v2.9.0)
+
+A comment body is capped at **10,000 characters**. This is a constant, not
+an operator setting — but `/api/v1/config` reports it as `max_body_chars`,
+and the composer counts down against it, so the two can never disagree.
+The counter stays hidden until the last 500 characters and turns red past
+the ceiling. Over-long bodies are still rejected server-side
+(`err.body.too_long`); the counter is a warning, not the enforcement.
+
+### Composer keyboard shortcuts (since v2.9.0)
+
+Inside any composer — top-level, reply, or edit:
+
+| Keys                 | Does                                            |
+| -------------------- | ----------------------------------------------- |
+| `Cmd`/`Ctrl` + `Enter` | Posts the form you are in.                    |
+| `Escape`             | Closes a reply or edit box, discarding its draft. The top-level composer has nothing to back out to and ignores it. |
+
+Bound on the form, so they work from the name and email fields too, not
+just the textarea. Both are suppressed while an IME composition is
+active. `Escape` does not propagate to the host page — closing a reply
+box will not also close a lightbox or drawer you have open around it.
+The hint under the box is hidden on touch devices.
 
 ### Composer sizing (since v2.0.3)
 
@@ -418,6 +483,33 @@ ancestor.
 | `--garrul-accent-hover` | `#1d4ed8`                                              | Submit button hover background         |
 | `--garrul-vote-active` | `--garrul-badge-bg`                                     | Active vote / reaction highlight (defaults to the badge background) |
 | `--garrul-shadow`     | `0 1px 2px rgba(0,0,0,.06)`                              | Box-shadow on raised surfaces          |
+| `--garrul-motion`     | `120ms`                                                  | Transition duration; `0ms` opts out    |
+
+### Presets (since v2.9.0)
+
+For a different look without picking colors by hand, set `data-preset`
+on the host element:
+
+```html
+<div id="garrul" data-slug="hello-world" data-api="{{INSTANCE_URL}}"
+  data-preset="soft"></div>
+```
+
+| `data-preset` | Look                                                     |
+| ------------- | -------------------------------------------------------- |
+| absent        | Default palette — blue accent, 6px corners, soft shadow  |
+| `minimal`     | Monochrome, no shadow, near-square corners               |
+| `soft`        | Rounded 12px, violet accent, tinted surfaces             |
+| `contrast`    | High contrast, hard borders, no shadow (WCAG AA pairs)   |
+
+Each preset has a light and a dark half, so it composes with `data-theme`
+and with `prefers-color-scheme` rather than replacing them. Any
+`--garrul-*` override you set still wins over the preset. Precedence:
+**host override > preset > `data-theme` > OS preference > light**.
+
+The iframe fallback (§6) takes the same thing as `?preset=` on the frame
+URL — which is the only styling available there, since a host page cannot
+reach into another document's custom properties.
 
 ### Dark mode
 
@@ -439,6 +531,11 @@ override every variable by hand. By default it follows the visitor's OS/browser
 Host `--garrul-*` overrides still win at every theme level, so the table above
 remains the supported customization surface. For the full reference and
 stability policy, see `docs/THEMING.md`.
+
+The resolved theme also sets `color-scheme`, so browser-painted UI inside the
+widget — `<select>` popups, scrollbars, caret and focus rings — follows it
+rather than staying light on a dark page. The iframe route does the same from
+its `?theme=` parameter.
 
 ### Code blocks in comments (since v2.5.1)
 

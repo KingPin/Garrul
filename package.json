@@ -1,6 +1,6 @@
 {
   "name": "garrul",
-  "version": "2.8.1",
+  "version": "2.9.0",
   "private": true,
   "description": "Self-hosted comment system on Cloudflare Workers + D1 + KV",
   "license": "Apache-2.0",
@@ -13,6 +13,7 @@
     "node": ">=24"
   },
   "scripts": {
+    "setup": "bash scripts/setup.sh",
     "dev": "wrangler dev",
     "predev": "npm run build:assets",
     "deploy": "wrangler deploy",

@@ -33,6 +33,11 @@ comma-separated list of full origins, no trailing slash, no path:
 ALLOWED_ORIGINS = "https://yourblog.example.com,https://staging.example.com"
 ```
 
+On a fresh install the usual cause is that the line is still the one
+`wrangler.example.toml` ships — `https://yourblog.example.com`, which
+is nobody's blog. `npm run upgrade -- --dry-run` lists every var still
+set to its shipped placeholder.
+
 Cloudflare caches the previous CORS response — redeploy and hard-reload.
 
 ### Widget renders but submitting fails with `err.origin.forbidden`
@@ -207,6 +212,12 @@ GitHub OAuth apps allow exactly one callback URL. For staging +
 production, register two OAuth apps and switch credentials per
 deployment.
 
+First thing to check on a fresh install: that `OAUTH_CALLBACK_BASE` in
+`wrangler.toml` is still not `https://comments.example.com`. It is one
+of four values that ship as placeholders, and leaving one set produces
+exactly this error with no hint about where it came from.
+`npm run upgrade -- --dry-run` lists any you missed.
+
 ### Supported providers / why no Instagram
 
 Configured providers are GitHub, Google, Facebook, X (Twitter), and
@@ -252,9 +263,9 @@ out-of-band (e.g. via DevTools) without hitting `/signout`, the KV row
 lingers until its TTL expires (≤30 days); call `/signout` to revoke it
 now.
 
-## Email digests
+## Reply notification emails
 
-### Nothing happens after 15 minutes
+### A reader subscribed but nothing arrives after 15 minutes
 
 Check, in order:
 
@@ -262,11 +273,12 @@ Check, in order:
 2. `RESEND_API_KEY` is set as a secret (`wrangler secret list`).
 3. `EMAIL_FROM` is set, and the from-address domain is verified in
    the Resend dashboard.
-4. `PUBLIC_BASE_URL` is set — the digest needs it for permalinks.
+4. `PUBLIC_BASE_URL` is set — the email needs it for permalinks and for
+   the confirm/unsubscribe links.
 5. The cron trigger is configured: `[triggers] crons = ["*/15 * * * *"]`
    in `wrangler.toml`. View runs in the dashboard under your worker.
 
-### Digest emails arrive but links go to wrong URL
+### Notification emails arrive but links go to the wrong URL
 
 `PUBLIC_BASE_URL` should point at the **worker**, not the blog. The
 `/c/:id` redirect lives on the worker and bounces to the post's URL

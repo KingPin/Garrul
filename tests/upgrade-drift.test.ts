@@ -7,6 +7,7 @@ import {
 	diffVars,
 	newVarsSince,
 	newSecretsSince,
+	placeholderVars,
 	breakingChangesSince,
 	diffKv,
 	diffD1,
@@ -309,12 +310,108 @@ describe("breakingChangesSince", () => {
 	});
 });
 
+describe("placeholderVars", () => {
+	const withPlaceholder = (name: string, placeholder: string): VarEntry => ({
+		name,
+		required: false,
+		placeholder,
+	});
+	const PUBLIC_BASE_URL = withPlaceholder(
+		"PUBLIC_BASE_URL",
+		"https://comments.example.com",
+	);
+
+	it("flags a var left at the value wrangler.example.toml ships", () => {
+		const r = placeholderVars(
+			{ PUBLIC_BASE_URL: "https://comments.example.com" },
+			[PUBLIC_BASE_URL],
+		);
+		expect(r).toEqual([
+			{ name: "PUBLIC_BASE_URL", value: "https://comments.example.com" },
+		]);
+	});
+
+	it("stays quiet once the operator has edited it", () => {
+		expect(
+			placeholderVars({ PUBLIC_BASE_URL: "https://comments.mysite.dev" }, [
+				PUBLIC_BASE_URL,
+			]),
+		).toEqual([]);
+	});
+
+	it("stays quiet when the var isn't set at all", () => {
+		// Unset is a different report — `newVarsSince` owns it. Claiming an
+		// absent key is "still the placeholder" would be a lie about the file.
+		expect(placeholderVars({}, [PUBLIC_BASE_URL])).toEqual([]);
+	});
+
+	it("ignores vars the manifest declares no placeholder for", () => {
+		// Only the four `mustEdit` vars carry one; matching on value alone would
+		// flag `EMAIL_PROVIDER = "resend"` for everybody.
+		expect(
+			placeholderVars({ EMAIL_PROVIDER: "resend" }, [v("EMAIL_PROVIDER")]),
+		).toEqual([]);
+	});
+
+	it("ignores a key set to a non-string", () => {
+		// `null` is the parser's marker for a number/bool/array. No placeholder
+		// is one, so there is nothing to compare and nothing to report.
+		expect(
+			placeholderVars({ PUBLIC_BASE_URL: null }, [PUBLIC_BASE_URL]),
+		).toEqual([]);
+	});
+
+	it("compares exactly — a placeholder with a path appended is edited", () => {
+		expect(
+			placeholderVars(
+				{ PUBLIC_BASE_URL: "https://comments.example.com/comments" },
+				[PUBLIC_BASE_URL],
+			),
+		).toEqual([]);
+	});
+
+	it("carries the description through so the report can explain itself", () => {
+		const withDesc: VarEntry = {
+			...PUBLIC_BASE_URL,
+			description: "public URL of this Worker",
+		};
+		expect(
+			placeholderVars({ PUBLIC_BASE_URL: "https://comments.example.com" }, [
+				withDesc,
+			]),
+		).toEqual([
+			{
+				name: "PUBLIC_BASE_URL",
+				value: "https://comments.example.com",
+				description: "public URL of this Worker",
+			},
+		]);
+	});
+
+	it("reports every unedited var, not just the first", () => {
+		const r = placeholderVars(
+			{
+				ALLOWED_ORIGINS: "https://yourblog.example.com",
+				ADMIN_EMAILS: "you@example.com",
+				PUBLIC_BASE_URL: "https://comments.mysite.dev",
+			},
+			[
+				withPlaceholder("ALLOWED_ORIGINS", "https://yourblog.example.com"),
+				withPlaceholder("ADMIN_EMAILS", "you@example.com"),
+				PUBLIC_BASE_URL,
+			],
+		);
+		expect(r.map((e) => e.name)).toEqual(["ALLOWED_ORIGINS", "ADMIN_EMAILS"]);
+	});
+});
+
 describe("hasMutations + blocksAutoApply", () => {
 	const empty = (): Plan => ({
 		secrets: { missing: [], extra: [] },
 		vars: { missing: [], extra: [] },
 		newVars: [],
 		newSecrets: [],
+		placeholders: [],
 		kv: { missing: [], extra: [] },
 		d1: { missing: [], extra: [] },
 		migrations: { pending: [], diverged: [] },
@@ -357,6 +454,18 @@ describe("hasMutations + blocksAutoApply", () => {
 		// Optional by definition — `apply` must not start prompting for them.
 		const p = empty();
 		p.newSecrets.push({ name: "GITHUB_TOKEN", required: false });
+		expect(hasMutations(p)).toBe(false);
+		expect(blocksAutoApply(p)).toHaveLength(0);
+	});
+
+	it("placeholders alone never block or count as a mutation", () => {
+		// Deliberate: someone whose domain really is example.com must still be
+		// able to upgrade, and wrangler.toml is never rewritten here anyway.
+		const p = empty();
+		p.placeholders.push({
+			name: "PUBLIC_BASE_URL",
+			value: "https://comments.example.com",
+		});
 		expect(hasMutations(p)).toBe(false);
 		expect(blocksAutoApply(p)).toHaveLength(0);
 	});

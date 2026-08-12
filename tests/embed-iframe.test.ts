@@ -189,6 +189,32 @@ describe("GET /embed/:slug", () => {
 		});
 	});
 
+	describe("?preset=", () => {
+		it("forwards a known preset to data-preset", async () => {
+			const res = await fetchPage("/embed/hello?preset=soft");
+			expect(await res.text()).toContain('data-preset="soft"');
+		});
+
+		it("emits no attribute at all for an unknown preset", async () => {
+			// Closed vocabulary, not an escape: an attribute no CSS rule matches
+			// is dead weight in a cached page, and the default palette is the
+			// right answer for a typo.
+			const res = await fetchPage("/embed/hello?preset=neon");
+			const body = await res.text();
+			expect(body).not.toContain("data-preset");
+			expect(body).not.toContain("neon");
+		});
+
+		it("cannot break out of the attribute", async () => {
+			const res = await fetchPage(
+				`/embed/hello?preset=${encodeURIComponent('soft" onload="alert(1)')}`,
+			);
+			const body = await res.text();
+			expect(body).not.toContain("onload");
+			expect(body).not.toContain("data-preset");
+		});
+	});
+
 	it("keeps the ?api= override gated on the allowlist", async () => {
 		// Regression guard on the pattern parent_origin was modelled after: an
 		// unlisted override would load attacker-controlled JS into the frame,

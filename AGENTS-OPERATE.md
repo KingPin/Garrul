@@ -41,10 +41,17 @@ is the maintainer's instance — don't assume the user wants to use it.
 Before running a single command, the user needs:
 
 - A **Cloudflare account** (free plan is sufficient).
-- A **domain on Cloudflare DNS**. Required for `custom_domain = true`.
-  If DNS is elsewhere, move it first or accept `*.workers.dev` (which
-  has third-party-cookie issues in Safari/Brave — not recommended).
-- **Node.js >= 22** and `npm`. The repo's `.nvmrc` pins the version.
+- **Optional: a domain on Cloudflare DNS.** Required for
+  `custom_domain = true`, and for nothing else. Without it the Worker
+  deploys to `*.workers.dev`, which is a real deployment on the same
+  free tier — fine for evaluating Garrul, not for production, because
+  the session cookie is third-party there and Safari/Brave block it
+  (sign-in fails; anonymous commenting and the admin UI still work).
+  Moving to a custom domain later is a `wrangler.toml` edit plus a
+  redeploy, with no data migration — so don't gate the install on it.
+- **Node.js >= 24** and `npm`. The repo's `.nvmrc` pins the version.
+  Node 22 fails at `npm ci` — see the `node-24-minimum` entry in
+  `release-manifest.json`.
 - A clone of the repo: `git clone https://github.com/KingPin/Garrul.git`.
 - `wrangler` (installed via `npm install` as a dev dep; no global needed).
 - **Optional credentials**: GitHub OAuth app (GitHub sign-in), Google
@@ -60,7 +67,7 @@ end-to-end before improvising. Operator-side shape:
 2. `npx wrangler login` — browser OAuth, one-time per machine.
 3. Copy templates: `cp wrangler.example.toml wrangler.toml` and
    `cp .dev.vars.example .dev.vars`. Both targets are gitignored.
-4. Run `./scripts/setup.sh`. It creates the D1 database (`garrul-db`)
+4. Run `npm run setup`. It creates the D1 database (`garrul-db`)
    and the four KV namespaces (`RATE_LIMITS`, `OAUTH_STATE`, `SESSIONS`,
    `TREE_CACHE`), pastes their IDs into `wrangler.toml`, generates
    `JWT_SECRET` + `IP_HASH_SECRET` straight into Cloudflare (never
@@ -205,6 +212,8 @@ between the two is a build error, not a silent misclassification.
 | `REACTIONS_ENABLED` | var | Comment emoji reactions. Defaults **on**; same falsy-spelling semantics. Disabling hides the reaction bar and 403s `POST /api/v1/reactions`. | `true` | `wrangler.toml` |
 | `VOTING_ENABLED` | var | Comment voting (up/down buttons in the widget). Defaults **on** when unset; set `0`/`false`/`no`/`off` to disable instance-wide. | `true` | `wrangler.toml` |
 | `DOWNVOTES_ENABLED` | var | Downvote button. Same defaults-on semantics. Applies to **both** comment votes and page votes (a brigading-mitigation switch); independent of `VOTING_ENABLED`. | `true` | `wrangler.toml` |
+| `MODERATOR_EMAIL_ENABLED` | var | Email `ADMIN_EMAILS` (or `MODERATOR_NOTIFY_EMAILS`) a digest when comments land in the moderation queue or get reported. Defaults **off** — outbound mail is not something an upgrade should start doing unasked. Needs `EMAIL_PROVIDER`, `RESEND_API_KEY`, `EMAIL_FROM` and `PUBLIC_BASE_URL`; without them the pass is a silent no-op. Also settable from `/admin/settings`. | `false` | `wrangler.toml` |
+| `MODERATOR_NOTIFY_EMAILS` | var | Comma-separated recipients for moderation-queue email. Unset falls back to `ADMIN_EMAILS`, which is already the set of people who can act on the queue — set this only when the alerts belong somewhere else, such as a shared `moderation@` alias. | `moderation@example.com` | `wrangler.toml` |
 | `PAGE_REACTIONS_ENABLED` | var | Article-level emoji reaction bar (react to the page itself, no comment). Defaults **off** so an upgrade never surfaces new UI unasked. Enables `POST /api/v1/page-engagement/reactions` and the widget bar. | `false` | `wrangler.toml` |
 | `PAGE_VOTES_ENABLED` | var | Article-level "was this helpful?" up/down vote tally. Defaults **off**. Enables `POST /api/v1/page-engagement/votes`; downvotes here still honor `DOWNVOTES_ENABLED`. | `false` | `wrangler.toml` |
 | `SHOW_DELETED_PLACEHOLDERS` | var | Keep deleted comments in the public tree as a placeholder (`[deleted]` / `[removed by a moderator]`) instead of pruning leaf deletions. Defaults **off** (current behavior: a deleted comment with live replies is still kept for thread continuity; a deleted leaf is dropped). Added v1.15.0. | `false` | `wrangler.toml` |
@@ -221,7 +230,7 @@ between the two is a build error, not a silent misclassification.
 <!-- END:config-table -->
 
 Bindings (D1, KV, Analytics) live in `wrangler.toml` outside `[vars]`
-and are populated by `./scripts/setup.sh`. Don't edit binding IDs by
+and are populated by `npm run setup`. Don't edit binding IDs by
 hand once a deploy has used them.
 
 ### Feature flags: runtime overrides (since v1.10.0)
@@ -597,7 +606,11 @@ providers (MailChannels, Postmark) can be wired by swapping the
 implementation. `EMAIL_PROVIDER` selects; only `resend` is implemented
 in v1.
 
-To enable digests:
+For the operator-facing overview — which channel notifies whom, and what
+a reader actually experiences — see `docs/notifications.md`. This section
+is the mechanism and the limits.
+
+To enable outbound email:
 
 1. Set `EMAIL_PROVIDER = "resend"` in `wrangler.toml`.
 2. Set `EMAIL_FROM` to a sender on a Resend-verified domain.
@@ -608,20 +621,45 @@ To enable digests:
 
 If `EMAIL_PROVIDER` or `RESEND_API_KEY` is unset, `sendEmail` returns
 `false`, the caller logs a warning, and the request continues.
-Operators who don't want digests can leave both unset and remove the
-`[triggers]` block to avoid registering the cron at all.
+Operators who don't want Garrul sending mail at all can leave both unset
+and remove the `[triggers]` block to avoid registering the cron.
 
-Triggers (events that produce a send): a subscriber to a thread sees a
-new reply land (digest email); a reader subscribes to a thread
-(double-opt-in confirmation email — the one transactional send, and the
-only one an unauthenticated caller can trigger, so it has its own
-ceiling below); an unsubscribe-link click (opens a confirmation page, no
-send). No transactional sends per comment; reply notification flows
-through the debounced cron.
+Triggers (events that produce a send):
+
+- **Reply notification** — a new comment lands on a thread someone has
+  subscribed to. This is a first-class, built-in email notification. It
+  does *not* require a webhook, and it is not merely a periodic
+  roundup: the send is caused by the comment. What the cron buys is
+  debouncing — a burst of replies coalesces into one email instead of N
+  (see `src/lib/digest.ts`). Subscriptions are thread-scoped, so a
+  subscriber hears about every new comment on the post, not only
+  direct replies to their own.
+- **Moderator digest** — a comment lands in the moderation queue, or a
+  reader files the first report on one. Also first-class built-in email,
+  also no webhook required, and the exact inverse of the reply
+  notification: readers hear when a comment is approved, you hear when
+  it isn't, so no comment ever notifies both. Off by default; turn it on
+  with `MODERATOR_EMAIL_ENABLED` or *Settings → Moderation → Email me
+  about the queue*. Recipients default to `ADMIN_EMAILS`;
+  `MODERATOR_NOTIFY_EMAILS` overrides for a shared alias. Same
+  5-minute debounce (`src/lib/moderator-digest.ts`), capped at 25
+  comments per tick, English-only like the admin UI and the bot.
+  Anything you handled inside the debounce window is dropped rather than
+  mailed. Silent no-op if email isn't configured.
+- **Subscription confirmation** — a reader subscribes to a thread
+  (double-opt-in). This is the only send an unauthenticated caller can
+  trigger, so it has its own ceiling — see below. A signed-in reader
+  whose provider verified their address (GitHub, Google) is confirmed
+  on the spot instead, so this send never happens for them.
+- An unsubscribe-link click opens a confirmation page and sends nothing.
+
+Nothing sends *inline* on the request path: every notification is
+queued to D1 and flushed by the cron, so a slow or failing Resend never
+delays or fails a reader's comment.
 
 ### The confirmation-email ceiling
 
-`POST /api/v1/subscriptions` sends one confirmation email per accepted
+`POST /api/v1/subscribe` sends one confirmation email per accepted
 request, which makes it the only endpoint where an unauthenticated
 caller spends your Resend quota and your domain's sending reputation.
 The rate limiter is not a hard ceiling there — on the default Cache API
@@ -687,6 +725,35 @@ Operator notes:
 - Full threat-model write-up: `docs/ANTISPAM.md` §"The
   confirmation-email ceiling".
 
+### The moderator-email ceiling
+
+Moderator mail runs through the same D1 machinery with its **own**
+counter rows, seeded by migration `0021`:
+
+| Budget | Cap | Window |
+| --- | --- | --- |
+| `moderator:burst` | 10 sends | 60 s |
+| `moderator:daily` | 500 sends | 24 h |
+
+Counted **per digest, not per recipient**: one tick spends one slot
+whether it mails one moderator or six, so growing the list never brings
+the cap closer. A tick that cannot reserve mails nobody and leaves its
+rows queued for the next one — the fan-out is all-or-nothing, so an
+exhausted cap can never mail half the team and mark the batch handled.
+
+Fixed, not settable, unlike the confirmation caps. Those are tunable
+because a busy post can legitimately 429 a real subscriber; there is no
+equivalent here — volume is bounded by the cron cadence (one digest per
+tick whatever the queue depth) and the recipient list is yours, so the
+only thing left for a cap to catch is a runaway.
+
+Separate scopes are the load-bearing part, not a tidiness choice: a spam
+flood filling your moderation queue cannot spend the budget that lets
+new subscribers confirm, and an attack on `/api/v1/subscribe` cannot
+silence the flood alert. Grep `wrangler tail` for `moderator email
+budget exhausted`; the queue rows stay pending and the next tick
+retries, so a tripped cap delays the mail rather than losing it.
+
 The unsubscribe link is a two-step flow: the `GET` from the email only
 renders a "Yes, unsubscribe me" button, and the `POST` behind that
 button does the write. Mail clients, link scanners and corporate
@@ -723,6 +790,9 @@ tracked by the `_migrations` table. Current set:
 - `0016_user_erasure.sql` — `users.erased_at`, for the admin erase-personal-data path
 - `0017_subscriptions_email_index.sql` — `subscriptions(email, confirmed_at)`; the per-email pending cap was a full table scan on every subscribe
 - `0018_email_send_budget.sql` — `email_send_budget`, the atomic global ceiling on outbound confirmation email (seeds its own counter rows)
+- `0019_audit_log_pii.sql` — trims PII out of the audit log
+- `0020_subscriptions_locale.sql` — `subscriptions.locale`, so each digest renders in the subscriber's own language
+- `0021_moderator_notifications.sql` — `moderator_notifications`, the queue behind moderator email (seeds its own `moderator:*` budget rows)
 
 Run with `npm run migrate` (local Miniflare) or
 `npm run migrate -- --remote` (production D1). Idempotent. Never edit a
@@ -1078,29 +1148,31 @@ you want the blast radius frozen while you work.
 npm run db:export -- garrul-backup-pre-purge.sql
 
 # 2. Purge. --remote hits production; drop it to rehearse against local.
-npx wrangler d1 execute garrul-db --remote --command \
+npx wrangler d1 execute DB --remote --command \
   "UPDATE comments SET ip_hash = NULL, user_agent = NULL
    WHERE (ip_hash IS NOT NULL OR user_agent IS NOT NULL);"
 
-npx wrangler d1 execute garrul-db --remote --command \
+npx wrangler d1 execute DB --remote --command \
   "UPDATE reports SET reporter_ip_hash = NULL WHERE reporter_ip_hash IS NOT NULL;"
 
 # 3. Anonymous ghost identities. See the warning below BEFORE running this.
-npx wrangler d1 execute garrul-db --remote --command \
+npx wrangler d1 execute DB --remote --command \
   "UPDATE users SET provider_id = NULL WHERE provider = 'anon' AND provider_id IS NOT NULL;"
 
 # 4. Rotate the secret.
 npx wrangler secret put IP_HASH_SECRET
 
 # 5. Confirm nothing survived.
-npx wrangler d1 execute garrul-db --remote --command \
+npx wrangler d1 execute DB --remote --command \
   "SELECT (SELECT COUNT(*) FROM comments
              WHERE (ip_hash IS NOT NULL OR user_agent IS NOT NULL)) AS comments,
           (SELECT COUNT(*) FROM reports WHERE reporter_ip_hash IS NOT NULL) AS reports,
           (SELECT COUNT(*) FROM users WHERE provider = 'anon' AND provider_id IS NOT NULL) AS ghosts;"
 ```
 
-Substitute your own `database_name` from `wrangler.toml` for `garrul-db`.
+`DB` there is the *binding*, not the database name — `wrangler d1
+execute` takes either, and the binding is the same on every install
+whatever you called the database. Nothing to substitute.
 
 **Step 3 is the destructive one.** Clearing a ghost's `provider_id`
 deletes the anonymous identity, not just a hash. Consequences, all
@@ -1218,7 +1290,7 @@ The 12 steps (each prints `→ name… OK`):
 1. **Preflight** — `wrangler --version` ≥ 4, clean working tree (unless `--allow-dirty`)
 2. **Resolve target** — `--version vX.Y.Z` or GitHub latest release; exit 0 if already there
 3. **Fetch manifests** — local from disk, remote from `raw.githubusercontent.com`; refuses if `target.minPreviousVersion > current`
-4. **Drift detection** (read-only): secrets via `wrangler secret list`; `[vars]`, KV and D1 by parsing `wrangler.toml`; migrations via `SELECT name FROM _migrations`; renderer via `CURRENT_RENDERER_VERSION` vs `target.renderer.version`
+4. **Drift detection** (read-only): secrets via `wrangler secret list`; `[vars]`, KV and D1 by parsing `wrangler.toml`; migrations via `SELECT name FROM _migrations`; renderer via `CURRENT_RENDERER_VERSION` vs `target.renderer.version`. Also compares each `[vars]` *value* against the placeholder the target ships — see *Unedited placeholders* below
 5. **Print plan** grouped as config drift / migrations / breaking changes
 6. **Confirm** (`Proceed? [y/N]`) unless `--yes`
 7. **Checkout** the target tag, then verify the `release-manifest.json` in
@@ -1242,7 +1314,7 @@ version requires:
 | `renderer.version`   | Current `CURRENT_RENDERER_VERSION`                          |
 | `renderer.eagerRerender` | If `true`, the orchestrator runs the rerender by default |
 | `secrets[]`          | Each `wrangler secret` name + `required` flag               |
-| `vars[]`             | Each `wrangler.toml` `[vars]` name + `required` flag        |
+| `vars[]`             | Each `wrangler.toml` `[vars]` name + `required` flag, plus `placeholder` for the four that ship one |
 | `kvNamespaces[]`     | Each KV binding name                                        |
 | `d1Databases[]`      | Each D1 binding + database name                             |
 | `analyticsDatasets[]` | Workers Analytics Engine datasets                          |
@@ -1275,6 +1347,36 @@ non-interactively, but `[vars]` live in `wrangler.toml`, which is the
 operator's file and is never rewritten in place. It also lists
 `[vars]` a new release introduced that you haven't set — all optional,
 all defaulted, shown so a new flag isn't invisible.
+
+### Unedited placeholders
+
+The plan opens with any `[vars]` still set to the value
+`wrangler.example.toml` ships them as — `ALLOWED_ORIGINS`,
+`ADMIN_EMAILS`, `PUBLIC_BASE_URL`, `OAUTH_CALLBACK_BASE`:
+
+```
+Still set to the example value shipped in wrangler.example.toml:
+  • PUBLIC_BASE_URL = "https://comments.example.com" — public URL of this Worker…
+```
+
+Nothing else in the upgrade path can catch these. Every var is
+`required: false` by design, so `diffVars` never reports one — and these
+are *set*, just set to `example.com`. A deploy with untouched example
+values passes every check here and then fails at runtime with the two
+most-reported errors in `docs/troubleshooting.md`: CORS rejections and
+`redirect_uri_mismatch`. Neither error message points back at
+`wrangler.toml`.
+
+It is a warning, never a blocker. An operator whose domain really is
+`example.com` must still be able to upgrade.
+
+The placeholder strings live in `wrangler.example.toml` and nowhere
+else. `npm run manifest:build` reads them out of that file and into
+`vars[].placeholder`, and fails loudly if a var the registry marks
+`mustEdit` has no string value there — the check going quiet is the
+failure this is built to avoid. They travel in the manifest so an old
+install is checked against the *target's* placeholders, not its own
+checkout's.
 
 ### What the upgrade trusts
 
@@ -1474,6 +1576,17 @@ bodies interpolate the offending field into a free-text `message`, so a
 recipients are your subscribers. Log lines are not a safe place for
 that. If the code alone isn't enough to diagnose a delivery problem, the
 Resend dashboard has the full message against the specific send.
+
+**Moderator email never arrives.** Everything above applies first — it
+uses the same provider and the same cron. Then check the switch: it is
+**off by default** and off *silently*, so an instance whose reader
+digests work fine will still send you nothing until
+`MODERATOR_EMAIL_ENABLED` (or *Settings → Moderation → Email me about
+the queue*) is on. Note the flag gates the **enqueue** as well as the
+send, so turning it on won't retroactively mail you about a queue that
+built up while it was off. Also confirm `ADMIN_EMAILS` is populated, or
+`MODERATOR_NOTIFY_EMAILS` if you set one — with neither, the pass
+returns without sending.
 
 **`*.workers.dev` in production.** Works just enough to be tempting,
 then breaks sign-in for Safari/Brave users. Map a custom subdomain

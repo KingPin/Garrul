@@ -1,7 +1,8 @@
 /**
- * Cron-pass isolation (issue #16). The scheduled handler runs five
- * independent passes per tick — email digest + webhook retries +
- * Telegram digest + IP-hash retention + audit-log retention — each under its
+ * Cron-pass isolation (issue #16). The scheduled handler runs six
+ * independent passes per tick — email digest + moderator digest + webhook
+ * retries + Telegram digest + IP-hash retention + audit-log retention — each
+ * under its
  * own waitUntil with its own catch. These tests pin that a throw in any pass
  * (a) never skips the others and (b) is caught and logged rather than surfacing
  * as an unhandled rejection.
@@ -14,6 +15,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("../src/lib/digest", async (importOriginal) => ({
 	...(await importOriginal<typeof import("../src/lib/digest")>()),
 	runDigest: vi.fn(),
+}));
+vi.mock("../src/lib/moderator-digest", async (importOriginal) => ({
+	...(await importOriginal<typeof import("../src/lib/moderator-digest")>()),
+	runModeratorDigest: vi.fn(),
 }));
 vi.mock("../src/lib/webhook", async (importOriginal) => ({
 	...(await importOriginal<typeof import("../src/lib/webhook")>()),
@@ -37,6 +42,7 @@ import { runIpRetention } from "../src/db/ip-retention";
 import { runAuditRetention } from "../src/db/audit-retention";
 import { runDigest } from "../src/lib/digest";
 import { log } from "../src/lib/log";
+import { runModeratorDigest } from "../src/lib/moderator-digest";
 import { runTelegramDigest } from "../src/lib/telegram-digest";
 import { runWebhookRetries } from "../src/lib/webhook";
 
@@ -65,6 +71,7 @@ describe("scheduled handler pass isolation", () => {
 
 	beforeEach(() => {
 		vi.mocked(runDigest).mockReset().mockResolvedValue(undefined);
+		vi.mocked(runModeratorDigest).mockReset().mockResolvedValue(undefined);
 		vi.mocked(runWebhookRetries).mockReset().mockResolvedValue(undefined);
 		vi.mocked(runTelegramDigest).mockReset().mockResolvedValue(undefined);
 		vi.mocked(runIpRetention).mockReset().mockResolvedValue(undefined);
@@ -79,9 +86,10 @@ describe("scheduled handler pass isolation", () => {
 	it("runs all passes under separate waitUntil calls", async () => {
 		const { ctx, tracked } = makeCtx();
 		await scheduled(ctx);
-		expect(tracked).toHaveLength(5);
+		expect(tracked).toHaveLength(6);
 		await Promise.all(tracked);
 		expect(runDigest).toHaveBeenCalledTimes(1);
+		expect(runModeratorDigest).toHaveBeenCalledTimes(1);
 		expect(runWebhookRetries).toHaveBeenCalledTimes(1);
 		expect(runTelegramDigest).toHaveBeenCalledTimes(1);
 		expect(runIpRetention).toHaveBeenCalledTimes(1);
@@ -101,6 +109,21 @@ describe("scheduled handler pass isolation", () => {
 			"scheduled.digest",
 			expect.objectContaining({
 				error: expect.stringContaining("digest boom"),
+			}),
+		);
+	});
+
+	it("a moderator-digest failure doesn't skip the other passes and is caught + logged", async () => {
+		vi.mocked(runModeratorDigest).mockRejectedValue(new Error("mod boom"));
+		const { ctx, tracked } = makeCtx();
+		await scheduled(ctx);
+		await expect(Promise.all(tracked)).resolves.toBeDefined();
+		expect(runDigest).toHaveBeenCalledTimes(1);
+		expect(runWebhookRetries).toHaveBeenCalledTimes(1);
+		expect(errSpy).toHaveBeenCalledWith(
+			"scheduled.moderator_digest",
+			expect.objectContaining({
+				error: expect.stringContaining("mod boom"),
 			}),
 		);
 	});

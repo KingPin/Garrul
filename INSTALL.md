@@ -4,8 +4,16 @@ End-to-end guide to deploying Garrul to production on Cloudflare
 Workers. If you just want to poke at it locally, see the
 [local development](#local-development) section at the bottom.
 
-Estimated time: **20–30 minutes** the first time, most of it
-spent waiting for DNS and clicking through OAuth consent screens.
+Estimated time: **a few minutes** to get a live instance on
+`*.workers.dev`, or **20–30 minutes** for the full production setup —
+most of that spent waiting on DNS and clicking through OAuth consent
+screens.
+
+You don't have to decide up front. `*.workers.dev` is a real
+deployment on the same free tier, not a sandbox, and moving to a
+custom domain later is one config block and a redeploy — no data
+migration. Every step below works on both paths; only
+[step 5](#5-configure-wranglertoml) differs.
 
 > **Using an AI assistant for install?** `AGENTS-OPERATE.md` at the
 > repo root is purpose-built for AI coding assistants helping you
@@ -14,17 +22,18 @@ spent waiting for DNS and clicking through OAuth consent screens.
 ## Prerequisites
 
 - A **Cloudflare account** (free plan is fine for small operators).
-- A **domain on Cloudflare DNS**. The custom-domain route needs the
-  zone to be on Cloudflare; if your DNS is elsewhere, move it first
-  or skip the custom domain (not recommended — see
-  [Custom domain](#5-configure-wranglertoml) below).
 - **Node.js ≥ 24** and `npm`. The repo's `.nvmrc` pins the version.
+- **Optional: a domain on Cloudflare DNS.** Only the custom-domain
+  route needs it, and only because `custom_domain = true` requires the
+  zone to be on Cloudflare. Skip it and you deploy to `*.workers.dev`
+  instead — see [step 5](#5-configure-wranglertoml) for what that
+  costs you.
 - A few external credentials, gathered as you go:
   - OAuth apps for whichever sign-in providers you want (all
     optional): GitHub, Google, Facebook, X, Discord
   - Cloudflare Turnstile site + secret keys (required for anonymous
     commenting)
-  - Resend API key (optional, for email digests)
+  - Resend API key (optional, for reply notifications by email)
 
 ## 1. Authenticate `wrangler`
 
@@ -89,10 +98,10 @@ cd comments
 npm install
 cp wrangler.example.toml wrangler.toml
 cp .dev.vars.example .dev.vars
-./scripts/setup.sh
+npm run setup
 ```
 
-`setup.sh` will:
+`npm run setup` will:
 
 - create the D1 database (`garrul-db`) and four KV namespaces,
 - write their generated IDs into `wrangler.toml`,
@@ -102,7 +111,7 @@ cp .dev.vars.example .dev.vars
 
 ### Bulk or one at a time
 
-Nothing is lost by picking either; you can re-run `setup.sh`, or set
+Nothing is lost by picking either; you can re-run `npm run setup`, or set
 any secret later with `wrangler secret put NAME`.
 
 **Bulk** (fewer keystrokes — one file, one upload):
@@ -139,7 +148,7 @@ Have these handy either way:
 | `GH_CLIENT_SECRET`    | From step 2 (GitHub)                               |
 | `GOOGLE_CLIENT_ID`    | From step 2 (Google)                               |
 | `GOOGLE_CLIENT_SECRET`| From step 2 (Google)                               |
-| `RESEND_API_KEY`      | <https://resend.com/api-keys> (only if using digests) |
+| `RESEND_API_KEY`      | <https://resend.com/api-keys> (only for email notifications) |
 | `WEBHOOK_URL`         | Optional — fire-and-forget POST on comment events  |
 
 Those are the common ones; `secrets.example.env` has the full set,
@@ -160,11 +169,20 @@ ALLOWED_ORIGINS = "https://yourblog.example.com"   # comma-separated
 ADMIN_EMAILS    = "you@example.com"                # comma-separated
 PUBLIC_BASE_URL     = "https://comments.example.com"
 OAUTH_CALLBACK_BASE = "https://comments.example.com"
-EMAIL_PROVIDER = "resend"                          # remove if not using digests
+EMAIL_PROVIDER = "resend"                          # remove if you don't want email
 EMAIL_FROM     = "Garrul <comments@example.com>"   # must be a verified Resend sender
 ```
 
-**Custom domain (strongly recommended).** Uncomment the `routes`
+Then pick where the Worker answers requests. Both options are real
+deployments on the same free tier; the only difference is sign-in.
+
+**Trying it out — `*.workers.dev`.** Leave the `routes` block
+commented out and deploy. Cloudflare hands you a
+`garrul.<your-subdomain>.workers.dev` URL, which `wrangler deploy`
+prints in step 7. Set `PUBLIC_BASE_URL`, `OAUTH_CALLBACK_BASE` and
+`ALLOWED_ORIGINS` to match once you have it.
+
+**Running it for real — a custom subdomain.** Uncomment the `routes`
 block and point it at your subdomain:
 
 ```toml
@@ -177,9 +195,15 @@ routes = [
 on Cloudflare DNS. Wrangler creates the proxied subdomain record
 for you on first deploy.
 
-Workers on `*.workers.dev` work but trigger third-party-cookie
-blocks in Safari and Brave — sign-in breaks for those users. Use a
-real subdomain in production.
+**Why production wants the subdomain.** The embed's session cookie is
+set from wherever the Worker lives, so on `*.workers.dev` it is a
+third-party cookie for every host page — and Safari and Brave block
+those, so sign-in silently fails for those readers. Anonymous
+commenting, moderation and the admin UI are unaffected.
+
+Switching from the first to the second is this config block plus a
+redeploy. The D1 database, KV namespaces and every comment in them
+stay exactly where they are.
 
 ## 6. Apply migrations to the production D1
 
@@ -200,9 +224,16 @@ Wrangler uploads the worker, builds the embed bundle, and (if a
 custom domain is configured) provisions the DNS record. The first
 deploy can take ~30 seconds while the certificate is issued.
 
+Wrangler prints the live URL when it finishes. On the `*.workers.dev`
+path that URL is the one you didn't know yet in step 5 — put it into
+`PUBLIC_BASE_URL` and `OAUTH_CALLBACK_BASE` now and deploy once more.
+(`ALLOWED_ORIGINS` is unaffected: it lists the sites that embed the
+widget, not the Worker itself.)
+
 ## 8. Verify
 
-Smoke test the deploy:
+Smoke test the deploy (substitute your `*.workers.dev` URL if you
+haven't set up a custom domain):
 
 ```bash
 curl -fsSL https://comments.example.com/api/v1/health
@@ -228,13 +259,19 @@ Drop the widget into a page on your blog:
 Post a comment as a signed-in user and as a guest (the guest path
 exercises Turnstile + rate-limit + sanitizer).
 
-## Cron / digest emails
+## Cron / reply notification emails
 
 `wrangler.example.toml` ships with a cron trigger that runs every
-15 minutes to deliver email digests. The cron fires automatically
-on deploy. If `EMAIL_PROVIDER`/`RESEND_API_KEY` are unset, the job
-no-ops cleanly. Remove the `[triggers]` block if you don't want
-the cron registered at all.
+15 minutes and delivers reply notifications to readers who subscribed
+to a thread. It fires automatically on deploy. The cron is what
+*debounces* the sends — a burst of replies coalesces into one email per
+subscriber instead of N — not what schedules them; the send is caused by
+the comment. If `EMAIL_PROVIDER`/`RESEND_API_KEY` are unset, the job
+no-ops cleanly. Remove the `[triggers]` block if you don't want the cron
+registered at all.
+
+Full picture — reader flow, the other notification channels, and what to
+check when mail doesn't arrive: [`docs/notifications.md`](docs/notifications.md).
 
 ## Configuration reference
 
@@ -251,7 +288,7 @@ goes — is section 5 of `AGENTS-OPERATE.md`, generated from
 | ------------------------------ | -------------------- | ----- |
 | `ALLOWED_ORIGINS`              | yes                  | Comma-separated origins allowed to embed and POST. No trailing slash. |
 | `ADMIN_EMAILS`                 | yes                  | Comma-separated; matching OAuth signups auto-admin. |
-| `PUBLIC_BASE_URL`              | yes                  | Public URL of this worker; used in permalinks and digests. |
+| `PUBLIC_BASE_URL`              | yes                  | Public URL of this worker; used in permalinks and notification emails. |
 | `OAUTH_CALLBACK_BASE`          | if OAuth enabled     | Same value as `PUBLIC_BASE_URL` in most setups. |
 | `IP_HASH_SECRET`               | yes                  | HMAC-SHA-256 pepper. Never store raw IPs. |
 | `TURNSTILE_SITE_KEY` / `_SECRET` | for anon commenting | From the Turnstile dashboard. |
@@ -260,9 +297,9 @@ goes — is section 5 of `AGENTS-OPERATE.md`, generated from
 | `FACEBOOK_CLIENT_ID` / `_SECRET` | for Facebook sign-in | From your Facebook app (developers.facebook.com). |
 | `TWITTER_CLIENT_ID` / `_SECRET` | for X sign-in        | X OAuth 2.0 credentials; provider slug is `twitter`. X returns no email. |
 | `DISCORD_CLIENT_ID` / `_SECRET` | for Discord sign-in  | From discord.com/developers → OAuth2. |
-| `EMAIL_PROVIDER`               | for digests          | Set to `resend`. |
-| `RESEND_API_KEY`               | for digests          | Sender domain must be verified in Resend. |
-| `EMAIL_FROM`                   | for digests          | e.g. `Garrul <comments@example.com>`. |
+| `EMAIL_PROVIDER`               | for reply notifications | Set to `resend`. |
+| `RESEND_API_KEY`               | for reply notifications | Sender domain must be verified in Resend. |
+| `EMAIL_FROM`                   | for reply notifications | e.g. `Garrul <comments@example.com>`. |
 | `WEBHOOK_URL`                  | optional             | Fire-and-forget POST on comment events. |
 | `EDIT_WINDOW_MINUTES`          | optional             | Default 15; `0` disables editing. Overridable at runtime from Admin → Settings. |
 | `JWT_SECRET`                   | required             | HMAC key for the signed OAuth state cookie. Sign-in fails without it. Generated by `setup.sh`. |

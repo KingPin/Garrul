@@ -17,7 +17,10 @@
 
 set -euo pipefail
 
-DB_NAME="${DB_NAME:-garrul-db}"
+# The binding, not `database_name` — `wrangler d1 export` takes either, and
+# the binding is identical on every install however the operator named their
+# database. Override with DB=<name> if you keep more than one around.
+DB="${DB:-DB}"
 
 if [ -n "${1:-}" ]; then
   OUT="$1"
@@ -40,9 +43,9 @@ case "$OUT_BASE" in
     ;;
 esac
 
-echo "[db-export] target: $DB_NAME (remote)"
+echo "[db-export] target: $DB (remote)"
 echo "[db-export] output: $OUT"
 
-wrangler d1 export "$DB_NAME" --remote --output "$OUT"
+wrangler d1 export "$DB" --remote --output "$OUT"
 
 echo "[db-export] done"

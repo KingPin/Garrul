@@ -9,7 +9,11 @@
  */
 import { Hono } from "hono";
 import type { Bindings } from "../index";
-import { getComment, toggleReaction } from "../db/queries";
+import {
+	getComment,
+	listReactionsForComment,
+	toggleReaction,
+} from "../db/queries";
 import { resolveActor } from "../lib/active-user";
 import { requireIpHash } from "../lib/ip-hash";
 import { checkRateLimit } from "../lib/ratelimit";
@@ -78,6 +82,16 @@ reactions.post("/", async (c) => {
 	const userId = actor.userId;
 
 	const result = await toggleReaction(c.env.DB, comment_id, userId, kind);
+	// Authoritative counts for this one comment, so the widget can patch the
+	// reaction row in place rather than re-fetching the whole thread — which it
+	// used to do on every 👍, throwing away scroll position and open composers.
+	// `added` covers the caller's own `mine` flag; these counts cover everyone
+	// else's, including reactions that landed since the thread was fetched.
+	// Same shape as the page-level endpoint (`{ kind: count }`).
+	const totals: Record<string, number> = {};
+	for (const r of await listReactionsForComment(c.env.DB, comment_id)) {
+		totals[r.kind] = r.count;
+	}
 
 	// Bust the cached first page so reaction counts reflect immediately.
 	await bustTreeCache(c.env, c.req.url, comment.post_slug);
@@ -87,7 +101,7 @@ reactions.post("/", async (c) => {
 		outcome: result.added ? "added" : "removed",
 	});
 
-	return c.json({ ok: true, added: result.added });
+	return c.json({ ok: true, added: result.added, reactions: totals });
 });
 
 export { reactions };

@@ -37,6 +37,8 @@ import { watchForSignIn } from "./auth-recovery";
 import { autoSizeTextarea } from "./autosize";
 import { createTurnstileGate, type TurnstileGate } from "./turnstile-gate";
 import { makeS, type StringTable, type WidgetKey } from "./strings";
+import { type ReactionCount, mergeReactionTotals } from "./reactions";
+import { absoluteTime, isoTime, relativeTime } from "./time";
 // Generated from styles.css by scripts/build-styles.ts (gitignored, rebuilt by
 // build:assets). Edit styles.css, never the .gen file.
 import { STYLE_CSS } from "./styles.gen";
@@ -60,6 +62,16 @@ let locale = "en";
 let langExplicit = "";
 /** The host page's `<html lang>`. A hint; the server may decline to use it. */
 let langHint = "";
+
+/**
+ * The server's comment-length ceiling, from /api/v1/config. Module state for
+ * the same single-mount reason as the translator, and seeded with the value
+ * lib/markdown.ts actually enforces so the counter is right even if the config
+ * call is the one thing that fails.
+ */
+let maxBodyChars = 10_000;
+/** How close to the ceiling the counter appears. Silent above this. */
+const COUNT_WARN_AT = 500;
 
 /**
  * Build an API URL carrying the resolved locale.
@@ -86,8 +98,6 @@ type TreeAuthor = {
 	avatar_svg: string | null;
 	avatar_url: string | null;
 };
-
-type ReactionCount = { kind: string; count: number; mine: boolean };
 
 type TreeNode = {
 	id: string;
@@ -120,6 +130,15 @@ type VoteResponse = {
 	my_vote: -1 | 0 | 1;
 };
 
+type ReactionResponse = {
+	ok: boolean;
+	added: boolean;
+	/** Absent on a Worker deployed before the field existed — the widget is
+	 *  served by the same Worker, so this is belt-and-braces, but a stale
+	 *  cached embed.js against a newer API is the shape that does happen. */
+	reactions?: Record<string, number>;
+};
+
 type SortKey = "new" | "top";
 
 type ListResponse = {
@@ -144,8 +163,18 @@ type Me = {
 } | null;
 
 
-const fmtTime = (ts: number): string =>
-	new Date(ts).toISOString().replace("T", " ").slice(0, 16);
+/**
+ * The `<time>` element behind a comment's timestamp. The visible label is
+ * relative ("2 hours ago"), the `datetime` attribute keeps the exact ISO value
+ * for machines and copy-paste, and `title` carries the reader's local wall
+ * clock — so nothing that used to be readable off the old UTC string is lost.
+ */
+const buildTime = (ts: number): HTMLTimeElement => {
+	const e = el("time", "gr-time", relativeTime(ts, Date.now(), locale));
+	e.dateTime = isoTime(ts);
+	e.title = absoluteTime(ts, locale);
+	return e;
+};
 
 const el = <K extends keyof HTMLElementTagNameMap>(
 	tag: K,
@@ -360,6 +389,39 @@ const buildToolbar = (ta: HTMLTextAreaElement): HTMLElement => {
 };
 
 /**
+ * The two keyboard shortcuts every comment box a reader has already used has:
+ * Cmd/Ctrl+Enter posts, Escape backs out. The widget shipped with no keydown
+ * handler at all, so a keyboard user had to tab past the preview tab, the six
+ * toolbar buttons and the captcha to reach Post.
+ *
+ * Bound on the form, not the textarea, so it works from the name field and the
+ * notify checkbox too.
+ */
+const bindComposerKeys = (form: HTMLFormElement, onCancel?: () => void): void => {
+	form.addEventListener("keydown", (e) => {
+		// An IME candidate window owns both keys while composing; Enter picks a
+		// candidate and Escape cancels the composition. Posting half a word of
+		// Japanese because the widget grabbed the keystroke is the failure mode.
+		if (e.isComposing) return;
+		if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+			e.preventDefault();
+			// requestSubmit(), not submit(): submit() skips the submit event, and
+			// the submit event is where every form in this widget does its work.
+			form.requestSubmit();
+			return;
+		}
+		if (e.key === "Escape" && onCancel) {
+			e.preventDefault();
+			// The host page may run its own Escape handler (lightbox, drawer,
+			// modal). Closing a reply box should not also close whatever the
+			// reader has open around it.
+			e.stopPropagation();
+			onCancel();
+		}
+	});
+};
+
+/**
  * Wrap a composer textarea in a GitHub-style "Write | Preview" tab strip.
  * Returns a container that should be inserted where the textarea would have
  * gone; the textarea is moved inside it.
@@ -391,7 +453,30 @@ const buildWritePreview = (
 	// this is the one place that has to grow the box while the author types.
 	// applyMarkdown re-fires `input`, so toolbar insertions size too.
 	textarea.addEventListener("input", () => autoSize(textarea));
-	const hint = el("span", "gr-md-hint", s("w.md_hint"));
+	// One row under the box: what you can write on the left, how to send it on
+	// the right. The whole row hides together in Preview mode.
+	const hint = el("div", "gr-md-hint");
+	// Silent until the author is close to the ceiling. A permanent "9,847 left"
+	// on a limit almost nobody reaches is a nag, not information — the counter
+	// is here for the person pasting an essay, and for them it has to appear
+	// before they hit Post, not after the server rejects it.
+	const counter = el("span", "gr-count");
+	counter.hidden = true;
+	const paintCount = (): void => {
+		const left = maxBodyChars - textarea.value.length;
+		counter.hidden = left > COUNT_WARN_AT;
+		if (counter.hidden) return;
+		counter.textContent =
+			left < 0 ? s("w.count_over", { n: -left }) : s("w.count_left", { n: left });
+		counter.classList.toggle("is-over", left < 0);
+	};
+	textarea.addEventListener("input", paintCount);
+	paintCount();
+	hint.append(
+		el("span", undefined, s("w.md_hint")),
+		counter,
+		el("span", "gr-kbd-hint", s("w.kbd_hint")),
+	);
 	const pane = el("div", "gr-preview");
 	pane.hidden = true;
 
@@ -483,6 +568,18 @@ const buildAvatar = (a: TreeAuthor): HTMLElement => {
 		const img = el("img");
 		img.setAttribute("src", a.avatar_url);
 		img.setAttribute("alt", "");
+		// The 40px wrapper already reserves the box, so these buy no layout
+		// stability — they buy the network. A long thread is a long thread of
+		// provider avatars, every one of them a separate cross-origin request
+		// fired eagerly and decoded on the main thread while the reader is still
+		// looking at the first comment.
+		img.setAttribute("width", "40");
+		img.setAttribute("height", "40");
+		img.setAttribute("loading", "lazy");
+		img.setAttribute("decoding", "async");
+		// Provider CDNs get no referrer: which post someone is reading is not
+		// GitHub's or Google's business.
+		img.setAttribute("referrerpolicy", "no-referrer");
 		wrap.appendChild(img);
 	} else if (a.avatar_svg) {
 		wrap.appendChild(parseTrustedHtml(a.avatar_svg));
@@ -831,25 +928,49 @@ const buildVotes = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	return wrap;
 };
 
+// Emoji reactions. Like votes above, a click patches the local TreeNode and
+// this one row rather than reloading: `ctx.reload()` runs replaceChildren() on
+// the whole shadow tree, so the most frequent interaction in the widget was
+// also the most destructive one — it dropped scroll position and any open
+// composer with a half-typed draft in it.
 const buildReactions = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	const wrap = el("div", "gr-reactions");
+	const cells = new Map<
+		string,
+		{ btn: HTMLButtonElement; count: HTMLElement }
+	>();
+
+	// The single place that knows how a reaction renders: run at build time and
+	// again after every toggle, reading whatever is currently on the node.
+	const paint = (): void => {
+		const map = reactionsByKind(n.reactions);
+		for (const [kind, cell] of cells) {
+			const r = map.get(kind);
+			const count = r?.count ?? 0;
+			if (r?.mine) cell.btn.dataset.mine = "1";
+			else delete cell.btn.dataset.mine;
+			cell.count.textContent = String(count);
+			cell.count.hidden = count === 0;
+			// An anonymous reader who un-reacts the last 👍 has to see the button
+			// go away, because that is the rule the initial render below applies.
+			// The old full reload got this for free.
+			if (!ctx.me) cell.btn.hidden = count === 0;
+		}
+	};
+
 	const map = reactionsByKind(n.reactions);
 	for (const { kind, emoji } of REACTION_KINDS) {
-		const r = map.get(kind);
-		const count = r?.count ?? 0;
-		const mine = r?.mine ?? false;
 		// Hide zero-count kinds unless the viewer is signed in (so signed-in
 		// users can react with a kind nobody else has used yet). Anonymous
 		// readers see only used kinds.
-		if (count === 0 && !ctx.me) continue;
+		if ((map.get(kind)?.count ?? 0) === 0 && !ctx.me) continue;
 		const btn = el("button", "gr-reaction");
 		btn.type = "button";
 		btn.dataset.kind = kind;
-		if (mine) btn.dataset.mine = "1";
 		btn.appendChild(document.createTextNode(emoji));
-		if (count > 0) {
-			btn.appendChild(el("span", "gr-reaction-count", String(count)));
-		}
+		const count = el("span", "gr-reaction-count", "");
+		btn.appendChild(count);
+		cells.set(kind, { btn, count });
 		btn.addEventListener("click", async () => {
 			btn.disabled = true;
 			try {
@@ -859,17 +980,33 @@ const buildReactions = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 					headers: { "content-type": "application/json" },
 					body: JSON.stringify({ comment_id: n.id, kind }),
 				});
-				if (!res.ok) {
-					btn.disabled = false;
+				if (!res.ok) return;
+				const body = (await res.json()) as ReactionResponse;
+				// No counts to patch from means an API older than this bundle;
+				// fall back to the reload this used to do rather than merging
+				// against `{}`, which would blank every reaction on the comment.
+				if (!body.reactions) {
+					ctx.reload();
 					return;
 				}
-				ctx.reload();
+				// Mutate the node so a later re-render (Load more, sort change)
+				// still reflects the toggle, then repaint this row.
+				n.reactions = mergeReactionTotals(
+					n.reactions,
+					body.reactions,
+					kind,
+					body.added,
+				);
+				paint();
 			} catch {
+				// Network/parse failure: leave the UI untouched; user can retry.
+			} finally {
 				btn.disabled = false;
 			}
 		});
 		wrap.appendChild(btn);
 	}
+	paint();
 	return wrap;
 };
 
@@ -1077,19 +1214,57 @@ const buildActions = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): HTMLEleme
 	if (isOwn) {
 		const delBtn = el("button", undefined, s("w.delete"));
 		delBtn.type = "button";
-		delBtn.addEventListener("click", async () => {
-			// Plain confirm is the smallest robust UX; the widget doesn't
-			// ship its own modal layer to keep the bundle small.
-			if (!window.confirm(s("w.delete_confirm"))) return;
-			try {
-				const res = await fetch(
-					apiUrl(ctx.apiBase, `/api/v1/comments/${encodeURIComponent(n.id)}`),
-					{ method: "DELETE", credentials: "include" },
-				);
-				if (res.ok) ctx.reload();
-			} catch {
-				// no-op; reload not triggered
-			}
+		delBtn.addEventListener("click", () => {
+			// Two steps in place, not window.confirm(). A native dialog is
+			// unstyleable, says the *page's* origin rather than the site's name,
+			// and is suppressed outright in some webviews and in cross-origin
+			// iframes with no user-activation — where the old code silently did
+			// nothing at all. This is the same in-place replacement the Report
+			// button already does, so it needs no modal layer.
+			const confirmWrap = el("span", "gr-confirm");
+			const yes = el("button", "gr-confirm-yes", s("w.delete"));
+			yes.type = "button";
+			const no = el("button", undefined, s("w.cancel"));
+			no.type = "button";
+			confirmWrap.append(el("span", undefined, s("w.delete_confirm")), yes, no);
+			delBtn.replaceWith(confirmWrap);
+			// Replacing the focused button drops focus to <body>, stranding a
+			// keyboard user mid-thread. Land on Cancel: for a destructive action
+			// the safe option is the one a stray Enter should hit.
+			no.focus();
+
+			const dismiss = (): void => {
+				confirmWrap.replaceWith(delBtn);
+				delBtn.focus();
+			};
+			no.addEventListener("click", dismiss);
+			confirmWrap.addEventListener("keydown", (e) => {
+				if (e.key !== "Escape") return;
+				e.preventDefault();
+				e.stopPropagation();
+				dismiss();
+			});
+
+			yes.addEventListener("click", async () => {
+				yes.disabled = true;
+				no.disabled = true;
+				try {
+					const res = await fetch(
+						apiUrl(ctx.apiBase, `/api/v1/comments/${encodeURIComponent(n.id)}`),
+						{ method: "DELETE", credentials: "include" },
+					);
+					if (res.ok) {
+						ctx.reload();
+						return;
+					}
+				} catch {
+					// Network failure — same handling as a refusal below.
+				}
+				// The delete did not happen, so do not leave the row looking like
+				// it is mid-flight. Back out to the button the reader started
+				// from; a second attempt is one click away.
+				dismiss();
+			});
 		});
 		row.appendChild(delBtn);
 	}
@@ -1161,7 +1336,12 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 	save.type = "submit";
 	const cancel = el("button", undefined, s("w.cancel"));
 	cancel.type = "button";
-	cancel.addEventListener("click", () => wrap.remove());
+	// One dismissal path for the button and for Escape. An abandoned edit keeps
+	// nothing: the original body is still on the node, and the box was never a
+	// draft surface (attachDraft is only on the reply and top-level composers).
+	const dismiss = (): void => wrap.remove();
+	cancel.addEventListener("click", dismiss);
+	bindComposerKeys(wrap, dismiss);
 	actions.append(save, cancel);
 
 	// Prefill with the original markdown source. The tree payload only carries
@@ -1319,12 +1499,18 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 		});
 	}
 
-	cancel.addEventListener("click", () => {
+	// Escape and the Cancel button are the same act, so they run the same
+	// teardown — dropping the draft, disposing the Turnstile gate and removing
+	// the form. An Escape that only hid the box would leak the gate's global
+	// message listener for the rest of the page's life.
+	const dismiss = (): void => {
 		clearDraft(dkey);
 		tsGate?.dispose();
 		tsHandle?.destroy();
 		wrap.remove();
-	});
+	};
+	cancel.addEventListener("click", dismiss);
+	bindComposerKeys(wrap, dismiss);
 
 	// Same precedence as the top-level composer: the Turnstile failure message
 	// is sticky, so nothing here overwrites it or hands the button back.
@@ -1460,7 +1646,7 @@ const buildComment = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	if (n.author.provider !== "anon") {
 		meta.appendChild(el("span", "gr-verified", s("w.verified")));
 	}
-	meta.appendChild(el("span", "gr-time", fmtTime(n.created_at)));
+	meta.appendChild(buildTime(n.created_at));
 	if (n.edited_at) meta.appendChild(el("span", "gr-edited", s("w.edited")));
 	// Author-only signal: the list endpoint returns the viewer's own queued
 	// comments, so this badge is only ever seen by the author themselves.
@@ -1892,20 +2078,43 @@ const applyDirection = (host: HTMLElement) => {
 	host.dir = dir === "rtl" ? "rtl" : "ltr";
 };
 
+/**
+ * Origin of the <script> that loaded this bundle, or null if it can't be
+ * determined — the fallback for `data-api` when the host page omits it.
+ *
+ * Read here, at module scope, and not inside init(): `document.currentScript`
+ * is only non-null *while* a script is executing. init() runs synchronously
+ * from the tail of this file when the document is already parsed, but a plain
+ * (non-deferred) <script> in the body defers it to DOMContentLoaded — where
+ * currentScript is null and the origin silently fell back to the *host page's*.
+ * Every cross-origin embed on that path pointed the widget's whole API at the
+ * blog it was embedded in unless the integrator set data-api by hand.
+ */
+const SCRIPT_ORIGIN: string | null = (() => {
+	const s = document.currentScript as HTMLScriptElement | null;
+	try {
+		// `.src` is "" for an inline script; new URL("") throws, hence the catch.
+		return s?.src ? new URL(s.src).origin : null;
+	} catch {
+		return null;
+	}
+})();
+
 const init = () => {
 	const host = document.getElementById("garrul");
 	if (!host) return;
 
 	const slug = host.dataset.slug;
 	if (!slug) {
+		// Release before returning: nothing else in this file ever will, and a
+		// one-line error message marooned in 220px of reserved space is a worse
+		// diagnostic than the message on its own.
+		releaseSpace(host);
 		host.textContent = "[garrul] missing data-slug";
 		return;
 	}
 
-	const scriptEl = document.currentScript as HTMLScriptElement | null;
-	const apiBase =
-		host.dataset.api ??
-		(scriptEl ? new URL(scriptEl.src).origin : window.location.origin);
+	const apiBase = host.dataset.api ?? SCRIPT_ORIGIN ?? window.location.origin;
 
 	applyDirection(host);
 	// Locale is a property of the site, not of the reader: data-lang is what the
@@ -1920,7 +2129,67 @@ const init = () => {
 	style.textContent = STYLE_CSS;
 	root.append(style, buildSkeleton());
 
-	void load(root, slug, apiBase, host);
+	// Hand the height back as soon as there is real content to measure. Holding
+	// the reservation would leave a short thread — "be the first to comment"
+	// plus a composer — sitting in 220px of dead space forever.
+	void load(root, slug, apiBase, host).finally(() => {
+		releaseSpace(host);
+	});
+};
+
+/**
+ * Did `reserveSpace` actually write the inline `min-height`?
+ *
+ * Load-bearing, because `releaseSpace` clears an inline style rather than
+ * restoring one. A host that sized #garrul inline themselves sends
+ * `reserveSpace` down its early return — and clearing unconditionally once the
+ * thread arrived would then delete *their* value, collapsing the element at the
+ * exact moment it filled up. Only what we wrote is ours to take back.
+ */
+let reservedHeight = false;
+
+/**
+ * Claim the widget's eventual height before the document finishes parsing.
+ *
+ * A plain (non-deferred) <script> in the body executes during parse, but
+ * init() waits for DOMContentLoaded. In between, #garrul is 0px tall — and
+ * then it jumps to the skeleton's height, shoving the footer and everything
+ * else below the thread down the page. Claiming the box at execution time
+ * turns that jump into nothing moving at all.
+ *
+ * Two shifts this cannot fix, so the docs cover them instead:
+ * - With the recommended `defer`, this runs in the same tick as init() and
+ *   buys nothing. Reserving space before a deferred script runs is the host
+ *   page's job — AGENTS.md §3 and docs/THEMING.md say so.
+ * - The skeleton → real thread swap. Nobody can size a thread they have not
+ *   fetched.
+ *
+ * `min-height`, so a longer thread outgrows it rather than being clipped, and
+ * only when the host has not sized the element themselves — this writes an
+ * inline style, which would otherwise silently beat their stylesheet.
+ */
+const reserveSpace = () => {
+	// Absent when the <script> sits above the mount element. Nothing to reserve
+	// yet, and init() will find it on DOMContentLoaded either way.
+	const host = document.getElementById("garrul");
+	if (!host) return;
+	const existing = getComputedStyle(host).minHeight;
+	if (existing && existing !== "0px" && existing !== "auto") return;
+	// Three skeleton rows and their gaps. Deliberately not the loaded widget's
+	// height: over-reserving trades one shift for a page-length hole.
+	host.style.minHeight = "220px";
+	reservedHeight = true;
+};
+
+/**
+ * Hand the reservation back. Every exit from init() has to reach this: the
+ * value is inline and nothing else ever clears it, so a path that skips it
+ * leaves 220px of dead space under the widget for the life of the page.
+ */
+const releaseSpace = (host: HTMLElement) => {
+	if (!reservedHeight) return;
+	host.style.minHeight = "";
+	reservedHeight = false;
 };
 
 const renderError = (root: ShadowRoot, err: unknown) => {
@@ -2072,6 +2341,7 @@ const loadOnce = async (
 			const cfg = (await cfgRes.json()) as {
 				turnstile_site_key?: string;
 				edit_window_minutes?: number;
+				max_body_chars?: number;
 				providers?: string[];
 				branding_hidden?: boolean;
 				comments_enabled?: boolean;
@@ -2106,6 +2376,11 @@ const loadOnce = async (
 			}
 			siteKey = cfg.turnstile_site_key ?? null;
 			editWindowMinutes = cfg.edit_window_minutes ?? 15;
+			// Guard the value rather than trusting it: a zero or negative ceiling
+			// from a mis-deployed Worker would put every composer permanently in
+			// the over-limit state.
+			if (typeof cfg.max_body_chars === "number" && cfg.max_body_chars > 0)
+				maxBodyChars = cfg.max_body_chars;
 			providers = (cfg.providers ?? []).filter((p): p is OAuthProvider =>
 				// biome-ignore lint/suspicious/noPrototypeBuiltins: the rule wants Object.hasOwn (ES2022); the widget builds for es2020 and esbuild will not polyfill it. This is already the safe `.call` form.
 				Object.prototype.hasOwnProperty.call(PROVIDER_LABELS, p),
@@ -2306,7 +2581,17 @@ const loadOnce = async (
 	if (window.location.hash.startsWith("#garrul-comment-")) {
 		const target = root.getElementById(window.location.hash.slice(1));
 		if (target) {
-			target.scrollIntoView({ block: "center", behavior: "smooth" });
+			// The CSS half of the reduced-motion promise lives in styles.css;
+			// scroll behavior is set here, so it has to be honored here too.
+			// `matchMedia` is guarded because the widget also runs under the
+			// iframe route and in test DOMs that don't implement it.
+			const still = window.matchMedia?.(
+				"(prefers-reduced-motion: reduce)",
+			)?.matches;
+			target.scrollIntoView({
+				block: "center",
+				behavior: still ? "auto" : "smooth",
+			});
 		}
 	}
 
@@ -2387,6 +2672,10 @@ const loadOnce = async (
 		e.preventDefault();
 		void submit(form, root, slug, apiBase, host);
 	});
+
+	// No cancel handler: the top-level composer is the page's resting state, so
+	// Escape has nothing to back out to. Cmd/Ctrl+Enter still posts.
+	bindComposerKeys(form);
 };
 
 const submit = async (
@@ -2517,13 +2806,20 @@ const submit = async (
 		const notifyCb = form.querySelector(".gr-notify-cb") as HTMLInputElement | null;
 		const emailInput = form.querySelector(".gr-email-input") as HTMLInputElement | null;
 		if (notifyCb?.checked) {
+			// Field presence encodes `!signedIn` (see buildForm), the same way
+			// the Turnstile slot does. A signed-in visitor has no field to read,
+			// so the address is omitted and the server fills it from the
+			// session. Guarding on a non-empty `email` alone made the checkbox
+			// a silent no-op for every signed-in reader.
 			const email = emailInput?.value.trim() ?? "";
-			if (email) {
+			if (email || !emailInput) {
 				void fetch(apiUrl(apiBase, "/api/v1/subscribe"), {
 					method: "POST",
 					credentials: "include",
 					headers: { "content-type": "application/json" },
-					body: JSON.stringify({ post_slug: slug, email }),
+					body: JSON.stringify(
+						email ? { post_slug: slug, email } : { post_slug: slug },
+					),
 				}).catch(() => {});
 			}
 		}
@@ -2540,6 +2836,9 @@ const submit = async (
 		ts?.gate.clear();
 	}
 };
+
+// Runs now, at script-execution time — that is the whole point of it.
+reserveSpace();
 
 if (document.readyState === "loading") {
 	document.addEventListener("DOMContentLoaded", init);

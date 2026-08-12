@@ -62,6 +62,17 @@ describe("widget stylesheet minification", () => {
 		for (const c of classes) expect(minified).toContain(c);
 	});
 
+	it("preserves every shipped data-preset palette", () => {
+		// Preset names are as public as the variable names (docs/THEMING.md), and
+		// the iframe route validates ?preset= against its own copy of the list —
+		// a preset the minifier dropped would leave that route emitting an
+		// attribute nothing matches, with no other symptom.
+		for (const p of ["minimal", "soft", "contrast"]) {
+			expect(source).toContain(`[data-preset="${p}"]`);
+			expect(minified).toContain(`[data-preset="${p}"]`);
+		}
+	});
+
 	it("preserves the shadow-root and dark-mode entry points", () => {
 		// :host is what scopes the whole sheet; losing it leaks styles nowhere.
 		expect(minified).toContain(":host");

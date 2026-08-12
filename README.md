@@ -8,12 +8,25 @@ Self-hosted comments for static sites and blogs. Runs on Cloudflare
 Workers + D1 + KV + Turnstile. One Worker per site, no per-comment
 billing, your data stays in your account.
 
+**[Try the live demo →](https://comments.garrul.com)**
+
+Self-hosted, but not the hard kind: **there is no container, no VPS, and
+no database server**. Nothing to patch, no uptime to monitor, no TLS to
+renew — Cloudflare keeps point-in-time backups of D1 for you. It is one
+Worker, and keeping it current is a single dry-runnable command per
+release. Two credentials to get started (a Turnstile key pair, from one
+dashboard page); every other integration is optional.
+
 - **Threaded comments** with markdown, reactions, edit/delete window
 - **OAuth sign-in** (GitHub, Google, Facebook, X, Discord) + anonymous
   posting with rate limiting and Turnstile
-- **Embeddable widget** (~13 KB gzipped, CI-capped at 30 KB) with
+- **Embeddable widget** (~15 KB gzipped, CI-capped at 30 KB) with
   Shadow-DOM isolation, theme variables, and an iframe alternative
-- **Email digests**, RSS feeds, comment counts, permalinks
+- **Reply notifications by email**, built in — readers opt in from the
+  widget, confirm by double-opt-in, and get a debounced digest when new
+  comments land. No webhook or external pipeline required; bring a
+  Resend key — [`docs/notifications.md`](docs/notifications.md)
+- **RSS feeds**, comment counts, permalinks
 - **Admin UI** for moderation queue + user management
 - **Webhook out** on every comment event — generic, Slack, Discord, or Telegram
 - **Telegram operator bot** — moderate from your phone with inline buttons,
@@ -44,14 +57,20 @@ More, including dark mode, mobile, and the rest of the admin UI:
 
 ## Install
 
-Deploying to production takes ~20 minutes the first time. Step-by-step
-guide — prerequisites, OAuth setup, Turnstile, custom domain, remote
-migrations, deploy, smoke test — lives in [`INSTALL.md`](INSTALL.md).
+Deploying to production takes ~20 minutes the first time — and then
+`npm run upgrade` per release, which is one command with a `--dry-run`
+that prints its plan before touching anything. That is the whole
+maintenance story; there is no OS to patch and no service to restart.
 
-Upgrading from a previous release: `npm run upgrade` — see
+Step-by-step guide — prerequisites, OAuth setup, Turnstile, custom
+domain, remote migrations, deploy, smoke test — lives in
+[`INSTALL.md`](INSTALL.md); upgrades in
 [`INSTALL.md#updating`](INSTALL.md#updating).
 
-For a quick local poke-around once you've installed deps:
+**Want to try it first? No Cloudflare account needed.**
+`.dev.vars.example` ships working dev defaults — including Cloudflare's
+"always passes" Turnstile test keys — so this runs with zero edits and
+zero credentials:
 
 ```bash
 git clone https://github.com/KingPin/Garrul.git comments

@@ -6,6 +6,16 @@
 # Blank values are fine locally — a feature is simply off when its
 # credentials are unset. Fill in only what you're exercising.
 
+# --- Local dev overrides ---
+# These are wrangler.toml vars, overridden here for local dev only:
+# .dev.vars takes precedence over [vars] under `wrangler dev`.
+# "dev" locally, and the one value a local clone genuinely cannot run without.
+# wrangler.example.toml ships ENV = "production" plus a placeholder
+# ALLOWED_ORIGINS, so without this override every /api/* request from
+# localhost is rejected by the Origin gate (src/lib/cors.ts) and the widget
+# never loads. Do not carry this file to a deployed instance.
+ENV="dev"
+
 # --- Generated secrets ---
 # auto-generated 32-byte HMAC key for signed OAuth state
 JWT_SECRET="dev-jwt-secret-change-me"

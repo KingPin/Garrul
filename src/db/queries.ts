@@ -958,6 +958,29 @@ export const listReactionsForPost = async (
 };
 
 /**
+ * Aggregate reactions for a single comment: (kind, count).
+ *
+ * The post-wide query above is what builds the tree; this one exists for the
+ * toggle endpoint, which needs authoritative counts for exactly one comment so
+ * the widget can patch that comment in place instead of re-fetching the thread.
+ */
+export const listReactionsForComment = async (
+	db: D1Database,
+	comment_id: string,
+): Promise<{ kind: string; count: number }[]> => {
+	const result = await db
+		.prepare(
+			`SELECT kind, COUNT(*) AS count
+			   FROM reactions
+			  WHERE comment_id = ?
+			  GROUP BY kind`,
+		)
+		.bind(comment_id)
+		.all<{ kind: string; count: number }>();
+	return result.results ?? [];
+};
+
+/**
  * Returns the set of (comment_id, kind) pairs the given user has reacted
  * with on the given post. Returned as `comment_id|kind` strings so the
  * caller can do an O(1) presence check.
@@ -2117,6 +2140,101 @@ export const updateSubscriptionLastNotified = async (
 	await db
 		.prepare(`UPDATE subscriptions SET last_notified_at = ? WHERE id = ?`)
 		.bind(now, id)
+		.run();
+};
+
+/** Why a comment is in the moderator queue. See 0021_moderator_notifications.sql. */
+export type ModeratorNotifyReason = "pending" | "reported";
+
+/**
+ * Queue one moderator notification.
+ *
+ * `INSERT OR IGNORE` against the partial UNIQUE(comment_id, reason) index from
+ * migration 0021: the report path is reader-triggered, so without the ignore a
+ * brigade would be one queue row per reporting network. Losing the race is the
+ * correct outcome here — the moderator only needs telling once.
+ *
+ * Silent on conflict by design, so callers don't have to distinguish "queued"
+ * from "already queued"; neither one changes what they do next.
+ */
+export const enqueueModeratorNotification = async (
+	db: D1Database,
+	comment_id: string,
+	reason: ModeratorNotifyReason,
+): Promise<void> => {
+	await db
+		.prepare(
+			`INSERT OR IGNORE INTO moderator_notifications
+			   (id, comment_id, reason, created_at, sent_at)
+			 VALUES (?, ?, ?, ?, NULL)`,
+		)
+		.bind(ulid(), comment_id, reason, Date.now())
+		.run();
+};
+
+export type PendingModeratorNotification = {
+	notification_id: string;
+	comment_id: string;
+	reason: string;
+	post_slug: string;
+	/** Live status, so the sender can drop rows a moderator already handled. */
+	status: string;
+	body_html: string;
+	/** NULL when the author row is gone; the sender renders a placeholder. */
+	author_name: string | null;
+};
+
+/**
+ * Pending moderator notifications, oldest first, joined to everything the
+ * digest renders.
+ *
+ * One statement rather than the batch-then-hydrate shape `listPendingDigests`
+ * uses: that one groups by subscriber and needs a per-digest comment set, while
+ * this is a single flat list capped at `limit`, so the join is both cheaper and
+ * simpler. LEFT JOIN on users because a hard-deleted author must not silently
+ * drop their comment out of the moderation queue.
+ *
+ * `older_than` is the debounce cutoff — a burst of spam coalesces into one
+ * email on a later tick instead of one email per comment.
+ */
+export const listPendingModeratorNotifications = async (
+	db: D1Database,
+	older_than: number,
+	limit: number,
+): Promise<PendingModeratorNotification[]> => {
+	const result = await db
+		.prepare(
+			`SELECT m.id         AS notification_id,
+			        m.comment_id  AS comment_id,
+			        m.reason      AS reason,
+			        c.post_slug   AS post_slug,
+			        c.status      AS status,
+			        c.body_html   AS body_html,
+			        u.name        AS author_name
+			   FROM moderator_notifications m
+			   JOIN comments c ON c.id = m.comment_id
+			   LEFT JOIN users u ON u.id = c.user_id
+			  WHERE m.sent_at IS NULL
+			    AND m.created_at < ?
+			  ORDER BY m.created_at ASC
+			  LIMIT ?`,
+		)
+		.bind(older_than, limit)
+		.all<PendingModeratorNotification>();
+	return result.results ?? [];
+};
+
+export const markModeratorNotificationsSent = async (
+	db: D1Database,
+	ids: string[],
+): Promise<void> => {
+	if (ids.length === 0) return;
+	const placeholders = ids.map(() => "?").join(",");
+	await db
+		.prepare(
+			`UPDATE moderator_notifications SET sent_at = ? WHERE id IN (${placeholders})`,
+		)
+		.bind(Date.now(), ...ids)
 		.run();
 };
 

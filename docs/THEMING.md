@@ -57,6 +57,39 @@ Or in a stylesheet:
 | `--garrul-accent-hover`   | `#1d4ed8`                                | Submit button hover background        |
 | `--garrul-vote-active`    | `--garrul-badge-bg`                      | Active vote / reaction highlight (defaults to the badge background) |
 | `--garrul-shadow`         | `0 1px 2px rgba(0,0,0,.06)`              | Box-shadow on raised surfaces         |
+| `--garrul-motion`         | `120ms`                                  | Duration of every hover/press/state transition. Set `0ms` to opt out; a reader's `prefers-reduced-motion` overrides it either way |
+
+## Presets
+
+If you want a different look and don't want to pick 21 colors, set
+`data-preset` on the mount element:
+
+```html
+<div id="garrul" data-slug="hello-world" data-preset="soft"></div>
+```
+
+| `data-preset` | Look |
+| ------------- | ---- |
+| absent        | The default palette — blue accent, 6px corners, soft shadow |
+| `minimal`     | Monochrome. The accent collapses onto the text color, the shadow goes, corners go nearly square. Defined entirely in terms of the other tokens, so it tracks light/dark on its own |
+| `soft`        | Rounded (12px), violet accent, gently tinted surfaces |
+| `contrast`    | Black on white (or the inverse), hard borders, no shadow, near-square corners — every pair clears WCAG AA at body size |
+
+Presets are palettes, not themes: each one has a light and a dark half and
+composes with `data-theme` and with `prefers-color-scheme`. `data-preset="soft"
+data-theme="dark"` is the dark violet palette; the same preset with no
+`data-theme` follows the reader's OS.
+
+Your own `--garrul-*` overrides still win — a preset is a starting point you
+can keep editing, not a replacement for the variables. Full precedence:
+
+**host override > preset > `data-theme` > OS preference > light default**
+
+For the [iframe embed](../examples/iframe), where the host page can't reach the
+widget's variables at all, pass `?preset=soft` on the frame URL instead.
+
+Preset names are as public as the variable names: adding one is
+non-breaking, renaming or removing one is a MAJOR bump.
 
 ## Dark mode
 
@@ -79,6 +112,13 @@ regardless of OS preference:
 | absent / `auto`         | Follow `prefers-color-scheme` (default)     |
 | `light`                 | Always light                                |
 | `dark`                  | Always dark                                 |
+
+Whichever way the theme resolves, it is also declared to the browser as
+`color-scheme`. That covers the parts of the UI Garrul does not paint —
+`<select>` popups, scrollbars, the text caret, default focus rings — which
+would otherwise stay light inside a dark widget. A pinned `data-theme` wins
+over the OS preference here too, so `data-theme="light"` on a dark-OS reader
+does not leave them a dark dropdown over a light thread.
 
 **Precedence (highest wins):**
 
@@ -105,6 +145,19 @@ comments narrower or wider, size the mount element:
 ```css
 #garrul { max-width: 1100px; margin: 0 auto; }
 ```
+
+**Reserved height.** The widget mounts after the page paints, so `#garrul`
+goes from 0px to the loading skeleton's height and shoves everything below the
+thread down. With a non-deferred `<script>` the bundle reserves that height
+itself, the moment it runs; with `defer` it can't, because it doesn't run until
+parsing is finished. Claim the box from your own stylesheet instead:
+
+```css
+#garrul { min-height: 220px; }
+```
+
+Use `min-height`, never `height` — the thread grows past it. Anything you set
+here wins: the widget only reserves height when you haven't.
 
 **Composer height.** Composers open at a sensible minimum and grow to fit
 their content as you type, capped at 60% of the viewport so the

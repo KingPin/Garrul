@@ -79,6 +79,46 @@ export const newVarsSince = (
 	);
 };
 
+export type PlaceholderVar = {
+	name: string;
+	value: string;
+	description?: string;
+};
+
+/**
+ * Vars still set to the value wrangler.example.toml ships them as.
+ *
+ * `diffVars` cannot catch these and never will: every var is `required: false`
+ * by design, and these are *set* — just set to `https://comments.example.com`.
+ * A deploy with untouched example origins passes every existing check and then
+ * fails at runtime with the two most-reported errors in
+ * docs/troubleshooting.md — CORS rejections and `redirect_uri_mismatch` —
+ * neither of which points back at wrangler.toml.
+ *
+ * Reported, never blocking. An operator legitimately running Garrul on
+ * `example.com` would be told to change a setting that is correct for them,
+ * and a warning they can ignore is the right cost for that; refusing to
+ * upgrade over it is not.
+ *
+ * `vars` is the operator's `[vars]` table with values; a `null` value is a key
+ * set to a non-string, which no placeholder is.
+ */
+export const placeholderVars = (
+	vars: Record<string, string | null>,
+	manifest: VarEntry[],
+): PlaceholderVar[] => {
+	const out: PlaceholderVar[] = [];
+	for (const v of manifest) {
+		if (v.placeholder === undefined) continue;
+		const actual = vars[v.name];
+		if (typeof actual !== "string" || actual !== v.placeholder) continue;
+		const entry: PlaceholderVar = { name: v.name, value: actual };
+		if (v.description !== undefined) entry.description = v.description;
+		out.push(entry);
+	}
+	return out;
+};
+
 /**
  * Optional secrets introduced after the release the operator is on and not
  * yet set — the secrets-side counterpart to `newVarsSince`.
@@ -207,6 +247,8 @@ export type Plan = {
 	newVars: VarEntry[];
 	/** Informational only. Optional by definition, so never applied either. */
 	newSecrets: SecretEntry[];
+	/** Informational only — wrangler.toml is the operator's file. */
+	placeholders: PlaceholderVar[];
 	kv: Diff<KvEntry>;
 	d1: Diff<D1Entry>;
 	migrations: MigrationDiff;

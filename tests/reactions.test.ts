@@ -68,6 +68,17 @@ const makeDb = (status: string) => ({
 			return null;
 		},
 		async all() {
+			// The per-comment aggregate the route now sends back so the widget
+			// can patch in place. Two kinds, one of them not the one being
+			// toggled, so a test can tell a real aggregate from an echo.
+			if (sql.includes("FROM reactions") && sql.includes("COUNT(*)")) {
+				return {
+					results: [
+						{ kind: "like", count: 3 },
+						{ kind: "love", count: 1 },
+					],
+				};
+			}
 			return { results: [] };
 		},
 		async run() {
@@ -196,5 +207,20 @@ describe("POST /reactions — only approved comments are reactable", () => {
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as { ok: boolean };
 		expect(body.ok).toBe(true);
+	});
+
+	it("returns authoritative per-comment counts, not just `added`", async () => {
+		// The widget patches its reaction row from this instead of reloading the
+		// whole thread, so an empty or missing `reactions` object is the shape
+		// that would visibly blank a comment's reactions.
+		installMockCaches();
+		const { app, env } = mkApp("approved");
+		const res = await post(app, env, { comment_id: COMMENT_ID, kind: "like" });
+		const body = (await res.json()) as {
+			added: boolean;
+			reactions: Record<string, number>;
+		};
+		expect(body.added).toBe(true);
+		expect(body.reactions).toEqual({ like: 3, love: 1 });
 	});
 });

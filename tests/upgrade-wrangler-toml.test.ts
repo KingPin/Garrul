@@ -9,6 +9,7 @@ import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseWranglerToml } from "../scripts/upgrade/wrangler";
+import { parseTomlVars } from "../scripts/upgrade/toml-vars";
 
 const dirs: string[] = [];
 
@@ -104,5 +105,57 @@ describe("parseWranglerToml varNames", () => {
 		const dir = mkdtempSync(join(tmpdir(), "garrul-toml-"));
 		dirs.push(dir);
 		expect(() => parseWranglerToml(dir)).toThrow(/not found/);
+	});
+});
+
+describe("parseTomlVars values", () => {
+	it("unquotes a plain string", () => {
+		expect(parseTomlVars('[vars]\nENV = "production"')).toEqual({
+			ENV: "production",
+		});
+	});
+
+	it("marks a non-string value null but keeps the key", () => {
+		// The key is set — `newVarsSince` must not announce it as new — but no
+		// placeholder is a number, so there is no value to compare.
+		expect(
+			parseTomlVars(
+				'[vars]\nCOMMENTS_PER_PAGE = 25\nVOTING_ENABLED = true\nENV = "production"',
+			),
+		).toEqual({ COMMENTS_PER_PAGE: null, VOTING_ENABLED: null, ENV: "production" });
+	});
+
+	it("strips a trailing comment", () => {
+		// wrangler.example.toml annotates several lines this way, and that file
+		// is where the placeholders the manifest ships are read from.
+		expect(
+			parseTomlVars(
+				'[vars]\nADMIN_EMAILS = "you@example.com"   # comma-separated',
+			),
+		).toEqual({ ADMIN_EMAILS: "you@example.com" });
+	});
+
+	it("does not treat a # inside the string as a comment", () => {
+		expect(parseTomlVars('[vars]\nX = "a#b"')).toEqual({ X: "a#b" });
+	});
+
+	it("leaves an escaped quote alone rather than half-decoding it", () => {
+		// No TOML escape decoding here by design; a value needing it is out of
+		// scope, so it reads as a non-string rather than as a mangled string.
+		expect(parseTomlVars('[vars]\nX = "a\\"b"')).toEqual({ X: null });
+	});
+
+	it("ignores everything outside [vars]", () => {
+		expect(
+			parseTomlVars(
+				'name = "garrul"\n[vars]\nENV = "production"\n[observability]\nenabled = true',
+			),
+		).toEqual({ ENV: "production" });
+	});
+
+	it("ignores commented-out keys", () => {
+		expect(
+			parseTomlVars('[vars]\nENV = "production"\n# AUTO_CLOSE_DAYS = 30'),
+		).toEqual({ ENV: "production" });
 	});
 });

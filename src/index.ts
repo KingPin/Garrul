@@ -18,6 +18,7 @@ import { counts } from "./routes/api.counts";
 import { permalink } from "./routes/permalink";
 import { subscriptions } from "./routes/api.subscriptions";
 import { runDigest } from "./lib/digest";
+import { runModeratorDigest } from "./lib/moderator-digest";
 import { runTelegramDigest } from "./lib/telegram-digest";
 import { runWebhookRetries } from "./lib/webhook";
 import { runIpRetention } from "./db/ip-retention";
@@ -106,6 +107,17 @@ export type Bindings = {
 	//   CONFIRM_SEND_DAILY_MAX — sends allowed per 24h window.
 	CONFIRM_SEND_BURST_MAX?: string;
 	CONFIRM_SEND_DAILY_MAX?: string;
+	// Moderator email (src/lib/moderator-digest.ts). Off unless enabled; a
+	// `settings` row overrides this env default, same as the other flags.
+	//   MODERATOR_EMAIL_ENABLED  — master switch. Default OFF: outbound mail is
+	//                              not something an upgrade should start doing.
+	//   MODERATOR_NOTIFY_EMAILS  — comma-separated recipients. Unset falls back
+	//                              to ADMIN_EMAILS, which is already exactly the
+	//                              set of people who can act on the queue; set
+	//                              this when the alerts belong somewhere else
+	//                              (a shared alias) than the admin accounts.
+	MODERATOR_EMAIL_ENABLED?: string;
+	MODERATOR_NOTIFY_EMAILS?: string;
 	// Set to "1" or "true" to suppress the "Powered by Garrul" attribution
 	// rendered under the comment list. Unset = attribution shown.
 	BRANDING_HIDDEN?: string;
@@ -348,6 +360,14 @@ export default {
 		ctx.waitUntil(
 			runDigest(env).catch((err) => {
 				log.error("scheduled.digest", { error: String(err) });
+			}),
+		);
+		// Moderator mail. Self-gates on the moderator_email_enabled flag and on
+		// email being configured at all, so on most instances this is one cached
+		// settings read per tick and nothing else.
+		ctx.waitUntil(
+			runModeratorDigest(env).catch((err) => {
+				log.error("scheduled.moderator_digest", { error: String(err) });
 			}),
 		);
 		ctx.waitUntil(
