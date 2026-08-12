@@ -319,8 +319,13 @@ host-page wiring:
   anything reading `reactions.like` off `/api/v1/counts` or a tree
   response sees `reactions.fire` after upgrading. Both POST routes still
   accept `like` on the wire for one release and store it as `fire`, so a
-  reader holding a cached pre-2.10.0 bundle keeps working. Emoji are
-  native unicode — the widget ships no icon artwork.
+  reader holding a cached pre-2.10.0 bundle keeps working. That
+  compatibility runs both ways: a POST in the deprecated spelling gets
+  its answer echoed in the same spelling, so the response carries both
+  `fire` and a `like` key with the identical count. Without the echo the
+  old bundle would look up a key that is no longer there and blank the
+  cell it just incremented. Emoji are native unicode — the widget ships
+  no icon artwork.
 - **Comment reactions patch in place** (since v2.9.0). Toggling an emoji
   on a comment (`POST /api/v1/reactions` `{comment_id, kind}`) no longer
   re-fetches and re-renders the
@@ -328,7 +333,11 @@ host-page wiring:
   `reactions` is `{kind: count}` for that one comment, and the widget
   updates just that row. Scroll position, open reply composers and typed
   drafts survive a reaction now. Zero-count kinds are absent from
-  `reactions`, matching the list payload.
+  `reactions`, matching the list payload — with one exception: the
+  deprecated-spelling echo above always carries a value, so a POST for
+  `like` that removes the last reaction answers `{"like": 0}`. Old
+  bundles drop non-positive counts on merge, which is exactly how they
+  clear the cell.
 - **Sorting** defaults to `new` (newest top-level threads first). `top`
   orders top-level threads by net score (`score_up - score_down`,
   newer-first on ties); replies inside a thread always stay
