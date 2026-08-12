@@ -211,7 +211,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
    Paint properties only — never `all`, which would sweep in height and animate
    the composer's autosize into a rubber band. */
 .gr-toolbar-btn, .gr-form button, .gr-actions button, .gr-low-score,
-.gr-vote, .gr-sort select, .gr-loadmore, .gr-collapse, .gr-showmore,
+.gr-vote, .gr-reaction, .gr-sort select, .gr-loadmore, .gr-collapse, .gr-showmore,
 .gr-signin button, .gr-signed button, .gr-attribution a {
 	transition: background-color var(--gr-motion), border-color var(--gr-motion),
 		color var(--gr-motion), opacity var(--gr-motion);

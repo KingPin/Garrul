@@ -37,6 +37,7 @@ import { watchForSignIn } from "./auth-recovery";
 import { autoSizeTextarea } from "./autosize";
 import { createTurnstileGate, type TurnstileGate } from "./turnstile-gate";
 import { makeS, type StringTable, type WidgetKey } from "./strings";
+import { type ReactionCount, mergeReactionTotals } from "./reactions";
 import { absoluteTime, isoTime, relativeTime } from "./time";
 // Generated from styles.css by scripts/build-styles.ts (gitignored, rebuilt by
 // build:assets). Edit styles.css, never the .gen file.
@@ -88,8 +89,6 @@ type TreeAuthor = {
 	avatar_url: string | null;
 };
 
-type ReactionCount = { kind: string; count: number; mine: boolean };
-
 type TreeNode = {
 	id: string;
 	parent_id: string | null;
@@ -119,6 +118,15 @@ type VoteResponse = {
 	score_up: number;
 	score_down: number;
 	my_vote: -1 | 0 | 1;
+};
+
+type ReactionResponse = {
+	ok: boolean;
+	added: boolean;
+	/** Absent on a Worker deployed before the field existed — the widget is
+	 *  served by the same Worker, so this is belt-and-braces, but a stale
+	 *  cached embed.js against a newer API is the shape that does happen. */
+	reactions?: Record<string, number>;
 };
 
 type SortKey = "new" | "top";
@@ -842,25 +850,49 @@ const buildVotes = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	return wrap;
 };
 
+// Emoji reactions. Like votes above, a click patches the local TreeNode and
+// this one row rather than reloading: `ctx.reload()` runs replaceChildren() on
+// the whole shadow tree, so the most frequent interaction in the widget was
+// also the most destructive one — it dropped scroll position and any open
+// composer with a half-typed draft in it.
 const buildReactions = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	const wrap = el("div", "gr-reactions");
+	const cells = new Map<
+		string,
+		{ btn: HTMLButtonElement; count: HTMLElement }
+	>();
+
+	// The single place that knows how a reaction renders: run at build time and
+	// again after every toggle, reading whatever is currently on the node.
+	const paint = (): void => {
+		const map = reactionsByKind(n.reactions);
+		for (const [kind, cell] of cells) {
+			const r = map.get(kind);
+			const count = r?.count ?? 0;
+			if (r?.mine) cell.btn.dataset.mine = "1";
+			else delete cell.btn.dataset.mine;
+			cell.count.textContent = String(count);
+			cell.count.hidden = count === 0;
+			// An anonymous reader who un-reacts the last 👍 has to see the button
+			// go away, because that is the rule the initial render below applies.
+			// The old full reload got this for free.
+			if (!ctx.me) cell.btn.hidden = count === 0;
+		}
+	};
+
 	const map = reactionsByKind(n.reactions);
 	for (const { kind, emoji } of REACTION_KINDS) {
-		const r = map.get(kind);
-		const count = r?.count ?? 0;
-		const mine = r?.mine ?? false;
 		// Hide zero-count kinds unless the viewer is signed in (so signed-in
 		// users can react with a kind nobody else has used yet). Anonymous
 		// readers see only used kinds.
-		if (count === 0 && !ctx.me) continue;
+		if ((map.get(kind)?.count ?? 0) === 0 && !ctx.me) continue;
 		const btn = el("button", "gr-reaction");
 		btn.type = "button";
 		btn.dataset.kind = kind;
-		if (mine) btn.dataset.mine = "1";
 		btn.appendChild(document.createTextNode(emoji));
-		if (count > 0) {
-			btn.appendChild(el("span", "gr-reaction-count", String(count)));
-		}
+		const count = el("span", "gr-reaction-count", "");
+		btn.appendChild(count);
+		cells.set(kind, { btn, count });
 		btn.addEventListener("click", async () => {
 			btn.disabled = true;
 			try {
@@ -870,17 +902,33 @@ const buildReactions = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 					headers: { "content-type": "application/json" },
 					body: JSON.stringify({ comment_id: n.id, kind }),
 				});
-				if (!res.ok) {
-					btn.disabled = false;
+				if (!res.ok) return;
+				const body = (await res.json()) as ReactionResponse;
+				// No counts to patch from means an API older than this bundle;
+				// fall back to the reload this used to do rather than merging
+				// against `{}`, which would blank every reaction on the comment.
+				if (!body.reactions) {
+					ctx.reload();
 					return;
 				}
-				ctx.reload();
+				// Mutate the node so a later re-render (Load more, sort change)
+				// still reflects the toggle, then repaint this row.
+				n.reactions = mergeReactionTotals(
+					n.reactions,
+					body.reactions,
+					kind,
+					body.added,
+				);
+				paint();
 			} catch {
+				// Network/parse failure: leave the UI untouched; user can retry.
+			} finally {
 				btn.disabled = false;
 			}
 		});
 		wrap.appendChild(btn);
 	}
+	paint();
 	return wrap;
 };
 

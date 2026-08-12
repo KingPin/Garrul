@@ -294,6 +294,14 @@ host-page wiring:
 - **Anonymous viewers can vote.** They use the same IP-hashed ghost
   identity as anonymous comments — one vote per identity per comment.
   Authors cannot vote on their own comments.
+- **Comment reactions patch in place** (since v2.9.0). Toggling an emoji
+  on a comment (`POST /api/v1/reactions` `{comment_id, kind}`, `kind` ∈
+  `like|love|laugh|hmm|cry`) no longer re-fetches and re-renders the
+  thread — the response carries `{ok, added, reactions}` where
+  `reactions` is `{kind: count}` for that one comment, and the widget
+  updates just that row. Scroll position, open reply composers and typed
+  drafts survive a reaction now. Zero-count kinds are absent from
+  `reactions`, matching the list payload.
 - **Sorting** defaults to `new` (newest top-level threads first). `top`
   orders top-level threads by net score (`score_up - score_down`,
   newer-first on ties); replies inside a thread always stay

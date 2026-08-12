@@ -958,6 +958,29 @@ export const listReactionsForPost = async (
 };
 
 /**
+ * Aggregate reactions for a single comment: (kind, count).
+ *
+ * The post-wide query above is what builds the tree; this one exists for the
+ * toggle endpoint, which needs authoritative counts for exactly one comment so
+ * the widget can patch that comment in place instead of re-fetching the thread.
+ */
+export const listReactionsForComment = async (
+	db: D1Database,
+	comment_id: string,
+): Promise<{ kind: string; count: number }[]> => {
+	const result = await db
+		.prepare(
+			`SELECT kind, COUNT(*) AS count
+			   FROM reactions
+			  WHERE comment_id = ?
+			  GROUP BY kind`,
+		)
+		.bind(comment_id)
+		.all<{ kind: string; count: number }>();
+	return result.results ?? [];
+};
+
+/**
  * Returns the set of (comment_id, kind) pairs the given user has reacted
  * with on the given post. Returned as `comment_id|kind` strings so the
  * caller can do an O(1) presence check.
