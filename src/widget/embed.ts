@@ -1257,12 +1257,31 @@ const buildSubscribeBell = (
 	const form = el("form", "gr-subscribe-form");
 	form.hidden = true;
 	const emailInput = el("input") as HTMLInputElement;
+	// Assigned only on the anonymous path: the signed-in bell posts straight from
+	// its own click and never builds a form, so `setBusy` has to tolerate null.
+	let submit: HTMLButtonElement | null = null;
+
+	// Disabling the bell alone left the form wide open — the submit button and the
+	// Enter key inside the input both reach `send` without going near the bell. So
+	// disable whichever control is actually live. Disabling the submit button also
+	// suppresses implicit submission, which is what closes the Enter-key path.
+	const setBusy = (busy: boolean): void => {
+		btn.disabled = busy;
+		if (submit) submit.disabled = busy;
+	};
 
 	// `message` is already localized by the server (it negotiates from ?lang=).
 	// Rendered via textContent — as every server string in this widget is — so a
 	// future message containing markup is text, not markup.
+	let inFlight = false;
 	const send = async (email: string): Promise<void> => {
-		btn.disabled = true;
+		// The disabled attributes are the affordance; this flag is the guarantee.
+		// A subscribe POST costs the operator send budget and the reader a
+		// duplicate email, so it is worth being certain rather than trusting that
+		// no path can re-enter while a request is open.
+		if (inFlight) return;
+		inFlight = true;
+		setBusy(true);
 		try {
 			const res = await fetch(apiUrl(apiBase, "/api/v1/subscribe"), {
 				method: "POST",
@@ -1286,7 +1305,8 @@ const buildSubscribeBell = (
 		} catch {
 			say(s("w.subscribe.failed"));
 		} finally {
-			btn.disabled = false;
+			inFlight = false;
+			setBusy(false);
 		}
 	};
 
@@ -1296,7 +1316,7 @@ const buildSubscribeBell = (
 		emailInput.required = true;
 		emailInput.placeholder = s("w.email_ph");
 		emailInput.autocomplete = "email";
-		const submit = el("button", "gr-subscribe-submit", s("w.subscribe.submit"));
+		submit = el("button", "gr-subscribe-submit", s("w.subscribe.submit"));
 		submit.type = "submit";
 		form.append(emailInput, submit);
 		form.addEventListener("submit", (e) => {

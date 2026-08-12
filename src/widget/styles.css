@@ -659,7 +659,13 @@ button:active:not([disabled]) { opacity: 0.75; }
 	cursor: pointer;
 	border-radius: var(--gr-radius);
 }
-.gr-subscribe-btn:hover { border-color: var(--gr-accent); }
+/* The bell and the submit both get disabled while a subscribe POST is open, so
+   they need the same busy treatment as the composer, the vote buttons and load
+   more — a control that stops responding without changing appearance reads as
+   broken. Declared before the :hover rule so specificity ascends; :hover still
+   matches a disabled button, hence the :not() guard. */
+.gr-subscribe-btn[disabled] { opacity: 0.6; cursor: progress; }
+.gr-subscribe-btn:hover:not([disabled]) { border-color: var(--gr-accent); }
 .gr-subscribe-form { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; }
 /* Smaller than the composer's submit — this is an inline confirmation, not the
    primary action on the page. */
@@ -674,7 +680,8 @@ button:active:not([disabled]) { opacity: 0.75; }
 	padding: 0.35rem 0.7rem;
 	cursor: pointer;
 }
-.gr-subscribe-submit:hover { background: var(--gr-accent-hover); }
+.gr-subscribe-submit[disabled] { opacity: 0.6; cursor: progress; }
+.gr-subscribe-submit:hover:not([disabled]) { background: var(--gr-accent-hover); }
 .gr-subscribe-form[hidden] { display: none; }
 .gr-subscribe-status { font-size: 0.85em; color: var(--gr-muted); }
 .gr-subscribe-status[hidden] { display: none; }
