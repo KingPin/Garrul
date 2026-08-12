@@ -62,7 +62,7 @@ end-to-end before improvising. Operator-side shape:
 2. `npx wrangler login` — browser OAuth, one-time per machine.
 3. Copy templates: `cp wrangler.example.toml wrangler.toml` and
    `cp .dev.vars.example .dev.vars`. Both targets are gitignored.
-4. Run `./scripts/setup.sh`. It creates the D1 database (`garrul-db`)
+4. Run `npm run setup`. It creates the D1 database (`garrul-db`)
    and the four KV namespaces (`RATE_LIMITS`, `OAUTH_STATE`, `SESSIONS`,
    `TREE_CACHE`), pastes their IDs into `wrangler.toml`, generates
    `JWT_SECRET` + `IP_HASH_SECRET` straight into Cloudflare (never
@@ -225,7 +225,7 @@ between the two is a build error, not a silent misclassification.
 <!-- END:config-table -->
 
 Bindings (D1, KV, Analytics) live in `wrangler.toml` outside `[vars]`
-and are populated by `./scripts/setup.sh`. Don't edit binding IDs by
+and are populated by `npm run setup`. Don't edit binding IDs by
 hand once a deploy has used them.
 
 ### Feature flags: runtime overrides (since v1.10.0)

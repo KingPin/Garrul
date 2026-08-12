@@ -13,6 +13,7 @@
     "node": ">=24"
   },
   "scripts": {
+    "setup": "bash scripts/setup.sh",
     "dev": "wrangler dev",
     "predev": "npm run build:assets",
     "deploy": "wrangler deploy",

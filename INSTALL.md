@@ -89,10 +89,10 @@ cd comments
 npm install
 cp wrangler.example.toml wrangler.toml
 cp .dev.vars.example .dev.vars
-./scripts/setup.sh
+npm run setup
 ```
 
-`setup.sh` will:
+`npm run setup` will:
 
 - create the D1 database (`garrul-db`) and four KV namespaces,
 - write their generated IDs into `wrangler.toml`,
@@ -102,7 +102,7 @@ cp .dev.vars.example .dev.vars
 
 ### Bulk or one at a time
 
-Nothing is lost by picking either; you can re-run `setup.sh`, or set
+Nothing is lost by picking either; you can re-run `npm run setup`, or set
 any secret later with `wrangler secret put NAME`.
 
 **Bulk** (fewer keystrokes — one file, one upload):

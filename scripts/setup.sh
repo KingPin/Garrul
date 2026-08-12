@@ -42,17 +42,40 @@ confirm_route() {
 		echo "✓ routes section appears configured — skipping prompt"
 		return
 	fi
-	echo
-	echo "RECOMMENDATION: use a custom subdomain (e.g. comments.yourdomain.com)"
-	echo "for the Worker route. *.workers.dev subdomains cause third-party-cookie"
-	echo "friction in some browsers and break the embed for Safari/Firefox users."
-	echo
-	read -r -p "Continue without configuring a custom route? [y/N] " resp
+	# Never exits. D1, KV and the secret prompts below are identical either way,
+	# so ejecting here only meant the operator hand-edited a 261-line TOML and
+	# then re-ran everything — a rejection as the first thing the tool does.
+	cat <<-'EOS'
+
+		Where should this Worker answer requests?
+
+		  1) *.workers.dev — free, live in minutes, no DNS to move. Good for
+		     trying Garrul out. Not a production answer: the cross-site cookie
+		     the embed needs gets blocked for some Safari/Firefox readers, so
+		     sign-in breaks for them. Anonymous commenting still works.
+
+		  2) A custom subdomain (comments.yourdomain.com) — the production
+		     answer. Needs the domain on Cloudflare, and one edit to the
+		     [[routes]] block in wrangler.toml.
+
+		Either way the rest of this setup is the same, and moving from 1 to 2
+		later is a config edit and a redeploy — no data migration.
+
+	EOS
+	read -r -p "Choose [1/2] (default 1): " resp
 	case "$resp" in
-		y|Y|yes|YES) ;;
+		2)
+			echo
+			echo "→ Uncomment the [[routes]] block in wrangler.toml and set your"
+			echo "  pattern, e.g. { pattern = \"comments.yourdomain.com\", custom_domain = true }"
+			echo "  Do it before your first deploy; setup continues either way."
+			;;
 		*)
-			echo "Edit wrangler.toml's [[routes]] section, then re-run."
-			exit 0 ;;
+			echo
+			echo "✓ staying on *.workers.dev — leave [[routes]] commented out."
+			echo "  After your first deploy, set PUBLIC_BASE_URL, OAUTH_CALLBACK_BASE"
+			echo "  and ALLOWED_ORIGINS to the workers.dev URL wrangler prints."
+			;;
 	esac
 }
 confirm_route
