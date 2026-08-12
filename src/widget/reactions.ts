@@ -96,6 +96,33 @@ export const normalizeReactionKind = (kind: string): string =>
 	DEPRECATED_KINDS.get(kind) ?? kind;
 
 /**
+ * Echo a totals map back under the spelling the caller actually asked for.
+ *
+ * Accepting `like` on the way in is only half the job: the totals a route
+ * returns are keyed by the *stored* kind, so a pre-2.10.0 bundle POSTs `like`,
+ * gets `{ fire: N }` back, finds no `like` entry, and paints that cell to 0 —
+ * then hides the button outright for an anonymous reader, because zero-count
+ * kinds are hidden from them. The reader watches the button they just pressed
+ * disappear. The page bar's variant is worse: `0` next to `aria-pressed="true"`.
+ *
+ * So when normalization rewrote the kind, send the count under both spellings.
+ * A current bundle never triggers this (it asks for `fire`, nothing is
+ * rewritten, the response shape is byte-identical), and the alias is drawn from
+ * `DEPRECATED_KINDS` rather than trusting the raw wire value, so this cannot
+ * mint a key from arbitrary caller input.
+ *
+ * Goes away with `DEPRECATED_KINDS`.
+ */
+export const withDeprecatedAlias = (
+	totals: Record<string, number>,
+	requested: string,
+): Record<string, number> => {
+	const stored = DEPRECATED_KINDS.get(requested);
+	if (stored === undefined) return totals;
+	return { ...totals, [requested]: totals[stored] ?? 0 };
+};
+
+/**
  * Fold a toggle response back into a comment's reaction list.
  *
  * `totals` is authoritative for counts (it is a fresh aggregate over the

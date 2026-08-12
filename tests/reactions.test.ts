@@ -174,6 +174,32 @@ describe("POST /reactions — input validation", () => {
 		expect(insert?.args[2]).toBe("fire");
 	});
 
+	it("answers a deprecated `like` in both spellings", async () => {
+		// Storing it as `fire` is only half the alias. That old bundle patches its
+		// row with mergeReactionTotals(prev, totals, "like", true) — keyed on `fire`
+		// alone it finds nothing, paints the cell to 0, and (for an anonymous
+		// reader, who never sees zero-count kinds) hides the button that was just
+		// pressed. Both spellings carry the same count.
+		installMockCaches();
+		const { app, env } = mkApp("approved");
+		const res = await post(app, env, { comment_id: COMMENT_ID, kind: "like" });
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { reactions: Record<string, number> };
+		expect(body.reactions.like).toBe(body.reactions.fire);
+		expect(body.reactions.like).toBeGreaterThan(0);
+	});
+
+	it("does not invent an alias key for a current kind", async () => {
+		// A current bundle asks for `fire`, nothing is rewritten, and it must see
+		// the response shape it has always seen.
+		installMockCaches();
+		const { app, env } = mkApp("approved");
+		const res = await post(app, env, { comment_id: COMMENT_ID, kind: "fire" });
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { reactions: Record<string, number> };
+		expect(body.reactions.like).toBeUndefined();
+	});
+
 	it("rejects a malformed JSON body with 400", async () => {
 		const { app, env } = mkApp();
 		const res = await app.request(
