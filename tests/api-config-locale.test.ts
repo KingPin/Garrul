@@ -14,6 +14,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { Hono } from "hono";
 import { config } from "../src/routes/api.config";
+import { MAX_BODY_CHARS, validateBody } from "../src/lib/markdown";
 import { LOCALES } from "../src/i18n";
 import { WIDGET_TABLES } from "../src/i18n/widget";
 import type { Bindings } from "../src/index";
@@ -188,6 +189,21 @@ describe("GET /api/v1/config — locale", () => {
 		const body = await getConfig("?lang=de");
 		expect(body.locale).toBe("de");
 		expect((body.strings as Record<string, string>)["w.reply"]).toBe("Antworten");
+	});
+
+	it("ships the same body ceiling the validator enforces", async () => {
+		// The widget counts down against this number as the author types. Two
+		// copies would drift, and the only symptom of the drift is a comment the
+		// composer said was fine coming back rejected.
+		const body = await getConfig();
+		expect(body.max_body_chars).toBe(MAX_BODY_CHARS);
+		const overLong = "x".repeat(MAX_BODY_CHARS + 1);
+		expect(validateBody(overLong)).toMatchObject({
+			ok: false,
+			key: "err.body.too_long",
+			max: MAX_BODY_CHARS,
+		});
+		expect(validateBody("x".repeat(MAX_BODY_CHARS))).toMatchObject({ ok: true });
 	});
 
 	it("sets no cache headers, because the body varies by locale", async () => {

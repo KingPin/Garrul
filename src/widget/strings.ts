@@ -58,6 +58,8 @@ export const EN = {
 	// reader has: navigator.platform is deprecated and userAgentData is
 	// Chromium-only. The CSS hides this line entirely on a coarse pointer.
 	"w.kbd_hint": "⌘/Ctrl + Enter to post",
+	"w.count_left": { one: "{n} character left", other: "{n} characters left" },
+	"w.count_over": { one: "{n} character over the limit", other: "{n} characters over the limit" },
 	"w.preview.empty": "Nothing to preview yet.",
 	"w.preview.loading": "Loading preview…",
 	"w.preview.failed": "Preview failed. Try again.",

@@ -41,7 +41,15 @@ import { Marked } from "marked";
 export const CURRENT_RENDERER_VERSION = 2;
 
 const URL_ALLOWLIST = /^(https?:|mailto:)/i;
-const MAX_BODY_CHARS = 10_000;
+/**
+ * Hard ceiling on a comment body, in characters.
+ *
+ * Exported because /api/v1/config ships it to the widget, which counts down
+ * against it as the author types. Two copies of this number would drift, and
+ * the drift is only visible as a comment the composer said was fine being
+ * rejected on submit.
+ */
+export const MAX_BODY_CHARS = 10_000;
 
 // Fenced-code info strings that may reach `class="language-…"`. marked already
 // HTML-escapes whatever it finds there, so this is not the thing standing

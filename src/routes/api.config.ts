@@ -23,6 +23,9 @@
  *   - community auto-collapse thresholds (community_min_votes,
  *     community_collapse_ratio): the widget folds heavily-downvoted comments
  *     client-side using these (see src/widget). 0 ratio = disabled.
+ *   - max_body_chars: the comment-length ceiling from lib/markdown.ts. Not an
+ *     operator setting; it is here so the composer's character counter counts
+ *     down against the same number validateBody enforces.
  *   - locale, and for anything but English a `strings` table and `rtl` flag.
  *     This is where the widget learns which language it is in; it echoes the
  *     answer back as `?lang=` on every later call so server error bodies match.
@@ -39,6 +42,7 @@
 import { Hono } from "hono";
 import type { Bindings } from "../index";
 import { PROVIDERS, type ProviderId } from "../lib/oauth";
+import { MAX_BODY_CHARS } from "../lib/markdown";
 import { loadSettings } from "../lib/settings";
 import { FALLBACK_LOCALE, LOCALES } from "../i18n";
 import { resolveLocale } from "../i18n/negotiate";
@@ -105,6 +109,10 @@ config.get("/", async (c) => {
 		// slice (included here for parity/debuggability); the widget consumes
 		// replies_per_thread and auto_collapse_depth for client-side reply
 		// collapsing.
+		// The body-length ceiling the widget counts down against. Not operator
+		// tunable — it is a constant in lib/markdown.ts, shipped here only so the
+		// composer and the validator can never disagree about it.
+		max_body_chars: MAX_BODY_CHARS,
 		comments_per_page: numbers.comments_per_page,
 		replies_per_thread: numbers.replies_per_thread,
 		auto_collapse_depth: numbers.auto_collapse_depth,

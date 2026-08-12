@@ -358,6 +358,15 @@ what you preview is byte-identical to what gets posted, with no
 client-side markdown library and no XSS divergence. The endpoint is
 public but rate-limited; no auth required.
 
+### Comment length (since v2.9.0)
+
+A comment body is capped at **10,000 characters**. This is a constant, not
+an operator setting — but `/api/v1/config` reports it as `max_body_chars`,
+and the composer counts down against it, so the two can never disagree.
+The counter stays hidden until the last 500 characters and turns red past
+the ceiling. Over-long bodies are still rejected server-side
+(`err.body.too_long`); the counter is a warning, not the enforcement.
+
 ### Composer keyboard shortcuts (since v2.9.0)
 
 Inside any composer — top-level, reply, or edit:

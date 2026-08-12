@@ -366,6 +366,12 @@ button:active:not([disabled]) { opacity: 0.75; }
 .gr-md-hint[hidden] { display: none; }
 /* A keyboard hint is noise on a phone, and this row is already tight there. */
 @media (pointer: coarse) { .gr-kbd-hint { display: none; } }
+/* Deliberately not a live region: it changes on every keystroke, and a screen
+   reader narrating "412 characters left, 411 characters left" over someone
+   typing is worse than silence. The over-limit rejection is announced by the
+   composer's status box, which is polite and only speaks once. */
+.gr-count[hidden] { display: none; }
+.gr-count.is-over { color: var(--gr-error); font-weight: 600; }
 .gr-preview p { margin: 0.3em 0; }
 .gr-preview a { color: var(--gr-link); }
 /* Physical left, deliberately: top is what keeps this out of scrollable

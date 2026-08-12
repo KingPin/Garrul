@@ -64,6 +64,16 @@ let langExplicit = "";
 let langHint = "";
 
 /**
+ * The server's comment-length ceiling, from /api/v1/config. Module state for
+ * the same single-mount reason as the translator, and seeded with the value
+ * lib/markdown.ts actually enforces so the counter is right even if the config
+ * call is the one thing that fails.
+ */
+let maxBodyChars = 10_000;
+/** How close to the ceiling the counter appears. Silent above this. */
+const COUNT_WARN_AT = 500;
+
+/**
  * Build an API URL carrying the resolved locale.
  *
  * Server error bodies are rendered verbatim by the widget, so a German reader
@@ -446,8 +456,25 @@ const buildWritePreview = (
 	// One row under the box: what you can write on the left, how to send it on
 	// the right. The whole row hides together in Preview mode.
 	const hint = el("div", "gr-md-hint");
+	// Silent until the author is close to the ceiling. A permanent "9,847 left"
+	// on a limit almost nobody reaches is a nag, not information — the counter
+	// is here for the person pasting an essay, and for them it has to appear
+	// before they hit Post, not after the server rejects it.
+	const counter = el("span", "gr-count");
+	counter.hidden = true;
+	const paintCount = (): void => {
+		const left = maxBodyChars - textarea.value.length;
+		counter.hidden = left > COUNT_WARN_AT;
+		if (counter.hidden) return;
+		counter.textContent =
+			left < 0 ? s("w.count_over", { n: -left }) : s("w.count_left", { n: left });
+		counter.classList.toggle("is-over", left < 0);
+	};
+	textarea.addEventListener("input", paintCount);
+	paintCount();
 	hint.append(
 		el("span", undefined, s("w.md_hint")),
+		counter,
 		el("span", "gr-kbd-hint", s("w.kbd_hint")),
 	);
 	const pane = el("div", "gr-preview");
@@ -2249,6 +2276,7 @@ const loadOnce = async (
 			const cfg = (await cfgRes.json()) as {
 				turnstile_site_key?: string;
 				edit_window_minutes?: number;
+				max_body_chars?: number;
 				providers?: string[];
 				branding_hidden?: boolean;
 				comments_enabled?: boolean;
@@ -2283,6 +2311,11 @@ const loadOnce = async (
 			}
 			siteKey = cfg.turnstile_site_key ?? null;
 			editWindowMinutes = cfg.edit_window_minutes ?? 15;
+			// Guard the value rather than trusting it: a zero or negative ceiling
+			// from a mis-deployed Worker would put every composer permanently in
+			// the over-limit state.
+			if (typeof cfg.max_body_chars === "number" && cfg.max_body_chars > 0)
+				maxBodyChars = cfg.max_body_chars;
 			providers = (cfg.providers ?? []).filter((p): p is OAuthProvider =>
 				// biome-ignore lint/suspicious/noPrototypeBuiltins: the rule wants Object.hasOwn (ES2022); the widget builds for es2020 and esbuild will not polyfill it. This is already the safe `.call` form.
 				Object.prototype.hasOwnProperty.call(PROVIDER_LABELS, p),
