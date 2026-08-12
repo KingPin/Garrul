@@ -83,6 +83,13 @@ export const de = {
 	"w.page.helpful": "War das hilfreich?",
 	"w.page.up": "Seite positiv bewerten",
 	"w.page.down": "Seite negativ bewerten",
+	"w.page.react_prompt": "Wie ist deine Reaktion?",
+	"w.react.fire": "Genial",
+	"w.react.love": "Liebe ich",
+	"w.react.wow": "Wow",
+	"w.react.laugh": "Lustig",
+	"w.react.hmm": "Hmm",
+	"w.react.cry": "Traurig",
 
 	// ── The thread ──────────────────────────────────────────────────────────
 	"w.replies": { one: "{n} Antwort", other: "{n} Antworten" },

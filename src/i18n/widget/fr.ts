@@ -82,6 +82,13 @@ export const fr = {
 	"w.page.helpful": "Cette page vous a-t-elle été utile ?",
 	"w.page.up": "Voter pour cette page",
 	"w.page.down": "Voter contre cette page",
+	"w.page.react_prompt": "Quelle est votre réaction ?",
+	"w.react.fire": "Génial",
+	"w.react.love": "J'adore",
+	"w.react.wow": "Waouh",
+	"w.react.laugh": "Drôle",
+	"w.react.hmm": "Hmm",
+	"w.react.cry": "Triste",
 
 	// ── The thread ──────────────────────────────────────────────────────────
 	"w.replies": { one: "{n} réponse", other: "{n} réponses" },

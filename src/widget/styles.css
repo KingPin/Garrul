@@ -538,7 +538,9 @@ button:active:not([disabled]) { opacity: 0.75; }
 }
 .gr-page-reactions { display: flex; gap: 0.4rem; flex-wrap: wrap; }
 .gr-page-votes { display: flex; align-items: center; gap: 0.4rem; }
-.gr-page-vote-label { color: var(--gr-muted); font-size: 0.9em; }
+/* The two prompts are deliberately identical: "What's your reaction?" and "Was
+   this helpful?" are the same kind of label sitting in the same kind of slot. */
+.gr-page-vote-label, .gr-page-react-prompt { color: var(--gr-muted); font-size: 0.9em; }
 .gr-reactions { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-top: 0.4rem; }
 .gr-reaction {
 	font: inherit;
@@ -557,6 +559,36 @@ button:active:not([disabled]) { opacity: 0.75; }
 	border-color: var(--gr-accent);
 }
 .gr-reaction-count { margin-inline-start: 0.25em; font-variant-numeric: tabular-nums; }
+/* The widget ships no emoji artwork — 2-3KB gzipped of SVG for decoration would
+   spend bundle headroom that exists to absorb features. That makes the reader's
+   own font the renderer, so the stack has to be explicit: a Linux reader with a
+   monochrome fallback ahead of Noto Color Emoji gets outline glyphs, and
+   `font-variant-emoji` stops a browser rendering the text-default codepoints
+   (❤ in particular) as a black glyph. The families are listed only on the emoji
+   span so the count digits keep inheriting the host page's font. */
+.gr-reaction-emoji {
+	font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji",
+		"Twemoji Mozilla", "Android Emoji", sans-serif;
+	font-variant-emoji: emoji;
+	line-height: 1;
+}
+/* Article-bar cells only: emoji + count on one line, label under it. Six of
+   these per *comment* would be more chrome than the comment, so the per-comment
+   row keeps the compact pill and carries the label as its accessible name. */
+.gr-reaction-labelled {
+	display: inline-flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 0.15em;
+	border-radius: 10px;
+	padding: 0.3em 0.6em;
+	min-width: 3.5em;
+}
+.gr-reaction-labelled .gr-reaction-emoji { font-size: 1.25em; }
+.gr-reaction-face { display: inline-flex; align-items: center; }
+/* Dimmed with opacity rather than a colour, so it stays legible against both
+   the resting background and the accent one [data-mine="1"] switches to. */
+.gr-reaction-label { font-size: 0.85em; opacity: 0.75; white-space: nowrap; }
 .gr-votes { display: flex; align-items: center; gap: 0.3rem; margin-top: 0.4rem; font-size: 0.85em; }
 .gr-vote {
 	font: inherit;

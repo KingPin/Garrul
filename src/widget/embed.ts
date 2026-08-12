@@ -945,6 +945,9 @@ const buildReactions = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 			const count = r?.count ?? 0;
 			if (r?.mine) cell.btn.dataset.mine = "1";
 			else delete cell.btn.dataset.mine;
+			// `data-mine` is what the stylesheet highlights; aria-pressed is the
+			// same fact for a reader who can't see the highlight.
+			cell.btn.setAttribute("aria-pressed", r?.mine ? "true" : "false");
 			cell.count.textContent = String(count);
 			cell.count.hidden = count === 0;
 			// An anonymous reader who un-reacts the last 👍 has to see the button
@@ -955,7 +958,7 @@ const buildReactions = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	};
 
 	const map = reactionsByKind(n.reactions);
-	for (const { kind, emoji } of REACTION_KINDS) {
+	for (const { kind, emoji, labelKey } of REACTION_KINDS) {
 		// Hide zero-count kinds unless the viewer is signed in (so signed-in
 		// users can react with a kind nobody else has used yet). Anonymous
 		// readers see only used kinds.
@@ -963,7 +966,13 @@ const buildReactions = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 		const btn = el("button", "gr-reaction");
 		btn.type = "button";
 		btn.dataset.kind = kind;
-		btn.appendChild(document.createTextNode(emoji));
+		// The label is the accessible name rather than visible text here: six
+		// labelled cells per comment would be more chrome than the comment. A
+		// screen reader otherwise announces the raw emoji, and on a couple of
+		// them ("crying face") that reads as the wrong sentiment entirely.
+		btn.setAttribute("aria-label", s(labelKey));
+		btn.title = s(labelKey);
+		btn.appendChild(el("span", "gr-reaction-emoji", emoji));
 		const count = el("span", "gr-reaction-count", "");
 		btn.appendChild(count);
 		cells.set(kind, { btn, count });
@@ -1025,14 +1034,24 @@ const buildPageEngagement = (ctx: WidgetCtx): HTMLElement => {
 		{ btn: HTMLButtonElement; count: HTMLElement }
 	>();
 	if (ctx.pageReactionsEnabled) {
+		// The prompt is what turns a row of chips into an invitation — without it
+		// the bar reads as a tally of what other people did.
+		wrap.appendChild(
+			el("div", "gr-page-react-prompt", s("w.page.react_prompt")),
+		);
 		const reactWrap = el("div", "gr-page-reactions");
-		for (const { kind, emoji } of REACTION_KINDS) {
-			const btn = el("button", "gr-reaction");
+		for (const { kind, emoji, labelKey } of REACTION_KINDS) {
+			const btn = el("button", "gr-reaction gr-reaction-labelled");
 			btn.type = "button";
 			btn.dataset.kind = kind;
-			btn.appendChild(document.createTextNode(emoji));
+			// Emoji and count on one line, label under it. Unlike the per-comment
+			// row there is space for the label here, and it is the only thing that
+			// says what the emoji is *for* before the reader commits to a click.
+			const face = el("span", "gr-reaction-face");
+			face.appendChild(el("span", "gr-reaction-emoji", emoji));
 			const count = el("span", "gr-reaction-count", "0");
-			btn.appendChild(count);
+			face.appendChild(count);
+			btn.append(face, el("span", "gr-reaction-label", s(labelKey)));
 			reactCells.set(kind, { btn, count });
 			reactWrap.appendChild(btn);
 		}
@@ -1046,8 +1065,10 @@ const buildPageEngagement = (ctx: WidgetCtx): HTMLElement => {
 		const mineSet = new Set(mine);
 		for (const [kind, cell] of reactCells) {
 			cell.count.textContent = String(totals[kind] ?? 0);
-			if (mineSet.has(kind)) cell.btn.dataset.mine = "1";
+			const isMine = mineSet.has(kind);
+			if (isMine) cell.btn.dataset.mine = "1";
 			else delete cell.btn.dataset.mine;
+			cell.btn.setAttribute("aria-pressed", isMine ? "true" : "false");
 		}
 	};
 
@@ -1076,6 +1097,7 @@ const buildPageEngagement = (ctx: WidgetCtx): HTMLElement => {
 			}
 			if (body.added) cell.btn.dataset.mine = "1";
 			else delete cell.btn.dataset.mine;
+			cell.btn.setAttribute("aria-pressed", body.added ? "true" : "false");
 		} catch {
 			// leave UI as-is; user can retry
 		} finally {

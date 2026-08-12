@@ -25,24 +25,37 @@
  * without a DOM.
  */
 
+import type { WidgetKey } from "./strings";
+
 export type ReactionCount = { kind: string; count: number; mine: boolean };
 
-export type ReactionKind = { kind: string; emoji: string };
+export type ReactionKind = {
+	kind: string;
+	emoji: string;
+	labelKey: WidgetKey;
+};
 
 /**
  * Every reaction a reader can leave, in render order.
  *
  * `kind` is the stored value — it goes in the `reactions.kind` /
  * `page_reactions.kind` column and travels the wire, so renaming one is a
- * migration, not an edit. `emoji` is presentation and can change freely.
+ * migration, not an edit. `emoji` and `labelKey` are presentation and can
+ * change freely.
+ *
+ * The label is a key rather than a string because an emoji alone doesn't say
+ * what it means: 🤔 could be read as "interesting" or "I doubt that". Typing it
+ * as `WidgetKey` makes a missing translation a build error instead of a widget
+ * that renders `w.react.wow` at a reader. The import is type-only, so nothing
+ * about the string table reaches the bundle or the Worker through this file.
  */
 export const REACTION_KINDS: readonly ReactionKind[] = [
-	{ kind: "fire", emoji: "🔥" },
-	{ kind: "love", emoji: "❤️" },
-	{ kind: "wow", emoji: "😮" },
-	{ kind: "laugh", emoji: "😂" },
-	{ kind: "hmm", emoji: "🤔" },
-	{ kind: "cry", emoji: "😢" },
+	{ kind: "fire", emoji: "🔥", labelKey: "w.react.fire" },
+	{ kind: "love", emoji: "❤️", labelKey: "w.react.love" },
+	{ kind: "wow", emoji: "😮", labelKey: "w.react.wow" },
+	{ kind: "laugh", emoji: "😂", labelKey: "w.react.laugh" },
+	{ kind: "hmm", emoji: "🤔", labelKey: "w.react.hmm" },
+	{ kind: "cry", emoji: "😢", labelKey: "w.react.cry" },
 ];
 
 /** Membership test for the routes, derived so it cannot drift from the list. */
