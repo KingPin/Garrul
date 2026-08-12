@@ -104,6 +104,10 @@ export const es = {
 	"w.sort_by": "Ordenar por {control}",
 	"w.sort.new": "Más recientes",
 	"w.sort.top": "Mejores",
+	"w.subscribe": "Avisarme por correo de nuevos comentarios en esta entrada",
+	"w.subscribe.submit": "Suscribirme",
+	"w.subscribe.done": "Revisa tu correo para confirmar.",
+	"w.subscribe.failed": "No se pudo suscribir. Inténtalo de nuevo.",
 	"w.load_more": "Cargar comentarios anteriores",
 	"w.load_more_failed": "No se pudieron cargar más: {detail}",
 

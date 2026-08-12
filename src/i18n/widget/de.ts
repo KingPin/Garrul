@@ -109,6 +109,10 @@ export const de = {
 	"w.sort_by": "Sortieren nach {control}",
 	"w.sort.new": "Neueste",
 	"w.sort.top": "Beste",
+	"w.subscribe": "Bei neuen Kommentaren zu diesem Beitrag benachrichtigen",
+	"w.subscribe.submit": "Abonnieren",
+	"w.subscribe.done": "Bitte bestätige die E-Mail, die wir dir geschickt haben.",
+	"w.subscribe.failed": "Abonnieren fehlgeschlagen. Bitte erneut versuchen.",
 	"w.load_more": "Ältere Kommentare laden",
 	"w.load_more_failed": "Konnte nicht mehr laden: {detail}",
 
