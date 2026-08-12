@@ -684,7 +684,20 @@ button:active:not([disabled]) { opacity: 0.75; }
 .gr-subscribe-submit:hover:not([disabled]) { background: var(--gr-accent-hover); }
 .gr-subscribe-form[hidden] { display: none; }
 .gr-subscribe-status { font-size: 0.85em; color: var(--gr-muted); }
-.gr-subscribe-status[hidden] { display: none; }
+/* Same treatment as .gr-error:empty, and for the same reason: the box is a live
+   region that has to stay in the a11y tree from mount, so it cannot be hidden
+   between announcements. Absolute rather than zero-height because it is a flex
+   child of .gr-subscribe (gap 0.4rem) and a flex item earns its share of the gap
+   however small it is. No offsets, so it cannot extend the page. */
+.gr-subscribe-status:empty {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	padding: 0;
+	border: 0;
+	overflow: hidden;
+	clip-path: inset(50%);
+}
 .gr-sort select {
 	font: inherit;
 	background: var(--gr-input-bg);

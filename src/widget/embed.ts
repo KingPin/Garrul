@@ -1238,15 +1238,19 @@ const buildSubscribeBell = (
 	btn.setAttribute("aria-label", s("w.subscribe"));
 	btn.title = s("w.subscribe");
 	btn.appendChild(el("span", "gr-reaction-emoji", "🔔"));
-	const status = el("span", "gr-subscribe-status");
 	// Announce the outcome: the click's only visible result is this text, and a
 	// reader on a screen reader would otherwise get nothing back at all.
-	status.setAttribute("role", "status");
-	status.hidden = true;
+	//
+	// It has to be a `statusBox`, not a hidden span promoted to a live region on
+	// use. A `hidden` element is outside the accessibility tree, so filling it and
+	// revealing it in the same task is not a mutation of a live region — it is a
+	// region appearing already-populated, which announces nothing. The box stays
+	// in the tree from mount and CSS collapses it while it is `:empty`, exactly as
+	// the composer's status box does.
+	const status = statusBox("gr-subscribe-status");
 
 	const say = (msg: string): void => {
 		status.textContent = msg;
-		status.hidden = false;
 	};
 
 	// Anonymous readers need to supply an address; a signed-in reader's comes
@@ -1325,6 +1329,12 @@ const buildSubscribeBell = (
 		submit = el("button", "gr-subscribe-submit", s("w.subscribe.submit"));
 		submit.type = "submit";
 		form.append(emailInput, submit);
+		// Only on this path is the bell a disclosure — signed in it posts straight
+		// away and controls nothing, and claiming otherwise would promise a panel
+		// that never opens. Safe to expose: this says whether the email field is
+		// showing, never whether the reader is subscribed, which is the one thing
+		// the endpoint refuses to reveal.
+		btn.setAttribute("aria-expanded", "false");
 		form.addEventListener("submit", (e) => {
 			e.preventDefault();
 			const email = emailInput.value.trim();
@@ -1338,6 +1348,7 @@ const buildSubscribeBell = (
 			return;
 		}
 		form.hidden = !form.hidden;
+		btn.setAttribute("aria-expanded", String(!form.hidden));
 		if (!form.hidden) emailInput.focus();
 	});
 
