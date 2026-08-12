@@ -629,16 +629,20 @@ button:active:not([disabled]) { opacity: 0.75; }
 /* margin-inline-start:auto keeps the bell right-aligned when it is the row's
    only child — space-between alone would park it on the left. */
 .gr-subscribe { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; margin-inline-start: auto; }
+/* Bordered like the sort select beside it, deliberately. A bare emoji floating
+   at the end of the row reads as decoration; the border is what says "press
+   me", and it is the only affordance a reader who never hovers will get, since
+   the meaning otherwise lives in title/aria-label alone. */
 .gr-subscribe-btn {
 	font: inherit;
-	background: none;
-	border: 0;
-	padding: 0.1em 0.3em;
+	background: var(--gr-input-bg);
+	border: 1px solid var(--gr-border);
+	padding: 0.2rem 0.45rem;
 	line-height: 1;
 	cursor: pointer;
 	border-radius: var(--gr-radius);
 }
-.gr-subscribe-btn:hover { background: var(--gr-input-bg); }
+.gr-subscribe-btn:hover { border-color: var(--gr-accent); }
 .gr-subscribe-form { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; }
 /* Smaller than the composer's submit — this is an inline confirmation, not the
    primary action on the page. */
