@@ -75,7 +75,7 @@ inline scripts, or the integrator wants hard origin isolation.
 
 **Weight:** `embed.js` is a single self-contained bundle — no runtime
 dependencies, no framework, no second request for CSS or strings. It is
-currently ~13 KB gzipped, against a CI-enforced 30 KB ceiling; run
+currently ~15 KB gzipped, against a CI-enforced 30 KB ceiling; run
 `npm run size` for the live figure rather than trusting this sentence.
 The script is `defer`red and the widget only mounts on
 `DOMContentLoaded`, so it never blocks rendering of the host page.

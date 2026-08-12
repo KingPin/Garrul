@@ -20,7 +20,7 @@ dashboard page); every other integration is optional.
 - **Threaded comments** with markdown, reactions, edit/delete window
 - **OAuth sign-in** (GitHub, Google, Facebook, X, Discord) + anonymous
   posting with rate limiting and Turnstile
-- **Embeddable widget** (~13 KB gzipped, CI-capped at 30 KB) with
+- **Embeddable widget** (~15 KB gzipped, CI-capped at 30 KB) with
   Shadow-DOM isolation, theme variables, and an iframe alternative
 - **Reply notifications by email**, built in — readers opt in from the
   widget, confirm by double-opt-in, and get a debounced digest when new
