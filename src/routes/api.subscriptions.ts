@@ -34,7 +34,7 @@
  *      is opt-in.
  *   2. `PENDING_PER_EMAIL_CAP`. Atomic, but keyed on the address, so an attacker
  *      cycling addresses never touches it.
- *   3. `reserveConfirmSend` — a global, atomic, D1-counted ceiling on
+ *   3. `reserveSend` — a global, atomic, D1-counted ceiling on
  *      confirmation email. The only one of the three that an address-cycling
  *      concurrent burst cannot get past on a default install. See
  *      src/lib/email-budget.ts for why it is global and what that costs.
@@ -51,7 +51,7 @@ import {
 	upsertSubscription,
 } from "../db/queries";
 import { requireActiveUser } from "../lib/active-user";
-import { confirmSendBudgets, reserveConfirmSend } from "../lib/email-budget";
+import { confirmSendBudgets, reserveSend } from "../lib/email-budget";
 import { requireIpHash } from "../lib/ip-hash";
 import { checkRateLimit } from "../lib/ratelimit";
 import { renderConfirmEmailHtml } from "../lib/digest";
@@ -203,7 +203,7 @@ subscriptions.post("/", async (c) => {
 	// and skips the settings read too, since the caps are the only thing it needs.
 	const reservation = autoConfirm
 		? null
-		: await reserveConfirmSend(
+		: await reserveSend(
 				c.env.DB,
 				confirmSendBudgets(await loadNumbers(c.env)),
 			);

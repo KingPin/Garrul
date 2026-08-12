@@ -18,6 +18,7 @@ import { counts } from "./routes/api.counts";
 import { permalink } from "./routes/permalink";
 import { subscriptions } from "./routes/api.subscriptions";
 import { runDigest } from "./lib/digest";
+import { runModeratorDigest } from "./lib/moderator-digest";
 import { runTelegramDigest } from "./lib/telegram-digest";
 import { runWebhookRetries } from "./lib/webhook";
 import { runIpRetention } from "./db/ip-retention";
@@ -359,6 +360,14 @@ export default {
 		ctx.waitUntil(
 			runDigest(env).catch((err) => {
 				log.error("scheduled.digest", { error: String(err) });
+			}),
+		);
+		// Moderator mail. Self-gates on the moderator_email_enabled flag and on
+		// email being configured at all, so on most instances this is one cached
+		// settings read per tick and nothing else.
+		ctx.waitUntil(
+			runModeratorDigest(env).catch((err) => {
+				log.error("scheduled.moderator_digest", { error: String(err) });
 			}),
 		);
 		ctx.waitUntil(

@@ -80,9 +80,9 @@ export const CONFIRM_DAILY_WINDOW_SEC = 86_400;
  *
  * The defaults behind these two keys are deliberately far above any plausible
  * organic signup rate for a self-hosted blog; the intent is that only abuse ever
- * reaches them. `reserveConfirmSend` logs at warn when a budget denies, so an
- * operator who does outgrow them finds out from `wrangler tail` rather than from
- * silence — and can now retune from /admin/settings instead of redeploying.
+ * reaches them. `reserveSend` logs at warn when a budget denies, so an operator
+ * who does outgrow them finds out from `wrangler tail` rather than from silence
+ * — and can now retune from /admin/settings instead of redeploying.
  */
 export const confirmSendBudgets = (numbers: {
 	confirm_send_burst_max: number;
@@ -193,7 +193,18 @@ const ALLOW: Reservation = {
 };
 
 /**
- * Reserve one confirmation email against every configured budget.
+ * Reserve one outbound email against every budget in `budgets`.
+ *
+ * Two callers with two disjoint sets of scopes: subscription-confirmation mail
+ * (`confirm:*`, operator-settable caps) and moderator mail (`moderator:*`, fixed
+ * caps — see src/lib/moderator-digest.ts). They share this machinery and share
+ * nothing else: separate counter rows mean a spam flood filling the moderation
+ * queue cannot spend the budget that lets new subscribers confirm, and an attack
+ * on the subscribe endpoint cannot silence the flood alert.
+ *
+ * `label` names the caller in the exhausted-budget warning, because that line is
+ * documented operator guidance (docs/ANTISPAM.md, AGENTS-OPERATE.md §5) and an
+ * operator reading it needs to know which kind of mail stopped.
  *
  * `budgets` is required rather than defaulted to a module constant. The caps are
  * operator-settable now, so a default would be a second, staler source of truth
@@ -217,10 +228,11 @@ const ALLOW: Reservation = {
  * would add a D1 *write* to precisely the path an attacker controls the volume
  * of. Paying one stale slot per denial is cheaper than that.
  */
-export const reserveConfirmSend = async (
+export const reserveSend = async (
 	db: EmailBudgetDb,
 	budgets: readonly SendBudget[],
 	now: number = Date.now(),
+	label = "confirmation",
 ): Promise<Reservation> => {
 	const held: SendBudget[] = [];
 	try {
@@ -236,7 +248,7 @@ export const reserveConfirmSend = async (
 				});
 				continue;
 			}
-			log.warn("confirmation email budget exhausted", {
+			log.warn(`${label} email budget exhausted`, {
 				scope: budget.scope,
 				max: budget.max,
 				window_sec: budget.windowSec,
