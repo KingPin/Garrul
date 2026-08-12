@@ -108,4 +108,15 @@ describe("normalizeReactionKind", () => {
 		expect(normalizeReactionKind("shrug")).toBe("shrug");
 		expect(REACTION_KIND_SET.has(normalizeReactionKind("shrug"))).toBe(false);
 	});
+
+	it("does not resolve inherited object keys", () => {
+		// The input is a wire value. A plain-object lookup answers for every key on
+		// Object.prototype, so these returned a function (or Object.prototype)
+		// while still typed `string` — a lie waiting for the first caller that
+		// trusts the return value instead of re-checking membership.
+		for (const key of ["constructor", "toString", "valueOf", "__proto__"]) {
+			expect(normalizeReactionKind(key)).toBe(key);
+			expect(typeof normalizeReactionKind(key)).toBe("string");
+		}
+	});
 });

@@ -75,8 +75,17 @@ export const REACTION_KIND_SET: ReadonlySet<string> = new Set(
  * directions.
  *
  * Removable once no deployment can still be running a pre-2.10.0 bundle.
+ *
+ * A `Map` rather than an object literal because the input is a wire value: a
+ * plain object resolves inherited keys, so `"constructor"` and `"toString"`
+ * would come back as *functions* and `"__proto__"` as `Object.prototype`, all
+ * still typed `string`. Nothing downstream is hurt by that today only because
+ * both callers immediately reject on `REACTION_KIND_SET`, which is too thin a
+ * thread to hang a type signature on.
  */
-const DEPRECATED_KINDS: Readonly<Record<string, string>> = { like: "fire" };
+const DEPRECATED_KINDS: ReadonlyMap<string, string> = new Map([
+	["like", "fire"],
+]);
 
 /**
  * Map a wire value to the kind to store. Unknown kinds pass through unchanged
@@ -84,7 +93,7 @@ const DEPRECATED_KINDS: Readonly<Record<string, string>> = { like: "fire" };
  * thing that decides whether a kind is allowed.
  */
 export const normalizeReactionKind = (kind: string): string =>
-	DEPRECATED_KINDS[kind] ?? kind;
+	DEPRECATED_KINDS.get(kind) ?? kind;
 
 /**
  * Fold a toggle response back into a comment's reaction list.
