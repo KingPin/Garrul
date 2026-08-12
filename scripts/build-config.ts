@@ -182,17 +182,35 @@ const buildDevVars = (): string => {
 		"# credentials are unset. Fill in only what you're exercising.",
 	];
 
+	const emit = (e: ConfigEntry) => {
+		// `devHint` wins where the production answer is wrong locally —
+		// "from dash.cloudflare.com" would send a contributor after real
+		// Turnstile keys when the placeholder below is a test key on purpose.
+		for (const line of (e.devHint ?? e.hint).split("\n")) {
+			out.push(`# ${line}`);
+		}
+		out.push(`${e.name}="${e.devPlaceholder ?? ""}"`);
+	};
+
+	// Vars come first, and only the ones carrying an explicit devPlaceholder.
+	// A `var`'s home is wrangler.toml; it appears here only where the shipped
+	// production default makes a local clone non-functional. `.dev.vars` wins
+	// over `[vars]` in `wrangler dev` (result is seeded from `[vars]`, then
+	// overwritten per key), which is what makes the override work at all.
+	const devVars = VARS.filter((e) => e.devPlaceholder != null);
+	if (devVars.length > 0) {
+		out.push(
+			"",
+			"# --- Local dev overrides ---",
+			"# These are wrangler.toml vars, overridden here for local dev only:",
+			"# .dev.vars takes precedence over [vars] under `wrangler dev`.",
+		);
+		for (const e of devVars) emit(e);
+	}
+
 	for (const [group, entries] of groupsOf(SECRETS)) {
 		out.push("", `# --- ${group} ---`);
-		for (const e of entries) {
-			// `devHint` wins where the production answer is wrong locally —
-			// "from dash.cloudflare.com" would send a contributor after real
-			// Turnstile keys when the placeholder below is a test key on purpose.
-			for (const line of (e.devHint ?? e.hint).split("\n")) {
-				out.push(`# ${line}`);
-			}
-			out.push(`${e.name}="${e.devPlaceholder ?? ""}"`);
-		}
+		for (const e of entries) emit(e);
 	}
 	return `${out.join("\n")}\n`;
 };

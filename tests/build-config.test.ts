@@ -91,11 +91,44 @@ describe(".dev.vars.example", () => {
 		}
 	});
 
-	it("never assigns a var", () => {
+	// A var's home is wrangler.toml, so one reaching this file is normally a
+	// generator bug. The exception is deliberate and narrow: a var whose
+	// shipped production default makes a local clone non-functional gets a
+	// `devPlaceholder`, and `.dev.vars` beating `[vars]` under `wrangler dev`
+	// is what lets the override work. Opt-in only — the rule still holds for
+	// every var that has not declared one.
+	it("assigns only the vars that declare a devPlaceholder", () => {
 		const devVars = buildDevVars();
 		for (const e of VARS) {
-			expect(devVars, e.name).not.toMatch(new RegExp(`^${e.name}=`, "m"));
+			const assigned = new RegExp(`^${e.name}=`, "m");
+			if (e.devPlaceholder != null) {
+				expect(devVars, e.name).toMatch(assigned);
+			} else {
+				expect(devVars, e.name).not.toMatch(assigned);
+			}
 		}
+	});
+
+	// The override is a local-only lie about a production setting, so it has
+	// to say why it is here — otherwise the next reader deletes it, or worse,
+	// copies it to a deployed instance.
+	it("explains every var override", () => {
+		const devVars = buildDevVars();
+		for (const e of VARS) {
+			if (e.devPlaceholder == null) continue;
+			expect(e.devHint, e.name).toBeTruthy();
+			for (const line of (e.devHint ?? "").split("\n")) {
+				expect(devVars, e.name).toContain(`# ${line}`);
+			}
+		}
+	});
+
+	// ENV specifically: without it, `wrangler.example.toml`'s ENV =
+	// "production" plus its placeholder ALLOWED_ORIGINS make src/lib/cors.ts
+	// reject every /api/* call from localhost, so the quickstart in README.md
+	// boots a server whose widget can never load.
+	it('ships ENV="dev" so the local quickstart actually serves the widget', () => {
+		expect(buildDevVars()).toMatch(/^ENV="dev"$/m);
 	});
 
 	// `hint` answers "where do I get the real credential", which is the wrong

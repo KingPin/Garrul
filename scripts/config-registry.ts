@@ -149,6 +149,9 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
 		description:
 			"Switches dev affordances (CORS open, cookies `SameSite=Lax`). Production must be `production`.",
 		example: "production",
+		devPlaceholder: "dev",
+		devHint:
+			'"dev" locally, and the one value a local clone genuinely cannot run without.\nwrangler.example.toml ships ENV = "production" plus a placeholder\nALLOWED_ORIGINS, so without this override every /api/* request from\nlocalhost is rejected by the Origin gate (src/lib/cors.ts) and the widget\nnever loads. Do not carry this file to a deployed instance.',
 		addedIn: "1.0.0",
 	},
 	{
