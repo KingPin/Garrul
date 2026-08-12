@@ -62,7 +62,10 @@ Fill these in per page:
 | `data-url`   | The canonical permalink — reflected in RSS and email.       |
 
 `data-api` is the same on every page; the host element and the
-`<script src>` must agree on the Worker origin.
+`<script src>` must agree on the Worker origin. Omitting it falls back to
+the origin the bundle was served from, which is the same answer — but
+keep it in the snippet: it is the one attribute that makes the wiring
+readable to whoever maintains the page next.
 
 **Script tag vs. iframe — which to use:** default to the script tag.
 It's smaller, themable via CSS custom properties, and integrates with

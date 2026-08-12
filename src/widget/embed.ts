@@ -1963,6 +1963,28 @@ const applyDirection = (host: HTMLElement) => {
 	host.dir = dir === "rtl" ? "rtl" : "ltr";
 };
 
+/**
+ * Origin of the <script> that loaded this bundle, or null if it can't be
+ * determined — the fallback for `data-api` when the host page omits it.
+ *
+ * Read here, at module scope, and not inside init(): `document.currentScript`
+ * is only non-null *while* a script is executing. init() runs synchronously
+ * from the tail of this file when the document is already parsed, but a plain
+ * (non-deferred) <script> in the body defers it to DOMContentLoaded — where
+ * currentScript is null and the origin silently fell back to the *host page's*.
+ * Every cross-origin embed on that path pointed the widget's whole API at the
+ * blog it was embedded in unless the integrator set data-api by hand.
+ */
+const SCRIPT_ORIGIN: string | null = (() => {
+	const s = document.currentScript as HTMLScriptElement | null;
+	try {
+		// `.src` is "" for an inline script; new URL("") throws, hence the catch.
+		return s?.src ? new URL(s.src).origin : null;
+	} catch {
+		return null;
+	}
+})();
+
 const init = () => {
 	const host = document.getElementById("garrul");
 	if (!host) return;
@@ -1973,10 +1995,7 @@ const init = () => {
 		return;
 	}
 
-	const scriptEl = document.currentScript as HTMLScriptElement | null;
-	const apiBase =
-		host.dataset.api ??
-		(scriptEl ? new URL(scriptEl.src).origin : window.location.origin);
+	const apiBase = host.dataset.api ?? SCRIPT_ORIGIN ?? window.location.origin;
 
 	applyDirection(host);
 	// Locale is a property of the site, not of the reader: data-lang is what the
