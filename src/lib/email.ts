@@ -18,6 +18,18 @@ export type SendEmailInput = {
 	subject: string;
 	html: string;
 	text?: string;
+	/**
+	 * Extra headers to set on the *outgoing message* — not on the request to
+	 * Resend. Resend takes these as a `headers` field in the POST body; the
+	 * `headers` on the fetch call below are a different thing entirely and the
+	 * two must not be conflated.
+	 *
+	 * Only used for `List-Unsubscribe` / `List-Unsubscribe-Post` today. Header
+	 * values are CRLF-injection-safe by construction at the one call site
+	 * (`PUBLIC_BASE_URL` + a 64-char hex token), so there is no sanitizer here.
+	 * A future caller interpolating anything host-supplied must sanitize first.
+	 */
+	headers?: Record<string, string>;
 };
 
 type EmailEnv = {
@@ -75,6 +87,7 @@ export const sendEmail = async (
 				subject: input.subject,
 				html: input.html,
 				...(input.text ? { text: input.text } : {}),
+				...(input.headers ? { headers: input.headers } : {}),
 			}),
 		});
 		if (!res.ok) {
