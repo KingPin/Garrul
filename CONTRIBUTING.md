@@ -78,6 +78,30 @@ satisfy a coverage gate.
 - One file per logical surface in `src/routes/`. Don't create
   `utils.ts` grab-bags.
 
+## Documentation is gated, per audience
+
+`docs-sync.yml` runs two independent checks on every PR, because this
+project has two sets of readers and used to enforce only one:
+
+| Gate | Fires when | Satisfied by | Bypass label |
+| --- | --- | --- | --- |
+| AGENTS docs sync | You touch `src/widget/`, `src/routes/embed.ts`, `src/routes/api.comments.ts`, `src/db/migrations/`, `INSTALL.md`, or a config template | `AGENTS.md` or `AGENTS-OPERATE.md` | `agents-docs-ok` |
+| Human docs sync | You **add or remove an env var** in `wrangler.example.toml`, `.dev.vars.example`, or `secrets.example.env` | `README.md`, `INSTALL.md`, or any `docs/*.md` | `human-docs-ok` |
+
+The labels are per gate on purpose. A single label used to skip both, so
+declining an AGENTS update silently declined the human one too.
+
+If you add an env var, the human gate will ask you to say so somewhere a
+person reads. That is not bureaucracy — it is the direct fix for a
+documented failure. Email reply notifications shipped in May 2026 and
+`AGENTS.md` described them two days later; the README did not mention
+them for 87 days, and a public review consequently marked the feature as
+absent and scored the project down for it. An undocumented feature does
+not exist to the person deciding whether to adopt it.
+
+Comment-only and value-only edits to the templates don't trip the gate —
+it looks for a change in the set of variable *names*.
+
 ## Translations wanted
 
 This is the easiest useful PR in the repo, and the one we most need

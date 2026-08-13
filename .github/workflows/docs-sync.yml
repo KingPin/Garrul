@@ -1,0 +1,151 @@
+name: Docs sync
+
+# Fails a PR that changes a watched surface without updating the docs for the
+# audience that surface belongs to. Two gates, one per audience:
+#
+#   agents — source/config changes must keep AGENTS.md / AGENTS-OPERATE.md true.
+#   human  — env and secret surface changes must keep README / INSTALL / docs/ true.
+#
+# Why the second gate exists. For most of this project's life only the first one
+# did, and the asymmetry had a measurable cost. Email reply notifications shipped
+# 2026-05-17; AGENTS.md was created two days later and described them in its very
+# first commit; the README did not mention them until 2026-08-12 — 87 days, and
+# only because a public comparison review marked the feature absent and a reader
+# had to be corrected in someone else's comment section. Across the 32 commits
+# that have touched the env/secret surface, 20 updated an AGENTS file and 8
+# updated a human-facing one.
+#
+# That gap was not neglect. One set of docs could not go stale without failing
+# CI and the other could go stale in silence, so drift was the designed outcome
+# rather than an accident. A gate on one audience only is a gate that teaches you
+# to serve that audience.
+#
+# The human gate is deliberately scoped to the env/secret surface rather than all
+# of src/. A gate that fires on every source commit gets bypass-labelled by
+# reflex, which rebuilds the honour system in a CI costume. A new or changed env
+# var, by contrast, is operator-facing every single time.
+
+on:
+  pull_request:
+    branches: ["**"]
+  # Manual runs are a no-op (there is no PR diff to inspect) but keep the
+  # workflow selectable in the Actions UI for smoke-testing changes to it.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  sync:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      # One gate failing should still report the other's verdict.
+      fail-fast: false
+      matrix:
+        include:
+          - name: AGENTS docs sync
+            label: agents-docs-ok
+            watch: '^(src/widget/|src/routes/embed\.ts|src/routes/api\.comments\.ts|src/db/migrations/|INSTALL\.md|wrangler\.example\.toml|\.dev\.vars\.example|secrets\.example\.env)'
+            satisfy: '^(AGENTS\.md|AGENTS-OPERATE\.md)$'
+            expects: "AGENTS.md and/or AGENTS-OPERATE.md"
+            hint: "an integrator or operator following the AGENTS guides would now be reading a stale description"
+          - name: Human docs sync
+            label: human-docs-ok
+            watch: '^(wrangler\.example\.toml|\.dev\.vars\.example|secrets\.example\.env)$'
+            satisfy: '^(README\.md|INSTALL\.md|docs/.*\.md)$'
+            expects: "README.md, INSTALL.md, or a page under docs/"
+            hint: "a new or changed env var is operator-facing every time — someone evaluating Garrul from its docs cannot see a capability that only the config template mentions"
+            # Only fire when a var NAME is added or removed, not when a comment
+            # or a placeholder value is edited. Replayed over all 32 commits that
+            # have touched these files: the naive form fails 25, this form fails
+            # 20, and the 5 it spares are pure template hygiene (restoring a
+            # comment, commenting out a block, reshuffling for setup.sh). It
+            # still catches every commit from the incident that prompted this
+            # gate, and it can name the vars in the failure message.
+            var_paths: "wrangler.example.toml .dev.vars.example secrets.example.env"
+
+    steps:
+      # Pinned to a commit SHA, not a tag — see the note in ci.yml.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      # Each gate carries its own bypass label. One label used to skip both
+      # checks, which gave the escape hatch the same asymmetry as the gate it
+      # guarded: waving off an AGENTS update silently waved off the human docs
+      # too. The skip lives here rather than on the job because `matrix` is not
+      # in scope for a job-level `if:`.
+      - name: Check ${{ matrix.name }}
+        if: >-
+          github.event_name == 'pull_request' &&
+          !contains(github.event.pull_request.labels.*.name, matrix.label)
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          WATCH_REGEX: ${{ matrix.watch }}
+          SATISFY_REGEX: ${{ matrix.satisfy }}
+          EXPECTS: ${{ matrix.expects }}
+          HINT: ${{ matrix.hint }}
+          LABEL: ${{ matrix.label }}
+          VAR_PATHS: ${{ matrix.var_paths }}
+        run: |
+          set -euo pipefail
+          CHANGED=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")
+          echo "Changed files in this PR:"
+          echo "$CHANGED"
+          echo ""
+
+          WATCHED_HIT=$(echo "$CHANGED" | grep -E "$WATCH_REGEX" || true)
+          SATISFY_HIT=$(echo "$CHANGED" | grep -E "$SATISFY_REGEX" || true)
+
+          if [ -n "$WATCHED_HIT" ] && [ -z "$SATISFY_HIT" ]; then
+            # Gates that set var_paths narrow the trigger to an actual change in
+            # the set of variable names, so editing a comment or a placeholder
+            # value in a config template doesn't demand a docs update.
+            VARS=""
+            if [ -n "${VAR_PATHS:-}" ]; then
+              # A name "changed" only if it appears on one side of the diff and
+              # not the other, so this is a symmetric difference and not a union.
+              # Collecting names from both +/- lines together would be wrong in
+              # the exact case this narrowing exists to spare: editing a
+              # placeholder value emits `-FOO=old` and `+FOO=new`, and a union
+              # reports FOO as changed when the set of names never moved.
+              names() {
+                # shellcheck disable=SC2086 # VAR_PATHS is a deliberate path list
+                git diff -U0 "$BASE_SHA" "$HEAD_SHA" -- $VAR_PATHS \
+                  | grep -E "^[$1][[:space:]]*#?[[:space:]]*[A-Z][A-Z0-9_]*[[:space:]]*=" \
+                  | sed -E "s/^.[[:space:]]*#?[[:space:]]*([A-Z][A-Z0-9_]*).*/\1/" \
+                  | sort -u || true
+              }
+              # Commented-out vars count as present: the `#?` above means a
+              # comment-out toggle cancels between the two sides, which is the
+              # intent — it changes whether a var is *set*, not whether it exists.
+              VARS=$(comm -3 <(names +) <(names -) | tr -d '\t' | sed '/^$/d')
+              if [ -z "$VARS" ]; then
+                echo "Watched files changed, but no variable name was added or removed."
+                echo "Comment and value-only edits don't need a docs update — passing."
+                exit 0
+              fi
+            fi
+
+            echo "::error::This PR changes watched paths without updating ${EXPECTS}."
+            echo "Watched paths touched:"
+            echo "$WATCHED_HIT" | sed 's/^/  - /'
+            if [ -n "$VARS" ]; then
+              echo ""
+              echo "Variable names added or removed:"
+              echo "$VARS" | sed 's/^/  - /'
+            fi
+            echo ""
+            echo "Why this is gated: ${HINT}."
+            echo ""
+            echo "Update ${EXPECTS} to match, or add the \`${LABEL}\` label to this PR"
+            echo "if the change genuinely doesn't affect those docs (refactor, dep"
+            echo "bump, test-only change, etc.)."
+            exit 1
+          fi
+
+          echo "${EXPECTS} — check passed."
