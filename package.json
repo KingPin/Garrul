@@ -52,9 +52,6 @@
     "hono": "^4.13.1",
     "marked": "^18.0.9"
   },
-  "overrides": {
-    "undici": "^7.29.0"
-  },
   "devDependencies": {
     "@biomejs/biome": "^2.5.7",
     "@cloudflare/workers-types": "^5.20260810.1",

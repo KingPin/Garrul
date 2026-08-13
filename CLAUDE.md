@@ -92,9 +92,7 @@ Critical paths only: API contracts, sanitizer (XSS attempts), auth cookie roundt
 
 Each override is temporary. Re-check them when bumping `wrangler`, and drop the entry once the upstream pin has caught up — a stale override silently holds a dependency *back*, which is the opposite of what it was added for.
 
-| Override | Why | Drop it when |
-| --- | --- | --- |
-| `undici: ^7.29.0` | `miniflare` (via `wrangler`) pins undici at exactly 7.28.0. Clears five advisories, including GHSA-4cwx-7wf7-3272 (high, cross-user disclosure + parse-time crash via degenerate private cache directives). | `miniflare` pins undici ≥ 7.29.0 itself. Note the ceiling: if miniflare moves to undici 8.x, this `^7` range would pin it back — widen or remove it. |
+There are no overrides today. The `undici: ^7.29.0` entry — added when `miniflare` pinned undici at exactly 7.28.0, to clear five advisories including GHSA-4cwx-7wf7-3272 (high, cross-user disclosure + parse-time crash via degenerate private cache directives) — was dropped once `miniflare` 5.20260804.0-alpha began pinning undici 7.29.0 itself. Resolution is unchanged without it: the lockfile is byte-identical either way.
 
 ### Commits
 Atomic commits per concern. Conventional-commits style (`feat:`, `fix:`, `refactor:`, `docs:`, `chore:`, `test:`). No giant "milestone done" commits.
