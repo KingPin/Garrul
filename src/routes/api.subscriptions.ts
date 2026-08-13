@@ -1,7 +1,9 @@
 /**
- * POST /api/v1/subscribe                { post_slug, email? }
+ * POST /api/v1/subscribe                          { post_slug, email? }
  * GET  /api/v1/subscribe/confirm/:token
- * GET  /api/v1/subscribe/unsubscribe/:token
+ * GET  /api/v1/subscribe/unsubscribe/:token       offers to unsubscribe
+ * POST /api/v1/subscribe/unsubscribe/:token       does it (human form)
+ * POST /api/v1/subscribe/unsubscribe/:token/one-click   does it (RFC 8058)
  *
  * Subscription model:
  *   - One row per (post_slug, email). This endpoint is unauthenticated and
@@ -380,6 +382,54 @@ subscriptions.post("/unsubscribe/:token", async (c) => {
 			locale,
 		),
 	);
+});
+
+/**
+ * RFC 8058 one-click unsubscribe. The target of the `List-Unsubscribe` header
+ * the digest sets, so this is what Gmail's and Apple Mail's native Unsubscribe
+ * button hits.
+ *
+ * Separate from the human POST above rather than folded into it, on three
+ * counts:
+ *
+ *   - **Caller.** This arrives from the mail provider's servers with no Origin
+ *     header, which needs its own CORS class (NO_ORIGIN_POST_PATHS in
+ *     lib/cors.ts). The human form's same-origin check must not be relaxed to
+ *     accommodate that.
+ *   - **Response.** No human reads this. It returns a bare text/plain 200 and
+ *     must never echo the address or the post — the response goes to a third
+ *     party's fetcher, not to the subscriber.
+ *   - **Method.** POST-only, so the mail-client *prefetchers* that motivated
+ *     the GET/POST split above cannot reach it either. RFC 8058 requires the
+ *     one-click target to be POST-only for exactly this reason.
+ *
+ * Unknown or expired token also answers 200. A non-2xx here is reported by the
+ * mail client as "unsubscribe failed" to a reader who has no way to act on it,
+ * and repeated failures count against sender reputation — while the only thing
+ * a differential response buys an attacker is confirmation that a 256-bit token
+ * they already hold is real.
+ *
+ * **Deliberately not IP-rate-limited**, which is a departure from every other
+ * write on this router. The identity here is a mail provider's shared egress —
+ * every Gmail user's unsubscribe leaves from the same handful of Google IPs, so
+ * an IP bucket (or the global envelope, 200/10min) throttles legitimate
+ * unsubscribes on any instance with real traffic while costing an attacker
+ * nothing: the sibling GET /unsubscribe/:token does the identical unindexed
+ * token lookup with no limit at all. The bound on abuse is the token's
+ * unguessability, same as the GET.
+ */
+subscriptions.post("/unsubscribe/:token/one-click", async (c) => {
+	const token = c.req.param("token");
+	if (token) {
+		const sub = await getSubscriptionByToken(c.env.DB, token);
+		// Same idempotent write as the human POST: only the first call stamps
+		// the row, so a provider retry is a no-op rather than a second audit
+		// entry.
+		if (sub && sub.unsubscribed_at == null) {
+			await markSubscriptionUnsubscribed(c.env.DB, sub.id);
+		}
+	}
+	return c.text("ok", 200);
 });
 
 const escapeHtml = (s: string): string =>

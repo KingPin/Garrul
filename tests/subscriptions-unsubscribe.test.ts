@@ -208,3 +208,70 @@ describe("POST /subscribe/unsubscribe/:token", () => {
 		expect(res.status).toBe(403);
 	});
 });
+
+describe("POST /subscribe/unsubscribe/:token/one-click (RFC 8058)", () => {
+	const oneClick = (
+		init: RequestInit = { method: "POST" },
+		token = TOKEN,
+	) =>
+		app().request(
+			`${url(token)}/one-click`,
+			init,
+			env as unknown as Record<string, unknown>,
+		);
+
+	it("unsubscribes on a POST with no Origin header", async () => {
+		// The whole point. Gmail posts this from its own servers, so there is
+		// no Origin to send — and the human POST above 403s exactly this shape.
+		const res = await oneClick();
+		expect(res.status).toBe(200);
+		expect(unsubscribedAt()).not.toBeNull();
+	});
+
+	it("answers text/plain and discloses nothing about the subscriber", async () => {
+		// The response goes to a third party's fetcher, not to the reader.
+		const res = await oneClick();
+		expect(res.headers.get("content-type")).toMatch(/text\/plain/);
+		const body = await res.text();
+		expect(body).not.toContain(EMAIL);
+		expect(body).not.toContain(SLUG);
+		expect(body).not.toContain("Notify me");
+	});
+
+	it("is idempotent — a provider retry does not re-stamp the row", async () => {
+		await oneClick();
+		const stamped = unsubscribedAt();
+		expect(stamped).not.toBeNull();
+
+		const res = await oneClick();
+		expect(res.status).toBe(200);
+		// The first timestamp is the record of when it happened.
+		expect(unsubscribedAt()).toBe(stamped);
+	});
+
+	it("answers 200 for an unknown token without writing", async () => {
+		// A non-2xx reads to the mail client as "unsubscribe failed" and counts
+		// against sender reputation, for a reader who cannot act on it.
+		const res = await oneClick({ method: "POST" }, "z".repeat(64));
+		expect(res.status).toBe(200);
+		expect(unsubscribedAt()).toBeNull();
+	});
+
+	it("a GET does not write — prefetchers cannot reach it", async () => {
+		// Same hazard the GET/POST split above exists for. The route is
+		// POST-only, and the no-Origin CORS relaxation is POST-only too, so a
+		// prefetch is rejected before any handler runs.
+		const res = await oneClick({ method: "GET" });
+		expect(res.status).not.toBe(200);
+		expect(unsubscribedAt()).toBeNull();
+	});
+
+	it("403s a cross-site POST that does carry an Origin", async () => {
+		const res = await oneClick({
+			method: "POST",
+			headers: { origin: "https://evil.example" },
+		});
+		expect(res.status).toBe(403);
+		expect(unsubscribedAt()).toBeNull();
+	});
+});
