@@ -676,9 +676,17 @@ subscriptions.get("/mine", async (c) => {
 		// has to either lie (lit, but no mail will ever arrive) or under-report
 		// (unlit, so the reader subscribes again and burns another confirmation
 		// email against the pending cap). It costs nothing — same row.
+		//
+		// `id` is what makes the bell a two-way toggle: cancelling goes through
+		// `DELETE /mine/:id`, so without it the widget would have to fetch the
+		// reader's whole list just to learn the id of the thread it is already
+		// looking at. Unlike `POST /subscribe` (see :298), disclosing a ULID here
+		// leaks nothing — the session has already proven it owns this address, so
+		// there is no third party for the id to be an oracle about.
 		return c.json({
 			subscribed,
 			pending: subscribed && row?.confirmed_at == null,
+			id: subscribed ? (row?.id ?? null) : null,
 		});
 	}
 

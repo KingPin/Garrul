@@ -195,7 +195,7 @@ const call = async (
 	);
 
 type ListBody = { subscriptions: { id: string; title: string | null }[] };
-type BellBody = { subscribed: boolean; pending: boolean };
+type BellBody = { subscribed: boolean; pending: boolean; id: string | null };
 
 describe("GET /subscribe/mine — the list", () => {
 	it("refuses an anonymous caller without disclosing anything", async () => {
@@ -265,6 +265,7 @@ describe("GET /subscribe/mine?post_slug= — the bell", () => {
 		expect(await bell("alpha", GH_SID)).toEqual({
 			subscribed: true,
 			pending: false,
+			id: "s-gh-1",
 		});
 	});
 
@@ -275,13 +276,25 @@ describe("GET /subscribe/mine?post_slug= — the bell", () => {
 		expect(await bell("beta", GH_SID)).toEqual({
 			subscribed: true,
 			pending: true,
+			id: "s-gh-2",
 		});
+	});
+
+	it("hands back an id DELETE /mine/:id accepts", async () => {
+		// The whole reason the id is in this response: it is what makes the bell a
+		// two-way toggle. If these two ever disagree the bell can light up and
+		// then refuse to switch off.
+		const { id } = await bell("alpha", GH_SID);
+		const res = await call(`/mine/${id}`, { sid: GH_SID, method: "DELETE" });
+		expect(res.status).toBe(200);
+		expect(typeof cancelledAt("s-gh-1")).toBe("number");
 	});
 
 	it("is unlit for a cancelled row", async () => {
 		expect(await bell("gamma", GH_SID)).toEqual({
 			subscribed: false,
 			pending: false,
+			id: null,
 		});
 	});
 
@@ -290,6 +303,7 @@ describe("GET /subscribe/mine?post_slug= — the bell", () => {
 		expect(await bell("delta", GH_SID)).toEqual({
 			subscribed: false,
 			pending: false,
+			id: null,
 		});
 	});
 
@@ -299,6 +313,7 @@ describe("GET /subscribe/mine?post_slug= — the bell", () => {
 		expect((await res.json()) as BellBody).toEqual({
 			subscribed: false,
 			pending: false,
+			id: null,
 		});
 	});
 
