@@ -76,6 +76,9 @@ Forward-only SQL files in `src/db/migrations/NNNN_name.sql`. The `_migrations` t
 ### Logging
 Use `src/lib/log.ts`. Every request gets an ID; every log line is JSON. Operators tail with `wrangler tail`. No PII (names, emails, comment bodies) in logs.
 
+### Lint
+`npm run lint` runs `biome lint`, deliberately **not** `biome check`. Biome classifies import sorting as an *assist* (`assist/source/organizeImports`), not a lint rule, so `check` reports it and `lint` does not. That convention has never been adopted here: `biome check` flags ~145 files, and this version also sorts named specifiers inside the braces, so adopting it means reordering imports nobody wrote wrong across the whole tree — a `git blame`-wrecking diff for zero runtime change. Don't "fix" it with a `--write` sweep. Keep new imports in sorted position where the surrounding file already is; leave the rest alone.
+
 ### Tests
 Critical paths only: API contracts, sanitizer (XSS attempts), auth cookie roundtrip, rate-limit, depth cap. No coverage threshold. Tests must not require network or paid services — hand-rolled in-memory D1/KV stubs (see `tests/helpers/`), mocks for OAuth/email/Turnstile. Moving integration tests onto the Workers pool is future work; `@cloudflare/vitest-pool-workers` is deliberately *not* a dependency until then, so install it as part of that work (`vitest.config.ts:8-12`).
 
