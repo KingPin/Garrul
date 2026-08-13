@@ -92,8 +92,12 @@ comment-id, reaction-kind)** tuple.
 - **Browser user-agent**: kept and removed on exactly the same terms as
   the hashed IP above.
 - **OAuth account data**: until you ask us to remove it.
-- **Subscriptions**: until you click the unsubscribe link in any
-  notification email.
+- **Subscriptions**: until you unsubscribe. You can do that from your mail
+  client's own Unsubscribe button, from the link in any notification email
+  (that link's page also lists every other thread you follow, and can drop
+  all of them at once), or — if you signed in with a provider that gave us
+  a verified address — from the 🔔 and **Manage subscriptions** controls in
+  the comment widget itself.
 - **Moderation records**: when we approve, hide, delete or ban, we keep a
   record of the action, the reason, the account it concerned and when —
   so we can explain a moderation decision later. These records are kept

@@ -24,8 +24,11 @@ dashboard page); every other integration is optional.
   isolation, theme variables, and an iframe alternative
 - **Reply notifications by email**, built in — readers opt in from the
   widget, confirm by double-opt-in, and get a debounced digest when new
-  comments land. No webhook or external pipeline required; bring a
-  Resend key — [`docs/notifications.md`](docs/notifications.md)
+  comments land. Getting out is just as easy: Gmail's own Unsubscribe
+  button (RFC 8058 one-click), a link in every digest that also lists the
+  reader's other threads, and a manage panel in the widget for signed-in
+  readers. No webhook or external pipeline required; bring a Resend
+  key — [`docs/notifications.md`](docs/notifications.md)
 - **Moderator notifications by email** — a digest of what's sitting in
   the queue or has been reported, to `ADMIN_EMAILS` or a shared alias.
   Off by default; one switch in *Settings → Moderation*

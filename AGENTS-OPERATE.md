@@ -775,6 +775,40 @@ wrote would silently unsubscribe recipients who never clicked. Expect
 support questions from operators who remember one click; the extra
 click is deliberate.
 
+That page also lists every *other* thread the same address follows, with
+a per-row unsubscribe and an unsubscribe-from-all — a reader following
+twenty threads no longer has to find twenty emails. Rows are actioned by
+subscription id, never by another row's token. Note the trade-off this
+accepts: a leaked unsubscribe token now discloses which posts that
+address follows, not just the one thread the mail was about. A token
+only reaches someone who can read the mailbox, which is a party that
+could read the same list off the messages themselves.
+
+**RFC 8058 one-click.** Digests carry `List-Unsubscribe` and
+`List-Unsubscribe-Post: List-Unsubscribe=One-Click`, so Gmail and Apple
+Mail render their own native Unsubscribe button next to the sender. It
+posts to `/api/v1/subscribe/unsubscribe/:token/one-click` **from the mail
+provider's servers**, which means no `Origin` header and no browser
+involved — hence the third relaxation class in `src/lib/cors.ts`, and
+hence no IP rate limit on that one route (providers post from shared
+egress; a 429 there is a failed unsubscribe, which counts against sender
+reputation). Bulk senders that omit these headers get filtered harder,
+so this is a deliverability feature as much as a courtesy one.
+
+To verify it yourself after deploying: send a digest to a Gmail address,
+open the message, and check for an "Unsubscribe" link beside the sender
+name. If it is missing, look at the raw message
+(⋮ → Show original) for both headers; Gmail requires the pair, and
+requires the message to pass DKIM/SPF alignment for the sender domain.
+
+**Signed-in readers manage their own.** A reader whose session carries a
+provider-verified address gets a stateful bell and a Manage panel in the
+widget (`GET /api/v1/subscribe/mine`, `DELETE /api/v1/subscribe/mine/:id`)
+and does not need to touch email at all. Those routes are session-scoped
+to the session's own address and answer 404 — never 403 — for a row it
+does not own. `/admin/subscriptions` remains the operator's view and is
+unaffected.
+
 ## 10. Operating the instance
 
 **Logs.** `npm run tail` (alias for `wrangler tail`). Every request

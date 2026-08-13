@@ -25,9 +25,11 @@ doesn't tell anybody anything.
 
 ### What a reader does
 
-1. Ticks **"Email me about new comments"** in the composer. An anonymous
-   reader types an address next to the checkbox; a signed-in reader doesn't
-   see a field, because their session already carries one.
+1. Ticks **"Email me about new comments"** in the composer, or presses the
+   🔔 in the thread toolbar. A reader whose session carries an address
+   doesn't see a field, because it's already known; everyone else types one
+   next to the checkbox. ("Signed in" isn't the test — X/Twitter gives us no
+   address, so those readers get the field too.)
 2. Gets a confirmation email and clicks the link
    (`GET /api/v1/subscribe/confirm/:token`). This is real double-opt-in:
    nothing is delivered to an unconfirmed address.
@@ -37,9 +39,32 @@ doesn't tell anybody anything.
 3. Receives an email when new comments land, with an unsubscribe link in
    every one.
 
-Unsubscribing is two steps on purpose: the link in the email only renders a
-"Yes, unsubscribe me" page, and the button behind it does the work. A mail
-client that pre-fetches links can't silently unsubscribe someone.
+### How a reader gets out
+
+Four ways, no account required for the first three:
+
+- **The Unsubscribe button in Gmail or Apple Mail.** Digests carry RFC 8058
+  `List-Unsubscribe` headers, so the mail client offers its own button next
+  to the sender name. One press, no page to visit. Sending these headers
+  also improves deliverability — bulk mail without them is filtered harder.
+- **The link at the bottom of every digest.** Two steps on purpose: the link
+  only renders a "Yes, unsubscribe me" page, and the button behind it does
+  the work. A mail client that pre-fetches links can't silently unsubscribe
+  someone.
+- **That same page**, which also lists every other thread the address
+  follows, with a per-row unsubscribe and an unsubscribe-from-all — for the
+  reader who followed twenty threads and doesn't want to find twenty emails.
+- **The widget**, for a reader signed in with a provider-verified address:
+  the 🔔 becomes a two-way toggle (🔕 while subscribed, with a distinct
+  "waiting for you to confirm" state), and a **Manage subscriptions**
+  disclosure beside it lists and cancels every thread that address follows.
+
+The widget controls appear *only* for a session carrying a verified address.
+For anyone else the bell stays an action rather than a state toggle, and
+deliberately so: `POST /api/v1/subscribe` answers the same way whether or
+not an address is already subscribed, so nobody can use it to find out which
+addresses follow which posts. Showing the state would mean answering exactly
+that question.
 
 ### What gets delivered
 
