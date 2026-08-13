@@ -3,6 +3,8 @@
  * GET  /api/v1/subscribe/confirm/:token
  * GET  /api/v1/subscribe/unsubscribe/:token       offers to unsubscribe
  * POST /api/v1/subscribe/unsubscribe/:token       does it (human form)
+ * POST /api/v1/subscribe/unsubscribe/:token/all   every thread for that address
+ * POST /api/v1/subscribe/unsubscribe/:token/row/:id  one listed thread
  * POST /api/v1/subscribe/unsubscribe/:token/one-click   does it (RFC 8058)
  * GET  /api/v1/subscribe/mine[?post_slug=]        what this session follows
  * DELETE /api/v1/subscribe/mine/:id               cancels one of them
@@ -54,6 +56,7 @@ import {
 	getSubscriptionByToken,
 	getSubscriptionForEmailAndSlug,
 	listActiveSubscriptionsForEmail,
+	markAllSubscriptionsUnsubscribedForEmail,
 	markSubscriptionUnsubscribed,
 	upsertSubscription,
 } from "../db/queries";
@@ -101,6 +104,19 @@ const landingLocale = (
 	rowLocale: string | null | undefined,
 	requestLocale: string | undefined,
 ): string => matchLocale(rowLocale) ?? matchLocale(requestLocale) ?? FALLBACK_LOCALE;
+
+/**
+ * The `/unsubscribe/:token` prefix of the request currently being handled,
+ * whichever of the four routes under it that is.
+ *
+ * The landing page's forms post to `${base}/all` and `${base}/row/:id`.
+ * Deriving the prefix from the request rather than writing `/api/v1/subscribe/…`
+ * into the HTML keeps the page correct if this router is ever mounted under a
+ * different prefix, and keeps the token in exactly the form the reader's client
+ * already sent — no re-serialization, so no chance of mangling it.
+ */
+const unsubBasePath = (url: string): string =>
+	new URL(url).pathname.replace(/\/(all|row\/[^/]+)$/, "");
 
 const randomToken = (): string => {
 	const bytes = new Uint8Array(32);
@@ -349,17 +365,28 @@ subscriptions.get("/unsubscribe/:token", async (c) => {
 	const postLabel = post?.title ?? sub.post_slug;
 	const locale = landingLocale(sub.locale, c.get("locale"));
 	const t = tFor(locale);
+	// Everything else this address follows. Rendered on the already-unsubscribed
+	// page too: that reader has finished with this thread and is exactly the one
+	// who may want out of the rest.
+	const manage = await manageHtml(
+		c.env.DB,
+		sub.email,
+		sub.id,
+		unsubBasePath(c.req.url),
+		t,
+	);
 
 	if (sub.unsubscribed_at != null) {
 		return c.html(
 			pageHtml(
 				fillTitleHtml(t("ui.subscribe.already_unsubscribed"), postLabel),
 				locale,
+				manage,
 			),
 		);
 	}
 
-	return c.html(confirmPageHtml(postLabel, locale, t));
+	return c.html(confirmPageHtml(postLabel, locale, t, manage));
 });
 
 subscriptions.post("/unsubscribe/:token", async (c) => {
@@ -381,10 +408,116 @@ subscriptions.post("/unsubscribe/:token", async (c) => {
 	const post = await getPost(c.env.DB, sub.post_slug);
 	const postLabel = post?.title ?? sub.post_slug;
 	const locale = landingLocale(sub.locale, c.get("locale"));
+	const t = tFor(locale);
 	return c.html(
 		pageHtml(
-			fillTitleHtml(tFor(locale)("ui.subscribe.unsubscribed"), postLabel),
+			fillTitleHtml(t("ui.subscribe.unsubscribed"), postLabel),
 			locale,
+			// Listed after the write, so the thread just cancelled is already gone
+			// from it and the reader sees only what is still live.
+			await manageHtml(
+				c.env.DB,
+				sub.email,
+				sub.id,
+				unsubBasePath(c.req.url),
+				t,
+			),
+		),
+	);
+});
+
+/**
+ * Unsubscribe every thread this address follows.
+ *
+ * The token proves mailbox access, which is the same thing it proves for the
+ * single-thread POST above — it just acts on every row keyed to that address
+ * rather than the one row the token names. No confirmation step beyond the
+ * button itself: the reader clicked something labelled "unsubscribe from all
+ * threads", and a second are-you-sure on a leave action is the friction that
+ * makes people hit the spam button instead.
+ *
+ * Not reachable by prefetch: POST only, same-origin-checked (the form is served
+ * by this Worker — see SELF_ORIGIN_POST_PATHS in lib/cors.ts).
+ */
+subscriptions.post("/unsubscribe/:token/all", async (c) => {
+	const token = c.req.param("token");
+	if (!token) return c.text("missing token", 400);
+
+	const sub = await getSubscriptionByToken(c.env.DB, token);
+	if (!sub) {
+		const locale = landingLocale(null, c.get("locale"));
+		return c.html(
+			pageHtml(escapeHtml(tFor(locale)("ui.subscribe.link_expired")), locale),
+		);
+	}
+
+	await markAllSubscriptionsUnsubscribedForEmail(c.env.DB, sub.email);
+
+	const locale = landingLocale(sub.locale, c.get("locale"));
+	return c.html(
+		pageHtml(
+			escapeHtml(tFor(locale)("ui.subscribe.unsubscribed_all")),
+			locale,
+		),
+	);
+});
+
+/**
+ * Unsubscribe one row from the list, addressed by subscription id.
+ *
+ * The id is not a capability and is not treated as one: the token still is.
+ * This re-loads the row and requires it to belong to the token's address,
+ * exactly as `DELETE /mine/:id` requires it to belong to the session's — a
+ * scraped id from someone else's page cancels nothing.
+ *
+ * A mismatch renders the same "link expired or already used" page as an unknown
+ * token, under a 404. Distinguishing "that id isn't yours" from "no such id"
+ * would confirm the id exists, which is the only thing an id-guesser could
+ * learn here.
+ */
+subscriptions.post("/unsubscribe/:token/row/:id", async (c) => {
+	const token = c.req.param("token");
+	if (!token) return c.text("missing token", 400);
+
+	const sub = await getSubscriptionByToken(c.env.DB, token);
+	if (!sub) {
+		const locale = landingLocale(null, c.get("locale"));
+		return c.html(
+			pageHtml(escapeHtml(tFor(locale)("ui.subscribe.link_expired")), locale),
+		);
+	}
+
+	const locale = landingLocale(sub.locale, c.get("locale"));
+	const t = tFor(locale);
+
+	const id = c.req.param("id");
+	const row = id ? await adminGetSubscription(c.env.DB, id) : null;
+	if (!row || row.email.toLowerCase() !== sub.email.toLowerCase()) {
+		return c.html(
+			pageHtml(escapeHtml(t("ui.subscribe.link_expired")), locale),
+			404,
+		);
+	}
+
+	if (row.unsubscribed_at == null) {
+		await markSubscriptionUnsubscribed(c.env.DB, row.id);
+	}
+
+	const post = await getPost(c.env.DB, row.post_slug);
+	return c.html(
+		pageHtml(
+			fillTitleHtml(t("ui.subscribe.unsubscribed"), post?.title ?? row.post_slug),
+			locale,
+			// `sub.id` stays the excluded row: the reader is still on the landing
+			// page for the thread the mail was about, and it keeps its own form
+			// above rather than appearing twice.
+			await manageHtml(
+				c.env.DB,
+				sub.email,
+				sub.id,
+				unsubBasePath(c.req.url),
+				t,
+			),
 		),
 	);
 });
@@ -648,7 +781,12 @@ ${extra}
  *
  * `postLabel` is raw — `fillTitleHtml` escapes it along with its template.
  */
-const confirmPageHtml = (postLabel: string, locale: string, t: Translator): string =>
+const confirmPageHtml = (
+	postLabel: string,
+	locale: string,
+	t: Translator,
+	manage = "",
+): string =>
 	pageHtml(
 		fillTitleHtml(t("ui.subscribe.unsubscribe_confirm"), postLabel),
 		locale,
@@ -659,7 +797,78 @@ const confirmPageHtml = (postLabel: string, locale: string, t: Translator): stri
 </form>
 <p style="color:#6b7280;font-size:0.875rem">
   ${escapeHtml(t("ui.subscribe.unsubscribe_note"))}
-</p>`,
+</p>${manage}`,
 	);
+
+const BUTTON_STYLE = "font:inherit;padding:0.35rem 0.75rem;cursor:pointer";
+
+/**
+ * The account-level half of the emailed landing page: every *other* thread this
+ * address still follows, each with its own unsubscribe button, plus one button
+ * that stops all of them.
+ *
+ * This exists because the per-thread link is only a per-thread exit. A reader
+ * who followed twenty posts had to find twenty different emails to leave them,
+ * and the row loaded to render this page already carries the address, so the
+ * rest is one indexed query.
+ *
+ * **A widening of what a leaked token discloses, and worth stating plainly.**
+ * Before this, a forwarded digest — or a scanning gateway that keeps a copy —
+ * exposed one token that could cancel one subscription. Now the page behind
+ * that token also lists *which posts this address follows*, with their titles.
+ * The mitigating fact is that a token only ever reaches someone who could read
+ * the mailbox, and a mailbox holds the same list in the digests themselves; so
+ * this discloses to a reader who already had the information by another route.
+ * It is still a widening rather than a wash, which is why it is written down.
+ * If it is ever judged too wide, the narrow fallback is to keep the
+ * unsubscribe-all button and drop the list.
+ *
+ * **Rows are addressed by subscription id, never by their own token.** Routing
+ * per-row actions through each row's token would scatter N unsubscribe
+ * capabilities into one HTML page, so a single scraped page would hand over
+ * every thread permanently rather than one page-load. The id is not a
+ * capability: `POST /unsubscribe/:token/row/:id` re-checks that the id belongs
+ * to the token's address.
+ *
+ * Returns "" when there is nothing else to show, so the single-subscription
+ * case renders exactly the page it did before — an "unsubscribe from all
+ * threads" button next to the only thread is noise.
+ */
+const manageHtml = async (
+	db: D1Database,
+	email: string,
+	excludeId: string,
+	basePath: string,
+	t: Translator,
+): Promise<string> => {
+	const rows = (await listActiveSubscriptionsForEmail(db, email)).filter(
+		(r) => r.id !== excludeId,
+	);
+	if (rows.length === 0) return "";
+
+	const items = rows
+		.map(
+			(r) => `<li style="margin:0.5rem 0">
+    <form method="post" action="${escapeHtml(basePath)}/row/${escapeHtml(r.id)}"
+          style="display:flex;gap:0.75rem;align-items:baseline">
+      <span style="flex:1">${escapeHtml(r.title ?? r.post_slug)}</span>
+      <button type="submit" style="${BUTTON_STYLE}">
+        ${escapeHtml(t("ui.subscribe.unsubscribe_row_cta"))}
+      </button>
+    </form>
+  </li>`,
+		)
+		.join("");
+
+	return `
+<hr style="margin:2rem 0;border:0;border-top:1px solid #e5e7eb">
+<p>${escapeHtml(t("ui.subscribe.manage_others"))}</p>
+<ul style="list-style:none;padding:0;margin:0">${items}</ul>
+<form method="post" action="${escapeHtml(basePath)}/all" style="margin-top:1.5rem">
+  <button type="submit" style="${BUTTON_STYLE}">
+    ${escapeHtml(t("ui.subscribe.unsubscribe_all_cta"))}
+  </button>
+</form>`;
+};
 
 export { subscriptions };

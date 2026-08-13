@@ -53,6 +53,12 @@ const CARVE_OUT_PATHS: readonly RegExp[] = [
  */
 const SELF_ORIGIN_POST_PATHS: readonly RegExp[] = [
 	/^\/api\/v1\/subscribe\/unsubscribe\/[^/]+\/?$/,
+	// The other two buttons on that same page: unsubscribe from every thread
+	// this address follows, and unsubscribe one listed row by its id. Same form,
+	// same page, same token capability — they only need their own entries
+	// because the list above is anchored and will not match a sub-path.
+	/^\/api\/v1\/subscribe\/unsubscribe\/[^/]+\/all\/?$/,
+	/^\/api\/v1\/subscribe\/unsubscribe\/[^/]+\/row\/[^/]+\/?$/,
 ];
 
 /**

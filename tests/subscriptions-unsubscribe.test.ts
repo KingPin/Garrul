@@ -115,6 +115,41 @@ const submit = (origin: string | null = SELF, token = TOKEN) =>
 		token,
 	);
 
+/** An extra subscription row, for the account-level list on the landing page. */
+const addSub = (
+	id: string,
+	slug: string,
+	email: string,
+	opts: { title?: string; cancelled?: boolean } = {},
+): void => {
+	sqlite
+		.prepare("INSERT OR IGNORE INTO posts (slug, title, url, created_at) VALUES (?, ?, ?, ?)")
+		.run(slug, opts.title ?? slug, null, 1_700_000_000_000);
+	sqlite
+		.prepare(
+			`INSERT INTO subscriptions
+			   (id, post_slug, email, token, confirm_token, confirmed_at,
+			    created_at, unsubscribed_at)
+			 VALUES (?, ?, ?, ?, NULL, ?, ?, ?)`,
+		)
+		.run(
+			id,
+			slug,
+			email,
+			`tok-${id}`,
+			1_700_000_000_000,
+			1_700_000_000_000,
+			opts.cancelled ? 1_700_000_000_000 : null,
+		);
+};
+
+const cancelledAt = (id: string): number | null =>
+	(
+		sqlite
+			.prepare("SELECT unsubscribed_at FROM subscriptions WHERE id = ?")
+			.get(id) as { unsubscribed_at: number | null }
+	).unsubscribed_at;
+
 const unsubscribedAt = (): number | null =>
 	(
 		sqlite
@@ -273,5 +308,192 @@ describe("POST /subscribe/unsubscribe/:token/one-click (RFC 8058)", () => {
 		});
 		expect(res.status).toBe(403);
 		expect(unsubscribedAt()).toBeNull();
+	});
+});
+
+/**
+ * The account-level half of the landing page.
+ *
+ * A per-thread link is only a per-thread exit: a reader following twenty posts
+ * had to find twenty emails to leave them. The row behind the token already
+ * carries the address, so the page can show the rest — which is also a widening
+ * of what one leaked token discloses, and the reason the per-row buttons are
+ * keyed by subscription id and never by the row's own token. A page that
+ * scattered N tokens would hand over N permanent capabilities to anyone who
+ * scraped it once.
+ */
+describe("the landing page's other-threads list", () => {
+	const OTHER = "someone.else@example.com";
+
+	it("renders nothing extra when this is the only subscription", async () => {
+		const html = await (await get()).text();
+		expect(html).not.toContain("also gets notifications");
+		expect(html).not.toContain("Unsubscribe from all threads");
+	});
+
+	it("lists the address's other active threads and an all-button", async () => {
+		addSub("s-two", "second-post", EMAIL, { title: "Second post" });
+		const html = await (await get()).text();
+		expect(html).toContain("also gets notifications");
+		expect(html).toContain("Second post");
+		expect(html).toContain("Unsubscribe from all threads");
+	});
+
+	it("omits the thread the page is already about", async () => {
+		addSub("s-two", "second-post", EMAIL, { title: "Second post" });
+		const html = await (await get()).text();
+		// "Notify me" appears once, in the confirmation question at the top —
+		// listing it again below would give the same thread two buttons.
+		expect(html.match(/Notify me/g)).toHaveLength(1);
+	});
+
+	it("omits cancelled rows", async () => {
+		addSub("s-gone", "gone-post", EMAIL, { title: "Gone post", cancelled: true });
+		expect(await (await get()).text()).not.toContain("Gone post");
+	});
+
+	it("never lists another address's threads", async () => {
+		addSub("s-other", "their-post", OTHER, { title: "Their post" });
+		const html = await (await get()).text();
+		expect(html).not.toContain("Their post");
+		expect(html).not.toContain("s-other");
+	});
+
+	it("keys per-row buttons by subscription id, never by the row's token", async () => {
+		addSub("s-two", "second-post", EMAIL, { title: "Second post" });
+		const html = await (await get()).text();
+		expect(html).toContain(`/unsubscribe/${TOKEN}/row/s-two`);
+		// The other row's own unsubscribe token must not reach the page: that
+		// would be a second permanent capability sitting in scrapeable HTML.
+		expect(html).not.toContain("tok-s-two");
+	});
+
+	it("still lists the others on the already-unsubscribed page", async () => {
+		// That reader is finished with this thread and is exactly the one who may
+		// want out of the rest.
+		addSub("s-two", "second-post", EMAIL, { title: "Second post" });
+		await submit();
+		const html = await (await get()).text();
+		expect(html).toContain("already unsubscribed");
+		expect(html).toContain("Second post");
+	});
+
+	it("escapes titles in the list", async () => {
+		addSub("s-two", "second-post", EMAIL, {
+			title: '<img src=x onerror=alert(1)>',
+		});
+		const html = await (await get()).text();
+		expect(html).not.toContain("<img src=x");
+		expect(html).toContain("&lt;img src=x");
+	});
+});
+
+describe("POST /subscribe/unsubscribe/:token/all", () => {
+	const OTHER = "someone.else@example.com";
+
+	const all = (origin: string | null = SELF, token = TOKEN) =>
+		app().request(
+			`${url(token)}/all`,
+			{ method: "POST", headers: origin ? { origin } : {} },
+			env as unknown as Record<string, unknown>,
+		);
+
+	it("cancels every thread for the token's address", async () => {
+		addSub("s-two", "second-post", EMAIL);
+		addSub("s-three", "third-post", EMAIL);
+
+		const res = await all();
+		expect(res.status).toBe(200);
+		expect(await res.text()).toContain("every thread");
+		expect(unsubscribedAt()).not.toBeNull();
+		expect(cancelledAt("s-two")).not.toBeNull();
+		expect(cancelledAt("s-three")).not.toBeNull();
+	});
+
+	it("leaves other addresses alone", async () => {
+		addSub("s-other", "their-post", OTHER);
+		await all();
+		expect(cancelledAt("s-other")).toBeNull();
+	});
+
+	it("403s a cross-site POST even with a valid token", async () => {
+		addSub("s-two", "second-post", EMAIL);
+		const res = await all("https://evil.example");
+		expect(res.status).toBe(403);
+		expect(unsubscribedAt()).toBeNull();
+		expect(cancelledAt("s-two")).toBeNull();
+	});
+
+	it("403s a POST with no Origin — this is not the RFC 8058 path", async () => {
+		// Only /one-click is relaxed for a missing Origin. Folding this route in
+		// would drop the CSRF check on a button that cancels everything.
+		const res = await all(null);
+		expect(res.status).toBe(403);
+		expect(unsubscribedAt()).toBeNull();
+	});
+
+	it("reports an unknown token without writing", async () => {
+		const res = await all(SELF, "z".repeat(64));
+		expect(res.status).toBe(200);
+		expect(await res.text()).toContain("Link expired or already used.");
+		expect(unsubscribedAt()).toBeNull();
+	});
+});
+
+describe("POST /subscribe/unsubscribe/:token/row/:id", () => {
+	const OTHER = "someone.else@example.com";
+
+	const row = (id: string, origin: string | null = SELF, token = TOKEN) =>
+		app().request(
+			`${url(token)}/row/${id}`,
+			{ method: "POST", headers: origin ? { origin } : {} },
+			env as unknown as Record<string, unknown>,
+		);
+
+	it("cancels the listed row and leaves the page's own thread alone", async () => {
+		addSub("s-two", "second-post", EMAIL, { title: "Second post" });
+		const res = await row("s-two");
+		expect(res.status).toBe(200);
+		expect(cancelledAt("s-two")).not.toBeNull();
+		// The mail's own thread still has its confirmation form above the list.
+		expect(unsubscribedAt()).toBeNull();
+	});
+
+	it("404s on another address's id and writes nothing", async () => {
+		// The id is not a capability. Answering anything other than the
+		// unknown-token page would confirm the id exists.
+		addSub("s-other", "their-post", OTHER);
+		const res = await row("s-other");
+		expect(res.status).toBe(404);
+		expect(await res.text()).toContain("Link expired or already used.");
+		expect(cancelledAt("s-other")).toBeNull();
+	});
+
+	it("404s identically on an id that does not exist", async () => {
+		const res = await row("s-nope");
+		expect(res.status).toBe(404);
+		expect(await res.text()).toContain("Link expired or already used.");
+	});
+
+	it("403s a cross-site POST even with a valid token and id", async () => {
+		addSub("s-two", "second-post", EMAIL);
+		const res = await row("s-two", "https://evil.example");
+		expect(res.status).toBe(403);
+		expect(cancelledAt("s-two")).toBeNull();
+	});
+
+	it("403s a POST with no Origin", async () => {
+		addSub("s-two", "second-post", EMAIL);
+		const res = await row("s-two", null);
+		expect(res.status).toBe(403);
+		expect(cancelledAt("s-two")).toBeNull();
+	});
+
+	it("is idempotent and does not move the original timestamp", async () => {
+		addSub("s-two", "second-post", EMAIL);
+		await row("s-two");
+		const stamped = cancelledAt("s-two");
+		await row("s-two");
+		expect(cancelledAt("s-two")).toBe(stamped);
 	});
 });
