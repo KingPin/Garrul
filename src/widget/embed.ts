@@ -2260,6 +2260,10 @@ const buildForm = (
 	siteKey: string | null,
 	signedIn: boolean,
 	subscriptionsEnabled: boolean,
+	// Separate from `signedIn` on purpose: it governs one branch, the notify
+	// checkbox's email field. Everything else here — the name field, Turnstile —
+	// keys off the session existing, which is a different question.
+	sessionEmail: string | null,
 ): HTMLFormElement => {
 	const form = document.createElement("form");
 	form.className = "gr-form";
@@ -2296,8 +2300,8 @@ const buildForm = (
 	honey.readOnly = true;
 	form.appendChild(honey);
 
-	// Notify-me opt-in. Anonymous: an email field appears alongside the
-	// checkbox. Signed-in: we already have their email so just the box.
+	// Notify-me opt-in. No address on the session: an email field appears
+	// alongside the checkbox. With one: just the box, since we already have it.
 	//
 	// Skipped entirely on an install with no outbound mail configured. The
 	// endpoint 503s there, so the checkbox was an opt-in that could never
@@ -2316,7 +2320,11 @@ const buildForm = (
 		notifyWrap.append(notifyCb, notifyText);
 		form.appendChild(notifyWrap);
 
-		if (!signedIn) {
+		// `sessionEmail`, not `signedIn`. An X/Twitter reader is signed in with no
+		// address at all, so the no-field branch posted `{post_slug}` with nothing
+		// for the server to fall back to — a 400 on every tick, silently, since the
+		// subscribe POST here is fire-and-forget.
+		if (sessionEmail == null) {
 			const emailInput = el("input") as HTMLInputElement;
 			emailInput.className = "gr-email-input";
 			emailInput.name = "email";
@@ -2875,7 +2883,13 @@ const loadOnce = async (
 	// The composer is always built (its submit/Turnstile wiring lives further
 	// down) but only mounted when comments are enabled. When disabled, existing
 	// comments stay visible (read-only) and we show a "closed" notice instead.
-	const form = buildForm(apiBase, siteKey, me != null, subscriptionsEnabled);
+	const form = buildForm(
+		apiBase,
+		siteKey,
+		me != null,
+		subscriptionsEnabled,
+		me?.email ?? null,
+	);
 	// Restore/persist the top-level composer draft (cleared on successful post
 	// in submit()). Reply-form drafts are wired separately in buildReplyForm.
 	const composer = form.querySelector(
@@ -3225,11 +3239,11 @@ const submit = async (
 		const notifyCb = form.querySelector(".gr-notify-cb") as HTMLInputElement | null;
 		const emailInput = form.querySelector(".gr-email-input") as HTMLInputElement | null;
 		if (notifyCb?.checked) {
-			// Field presence encodes `!signedIn` (see buildForm), the same way
-			// the Turnstile slot does. A signed-in visitor has no field to read,
-			// so the address is omitted and the server fills it from the
-			// session. Guarding on a non-empty `email` alone made the checkbox
-			// a silent no-op for every signed-in reader.
+			// Field presence encodes "the session carries no address" (see
+			// buildForm), much as the Turnstile slot encodes `!signedIn`. No field
+			// means the server has an address to fall back to, so omitting it is
+			// safe. Guarding on a non-empty `email` alone made the checkbox a
+			// silent no-op for every signed-in reader.
 			const email = emailInput?.value.trim() ?? "";
 			if (email || !emailInput) {
 				void fetch(apiUrl(apiBase, "/api/v1/subscribe"), {
