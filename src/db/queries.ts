@@ -2010,6 +2010,106 @@ export const markSubscriptionUnsubscribed = async (
 		.run();
 };
 
+/**
+ * Unsubscribe every still-active row for one address.
+ *
+ * Backs the "stop all mail for this address" button. Scoped by email and
+ * nothing else, which is the point: a reader following twenty posts should not
+ * have to find twenty emails.
+ *
+ * `unsubscribed_at IS NULL` in the WHERE, not just for efficiency — without it
+ * a second click would overwrite the first cancellation's timestamp, and that
+ * timestamp is the record of when the reader actually asked to stop.
+ *
+ * Returns how many rows it stamped, so the caller can tell "cancelled twelve"
+ * from "there was nothing left".
+ */
+export const markAllSubscriptionsUnsubscribedForEmail = async (
+	db: D1Database,
+	email: string,
+): Promise<number> => {
+	const now = Date.now();
+	const res = await db
+		.prepare(
+			`UPDATE subscriptions SET unsubscribed_at = ?
+			  WHERE email = ? AND unsubscribed_at IS NULL`,
+		)
+		// Lowercased for the same reason as everywhere else in this file:
+		// `subscriptions.email` is always written through `.toLowerCase()`,
+		// while `users.email` keeps whatever casing the provider returned.
+		.bind(now, email.toLowerCase())
+		.run();
+	return res.meta?.changes ?? 0;
+};
+
+/** One active subscription plus the post title, for a management list. */
+export type SubscriptionListItem = {
+	id: string;
+	post_slug: string;
+	/** NULL when the post row has no title yet — render the slug instead. */
+	title: string | null;
+	created_at: number;
+};
+
+/**
+ * Every active subscription for one address, newest first.
+ *
+ * Powers both management surfaces: the signed-in reader's widget panel and the
+ * emailed landing page. LEFT JOIN rather than JOIN — a subscription can exist
+ * for a slug with no `posts` row (the row is created on first comment), and
+ * dropping those would hide a subscription the reader cannot then cancel.
+ *
+ * Cancelled rows are excluded rather than flagged: a list of things you have
+ * already stopped is not a management surface, and including them would mean
+ * every caller has to filter.
+ *
+ * Served by `idx_subs_email_confirmed` (0017) — email is the index prefix.
+ */
+export const listActiveSubscriptionsForEmail = async (
+	db: D1Database,
+	email: string,
+): Promise<SubscriptionListItem[]> => {
+	const result = await db
+		.prepare(
+			`SELECT s.id, s.post_slug, p.title, s.created_at
+			   FROM subscriptions s
+			   LEFT JOIN posts p ON p.slug = s.post_slug
+			  WHERE s.email = ?
+			    AND s.unsubscribed_at IS NULL
+			  ORDER BY s.created_at DESC`,
+		)
+		.bind(email.toLowerCase())
+		.all<SubscriptionListItem>();
+	return result.results ?? [];
+};
+
+/**
+ * One subscription for (post_slug, email), or null.
+ *
+ * The bell's state read. Hits `UNIQUE (post_slug, email)` from 0001, so it is a
+ * single indexed lookup — this runs on widget mount for every signed-in reader.
+ *
+ * Returns the row whether or not it is cancelled or unconfirmed; deciding what
+ * counts as "following" is the caller's call, and the bell wants confirmed and
+ * not-cancelled.
+ */
+export const getSubscriptionForEmailAndSlug = async (
+	db: D1Database,
+	email: string,
+	post_slug: string,
+): Promise<Subscription | null> => {
+	return await db
+		.prepare(
+			`SELECT id, post_slug, email, token, created_at,
+			        unsubscribed_at, last_notified_at,
+			        confirm_token, confirmed_at, locale
+			   FROM subscriptions
+			  WHERE post_slug = ? AND email = ?`,
+		)
+		.bind(post_slug, email.toLowerCase())
+		.first<Subscription>();
+};
+
 export const listActiveSubscriptionsForPost = async (
 	db: D1Database,
 	post_slug: string,

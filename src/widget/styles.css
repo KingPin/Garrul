@@ -666,6 +666,25 @@ button:active:not([disabled]) { opacity: 0.75; }
    matches a disabled button, hence the :not() guard. */
 .gr-subscribe-btn[disabled] { opacity: 0.6; cursor: progress; }
 .gr-subscribe-btn:hover:not([disabled]) { border-color: var(--gr-accent); }
+/* Awaiting confirmation: a subscription row exists, but no mail flows until the
+   reader clicks the emailed link. Neither 🔔 (nothing here yet) nor 🔕 (mail is
+   coming, press to stop) is true, so the glyph stays 🔔 and the dashed, dimmed
+   border carries the "not settled yet" half. Sighted readers get it from here;
+   everyone else gets it from the label, which says so in words. */
+.gr-subscribe-btn.gr-subscribe-pending { opacity: 0.7; border-style: dashed; }
+/* Text button, not another bordered pill: two equally-weighted controls side by
+   side would read as a choice between them, and the bell is the primary one. */
+.gr-subscribe-manage {
+	font: inherit;
+	font-size: 0.85em;
+	background: none;
+	border: 0;
+	padding: 0;
+	color: var(--gr-muted);
+	cursor: pointer;
+	text-decoration: underline;
+}
+.gr-subscribe-manage:hover { color: var(--gr-accent); }
 .gr-subscribe-form { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; }
 /* Smaller than the composer's submit — this is an inline confirmation, not the
    primary action on the page. */
@@ -698,6 +717,34 @@ button:active:not([disabled]) { opacity: 0.75; }
 	overflow: hidden;
 	clip-path: inset(50%);
 }
+/* The manage panel is a list, not a control that belongs beside the bell, so it
+   takes the whole next line — flex-basis:100% is what forces the wrap inside
+   .gr-subscribe rather than letting it squeeze into the toolbar row. */
+.gr-subscribe-panel { flex-basis: 100%; font-size: 0.9em; }
+.gr-subscribe-panel[hidden] { display: none; }
+.gr-subscribe-list {
+	list-style: none;
+	margin: 0.4rem 0 0;
+	padding: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 0.3rem;
+}
+.gr-subscribe-list li { display: flex; gap: 0.5rem; align-items: baseline; }
+.gr-subscribe-title { flex: 1; }
+.gr-subscribe-drop {
+	font: inherit;
+	font-size: 0.85em;
+	background: var(--gr-input-bg);
+	color: var(--gr-fg);
+	border: 1px solid var(--gr-border);
+	border-radius: var(--gr-radius);
+	padding: 0.1rem 0.4rem;
+	cursor: pointer;
+}
+.gr-subscribe-drop[disabled] { opacity: 0.6; cursor: progress; }
+.gr-subscribe-drop:hover:not([disabled]) { border-color: var(--gr-accent); }
+.gr-subscribe-empty { margin: 0.4rem 0 0; color: var(--gr-muted); }
 .gr-sort select {
 	font: inherit;
 	background: var(--gr-input-bg);

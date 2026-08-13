@@ -33,6 +33,24 @@ export type ProviderId =
 
 export type ProviderProfile = {
 	provider_id: string; // stable per-provider user id (string form)
+	/**
+	 * **NULL unless the provider vouched for this address as verified.** Every
+	 * fetcher below already upholds this — github filters `/user/emails` to
+	 * `verified` entries, google gates on `email_verified`, facebook relies on
+	 * Graph omitting unconfirmed addresses, discord gates on `u.verified`, and
+	 * twitter is always null because v2 exposes no email under these scopes.
+	 *
+	 * It is stated here because the property was implicit in five separate
+	 * functions and something now *depends* on it: this field becomes
+	 * `users.email`, and `GET /api/v1/subscribe/mine` treats a non-null
+	 * `users.email` as proof that the session owns that inbox. A future
+	 * provider that returned an unverified address would turn that endpoint
+	 * into an oracle against someone else's mailbox — sign in with an
+	 * unverified claim to victim@example.com, read back what they follow.
+	 *
+	 * So: a new fetcher must return null unless the provider says verified.
+	 * If a provider cannot say, null is the answer.
+	 */
 	email: string | null;
 	name: string;
 	avatar_url: string | null;

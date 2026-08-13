@@ -200,6 +200,24 @@ export const runDigest = async (env: DigestEnv, now: number = Date.now()): Promi
 			// substitution path means there is only one place to check.
 			subject: fillSubject(t("email.digest.subject"), title),
 			html,
+			// RFC 8058. These render the mail client's *native* Unsubscribe
+			// button — Gmail's bulk-sender guidance expects one-click, and the
+			// footer link below is the fallback for clients that ignore
+			// headers, not a substitute for it.
+			//
+			// HTTPS only, no `mailto:` alternative: Garrul has no inbound mail
+			// handling, so a mailto would advertise an address nothing reads
+			// and every unsubscribe through it would silently fail.
+			//
+			// Both values are safe to drop into a header unescaped by
+			// construction — `publicBase` is operator-set config and `d.token`
+			// is 64 hex chars from `randomToken`. Nothing host-supplied gets
+			// near them; a future interpolation that isn't would need
+			// sanitizing (see the note on SendEmailInput.headers).
+			headers: {
+				"List-Unsubscribe": `<${unsubscribeUrl}/one-click>`,
+				"List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+			},
 		});
 
 		if (ok) {

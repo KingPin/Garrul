@@ -284,6 +284,46 @@ Check, in order:
 `/c/:id` redirect lives on the worker and bounces to the post's URL
 with a `#garrul-comment-<id>` anchor.
 
+### A reader says they can't unsubscribe
+
+There are four exits; walk them in this order.
+
+1. **The mail client's own Unsubscribe button** (Gmail, Apple Mail).
+   Digests carry RFC 8058 `List-Unsubscribe` and
+   `List-Unsubscribe-Post` headers, and the client only renders that
+   button when it trusts the sender — so a missing button usually means
+   DKIM/SPF alignment, not a Garrul bug. Open the message, ⋮ → **Show
+   original**, and check that both headers are present and that DKIM and
+   SPF say `PASS`.
+2. **The link at the bottom of the digest.** It renders a confirmation
+   page rather than unsubscribing on load, so a reader who clicked it and
+   saw a page is not yet unsubscribed — they have to press the button.
+   If that page 404s, `PUBLIC_BASE_URL` is wrong (see above) or the
+   subscription was already cancelled; a spent token is not reusable.
+3. **That same page's list of their other threads**, with an
+   unsubscribe-from-all. This is the answer for "I follow twenty posts
+   and I'm not hunting twenty emails."
+4. **The widget**, but only for a reader whose session carries an email
+   address — *any* provider that supplied a verified one, not just the two
+   that skip the confirmation mail. The 🔔 toggles off and a **Manage
+   subscriptions** disclosure lists every thread. A reader signed in via
+   X/Twitter has no address on their account, so they get the plain
+   subscribe bell and must use one of the email routes.
+
+You can always cancel it for them from *Admin → Subscriptions*.
+
+### The bell doesn't turn off for a signed-in reader
+
+It only becomes a toggle when the session carries an address. Check
+*Admin → Users* for that account: an X/Twitter sign-in, or an OAuth
+account whose provider withheld the email, has none. Nothing is broken —
+the bell stays a one-way subscribe action, and the reader unsubscribes
+by email instead.
+
+A bell that looks lit but dashed/dimmed is the third state: subscribed
+but **awaiting confirmation**. Nothing is delivered to that address
+until they click the link in the confirmation email.
+
 ## Performance
 
 ### First comment load feels slow

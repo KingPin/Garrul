@@ -1214,30 +1214,45 @@ const buildPageEngagement = (ctx: WidgetCtx): HTMLElement => {
  * accepts a standalone `{post_slug, email?}` with double opt-in, a per-address
  * pending cap and a global send budget.
  *
- * **This is an action, never a state toggle, and that is a security property
- * rather than a simplification.** The endpoint deliberately returns a constant
- * shape unless the caller proved they own the inbox, because mirroring the
- * stored `confirmed_at` would make it a subscription oracle — an unauthenticated
- * prober could learn "this address already follows this post", from a branch
- * that sends no mail, so the victim would never see it. A bell that rendered
- * subscribed-vs-not would have to ask that question. So: no state query, no
- * localStorage marker, and no unsubscribe here (unsubscribing is token-based via
- * the emailed link, which is the only way to do it without the oracle).
+ * **Two bells, and which one you get is a security decision.**
  *
- * Repeat clicks are therefore fine by design — the upsert is non-destructive and
- * refunds send budget when no mail actually goes out.
+ * *Anonymous* (and signed-in-with-no-address, below): an action, never a state
+ * toggle. `POST /api/v1/subscribe` deliberately returns a constant shape for a
+ * caller who has not proved they own the inbox, because mirroring the stored
+ * `confirmed_at` would make it a subscription oracle — an unauthenticated prober
+ * could learn "this address already follows this post", from a branch that sends
+ * no mail, so the victim would never see it. A bell that rendered
+ * subscribed-vs-not would have to ask that question. So on this path: no state
+ * query, no localStorage marker, and no unsubscribe (that stays token-based via
+ * the emailed link). Repeat clicks are fine by design — the upsert is
+ * non-destructive and refunds send budget when no mail actually goes out.
+ *
+ * *Session with a provider-verified address*: a real toggle, reading
+ * `GET /api/v1/subscribe/mine?post_slug=` on mount and cancelling through
+ * `DELETE /api/v1/subscribe/mine/:id`. There is no oracle to leak here, because
+ * the only address in play is one the session already proved it owns — the
+ * question "does this address follow this post" is being asked by the address.
+ *
+ * The branch is on `sessionEmail`, **not** on "is signed in". An X/Twitter
+ * reader is signed in and has no address at all (their v2 API exposes none under
+ * our scopes), so a session-shaped bell would post no address, take a 400 on
+ * every click, and read back as never-subscribed no matter what. They get the
+ * anonymous bell, which works.
  */
 const buildSubscribeBell = (
 	apiBase: string,
 	slug: string,
-	signedIn: boolean,
+	sessionEmail: string | null,
 ): HTMLElement => {
+	// The whole managed/unmanaged split in one flag. `sessionEmail` itself is
+	// never sent — the server reads the address off the session — but its
+	// presence is what says the server *can*.
+	const managed = sessionEmail != null;
 	const wrap = el("div", "gr-subscribe");
 	const btn = el("button", "gr-subscribe-btn");
 	btn.type = "button";
-	btn.setAttribute("aria-label", s("w.subscribe"));
-	btn.title = s("w.subscribe");
-	btn.appendChild(el("span", "gr-reaction-emoji", "🔔"));
+	const glyph = el("span", "gr-reaction-emoji", "🔔");
+	btn.appendChild(glyph);
 	// Announce the outcome: the click's only visible result is this text, and a
 	// reader on a screen reader would otherwise get nothing back at all.
 	//
@@ -1251,6 +1266,26 @@ const buildSubscribeBell = (
 
 	const say = (msg: string): void => {
 		status.textContent = msg;
+	};
+
+	// Managed-path state. `subId` is both the flag and the handle: non-null means
+	// this reader follows the thread *and* holds the id `DELETE /mine/:id` needs.
+	// `pending` is the un-confirmed half — a row exists, but no mail flows until
+	// the reader clicks the link, so the bell is honestly neither lit nor unlit.
+	let subId: string | null = null;
+	let pending = false;
+
+	const renderBell = (): void => {
+		const label = subId
+			? s(pending ? "w.subscribe.awaiting" : "w.unsubscribe")
+			: s("w.subscribe");
+		btn.setAttribute("aria-label", label);
+		btn.title = label;
+		glyph.textContent = subId && !pending ? "🔕" : "🔔";
+		btn.classList.toggle("gr-subscribe-pending", pending);
+		// A toggle on the managed path, a disclosure on the anonymous one (set
+		// below). Never both — they describe different controls.
+		if (managed) btn.setAttribute("aria-pressed", String(subId != null));
 	};
 
 	// Anonymous readers need to supply an address; a signed-in reader's comes
@@ -1274,10 +1309,159 @@ const buildSubscribeBell = (
 		if (submit) submit.disabled = busy;
 	};
 
+	// One flag for every write below — subscribe, cancel-from-the-bell and
+	// cancel-from-a-row — rather than one per control, because the bell and a
+	// panel row can act on the same subscription.
+	let inFlight = false;
+
+	/**
+	 * The manage disclosure: everything this address follows, not just this
+	 * thread. Managed readers only — an address the session hasn't proved is an
+	 * address whose list it has no business being handed.
+	 *
+	 * Lazy on purpose. The bell's own state read fires on every widget mount, but
+	 * this one only ever fires for a reader who asked, which is rare enough that
+	 * loading it up front would be pure waste on every page view.
+	 */
+	const panel = el("div", "gr-subscribe-panel");
+	panel.hidden = true;
+	const manageBtn = el("button", "gr-subscribe-manage", s("w.manage"));
+	manageBtn.type = "button";
+	manageBtn.setAttribute("aria-expanded", "false");
+	let panelLoaded = false;
+
+	const loadState = async (): Promise<void> => {
+		try {
+			const res = await fetch(
+				apiUrl(
+					apiBase,
+					`/api/v1/subscribe/mine?post_slug=${encodeURIComponent(slug)}`,
+				),
+				{ credentials: "include" },
+			);
+			if (!res.ok) return;
+			const body = (await res.json()) as {
+				subscribed?: boolean;
+				pending?: boolean;
+				id?: string | null;
+			};
+			// Both halves or neither: a `subscribed` with no id is a server too old
+			// to have sent one, and a toggle with no id to cancel is a button that
+			// lies. Falling back to the unlit bell leaves subscribing working.
+			subId = body.subscribed && body.id ? body.id : null;
+			pending = subId != null && body.pending === true;
+			renderBell();
+		} catch {
+			// Fail soft, matching the reactions block: the bell stays unlit and
+			// subscribing still works, which is exactly what it did before it had
+			// any state to read. An unreachable /mine must not cost the reader the
+			// control itself.
+		}
+	};
+
+	const cancel = async (id: string): Promise<boolean> => {
+		if (inFlight) return false;
+		inFlight = true;
+		setBusy(true);
+		try {
+			const res = await fetch(
+				apiUrl(apiBase, `/api/v1/subscribe/mine/${encodeURIComponent(id)}`),
+				{ method: "DELETE", credentials: "include" },
+			);
+			if (!res.ok) {
+				say(
+					res.status === 429
+						? s("w.subscribe.ratelimit")
+						: s("w.unsubscribe.failed"),
+				);
+				return false;
+			}
+			say(s("w.unsubscribe.done"));
+			// The bell tracks this thread; a row cancelled from the panel may be it.
+			if (subId === id) {
+				subId = null;
+				pending = false;
+				renderBell();
+			}
+			return true;
+		} catch {
+			say(s("w.unsubscribe.failed"));
+			return false;
+		} finally {
+			inFlight = false;
+			setBusy(false);
+		}
+	};
+
+	type PanelRow = { id: string; post_slug: string; title: string | null };
+
+	const renderPanel = (rows: PanelRow[]): void => {
+		panel.textContent = "";
+		if (rows.length === 0) {
+			panel.appendChild(el("p", "gr-subscribe-empty", s("w.manage.empty")));
+			return;
+		}
+		const ul = el("ul", "gr-subscribe-list");
+		for (const row of rows) {
+			const li = el("li");
+			// `title` is null until the host page has told the server one, so the
+			// slug is the honest fallback — a row with no label is a row the reader
+			// cannot tell apart from the next one.
+			li.appendChild(el("span", "gr-subscribe-title", row.title || row.post_slug));
+			const drop = el("button", "gr-subscribe-drop", s("w.unsubscribe.row"));
+			drop.type = "button";
+			drop.addEventListener("click", () => {
+				drop.disabled = true;
+				void cancel(row.id).then((ok) => {
+					if (!ok) {
+						drop.disabled = false;
+						return;
+					}
+					li.remove();
+					if (!ul.firstChild) renderPanel([]);
+				});
+			});
+			li.appendChild(drop);
+			ul.appendChild(li);
+		}
+		panel.appendChild(ul);
+	};
+
+	const loadPanel = async (): Promise<void> => {
+		panelLoaded = true;
+		try {
+			const res = await fetch(apiUrl(apiBase, "/api/v1/subscribe/mine"), {
+				credentials: "include",
+			});
+			if (!res.ok) throw new Error(String(res.status));
+			const body = (await res.json()) as { subscriptions?: PanelRow[] };
+			renderPanel(body.subscriptions ?? []);
+		} catch {
+			// Not sticky: clearing the flag lets a second open retry, which is the
+			// only recovery a reader has for a blip.
+			panelLoaded = false;
+			panel.textContent = "";
+			panel.appendChild(el("p", "gr-subscribe-empty", s("w.manage.failed")));
+		}
+	};
+
+	// A write from either control invalidates the list. Re-fetching rather than
+	// splicing keeps one source of truth — the panel can be stale for reasons
+	// this tab never saw (another tab, an emailed unsubscribe link).
+	const invalidatePanel = (): void => {
+		panelLoaded = false;
+		if (!panel.hidden) void loadPanel();
+	};
+
+	manageBtn.addEventListener("click", () => {
+		panel.hidden = !panel.hidden;
+		manageBtn.setAttribute("aria-expanded", String(!panel.hidden));
+		if (!panel.hidden && !panelLoaded) void loadPanel();
+	});
+
 	// `message` is already localized by the server (it negotiates from ?lang=).
 	// Rendered via textContent — as every server string in this widget is — so a
 	// future message containing markup is text, not markup.
-	let inFlight = false;
 	const send = async (email: string): Promise<void> => {
 		// The disabled attributes are the affordance; this flag is the guarantee.
 		// A subscribe POST costs the operator send budget and the reader a
@@ -1310,8 +1494,18 @@ const buildSubscribeBell = (
 				return;
 			}
 			say(body?.message ?? s("w.subscribe.done"));
-			form.hidden = true;
-			btn.hidden = true;
+			if (managed) {
+				// Re-read rather than assume. The POST deliberately returns no
+				// subscription id (it would tell a caller who may not own the address
+				// *when* it subscribed), and only the re-read settles
+				// pending-vs-confirmed honestly — a provider-verified address
+				// auto-confirms and never gets a confirmation mail at all.
+				await loadState();
+				invalidatePanel();
+			} else {
+				form.hidden = true;
+				btn.hidden = true;
+			}
 		} catch {
 			say(s("w.subscribe.failed"));
 		} finally {
@@ -1320,7 +1514,7 @@ const buildSubscribeBell = (
 		}
 	};
 
-	if (!signedIn) {
+	if (!managed) {
 		emailInput.className = "gr-email-input";
 		emailInput.type = "email";
 		emailInput.required = true;
@@ -1329,11 +1523,10 @@ const buildSubscribeBell = (
 		submit = el("button", "gr-subscribe-submit", s("w.subscribe.submit"));
 		submit.type = "submit";
 		form.append(emailInput, submit);
-		// Only on this path is the bell a disclosure — signed in it posts straight
-		// away and controls nothing, and claiming otherwise would promise a panel
-		// that never opens. Safe to expose: this says whether the email field is
-		// showing, never whether the reader is subscribed, which is the one thing
-		// the endpoint refuses to reveal.
+		// Only on this path is the bell a disclosure — managed, it is a toggle and
+		// carries aria-pressed instead. Safe to expose: this says whether the email
+		// field is showing, never whether the reader is subscribed, which is the
+		// one thing the endpoint refuses to reveal.
 		btn.setAttribute("aria-expanded", "false");
 		form.addEventListener("submit", (e) => {
 			e.preventDefault();
@@ -1343,8 +1536,17 @@ const buildSubscribeBell = (
 	}
 
 	btn.addEventListener("click", () => {
-		if (signedIn) {
-			void send("");
+		if (managed) {
+			// Read `subId` at click time, not at bind time: the panel, a cancel, and
+			// the post-subscribe re-read all move it underneath this handler.
+			const id = subId;
+			if (id) {
+				void cancel(id).then((ok) => {
+					if (ok) invalidatePanel();
+				});
+			} else {
+				void send("");
+			}
 			return;
 		}
 		form.hidden = !form.hidden;
@@ -1352,7 +1554,14 @@ const buildSubscribeBell = (
 		if (!form.hidden) emailInput.focus();
 	});
 
-	wrap.append(btn, form, status);
+	renderBell();
+	wrap.append(btn);
+	if (managed) wrap.append(manageBtn);
+	wrap.append(form, status);
+	if (managed) {
+		wrap.append(panel);
+		void loadState();
+	}
 	return wrap;
 };
 
@@ -2051,6 +2260,10 @@ const buildForm = (
 	siteKey: string | null,
 	signedIn: boolean,
 	subscriptionsEnabled: boolean,
+	// Separate from `signedIn` on purpose: it governs one branch, the notify
+	// checkbox's email field. Everything else here — the name field, Turnstile —
+	// keys off the session existing, which is a different question.
+	sessionEmail: string | null,
 ): HTMLFormElement => {
 	const form = document.createElement("form");
 	form.className = "gr-form";
@@ -2087,8 +2300,8 @@ const buildForm = (
 	honey.readOnly = true;
 	form.appendChild(honey);
 
-	// Notify-me opt-in. Anonymous: an email field appears alongside the
-	// checkbox. Signed-in: we already have their email so just the box.
+	// Notify-me opt-in. No address on the session: an email field appears
+	// alongside the checkbox. With one: just the box, since we already have it.
 	//
 	// Skipped entirely on an install with no outbound mail configured. The
 	// endpoint 503s there, so the checkbox was an opt-in that could never
@@ -2107,7 +2320,11 @@ const buildForm = (
 		notifyWrap.append(notifyCb, notifyText);
 		form.appendChild(notifyWrap);
 
-		if (!signedIn) {
+		// `sessionEmail`, not `signedIn`. An X/Twitter reader is signed in with no
+		// address at all, so the no-field branch posted `{post_slug}` with nothing
+		// for the server to fall back to — a 400 on every tick, silently, since the
+		// subscribe POST here is fire-and-forget.
+		if (sessionEmail == null) {
 			const emailInput = el("input") as HTMLInputElement;
 			emailInput.className = "gr-email-input";
 			emailInput.name = "email";
@@ -2666,7 +2883,13 @@ const loadOnce = async (
 	// The composer is always built (its submit/Turnstile wiring lives further
 	// down) but only mounted when comments are enabled. When disabled, existing
 	// comments stay visible (read-only) and we show a "closed" notice instead.
-	const form = buildForm(apiBase, siteKey, me != null, subscriptionsEnabled);
+	const form = buildForm(
+		apiBase,
+		siteKey,
+		me != null,
+		subscriptionsEnabled,
+		me?.email ?? null,
+	);
 	// Restore/persist the top-level composer draft (cleared on successful post
 	// in submit()). Reply-form drafts are wired separately in buildReplyForm.
 	const composer = form.querySelector(
@@ -2731,7 +2954,10 @@ const loadOnce = async (
 			bar.appendChild(sortWrap);
 		}
 		if (subscriptionsEnabled) {
-			bar.appendChild(buildSubscribeBell(apiBase, slug, me != null));
+			// `me?.email`, not `me != null` — a session with no address (X/Twitter,
+			// or an anonymous ghost) cannot drive the stateful bell. See the note on
+			// buildSubscribeBell.
+			bar.appendChild(buildSubscribeBell(apiBase, slug, me?.email ?? null));
 		}
 		wrap.appendChild(bar);
 	}
@@ -3013,11 +3239,11 @@ const submit = async (
 		const notifyCb = form.querySelector(".gr-notify-cb") as HTMLInputElement | null;
 		const emailInput = form.querySelector(".gr-email-input") as HTMLInputElement | null;
 		if (notifyCb?.checked) {
-			// Field presence encodes `!signedIn` (see buildForm), the same way
-			// the Turnstile slot does. A signed-in visitor has no field to read,
-			// so the address is omitted and the server fills it from the
-			// session. Guarding on a non-empty `email` alone made the checkbox
-			// a silent no-op for every signed-in reader.
+			// Field presence encodes "the session carries no address" (see
+			// buildForm), much as the Turnstile slot encodes `!signedIn`. No field
+			// means the server has an address to fall back to, so omitting it is
+			// safe. Guarding on a non-empty `email` alone made the checkbox a
+			// silent no-op for every signed-in reader.
 			const email = emailInput?.value.trim() ?? "";
 			if (email || !emailInput) {
 				void fetch(apiUrl(apiBase, "/api/v1/subscribe"), {

@@ -53,6 +53,14 @@ export const en = {
 	"ui.subscribe.unsubscribe_cta": "Yes, unsubscribe me",
 	"ui.subscribe.unsubscribe_note":
 		"Nothing has changed yet — you stay subscribed until you confirm.",
+	// The rest of the same page: everything else this address follows, so a
+	// reader with twenty threads doesn't have to hunt down twenty emails.
+	"ui.subscribe.manage_others":
+		"This address also gets notifications for these threads:",
+	"ui.subscribe.unsubscribe_row_cta": "Unsubscribe",
+	"ui.subscribe.unsubscribe_all_cta": "Unsubscribe from all threads",
+	"ui.subscribe.unsubscribed_all":
+		"You're unsubscribed from comment notifications on every thread.",
 
 	// Transactional email.
 	//

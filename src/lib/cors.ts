@@ -12,9 +12,15 @@
  * Wildcards (*) are NOT supported — the spec disallows `*` together with
  * `credentials: include`, and we always want credentials.
  *
- * Carve-outs (CARVE_OUT_PATHS) bypass the Origin check entirely — used for
- * routes that legitimately receive no Origin header (uptime probes, OAuth
- * top-level browser navigation).
+ * Three relaxations, each narrower than it looks and each documented at its
+ * own list below. They are separate lists on purpose — folding any of them
+ * together would widen the others:
+ *   - CARVE_OUT_PATHS      GET only, no Origin needed (probes, OAuth returns,
+ *                          email-link clicks)
+ *   - SELF_ORIGIN_POST_PATHS  POST whose Origin is this Worker's own (forms we
+ *                          serve ourselves)
+ *   - NO_ORIGIN_POST_PATHS POST with no Origin at all (RFC 8058 one-click,
+ *                          which arrives from a mail provider's servers)
  */
 import type { MiddlewareHandler } from "hono";
 
@@ -47,6 +53,40 @@ const CARVE_OUT_PATHS: readonly RegExp[] = [
  */
 const SELF_ORIGIN_POST_PATHS: readonly RegExp[] = [
 	/^\/api\/v1\/subscribe\/unsubscribe\/[^/]+\/?$/,
+	// The other two buttons on that same page: unsubscribe from every thread
+	// this address follows, and unsubscribe one listed row by its id. Same form,
+	// same page, same token capability — they only need their own entries
+	// because the list above is anchored and will not match a sub-path.
+	/^\/api\/v1\/subscribe\/unsubscribe\/[^/]+\/all\/?$/,
+	/^\/api\/v1\/subscribe\/unsubscribe\/[^/]+\/row\/[^/]+\/?$/,
+];
+
+/**
+ * Paths where a POST carrying *no* Origin header at all satisfies the gate.
+ *
+ * One entry, and it should stay that way: RFC 8058 one-click unsubscribe.
+ * Gmail and friends POST `List-Unsubscribe=One-Click` from their own servers,
+ * not from a browser, so there is no Origin to send — `isCarveOut` is GET-only
+ * and `isSelfOriginPost` requires an origin, so without this the mail
+ * provider's unsubscribe button 403s.
+ *
+ * Why this can't just be another `SELF_ORIGIN_POST_PATHS` entry: that list's
+ * existing entry is the prefix of this one, and it guards the *human*
+ * confirmation form. Relaxing that entry to accept a missing Origin would drop
+ * the CSRF check on the form as well, which is the one place a browser is
+ * actually involved. Two different threat models, so two different lists.
+ *
+ * What makes the relaxation safe here is that the 64-char token in the path is
+ * the sole capability, and the endpoint is write-only — it returns a bare 200
+ * and discloses nothing about the address. A cross-site forgery gains nothing
+ * it could not already do by GETting the same token out of the mail, and a
+ * browser-originated forgery is still rejected, because a browser always sends
+ * an Origin on a cross-site POST.
+ *
+ * Anchored at both ends, same reasoning as the lists above.
+ */
+const NO_ORIGIN_POST_PATHS: readonly RegExp[] = [
+	/^\/api\/v1\/subscribe\/unsubscribe\/[^/]+\/one-click\/?$/,
 ];
 
 const parseAllowed = (raw: string | undefined): Set<string> => {
@@ -75,6 +115,18 @@ const isSelfOriginPost = (
 	if (method !== "POST" || !origin) return false;
 	if (!SELF_ORIGIN_POST_PATHS.some((re) => re.test(path))) return false;
 	return origin === new URL(requestUrl).origin;
+};
+
+// Only when the header is genuinely absent. A POST that *does* carry an Origin
+// falls through to the normal allowlist check, so a browser-driven forgery
+// against the one-click path is still rejected on its Origin.
+const isNoOriginPost = (
+	method: string,
+	path: string,
+	origin: string | undefined,
+): boolean => {
+	if (method !== "POST" || origin) return false;
+	return NO_ORIGIN_POST_PATHS.some((re) => re.test(path));
 };
 
 export const corsAndCsrf = (): MiddlewareHandler => {
@@ -117,7 +169,13 @@ export const corsAndCsrf = (): MiddlewareHandler => {
 			origin,
 			c.req.url,
 		);
-		if (!isCarveOut(c.req.method, path) && !selfOriginPost && !isDev) {
+		const noOriginPost = isNoOriginPost(c.req.method, path, origin);
+		if (
+			!isCarveOut(c.req.method, path) &&
+			!selfOriginPost &&
+			!noOriginPost &&
+			!isDev
+		) {
 			if (!origin || !matches(origin, allowed)) {
 				return c.json({ error: "err.origin.forbidden" }, 403);
 			}

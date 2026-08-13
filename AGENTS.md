@@ -378,9 +378,10 @@ and needing no host-page wiring:
 
 - the composer's "Email me about new comments" checkbox, and
 - a 🔔 in the thread toolbar, for a reader who wants replies but has
-  nothing to say. Signed-in readers subscribe in one click (the session
-  supplies the address; a provider-verified one confirms immediately);
-  anonymous readers get an inline email field and a confirmation mail.
+  nothing to say. A signed-in reader whose provider supplied a verified
+  address subscribes in one click (a provider-verified address confirms
+  immediately); everyone else gets an inline email field and a
+  confirmation mail.
 
 Both read `subscriptions_enabled` from `/api/v1/config` — a derived flag,
 true when the operator has set `EMAIL_FROM` and `PUBLIC_BASE_URL`. It is
@@ -390,13 +391,46 @@ without those vars.
 
 Subscriptions are **thread-scoped** and unique per `(post_slug, email)`,
 so a subscriber hears about every new comment on the post, not only direct
-replies. The bell is an action, not a state toggle: the widget never
-displays whether an address is already subscribed, and there is no
-unsubscribe control in the widget — that is a tokenized link in the mail.
-This is deliberate. `POST /api/v1/subscribe` returns a constant response
-unless the caller proved they own the inbox, so that an unauthenticated
-prober cannot use it to discover which addresses follow which posts;
-rendering subscription state would require asking exactly that question.
+replies.
+
+#### Unsubscribing (since v2.11.0)
+
+There are two bells, and which one a reader gets is a security decision.
+
+- **Anonymous, and signed in with no address** (X/Twitter exposes no email
+  under our scopes): the bell is an action, not a state toggle. It never
+  displays whether an address is already subscribed and offers no
+  unsubscribe — that stays a tokenized link in the mail. This is
+  deliberate: `POST /api/v1/subscribe` returns a constant response unless
+  the caller proved they own the inbox, so an unauthenticated prober
+  cannot use it to discover which addresses follow which posts, and
+  rendering subscription state would require asking exactly that question.
+- **Signed in with a provider-verified address**: the bell is a real
+  toggle (🔔 / 🔕, plus a third "awaiting confirmation" state), and a
+  **Manage subscriptions** disclosure beside it lists every thread that
+  address follows with a per-row unsubscribe. There is no oracle here
+  because the only address in play is one the session already proved it
+  owns.
+
+The endpoints behind the second bell are `GET /api/v1/subscribe/mine`
+(the list), `GET /api/v1/subscribe/mine?post_slug=` (one thread's state:
+`{subscribed, pending, id}`) and `DELETE /api/v1/subscribe/mine/:id`. All
+three are session-scoped to the session's own verified address; a row that
+address does not own answers **404**, never 403, so an id cannot be probed
+for existence. A session with no address is not an error — it gets an
+empty list and an unlit bell.
+
+Emailed digests carry RFC 8058 `List-Unsubscribe` and
+`List-Unsubscribe-Post` headers, so Gmail and Apple Mail render their own
+native Unsubscribe button. It posts to
+`POST /api/v1/subscribe/unsubscribe/:token/one-click` from the mail
+provider's servers, with no `Origin` header — see the third relaxation
+class in `src/lib/cors.ts`. The human landing page at
+`GET /api/v1/subscribe/unsubscribe/:token` also now lists the address's
+other threads, with per-row buttons and an unsubscribe-from-all.
+
+**Embedders need no wiring for any of this.** It is all inside the widget
+and the emails; there are no new `data-*` attributes and no new env vars.
 
 ### Markdown preview (since v1.10.0)
 

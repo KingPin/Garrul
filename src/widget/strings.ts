@@ -151,6 +151,21 @@ export const EN = {
 	"w.subscribe.failed": "Could not subscribe. Try again.",
 	// Never "try again" — a 429 retry cannot succeed and pushes the window out.
 	"w.subscribe.ratelimit": "Too many requests. Try again later.",
+	// The stateful half of the bell, for a reader whose session carries a
+	// provider-verified address. `w.subscribe.awaiting` is the third state, not a
+	// variant of the other two: a row exists but no mail flows until the reader
+	// clicks the confirmation link, so labelling it either "subscribe" or
+	// "unsubscribe" would be a lie in one direction or the other.
+	"w.subscribe.awaiting": "Confirm the email we sent, or press to cancel",
+	"w.unsubscribe": "Stop emailing me about new comments on this post",
+	"w.unsubscribe.done": "You'll stop getting emails about this thread.",
+	"w.unsubscribe.failed": "Could not unsubscribe. Try again.",
+	// Panel rows sit under a heading that already says what the list is, so the
+	// row button is a bare verb rather than repeating the thread title.
+	"w.unsubscribe.row": "Unsubscribe",
+	"w.manage": "Manage subscriptions",
+	"w.manage.empty": "You're not following any threads.",
+	"w.manage.failed": "Could not load your subscriptions.",
 	"w.load_more": "Load older comments",
 	"w.load_more_failed": "Could not load more: {detail}",
 

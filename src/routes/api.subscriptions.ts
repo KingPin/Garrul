@@ -1,7 +1,13 @@
 /**
- * POST /api/v1/subscribe                { post_slug, email? }
+ * POST /api/v1/subscribe                          { post_slug, email? }
  * GET  /api/v1/subscribe/confirm/:token
- * GET  /api/v1/subscribe/unsubscribe/:token
+ * GET  /api/v1/subscribe/unsubscribe/:token       offers to unsubscribe
+ * POST /api/v1/subscribe/unsubscribe/:token       does it (human form)
+ * POST /api/v1/subscribe/unsubscribe/:token/all   every thread for that address
+ * POST /api/v1/subscribe/unsubscribe/:token/row/:id  one listed thread
+ * POST /api/v1/subscribe/unsubscribe/:token/one-click   does it (RFC 8058)
+ * GET  /api/v1/subscribe/mine[?post_slug=]        what this session follows
+ * DELETE /api/v1/subscribe/mine/:id               cancels one of them
  *
  * Subscription model:
  *   - One row per (post_slug, email). This endpoint is unauthenticated and
@@ -39,14 +45,18 @@
  *      concurrent burst cannot get past on a default install. See
  *      src/lib/email-budget.ts for why it is global and what that costs.
  */
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import type { Bindings } from "../index";
 import {
+	adminGetSubscription,
 	confirmSubscription,
 	countPendingSubscriptionsForEmail,
 	getPost,
 	getSubscriptionByConfirmToken,
 	getSubscriptionByToken,
+	getSubscriptionForEmailAndSlug,
+	listActiveSubscriptionsForEmail,
+	markAllSubscriptionsUnsubscribedForEmail,
 	markSubscriptionUnsubscribed,
 	upsertSubscription,
 } from "../db/queries";
@@ -94,6 +104,19 @@ const landingLocale = (
 	rowLocale: string | null | undefined,
 	requestLocale: string | undefined,
 ): string => matchLocale(rowLocale) ?? matchLocale(requestLocale) ?? FALLBACK_LOCALE;
+
+/**
+ * The `/unsubscribe/:token` prefix of the request currently being handled,
+ * whichever of the four routes under it that is.
+ *
+ * The landing page's forms post to `${base}/all` and `${base}/row/:id`.
+ * Deriving the prefix from the request rather than writing `/api/v1/subscribe/…`
+ * into the HTML keeps the page correct if this router is ever mounted under a
+ * different prefix, and keeps the token in exactly the form the reader's client
+ * already sent — no re-serialization, so no chance of mangling it.
+ */
+const unsubBasePath = (url: string): string =>
+	new URL(url).pathname.replace(/\/(all|row\/[^/]+)$/, "");
 
 const randomToken = (): string => {
 	const bytes = new Uint8Array(32);
@@ -342,17 +365,28 @@ subscriptions.get("/unsubscribe/:token", async (c) => {
 	const postLabel = post?.title ?? sub.post_slug;
 	const locale = landingLocale(sub.locale, c.get("locale"));
 	const t = tFor(locale);
+	// Everything else this address follows. Rendered on the already-unsubscribed
+	// page too: that reader has finished with this thread and is exactly the one
+	// who may want out of the rest.
+	const manage = await manageHtml(
+		c.env.DB,
+		sub.email,
+		sub.id,
+		unsubBasePath(c.req.url),
+		t,
+	);
 
 	if (sub.unsubscribed_at != null) {
 		return c.html(
 			pageHtml(
 				fillTitleHtml(t("ui.subscribe.already_unsubscribed"), postLabel),
 				locale,
+				manage,
 			),
 		);
 	}
 
-	return c.html(confirmPageHtml(postLabel, locale, t));
+	return c.html(confirmPageHtml(postLabel, locale, t, manage));
 });
 
 subscriptions.post("/unsubscribe/:token", async (c) => {
@@ -374,12 +408,346 @@ subscriptions.post("/unsubscribe/:token", async (c) => {
 	const post = await getPost(c.env.DB, sub.post_slug);
 	const postLabel = post?.title ?? sub.post_slug;
 	const locale = landingLocale(sub.locale, c.get("locale"));
+	const t = tFor(locale);
 	return c.html(
 		pageHtml(
-			fillTitleHtml(tFor(locale)("ui.subscribe.unsubscribed"), postLabel),
+			fillTitleHtml(t("ui.subscribe.unsubscribed"), postLabel),
+			locale,
+			// Listed after the write, so the thread just cancelled is already gone
+			// from it and the reader sees only what is still live.
+			await manageHtml(
+				c.env.DB,
+				sub.email,
+				sub.id,
+				unsubBasePath(c.req.url),
+				t,
+			),
+		),
+	);
+});
+
+/**
+ * Unsubscribe every thread this address follows.
+ *
+ * The token proves mailbox access, which is the same thing it proves for the
+ * single-thread POST above — it just acts on every row keyed to that address
+ * rather than the one row the token names. No confirmation step beyond the
+ * button itself: the reader clicked something labelled "unsubscribe from all
+ * threads", and a second are-you-sure on a leave action is the friction that
+ * makes people hit the spam button instead.
+ *
+ * Not reachable by prefetch: POST only, same-origin-checked (the form is served
+ * by this Worker — see SELF_ORIGIN_POST_PATHS in lib/cors.ts).
+ */
+subscriptions.post("/unsubscribe/:token/all", async (c) => {
+	const token = c.req.param("token");
+	if (!token) return c.text("missing token", 400);
+
+	const sub = await getSubscriptionByToken(c.env.DB, token);
+	if (!sub) {
+		const locale = landingLocale(null, c.get("locale"));
+		return c.html(
+			pageHtml(escapeHtml(tFor(locale)("ui.subscribe.link_expired")), locale),
+		);
+	}
+
+	await markAllSubscriptionsUnsubscribedForEmail(c.env.DB, sub.email);
+
+	const locale = landingLocale(sub.locale, c.get("locale"));
+	return c.html(
+		pageHtml(
+			escapeHtml(tFor(locale)("ui.subscribe.unsubscribed_all")),
 			locale,
 		),
 	);
+});
+
+/**
+ * Unsubscribe one row from the list, addressed by subscription id.
+ *
+ * The id is not a capability and is not treated as one: the token still is.
+ * This re-loads the row and requires it to belong to the token's address,
+ * exactly as `DELETE /mine/:id` requires it to belong to the session's — a
+ * scraped id from someone else's page cancels nothing.
+ *
+ * A mismatch renders the same "link expired or already used" page as an unknown
+ * token, under a 404. Distinguishing "that id isn't yours" from "no such id"
+ * would confirm the id exists, which is the only thing an id-guesser could
+ * learn here.
+ */
+subscriptions.post("/unsubscribe/:token/row/:id", async (c) => {
+	const token = c.req.param("token");
+	if (!token) return c.text("missing token", 400);
+
+	const sub = await getSubscriptionByToken(c.env.DB, token);
+	if (!sub) {
+		const locale = landingLocale(null, c.get("locale"));
+		return c.html(
+			pageHtml(escapeHtml(tFor(locale)("ui.subscribe.link_expired")), locale),
+		);
+	}
+
+	const locale = landingLocale(sub.locale, c.get("locale"));
+	const t = tFor(locale);
+
+	const id = c.req.param("id");
+	const row = id ? await adminGetSubscription(c.env.DB, id) : null;
+	if (!row || row.email.toLowerCase() !== sub.email.toLowerCase()) {
+		return c.html(
+			pageHtml(escapeHtml(t("ui.subscribe.link_expired")), locale),
+			404,
+		);
+	}
+
+	if (row.unsubscribed_at == null) {
+		await markSubscriptionUnsubscribed(c.env.DB, row.id);
+	}
+
+	const post = await getPost(c.env.DB, row.post_slug);
+	return c.html(
+		pageHtml(
+			fillTitleHtml(t("ui.subscribe.unsubscribed"), post?.title ?? row.post_slug),
+			locale,
+			// `sub.id` stays the excluded row: the reader is still on the landing
+			// page for the thread the mail was about, and it keeps its own form
+			// above rather than appearing twice.
+			await manageHtml(
+				c.env.DB,
+				sub.email,
+				sub.id,
+				unsubBasePath(c.req.url),
+				t,
+			),
+		),
+	);
+});
+
+/**
+ * RFC 8058 one-click unsubscribe. The target of the `List-Unsubscribe` header
+ * the digest sets, so this is what Gmail's and Apple Mail's native Unsubscribe
+ * button hits.
+ *
+ * Separate from the human POST above rather than folded into it, on three
+ * counts:
+ *
+ *   - **Caller.** This arrives from the mail provider's servers with no Origin
+ *     header, which needs its own CORS class (NO_ORIGIN_POST_PATHS in
+ *     lib/cors.ts). The human form's same-origin check must not be relaxed to
+ *     accommodate that.
+ *   - **Response.** No human reads this. It returns a bare text/plain 200 and
+ *     must never echo the address or the post — the response goes to a third
+ *     party's fetcher, not to the subscriber.
+ *   - **Method.** POST-only, so the mail-client *prefetchers* that motivated
+ *     the GET/POST split above cannot reach it either. RFC 8058 requires the
+ *     one-click target to be POST-only for exactly this reason.
+ *
+ * Unknown or expired token also answers 200. A non-2xx here is reported by the
+ * mail client as "unsubscribe failed" to a reader who has no way to act on it,
+ * and repeated failures count against sender reputation — while the only thing
+ * a differential response buys an attacker is confirmation that a 256-bit token
+ * they already hold is real.
+ *
+ * **Deliberately not IP-rate-limited**, which is a departure from every other
+ * write on this router. The identity here is a mail provider's shared egress —
+ * every Gmail user's unsubscribe leaves from the same handful of Google IPs, so
+ * an IP bucket (or the global envelope, 200/10min) throttles legitimate
+ * unsubscribes on any instance with real traffic while costing an attacker
+ * nothing: the sibling GET /unsubscribe/:token does the identical unindexed
+ * token lookup with no limit at all. The bound on abuse is the token's
+ * unguessability, same as the GET.
+ */
+subscriptions.post("/unsubscribe/:token/one-click", async (c) => {
+	const token = c.req.param("token");
+	if (token) {
+		const sub = await getSubscriptionByToken(c.env.DB, token);
+		// Same idempotent write as the human POST: only the first call stamps
+		// the row, so a provider retry is a no-op rather than a second audit
+		// entry.
+		if (sub && sub.unsubscribed_at == null) {
+			await markSubscriptionUnsubscribed(c.env.DB, sub.id);
+		}
+	}
+	return c.text("ok", 200);
+});
+
+/**
+ * ─── Session-scoped management ───────────────────────────────────────────
+ *
+ *   GET    /api/v1/subscribe/mine?post_slug=X   → { subscribed, pending }
+ *   GET    /api/v1/subscribe/mine               → { subscriptions: [...] }
+ *   DELETE /api/v1/subscribe/mine/:id           → unsubscribe one row
+ *
+ * The second of two management surfaces, and it exists *because* the emailed
+ * one cannot cover it. A hosted "manage your subscriptions" page on this
+ * Worker's own origin is impossible here: the session cookie is
+ * `SameSite=None; Secure; Partitioned`, so it materializes in the *embedder's*
+ * cookie partition (that is what `POST /auth/session/exchange` is for), and a
+ * top-level page on comments.example.com is a different partition that cannot
+ * see it. The signed-in surface therefore has to live inside the widget, and
+ * these three routes are what it calls.
+ *
+ * **The gate is `user.email != null`, deliberately not `PROVIDER_VERIFIED`.**
+ * The two sets answer different questions and reusing the wrong one here is
+ * the mistake worth naming. `PROVIDER_VERIFIED` (github, google) decides
+ * whether we trust a provider enough to *skip sending* a confirmation mail —
+ * it is a mailbomb-economics judgement, not an identity one. Gating `/mine` on
+ * it would let Facebook and Discord readers subscribe and then refuse them any
+ * way to see or cancel what they follow, which is the exact gap this work
+ * exists to close.
+ *
+ * What makes `user.email != null` sufficient is a contract stated upstream:
+ * `ProviderProfile.email` is null unless the provider vouched for the address
+ * as verified (src/lib/oauth.ts, where every fetcher upholds it). A provider
+ * that returned an unverified claim would turn these routes into an oracle
+ * against someone else's mailbox — sign in asserting victim@example.com, read
+ * back what they follow. That the claim can't be unverified is a property of
+ * oauth.ts, not of this file, which is why it is written down in both places.
+ *
+ * A reader with no address at all — an anonymous ghost, or X/Twitter, whose v2
+ * API exposes no email under our scopes — is signed in but owns nothing here.
+ * That is an empty account, not an error: they get an empty list and an unlit
+ * bell rather than a status code they can do nothing about.
+ *
+ * **Known limitation, deliberately not reconciled.** `POST /subscribe` takes
+ * the address from the request body *or* the session (see :160), so a signed-in
+ * reader who types some other address creates a row keyed to that address —
+ * which their own `/mine` will never show, and which stays reachable only
+ * through its emailed unsubscribe link. Closing the gap means either refusing
+ * signed-in readers a second address or letting a session cancel rows for an
+ * address it has not proven; both are worse than the gap.
+ */
+
+/**
+ * Reads are cheap and session-gated, but they fire on every widget mount, so
+ * the shared `DEFAULTS` (1/10s, 5/600s) would cut a reader off after their
+ * fifth post in ten minutes. Its own scope because it has its own config —
+ * see the note on `RateLimitOptions.scope` for what sharing one costs.
+ */
+const MINE_LIMITS = {
+	short: { max: 10, windowSec: 10 },
+	long: { max: 60, windowSec: 600 },
+};
+
+/**
+ * Session gate and rate limit for both `/mine` routes, in that order, plus the
+ * address they act on — or the response that refuses.
+ *
+ * `email: null` is not a failure: it is a signed-in reader whose account
+ * carries no address (ghost, X/Twitter), and each caller decides what empty
+ * means for it. The 401/403 split mirrors `POST /subscribe` at :143-147 — a
+ * session pointing at a refused user is banned, not unauthenticated.
+ *
+ * **The limiter keys on the account, not the client IP, and that is the whole
+ * reason this helper exists.** `GET /mine` fires on every widget mount, so an
+ * IP-keyed check spends one token of the shared per-IP `GLOBAL_ENVELOPE`
+ * (20/10s, 200/10min) per *page view* — a budget every write endpoint on this
+ * Worker draws from. Behind one office NAT or a carrier CGNAT, readers merely
+ * *loading* the page would drain the short bucket, and the resulting 429 would
+ * land on somebody trying to post a comment: a symptom nowhere near its cause.
+ * Every other rate-limited route here is a write, so this is the first read on
+ * a per-page-view path and the first that could do that. Keying on `user:`
+ * gives each account its own envelope and leaves the IP budget to the writes it
+ * was sized for.
+ *
+ * Session first, D1 second — same order as `PATCH /comments/:id`
+ * (api.comments.ts:1021) and for the same reason. A caller with no cookie is
+ * refused before spending either a KV or a D1 read, because `readSession`
+ * returns null without touching KV when the cookie is absent or malformed.
+ */
+const mineGate = async (
+	c: Context<{ Bindings: Bindings; Variables: LocaleVars }>,
+	t: Translator,
+): Promise<{ email: string | null } | Response> => {
+	const session = await readSession(c);
+	if (!session) return c.json({ error: t("err.session.expired") }, 401);
+
+	const rl = await checkRateLimit(c.req.url, `user:${session.user_id}`, {
+		scope: "subscribe-mine",
+		config: MINE_LIMITS,
+		env: c.env,
+	});
+	if (!rl.ok) {
+		return c.json({ error: t("err.ratelimit"), reason: rl.reason ?? null }, 429);
+	}
+
+	const user = await requireActiveUser(c.env.DB, session.user_id);
+	if (!user) return c.json({ error: t("err.banned") }, 403);
+	return { email: user.email ? user.email.toLowerCase() : null };
+};
+
+subscriptions.get("/mine", async (c) => {
+	const t = c.get("t") ?? tFor(FALLBACK_LOCALE);
+
+	const gate = await mineGate(c, t);
+	if (gate instanceof Response) return gate;
+	const { email } = gate;
+
+	const post_slug = (c.req.query("post_slug") ?? "").trim();
+	if (post_slug) {
+		// Bell state. One read on UNIQUE(post_slug, email) — this is the query
+		// the widget makes on every mount, so it must not become a table scan.
+		const row = email
+			? await getSubscriptionForEmailAndSlug(c.env.DB, email, post_slug)
+			: null;
+		const subscribed = row != null && row.unsubscribed_at == null;
+		// `pending` is the un-confirmed half of `subscribed`. Without it the bell
+		// has to either lie (lit, but no mail will ever arrive) or under-report
+		// (unlit, so the reader subscribes again and burns another confirmation
+		// email against the pending cap). It costs nothing — same row.
+		//
+		// `id` is what makes the bell a two-way toggle: cancelling goes through
+		// `DELETE /mine/:id`, so without it the widget would have to fetch the
+		// reader's whole list just to learn the id of the thread it is already
+		// looking at. Unlike `POST /subscribe` (see :298), disclosing a ULID here
+		// leaks nothing — the session has already proven it owns this address, so
+		// there is no third party for the id to be an oracle about.
+		return c.json({
+			subscribed,
+			pending: subscribed && row?.confirmed_at == null,
+			id: subscribed ? (row?.id ?? null) : null,
+		});
+	}
+
+	// Un-confirmed rows are listed too: they are real rows the reader created,
+	// they occupy the per-address pending cap, and a subscription you cannot see
+	// is one you cannot cancel.
+	const list = email
+		? await listActiveSubscriptionsForEmail(c.env.DB, email)
+		: [];
+	return c.json({ subscriptions: list });
+});
+
+/**
+ * Cancel one subscription by id.
+ *
+ * **IDOR guard, and the status code is part of it.** A row the session does not
+ * own answers 404, not 403: 403 confirms the id exists, which turns a ULID
+ * guess into an existence oracle over other readers' subscriptions. The same
+ * 404 covers "no such row", "not your address", and "your account has no
+ * address at all" — three different reasons the caller has no business
+ * distinguishing. (An address-less reader can own no row by construction, and
+ * the list above already renders them nothing to click, so this path is only
+ * reachable by a hand-made request.)
+ */
+subscriptions.delete("/mine/:id", async (c) => {
+	const t = c.get("t") ?? tFor(FALLBACK_LOCALE);
+
+	const gate = await mineGate(c, t);
+	if (gate instanceof Response) return gate;
+	const { email } = gate;
+
+	const id = c.req.param("id");
+	const row = id ? await adminGetSubscription(c.env.DB, id) : null;
+	if (!row || !email || row.email.toLowerCase() !== email) {
+		return c.json({ error: t("err.not_found") }, 404);
+	}
+
+	// Idempotent: a second DELETE reports success without moving the timestamp
+	// that records when the reader actually asked to stop.
+	if (row.unsubscribed_at == null) {
+		await markSubscriptionUnsubscribed(c.env.DB, row.id);
+	}
+	return c.json({ ok: true });
 });
 
 const escapeHtml = (s: string): string =>
@@ -429,7 +797,12 @@ ${extra}
  *
  * `postLabel` is raw — `fillTitleHtml` escapes it along with its template.
  */
-const confirmPageHtml = (postLabel: string, locale: string, t: Translator): string =>
+const confirmPageHtml = (
+	postLabel: string,
+	locale: string,
+	t: Translator,
+	manage = "",
+): string =>
 	pageHtml(
 		fillTitleHtml(t("ui.subscribe.unsubscribe_confirm"), postLabel),
 		locale,
@@ -440,7 +813,78 @@ const confirmPageHtml = (postLabel: string, locale: string, t: Translator): stri
 </form>
 <p style="color:#6b7280;font-size:0.875rem">
   ${escapeHtml(t("ui.subscribe.unsubscribe_note"))}
-</p>`,
+</p>${manage}`,
 	);
+
+const BUTTON_STYLE = "font:inherit;padding:0.35rem 0.75rem;cursor:pointer";
+
+/**
+ * The account-level half of the emailed landing page: every *other* thread this
+ * address still follows, each with its own unsubscribe button, plus one button
+ * that stops all of them.
+ *
+ * This exists because the per-thread link is only a per-thread exit. A reader
+ * who followed twenty posts had to find twenty different emails to leave them,
+ * and the row loaded to render this page already carries the address, so the
+ * rest is one indexed query.
+ *
+ * **A widening of what a leaked token discloses, and worth stating plainly.**
+ * Before this, a forwarded digest — or a scanning gateway that keeps a copy —
+ * exposed one token that could cancel one subscription. Now the page behind
+ * that token also lists *which posts this address follows*, with their titles.
+ * The mitigating fact is that a token only ever reaches someone who could read
+ * the mailbox, and a mailbox holds the same list in the digests themselves; so
+ * this discloses to a reader who already had the information by another route.
+ * It is still a widening rather than a wash, which is why it is written down.
+ * If it is ever judged too wide, the narrow fallback is to keep the
+ * unsubscribe-all button and drop the list.
+ *
+ * **Rows are addressed by subscription id, never by their own token.** Routing
+ * per-row actions through each row's token would scatter N unsubscribe
+ * capabilities into one HTML page, so a single scraped page would hand over
+ * every thread permanently rather than one page-load. The id is not a
+ * capability: `POST /unsubscribe/:token/row/:id` re-checks that the id belongs
+ * to the token's address.
+ *
+ * Returns "" when there is nothing else to show, so the single-subscription
+ * case renders exactly the page it did before — an "unsubscribe from all
+ * threads" button next to the only thread is noise.
+ */
+const manageHtml = async (
+	db: D1Database,
+	email: string,
+	excludeId: string,
+	basePath: string,
+	t: Translator,
+): Promise<string> => {
+	const rows = (await listActiveSubscriptionsForEmail(db, email)).filter(
+		(r) => r.id !== excludeId,
+	);
+	if (rows.length === 0) return "";
+
+	const items = rows
+		.map(
+			(r) => `<li style="margin:0.5rem 0">
+    <form method="post" action="${escapeHtml(basePath)}/row/${escapeHtml(r.id)}"
+          style="display:flex;gap:0.75rem;align-items:baseline">
+      <span style="flex:1">${escapeHtml(r.title ?? r.post_slug)}</span>
+      <button type="submit" style="${BUTTON_STYLE}">
+        ${escapeHtml(t("ui.subscribe.unsubscribe_row_cta"))}
+      </button>
+    </form>
+  </li>`,
+		)
+		.join("");
+
+	return `
+<hr style="margin:2rem 0;border:0;border-top:1px solid #e5e7eb">
+<p>${escapeHtml(t("ui.subscribe.manage_others"))}</p>
+<ul style="list-style:none;padding:0;margin:0">${items}</ul>
+<form method="post" action="${escapeHtml(basePath)}/all" style="margin-top:1.5rem">
+  <button type="submit" style="${BUTTON_STYLE}">
+    ${escapeHtml(t("ui.subscribe.unsubscribe_all_cta"))}
+  </button>
+</form>`;
+};
 
 export { subscriptions };
