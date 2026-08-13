@@ -388,6 +388,90 @@ describe("corsAndCsrf — Origin allowlist on /api/*", () => {
 		});
 	});
 
+	// Origin-less POST (RFC 8058 one-click) and self-origin POST (the human
+	// confirmation form) are the two relaxations that need a real request URL —
+	// isSelfOriginPost compares against `new URL(c.req.url).origin`, which the
+	// stub context above has no way to supply. Real Hono it is.
+	//
+	// These two live in the same describe on purpose: the whole risk in the
+	// no-Origin class is that it quietly widens its neighbour, whose path is a
+	// prefix of it. Asserting both in one place makes that regression loud.
+	describe("real Hono — token-gated POST relaxations", () => {
+		const TOKEN = "a".repeat(64);
+		const UNSUB = `/api/v1/subscribe/unsubscribe/${TOKEN}`;
+		const env = { ALLOWED_ORIGINS: "https://blog.example.com" };
+		const SELF = "http://localhost";
+
+		const mkApp = () => {
+			const app = new Hono();
+			app.use("*", corsAndCsrf());
+			app.all("*", (c) => c.json({ ok: true }));
+			return app;
+		};
+
+		const call = async (
+			path: string,
+			method: string,
+			origin?: string,
+		): Promise<Response> =>
+			await mkApp().request(
+				path,
+				{ method, headers: origin ? { origin } : {} },
+				env,
+			);
+
+		it("one-click POST with no Origin passes (Gmail posts from its servers)", async () => {
+			const res = await call(`${UNSUB}/one-click`, "POST");
+			expect(res.status).toBe(200);
+		});
+
+		it("one-click POST tolerates a trailing slash", async () => {
+			const res = await call(`${UNSUB}/one-click/`, "POST");
+			expect(res.status).toBe(200);
+		});
+
+		it("one-click POST with a hostile Origin is still rejected", async () => {
+			// A browser always sends Origin on a cross-site POST, so the
+			// relaxation never fires for the case CSRF defense is about.
+			const res = await call(
+				`${UNSUB}/one-click`,
+				"POST",
+				"https://evil.example.com",
+			);
+			expect(res.status).toBe(403);
+		});
+
+		it("one-click GET with no Origin is rejected — the relaxation is POST-only", async () => {
+			// Mail-client prefetchers issue GETs. If this ever passes, a
+			// prefetch unsubscribes someone who never clicked.
+			const res = await call(`${UNSUB}/one-click`, "GET");
+			expect(res.status).toBe(403);
+		});
+
+		it("no-Origin relaxation is anchored — /one-click/extra does not bypass", async () => {
+			const res = await call(`${UNSUB}/one-click/extra`, "POST");
+			expect(res.status).toBe(403);
+		});
+
+		it("the relaxation did NOT leak onto its prefix — bare unsubscribe POST with no Origin is rejected", async () => {
+			// This is the human confirmation form. It is served by this Worker,
+			// so a real click always carries the Worker's own Origin; a request
+			// without one is not that form.
+			const res = await call(UNSUB, "POST");
+			expect(res.status).toBe(403);
+		});
+
+		it("bare unsubscribe POST with this Worker's own Origin passes (the form)", async () => {
+			const res = await call(UNSUB, "POST", SELF);
+			expect(res.status).toBe(200);
+		});
+
+		it("an unrelated no-Origin POST is still rejected", async () => {
+			const res = await call("/api/v1/comments", "POST");
+			expect(res.status).toBe(403);
+		});
+	});
+
 	describe("ALLOWED_ORIGINS parsing", () => {
 		it("multi-value comma list — each origin allowed", async () => {
 			const env = {
