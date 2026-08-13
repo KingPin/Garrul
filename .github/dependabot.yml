@@ -10,10 +10,12 @@ updates:
     directory: /
     schedule:
       interval: weekly
-    # Action bumps don't change agent-facing behavior, and
-    # .github/workflows/agents-docs-sync.yml fails any PR touching watched
-    # source paths without an AGENTS.md update. Label them so that gate waives
-    # itself instead of blocking a security update.
+    # Action bumps don't change agent-facing behavior, and the AGENTS gate in
+    # .github/workflows/docs-sync.yml fails any PR touching watched source
+    # paths without an AGENTS.md update. Label them so that gate waives itself
+    # instead of blocking a security update. No `human-docs-ok` here on
+    # purpose: a dependency bump cannot add an env var, so the human gate never
+    # fires, and a bypass label that isn't needed is one that stops being read.
     labels:
       - dependencies
       - agents-docs-ok

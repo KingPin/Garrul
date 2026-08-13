@@ -42,7 +42,7 @@ scripts/                # setup.sh, rerender.ts, seed-demo.ts, db-export.sh, bui
                         #   import-disqus.ts, upgrade.ts, upgrade/
 docs/                   # THEMING.md, ANTISPAM.md, troubleshooting.md, webhooks.md, telegram.md,
                         #   api-keys-design.md, privacy-policy.template.md, tos.template.md
-.github/workflows/      # ci.yml, release.yml, agents-docs-sync.yml
+.github/workflows/      # ci.yml, release.yml, docs-sync.yml
 ```
 
 - `AGENTS.md`, `AGENTS-OPERATE.md` — AI assistant integration / operations guides. `AGENTS.md` is also served by the Worker at `/AGENTS.md` with light host templating.
@@ -136,6 +136,12 @@ GitHub Actions workflows ship in `.github/workflows/` and run unconditionally �
 
 - `ci.yml` — `lint`, `typecheck`, `test`, `manifest:check`, `build`, `size`. Runs on push/PR to `main` plus `workflow_dispatch`.
 - `release.yml` — fires on `v*` tags. Remember the auto-generated release body is a stub; rewrite it (see Releases above).
-- `agents-docs-sync.yml` — fails a PR that touches watched source paths without updating `AGENTS.md` / `AGENTS-OPERATE.md`. Add the `agents-docs-ok` label to bypass for refactors and dep bumps.
+- `docs-sync.yml` — two independent doc gates, one per audience. Bypass labels are **per gate**, so waving off one can't silently wave off the other.
+  - *AGENTS docs sync* — a PR touching watched source paths must update `AGENTS.md` / `AGENTS-OPERATE.md`. Bypass: `agents-docs-ok`.
+  - *Human docs sync* — a PR that adds or removes an env var in `wrangler.example.toml`, `.dev.vars.example`, or `secrets.example.env` must update `README.md`, `INSTALL.md`, or a page under `docs/`. Bypass: `human-docs-ok`.
 
-Earlier versions gated every job on `github.event.repository.private == false` so private-repo pushes wouldn't burn billing. Those guards were removed once the repo went public. `ci.yml` and `release.yml` had grown a `|| github.event_name == 'workflow_dispatch'` escape hatch; `agents-docs-sync.yml` never did, so it sat unrunnable.
+**Why the human gate exists.** For most of this project's life only the AGENTS gate did, and the asymmetry had a measurable cost. Email reply notifications shipped 2026-05-17; `AGENTS.md` was created two days later and described them in its first commit; `README.md` did not mention them until 2026-08-12 — 87 days, and only because a public comparison review marked the feature absent. Across the 32 commits that have touched the env/secret surface, 20 updated an AGENTS file and 8 updated a human-facing one. One set of docs could not go stale without failing CI and the other could go stale in silence, so drift was the designed outcome, not an accident. **A gate on one audience is a gate that teaches you to serve that audience.**
+
+The human gate is scoped to the env/secret surface rather than all of `src/` on purpose: a gate that fires on every source commit gets bypass-labelled by reflex, which rebuilds the honour system in a CI costume. It also fires only when a variable *name* changes, so editing a comment or a placeholder value in a template doesn't demand a docs update — replayed over all 32 historical commits, that narrowing drops 25 failures to 20 and the 5 it spares are pure template hygiene.
+
+Earlier versions gated every job on `github.event.repository.private == false` so private-repo pushes wouldn't burn billing. Those guards were removed once the repo went public. `ci.yml` and `release.yml` had grown a `|| github.event_name == 'workflow_dispatch'` escape hatch; the docs-sync workflow (then `agents-docs-sync.yml`) never did, so it sat unrunnable.
