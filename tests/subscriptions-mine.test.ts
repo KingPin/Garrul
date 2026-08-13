@@ -372,3 +372,34 @@ describe("DELETE /subscribe/mine/:id", () => {
 		expect(cancelledAt("s-fb-1")).not.toBeNull();
 	});
 });
+
+/**
+ * The limiter keys on the account, never on the client IP.
+ *
+ * `GET /mine` is the only rate-limited *read* on a per-page-view path in this
+ * Worker — every other limited route is a write. Keyed on `ipHash` it would
+ * spend one token of the shared per-IP `GLOBAL_ENVELOPE` (20/10s, 200/10min)
+ * per page view, so behind a single office NAT or a carrier CGNAT readers
+ * merely *loading* the page would drain the bucket and the 429 would surface on
+ * somebody else trying to post a comment — a symptom nowhere near its cause.
+ *
+ * Nothing else in this suite pins the identity, so this case is what stops the
+ * route quietly reverting to `ipHash`. It discriminates by construction: `call`
+ * sends one fixed `cf-connecting-ip` for every request, so the only thing that
+ * can separate these two readers' budgets is the session.
+ */
+describe("GET /subscribe/mine — rate-limit identity", () => {
+	it("does not let one reader's page views exhaust another's budget", async () => {
+		// MINE_LIMITS.short is 10/10s — spend one account's bucket exactly.
+		for (let i = 0; i < 10; i++) {
+			expect((await call("/mine", { sid: GH_SID })).status).toBe(200);
+		}
+		// Not a vacuous test: the 11th is refused, so the limiter really is
+		// running on this route and the 200s below mean something.
+		expect((await call("/mine", { sid: GH_SID })).status).toBe(429);
+
+		// Same IP, different account, untouched budget. Keyed on the IP this is
+		// a 429 and the second reader's bell goes dark for no reason of theirs.
+		expect((await call("/mine", { sid: FB_SID })).status).toBe(200);
+	});
+});

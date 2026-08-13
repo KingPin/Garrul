@@ -629,30 +629,39 @@ const MINE_LIMITS = {
 };
 
 /**
- * Resolve the address these routes act on, or the response that refuses.
+ * Session gate and rate limit for both `/mine` routes, in that order, plus the
+ * address they act on — or the response that refuses.
  *
- * `null` is not a failure: it is a signed-in reader whose account carries no
- * address (ghost, X/Twitter), and each caller decides what empty means for it.
- * The 401/403 split mirrors `POST /subscribe` at :143-147 — a session pointing
- * at a refused user is banned, not unauthenticated.
+ * `email: null` is not a failure: it is a signed-in reader whose account
+ * carries no address (ghost, X/Twitter), and each caller decides what empty
+ * means for it. The 401/403 split mirrors `POST /subscribe` at :143-147 — a
+ * session pointing at a refused user is banned, not unauthenticated.
+ *
+ * **The limiter keys on the account, not the client IP, and that is the whole
+ * reason this helper exists.** `GET /mine` fires on every widget mount, so an
+ * IP-keyed check spends one token of the shared per-IP `GLOBAL_ENVELOPE`
+ * (20/10s, 200/10min) per *page view* — a budget every write endpoint on this
+ * Worker draws from. Behind one office NAT or a carrier CGNAT, readers merely
+ * *loading* the page would drain the short bucket, and the resulting 429 would
+ * land on somebody trying to post a comment: a symptom nowhere near its cause.
+ * Every other rate-limited route here is a write, so this is the first read on
+ * a per-page-view path and the first that could do that. Keying on `user:`
+ * gives each account its own envelope and leaves the IP budget to the writes it
+ * was sized for.
+ *
+ * Session first, D1 second — same order as `PATCH /comments/:id`
+ * (api.comments.ts:1021) and for the same reason. A caller with no cookie is
+ * refused before spending either a KV or a D1 read, because `readSession`
+ * returns null without touching KV when the cookie is absent or malformed.
  */
-const mineEmail = async (
+const mineGate = async (
 	c: Context<{ Bindings: Bindings; Variables: LocaleVars }>,
 	t: Translator,
-): Promise<string | null | Response> => {
+): Promise<{ email: string | null } | Response> => {
 	const session = await readSession(c);
 	if (!session) return c.json({ error: t("err.session.expired") }, 401);
-	const user = await requireActiveUser(c.env.DB, session.user_id);
-	if (!user) return c.json({ error: t("err.banned") }, 403);
-	return user.email ? user.email.toLowerCase() : null;
-};
 
-subscriptions.get("/mine", async (c) => {
-	const t = c.get("t") ?? tFor(FALLBACK_LOCALE);
-
-	const ipHash = await requireIpHash(c);
-	if (ipHash instanceof Response) return ipHash;
-	const rl = await checkRateLimit(c.req.url, ipHash, {
+	const rl = await checkRateLimit(c.req.url, `user:${session.user_id}`, {
 		scope: "subscribe-mine",
 		config: MINE_LIMITS,
 		env: c.env,
@@ -661,8 +670,17 @@ subscriptions.get("/mine", async (c) => {
 		return c.json({ error: t("err.ratelimit"), reason: rl.reason ?? null }, 429);
 	}
 
-	const email = await mineEmail(c, t);
-	if (email instanceof Response) return email;
+	const user = await requireActiveUser(c.env.DB, session.user_id);
+	if (!user) return c.json({ error: t("err.banned") }, 403);
+	return { email: user.email ? user.email.toLowerCase() : null };
+};
+
+subscriptions.get("/mine", async (c) => {
+	const t = c.get("t") ?? tFor(FALLBACK_LOCALE);
+
+	const gate = await mineGate(c, t);
+	if (gate instanceof Response) return gate;
+	const { email } = gate;
 
 	const post_slug = (c.req.query("post_slug") ?? "").trim();
 	if (post_slug) {
@@ -714,19 +732,9 @@ subscriptions.get("/mine", async (c) => {
 subscriptions.delete("/mine/:id", async (c) => {
 	const t = c.get("t") ?? tFor(FALLBACK_LOCALE);
 
-	const ipHash = await requireIpHash(c);
-	if (ipHash instanceof Response) return ipHash;
-	const rl = await checkRateLimit(c.req.url, ipHash, {
-		scope: "subscribe-mine",
-		config: MINE_LIMITS,
-		env: c.env,
-	});
-	if (!rl.ok) {
-		return c.json({ error: t("err.ratelimit"), reason: rl.reason ?? null }, 429);
-	}
-
-	const email = await mineEmail(c, t);
-	if (email instanceof Response) return email;
+	const gate = await mineGate(c, t);
+	if (gate instanceof Response) return gate;
+	const { email } = gate;
 
 	const id = c.req.param("id");
 	const row = id ? await adminGetSubscription(c.env.DB, id) : null;

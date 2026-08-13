@@ -298,7 +298,7 @@ describe("route wiring", () => {
 		expect(missing).toEqual([]);
 		// Guards the guard: a regex that stopped matching would otherwise pass
 		// vacuously and this test would quietly stop protecting anything.
-		expect(found).toBe(13);
+		expect(found).toBe(12);
 	});
 });
 
