@@ -4,6 +4,8 @@
  * GET  /api/v1/subscribe/unsubscribe/:token       offers to unsubscribe
  * POST /api/v1/subscribe/unsubscribe/:token       does it (human form)
  * POST /api/v1/subscribe/unsubscribe/:token/one-click   does it (RFC 8058)
+ * GET  /api/v1/subscribe/mine[?post_slug=]        what this session follows
+ * DELETE /api/v1/subscribe/mine/:id               cancels one of them
  *
  * Subscription model:
  *   - One row per (post_slug, email). This endpoint is unauthenticated and
@@ -41,14 +43,17 @@
  *      concurrent burst cannot get past on a default install. See
  *      src/lib/email-budget.ts for why it is global and what that costs.
  */
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import type { Bindings } from "../index";
 import {
+	adminGetSubscription,
 	confirmSubscription,
 	countPendingSubscriptionsForEmail,
 	getPost,
 	getSubscriptionByConfirmToken,
 	getSubscriptionByToken,
+	getSubscriptionForEmailAndSlug,
+	listActiveSubscriptionsForEmail,
 	markSubscriptionUnsubscribed,
 	upsertSubscription,
 } from "../db/queries";
@@ -430,6 +435,170 @@ subscriptions.post("/unsubscribe/:token/one-click", async (c) => {
 		}
 	}
 	return c.text("ok", 200);
+});
+
+/**
+ * ─── Session-scoped management ───────────────────────────────────────────
+ *
+ *   GET    /api/v1/subscribe/mine?post_slug=X   → { subscribed, pending }
+ *   GET    /api/v1/subscribe/mine               → { subscriptions: [...] }
+ *   DELETE /api/v1/subscribe/mine/:id           → unsubscribe one row
+ *
+ * The second of two management surfaces, and it exists *because* the emailed
+ * one cannot cover it. A hosted "manage your subscriptions" page on this
+ * Worker's own origin is impossible here: the session cookie is
+ * `SameSite=None; Secure; Partitioned`, so it materializes in the *embedder's*
+ * cookie partition (that is what `POST /auth/session/exchange` is for), and a
+ * top-level page on comments.example.com is a different partition that cannot
+ * see it. The signed-in surface therefore has to live inside the widget, and
+ * these three routes are what it calls.
+ *
+ * **The gate is `user.email != null`, deliberately not `PROVIDER_VERIFIED`.**
+ * The two sets answer different questions and reusing the wrong one here is
+ * the mistake worth naming. `PROVIDER_VERIFIED` (github, google) decides
+ * whether we trust a provider enough to *skip sending* a confirmation mail —
+ * it is a mailbomb-economics judgement, not an identity one. Gating `/mine` on
+ * it would let Facebook and Discord readers subscribe and then refuse them any
+ * way to see or cancel what they follow, which is the exact gap this work
+ * exists to close.
+ *
+ * What makes `user.email != null` sufficient is a contract stated upstream:
+ * `ProviderProfile.email` is null unless the provider vouched for the address
+ * as verified (src/lib/oauth.ts, where every fetcher upholds it). A provider
+ * that returned an unverified claim would turn these routes into an oracle
+ * against someone else's mailbox — sign in asserting victim@example.com, read
+ * back what they follow. That the claim can't be unverified is a property of
+ * oauth.ts, not of this file, which is why it is written down in both places.
+ *
+ * A reader with no address at all — an anonymous ghost, or X/Twitter, whose v2
+ * API exposes no email under our scopes — is signed in but owns nothing here.
+ * That is an empty account, not an error: they get an empty list and an unlit
+ * bell rather than a status code they can do nothing about.
+ *
+ * **Known limitation, deliberately not reconciled.** `POST /subscribe` takes
+ * the address from the request body *or* the session (see :160), so a signed-in
+ * reader who types some other address creates a row keyed to that address —
+ * which their own `/mine` will never show, and which stays reachable only
+ * through its emailed unsubscribe link. Closing the gap means either refusing
+ * signed-in readers a second address or letting a session cancel rows for an
+ * address it has not proven; both are worse than the gap.
+ */
+
+/**
+ * Reads are cheap and session-gated, but they fire on every widget mount, so
+ * the shared `DEFAULTS` (1/10s, 5/600s) would cut a reader off after their
+ * fifth post in ten minutes. Its own scope because it has its own config —
+ * see the note on `RateLimitOptions.scope` for what sharing one costs.
+ */
+const MINE_LIMITS = {
+	short: { max: 10, windowSec: 10 },
+	long: { max: 60, windowSec: 600 },
+};
+
+/**
+ * Resolve the address these routes act on, or the response that refuses.
+ *
+ * `null` is not a failure: it is a signed-in reader whose account carries no
+ * address (ghost, X/Twitter), and each caller decides what empty means for it.
+ * The 401/403 split mirrors `POST /subscribe` at :143-147 — a session pointing
+ * at a refused user is banned, not unauthenticated.
+ */
+const mineEmail = async (
+	c: Context<{ Bindings: Bindings; Variables: LocaleVars }>,
+	t: Translator,
+): Promise<string | null | Response> => {
+	const session = await readSession(c);
+	if (!session) return c.json({ error: t("err.session.expired") }, 401);
+	const user = await requireActiveUser(c.env.DB, session.user_id);
+	if (!user) return c.json({ error: t("err.banned") }, 403);
+	return user.email ? user.email.toLowerCase() : null;
+};
+
+subscriptions.get("/mine", async (c) => {
+	const t = c.get("t") ?? tFor(FALLBACK_LOCALE);
+
+	const ipHash = await requireIpHash(c);
+	if (ipHash instanceof Response) return ipHash;
+	const rl = await checkRateLimit(c.req.url, ipHash, {
+		scope: "subscribe-mine",
+		config: MINE_LIMITS,
+		env: c.env,
+	});
+	if (!rl.ok) {
+		return c.json({ error: t("err.ratelimit"), reason: rl.reason ?? null }, 429);
+	}
+
+	const email = await mineEmail(c, t);
+	if (email instanceof Response) return email;
+
+	const post_slug = (c.req.query("post_slug") ?? "").trim();
+	if (post_slug) {
+		// Bell state. One read on UNIQUE(post_slug, email) — this is the query
+		// the widget makes on every mount, so it must not become a table scan.
+		const row = email
+			? await getSubscriptionForEmailAndSlug(c.env.DB, email, post_slug)
+			: null;
+		const subscribed = row != null && row.unsubscribed_at == null;
+		// `pending` is the un-confirmed half of `subscribed`. Without it the bell
+		// has to either lie (lit, but no mail will ever arrive) or under-report
+		// (unlit, so the reader subscribes again and burns another confirmation
+		// email against the pending cap). It costs nothing — same row.
+		return c.json({
+			subscribed,
+			pending: subscribed && row?.confirmed_at == null,
+		});
+	}
+
+	// Un-confirmed rows are listed too: they are real rows the reader created,
+	// they occupy the per-address pending cap, and a subscription you cannot see
+	// is one you cannot cancel.
+	const list = email
+		? await listActiveSubscriptionsForEmail(c.env.DB, email)
+		: [];
+	return c.json({ subscriptions: list });
+});
+
+/**
+ * Cancel one subscription by id.
+ *
+ * **IDOR guard, and the status code is part of it.** A row the session does not
+ * own answers 404, not 403: 403 confirms the id exists, which turns a ULID
+ * guess into an existence oracle over other readers' subscriptions. The same
+ * 404 covers "no such row", "not your address", and "your account has no
+ * address at all" — three different reasons the caller has no business
+ * distinguishing. (An address-less reader can own no row by construction, and
+ * the list above already renders them nothing to click, so this path is only
+ * reachable by a hand-made request.)
+ */
+subscriptions.delete("/mine/:id", async (c) => {
+	const t = c.get("t") ?? tFor(FALLBACK_LOCALE);
+
+	const ipHash = await requireIpHash(c);
+	if (ipHash instanceof Response) return ipHash;
+	const rl = await checkRateLimit(c.req.url, ipHash, {
+		scope: "subscribe-mine",
+		config: MINE_LIMITS,
+		env: c.env,
+	});
+	if (!rl.ok) {
+		return c.json({ error: t("err.ratelimit"), reason: rl.reason ?? null }, 429);
+	}
+
+	const email = await mineEmail(c, t);
+	if (email instanceof Response) return email;
+
+	const id = c.req.param("id");
+	const row = id ? await adminGetSubscription(c.env.DB, id) : null;
+	if (!row || !email || row.email.toLowerCase() !== email) {
+		return c.json({ error: t("err.not_found") }, 404);
+	}
+
+	// Idempotent: a second DELETE reports success without moving the timestamp
+	// that records when the reader actually asked to stop.
+	if (row.unsubscribed_at == null) {
+		await markSubscriptionUnsubscribed(c.env.DB, row.id);
+	}
+	return c.json({ ok: true });
 });
 
 const escapeHtml = (s: string): string =>
