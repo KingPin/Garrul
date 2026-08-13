@@ -20,12 +20,18 @@ dashboard page); every other integration is optional.
 - **Threaded comments** with markdown, reactions, edit/delete window
 - **OAuth sign-in** (GitHub, Google, Facebook, X, Discord) + anonymous
   posting with rate limiting and Turnstile
-- **Embeddable widget** (~15 KB gzipped, CI-capped at 30 KB) with
-  Shadow-DOM isolation, theme variables, and an iframe alternative
+- **Embeddable widget**, CI-capped at 30 KB gzipped, with Shadow-DOM
+  isolation, theme variables, and an iframe alternative
 - **Reply notifications by email**, built in — readers opt in from the
   widget, confirm by double-opt-in, and get a debounced digest when new
   comments land. No webhook or external pipeline required; bring a
   Resend key — [`docs/notifications.md`](docs/notifications.md)
+- **Moderator notifications by email** — a digest of what's sitting in
+  the queue or has been reported, to `ADMIN_EMAILS` or a shared alias.
+  Off by default; one switch in *Settings → Moderation*
+- **Import from Disqus** — upload an export in the admin UI, or run
+  `npm run import-disqus -- ./export.xml --dry-run` to see the plan
+  before it writes anything
 - **RSS feeds**, comment counts, permalinks
 - **Admin UI** for moderation queue + user management
 - **Webhook out** on every comment event — generic, Slack, Discord, or Telegram
@@ -116,10 +122,9 @@ frame-src   ... https://comments.example.com;
 
 `script-src` lets the embed bundle execute, `connect-src` lets it call
 the API, and `frame-src` lets the widget mount its same-origin iframe
-that hosts the Turnstile anti-spam challenge. (Turnstile used to render
-directly inside the Shadow DOM, which required `*.cloudflare.com` in
-your CSP — that's no longer needed. The challenge frame is nested
-inside our iframe and governed by its CSP, not yours.) See
+that hosts the Turnstile anti-spam challenge. You do **not** need
+`*.cloudflare.com` in your CSP — the challenge frame is nested inside
+ours and governed by its CSP, not yours. See
 [docs/troubleshooting.md](docs/troubleshooting.md) for symptom-by-symptom
 diagnosis, or use the iframe variant below to keep your host CSP
 untouched entirely.
@@ -139,44 +144,25 @@ The iframe page posts content height to the parent via
 
 ### Language
 
-The widget's language is a property of **the site, not the reader**. A
-German visitor to an English blog gets an English comment box, because
-a German composer under English prose reads as broken. `Accept-Language`
+The widget's language is a property of **the site, not the reader** — a
+German visitor to an English blog gets an English comment box, because a
+German composer under English prose reads as broken. `Accept-Language`
 and `navigator.language` are deliberately never consulted.
 
 ```html
 <div id="garrul" data-slug="my-post" data-lang="de"></div>
 ```
 
-Resolution order: `data-lang` → the operator's `default_locale` setting
-→ your page's `<html lang>` → English. Unrecognized tags fall back to
-English rather than erroring, and English costs nothing on the wire —
-it's compiled into the bundle, so only non-English mounts download a
-string table. For the iframe variant, pass `?lang=de` on the embed URL.
-
-| Locale | | Status |
-| --- | --- | --- |
-| `en` | English | Source |
-| `de` | Deutsch | Machine-seeded — not reviewed |
-| `es` | Español | Machine-seeded — not reviewed |
-| `fr` | Français | Machine-seeded — not reviewed |
-
-**"Machine-seeded" means exactly that:** LLM output that no native
-speaker has checked. They ship anyway because holding translations
-until a volunteer appears is how a project ends up with none — but
-unreviewed locales are reachable **only** through an explicit
-`data-lang`, never picked up automatically from your `<html lang>`. So
-the only person who ever sees unreviewed German is an operator who
-typed `de` and therefore reads German.
-
-If you speak one of these, correcting it is a five-line PR and gets the
-locale promoted to reviewed (and auto-selectable). See
+English, German, Spanish and French ship. The last three are
+**machine-seeded** — LLM output no native speaker has checked — so they
+are reachable only through an explicit `data-lang` and are never picked
+up automatically from your `<html lang>`. If you speak one, correcting
+it is a five-line PR and promotes the locale to reviewed:
 [CONTRIBUTING.md](CONTRIBUTING.md#translations-wanted).
 
-Comment bodies are never translated — they're what your readers wrote.
-Timestamps render locale-neutral (`2026-08-10 14:30`) in every
-language. The admin UI is English-only by design; it's seen only by
-you.
+Resolution order, the iframe variant's `?lang=`, what is and isn't
+translated, and how timestamps render:
+[`docs/i18n.md`](docs/i18n.md).
 
 ### Per-platform integration snippets
 
@@ -245,10 +231,10 @@ your local archive.
 
 Your instance is gated by `ALLOWED_ORIGINS` (set in `wrangler.toml`,
 comma-separated, no wildcards). Every request under `/api/*` — including
-plain GET reads of comment trees, counts, and config — must carry an
-`Origin` header matching the allowlist. Browser fetches from your own
-sites send `Origin` automatically and continue to work; direct curl /
-scraper hits to `/api/v1/*` now return `403 err.origin.forbidden`.
+plain GET reads of comment trees, counts, and config — must carry a
+matching `Origin` header. Browser fetches from your own sites send it
+automatically; direct curl or scraper hits to `/api/v1/*` return
+`403 err.origin.forbidden`.
 
 Exempt by design (no `Origin` header reaches them):
 
@@ -257,11 +243,12 @@ Exempt by design (no `Origin` header reaches them):
 - `GET /feed/:slug`, `GET /c/:id`, `GET /embed/:slug`, `GET /embed.js` —
   outside the `/api/*` gate; intentionally public
 
-Server-side build-time fetchers (SSGs that read comments at deploy time)
-will now get 403s. Workaround: consume `GET /feed/:slug` (Atom, ungated)
-until the planned API-keys system ships — design lives in
-[`docs/api-keys-design.md`](docs/api-keys-design.md) (not implemented in
-v1).
+**Build-time fetchers get 403s.** An SSG that reads comments at deploy
+time should consume `GET /feed/:slug` (Atom, ungated) until the planned
+API-keys system ships — design in
+[`docs/api-keys-design.md`](docs/api-keys-design.md), not implemented.
+Symptom-level help in
+[`docs/troubleshooting.md`](docs/troubleshooting.md).
 
 ## Privacy
 
@@ -276,18 +263,17 @@ No analytics, no tracking pixels, no advertising, no Gravatar. One
 strictly-necessary cookie. Data-subject requests are served by a per-user
 JSON export and an admin erase panel, both on `/admin/users/<id>`.
 
-To deploy a public instance, copy `docs/privacy-policy.template.md` and
-`docs/tos.template.md`, fill in your contact details, and link them
-from your blog footer.
+Deploying a public instance? Copy `docs/privacy-policy.template.md` and
+`docs/tos.template.md`, fill in your contact details, and link them from
+your footer.
 
-Running an instance European or Californian readers comment on makes **you**
-the controller of that data, not this project.
-[`docs/compliance/`](docs/compliance/) has the paperwork that follows from
-that: a personal-data inventory that maps onto a GDPR Art. 30 record, the
-data-subject rights mapped to the mechanisms that serve them, the CCPA/CPRA
-categories, a subprocessor register, and a runbook for answering a request.
-Not legal advice, and it does not claim Garrul "is GDPR compliant" —
-compliance is a property of a deployment.
+Running an instance that European or Californian readers comment on makes
+**you** the controller of that data, not this project.
+[`docs/compliance/`](docs/compliance/) has the paperwork that follows: a
+personal-data inventory, the data-subject rights mapped to the mechanisms
+that serve them, CCPA/CPRA categories, a subprocessor register, and a DSAR
+runbook. Not legal advice, and it does not claim Garrul "is GDPR
+compliant" — compliance is a property of a deployment.
 
 ## Troubleshooting
 
