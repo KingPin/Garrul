@@ -54,7 +54,8 @@ Four ways, no account required for the first three:
 - **That same page**, which also lists every other thread the address
   follows, with a per-row unsubscribe and an unsubscribe-from-all — for the
   reader who followed twenty threads and doesn't want to find twenty emails.
-- **The widget**, for a reader signed in with a provider-verified address:
+- **The widget**, for a reader signed in with a provider-verified address —
+  *any* of the five, not only the two that skip confirmation above:
   the 🔔 becomes a two-way toggle (🔕 while subscribed, with a distinct
   "waiting for you to confirm" state), and a **Manage subscriptions**
   disclosure beside it lists and cancels every thread that address follows.

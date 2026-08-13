@@ -303,11 +303,12 @@ There are four exits; walk them in this order.
 3. **That same page's list of their other threads**, with an
    unsubscribe-from-all. This is the answer for "I follow twenty posts
    and I'm not hunting twenty emails."
-4. **The widget**, but only for a reader signed in with a
-   provider-verified address (GitHub, Google). The 🔔 toggles off and a
-   **Manage subscriptions** disclosure lists every thread. A reader
-   signed in via X/Twitter has no address on their account, so they get
-   the plain subscribe bell and must use one of the email routes.
+4. **The widget**, but only for a reader whose session carries an email
+   address — *any* provider that supplied a verified one, not just the two
+   that skip the confirmation mail. The 🔔 toggles off and a **Manage
+   subscriptions** disclosure lists every thread. A reader signed in via
+   X/Twitter has no address on their account, so they get the plain
+   subscribe bell and must use one of the email routes.
 
 You can always cancel it for them from *Admin → Subscriptions*.
 
