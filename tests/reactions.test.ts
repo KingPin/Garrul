@@ -19,9 +19,13 @@ import { installMockCaches, uninstallMockCaches } from "./helpers/mock-caches";
 const COMMENT_ID = "01HC000000000000000000ABCD";
 const GHOST_ID = "01HU000000000000000000";
 
-const makeDb = (status: string) => ({
+// `writes` collects every (sql, args) pair a test cares to inspect. Only the
+// deprecated-alias test uses it — the kind that gets *stored* is not visible in
+// the response, so it has to be read off the statement.
+const makeDb = (status: string, writes: { sql: string; args: unknown[] }[] = []) => ({
 	prepare: (sql: string) => ({
-		bind(..._args: unknown[]) {
+		bind(...args: unknown[]) {
+			writes.push({ sql, args });
 			return this;
 		},
 		async first() {
@@ -74,7 +78,7 @@ const makeDb = (status: string) => ({
 			if (sql.includes("FROM reactions") && sql.includes("COUNT(*)")) {
 				return {
 					results: [
-						{ kind: "like", count: 3 },
+						{ kind: "fire", count: 3 },
 						{ kind: "love", count: 1 },
 					],
 				};
@@ -98,11 +102,14 @@ const makeKv = () => ({
 	async delete() {},
 });
 
-const mkApp = (status = "approved") => {
+const mkApp = (
+	status = "approved",
+	writes: { sql: string; args: unknown[] }[] = [],
+) => {
 	const app = new Hono<{ Bindings: Record<string, unknown> }>();
 	app.route("/r", reactions);
 	const env = {
-		DB: makeDb(status),
+		DB: makeDb(status, writes),
 		TREE_CACHE: makeKv(),
 		SESSIONS: makeKv(),
 		ANALYTICS: { writeDataPoint: () => {} },
@@ -138,7 +145,7 @@ afterEach(() => {
 describe("POST /reactions — input validation", () => {
 	it("rejects a missing comment_id with 400", async () => {
 		const { app, env } = mkApp();
-		const res = await post(app, env, { kind: "like" });
+		const res = await post(app, env, { kind: "fire" });
 		expect(res.status).toBe(400);
 	});
 
@@ -151,6 +158,46 @@ describe("POST /reactions — input validation", () => {
 		expect(res.status).toBe(400);
 		const body = (await res.json()) as { error: string };
 		expect(body.error).toBe("invalid_kind");
+	});
+
+	it("accepts the deprecated `like` and stores it as `fire`", async () => {
+		// A reader holding a pre-2.10.0 bundle in cache still POSTs `like`.
+		// Rejecting it would break their buttons; storing it verbatim would land
+		// a row no build renders, which is exactly what migration 0022 cleaned up.
+		installMockCaches();
+		const writes: { sql: string; args: unknown[] }[] = [];
+		const { app, env } = mkApp("approved", writes);
+		const res = await post(app, env, { comment_id: COMMENT_ID, kind: "like" });
+		expect(res.status).toBe(200);
+		const insert = writes.find((w) => w.sql.includes("INSERT INTO reactions"));
+		// (comment_id, user_id, kind, created_at) — see toggleReaction.
+		expect(insert?.args[2]).toBe("fire");
+	});
+
+	it("answers a deprecated `like` in both spellings", async () => {
+		// Storing it as `fire` is only half the alias. That old bundle patches its
+		// row with mergeReactionTotals(prev, totals, "like", true) — keyed on `fire`
+		// alone it finds nothing, paints the cell to 0, and (for an anonymous
+		// reader, who never sees zero-count kinds) hides the button that was just
+		// pressed. Both spellings carry the same count.
+		installMockCaches();
+		const { app, env } = mkApp("approved");
+		const res = await post(app, env, { comment_id: COMMENT_ID, kind: "like" });
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { reactions: Record<string, number> };
+		expect(body.reactions.like).toBe(body.reactions.fire);
+		expect(body.reactions.like).toBeGreaterThan(0);
+	});
+
+	it("does not invent an alias key for a current kind", async () => {
+		// A current bundle asks for `fire`, nothing is rewritten, and it must see
+		// the response shape it has always seen.
+		installMockCaches();
+		const { app, env } = mkApp("approved");
+		const res = await post(app, env, { comment_id: COMMENT_ID, kind: "fire" });
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { reactions: Record<string, number> };
+		expect(body.reactions.like).toBeUndefined();
 	});
 
 	it("rejects a malformed JSON body with 400", async () => {
@@ -177,7 +224,7 @@ describe("POST /reactions — input validation", () => {
 		const res = await post(
 			app,
 			{ ...env, REACTIONS_ENABLED: "0" },
-			{ comment_id: COMMENT_ID, kind: "like" },
+			{ comment_id: COMMENT_ID, kind: "fire" },
 		);
 		expect(res.status).toBe(403);
 		const body = (await res.json()) as { error: string };
@@ -191,7 +238,7 @@ describe("POST /reactions — only approved comments are reactable", () => {
 			const { app, env } = mkApp(status);
 			const res = await post(app, env, {
 				comment_id: COMMENT_ID,
-				kind: "like",
+				kind: "fire",
 			});
 			expect(res.status).toBe(404);
 			// Same body as a missing row — nothing to key the moderation state off.
@@ -203,7 +250,7 @@ describe("POST /reactions — only approved comments are reactable", () => {
 	it("still accepts a reaction on an approved comment", async () => {
 		installMockCaches();
 		const { app, env } = mkApp("approved");
-		const res = await post(app, env, { comment_id: COMMENT_ID, kind: "like" });
+		const res = await post(app, env, { comment_id: COMMENT_ID, kind: "fire" });
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as { ok: boolean };
 		expect(body.ok).toBe(true);
@@ -215,12 +262,12 @@ describe("POST /reactions — only approved comments are reactable", () => {
 		// that would visibly blank a comment's reactions.
 		installMockCaches();
 		const { app, env } = mkApp("approved");
-		const res = await post(app, env, { comment_id: COMMENT_ID, kind: "like" });
+		const res = await post(app, env, { comment_id: COMMENT_ID, kind: "fire" });
 		const body = (await res.json()) as {
 			added: boolean;
 			reactions: Record<string, number>;
 		};
 		expect(body.added).toBe(true);
-		expect(body.reactions).toEqual({ like: 3, love: 1 });
+		expect(body.reactions).toEqual({ fire: 3, love: 1 });
 	});
 });

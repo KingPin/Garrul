@@ -80,6 +80,13 @@ export const es = {
 	"w.page.helpful": "¿Te ha resultado útil?",
 	"w.page.up": "Votar a favor de esta página",
 	"w.page.down": "Votar en contra de esta página",
+	"w.page.react_prompt": "¿Cuál es tu reacción?",
+	"w.react.fire": "Brillante",
+	"w.react.love": "Me encanta",
+	"w.react.wow": "Vaya",
+	"w.react.laugh": "Divertido",
+	"w.react.hmm": "Mmm",
+	"w.react.cry": "Triste",
 
 	// ── The thread ──────────────────────────────────────────────────────────
 	"w.replies": { one: "{n} respuesta", other: "{n} respuestas" },
@@ -97,6 +104,11 @@ export const es = {
 	"w.sort_by": "Ordenar por {control}",
 	"w.sort.new": "Más recientes",
 	"w.sort.top": "Mejores",
+	"w.subscribe": "Avisarme por correo de nuevos comentarios en esta entrada",
+	"w.subscribe.submit": "Suscribirme",
+	"w.subscribe.done": "Revisa tu correo para confirmar.",
+	"w.subscribe.failed": "No se pudo suscribir. Inténtalo de nuevo.",
+	"w.subscribe.ratelimit": "Demasiadas solicitudes. Inténtalo más tarde.",
 	"w.load_more": "Cargar comentarios anteriores",
 	"w.load_more_failed": "No se pudieron cargar más: {detail}",
 

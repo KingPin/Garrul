@@ -15,6 +15,10 @@
  *     surfaces the widget should render. Resolved with DB-override > env >
  *     default precedence (see src/lib/settings.ts); operators toggle them at
  *     runtime from the admin Settings page.
+ *   - subscriptions_enabled: whether this install can send mail, derived from
+ *     EMAIL_FROM + PUBLIC_BASE_URL. Not an operator toggle — it tells the widget
+ *     whether to offer the subscribe affordances at all, since `POST
+ *     /api/v1/subscribe` fails closed on the same pair.
  *   - numeric display settings (comments_per_page, replies_per_thread,
  *     auto_collapse_depth, edit_window_minutes): page size, reply-collapse and
  *     edit-window tuning, same DB-override > env > default precedence (see
@@ -105,6 +109,16 @@ config.get("/", async (c) => {
 		downvotes_enabled: flags.downvotes_enabled,
 		page_reactions_enabled: flags.page_reactions_enabled,
 		page_votes_enabled: flags.page_votes_enabled,
+		// Derived, not an operator setting: "can this install send mail at all".
+		// Both are required for a double-opt-in — without EMAIL_FROM there is
+		// nothing to send from, and without PUBLIC_BASE_URL the confirmation link
+		// in the mail has no origin to point at. `POST /api/v1/subscribe` already
+		// fails closed with 503 on exactly this pair; the flag lets the widget
+		// avoid *offering* a subscription it knows would 503. RESEND_API_KEY is
+		// deliberately not part of the test — it is a secret, and a widget that
+		// went dark when the key alone was missing would hide the misconfiguration
+		// rather than surface it (the route logs and refunds send budget instead).
+		subscriptions_enabled: !!(c.env.EMAIL_FROM && c.env.PUBLIC_BASE_URL),
 		// Display/pagination. comments_per_page drives the server-side page
 		// slice (included here for parity/debuggability); the widget consumes
 		// replies_per_thread and auto_collapse_depth for client-side reply

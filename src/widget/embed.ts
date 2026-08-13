@@ -37,7 +37,11 @@ import { watchForSignIn } from "./auth-recovery";
 import { autoSizeTextarea } from "./autosize";
 import { createTurnstileGate, type TurnstileGate } from "./turnstile-gate";
 import { makeS, type StringTable, type WidgetKey } from "./strings";
-import { type ReactionCount, mergeReactionTotals } from "./reactions";
+import {
+	type ReactionCount,
+	REACTION_KINDS,
+	mergeReactionTotals,
+} from "./reactions";
 import { absoluteTime, isoTime, relativeTime } from "./time";
 // Generated from styles.css by scripts/build-styles.ts (gitignored, rebuilt by
 // build:assets). Edit styles.css, never the .gen file.
@@ -611,6 +615,11 @@ type WidgetCtx = {
 	downvotesEnabled: boolean;
 	pageReactionsEnabled: boolean;
 	pageVotesEnabled: boolean;
+	// Whether this install can send mail at all (EMAIL_FROM + PUBLIC_BASE_URL,
+	// derived server-side). Gates both subscribe affordances — the bell and the
+	// composer's notify checkbox — because POST /api/v1/subscribe 503s without
+	// them, and an opt-in that cannot possibly deliver is worse than no opt-in.
+	subscriptionsEnabled: boolean;
 	// Reply-collapse tuning (server config). repliesPerThread: replies shown
 	// under a parent before a "Show N more" button (0 = all). autoCollapseDepth:
 	// a comment at depth >= this starts with its replies collapsed (0 = never).
@@ -835,14 +844,6 @@ const mountTurnstileFrame = (
 	};
 };
 
-const REACTION_KINDS: { kind: string; emoji: string }[] = [
-	{ kind: "like", emoji: "👍" },
-	{ kind: "love", emoji: "❤️" },
-	{ kind: "laugh", emoji: "😂" },
-	{ kind: "hmm", emoji: "🤔" },
-	{ kind: "cry", emoji: "😢" },
-];
-
 const reactionsByKind = (rs: ReactionCount[]): Map<string, ReactionCount> => {
 	const m = new Map<string, ReactionCount>();
 	for (const r of rs) m.set(r.kind, r);
@@ -949,6 +950,9 @@ const buildReactions = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 			const count = r?.count ?? 0;
 			if (r?.mine) cell.btn.dataset.mine = "1";
 			else delete cell.btn.dataset.mine;
+			// `data-mine` is what the stylesheet highlights; aria-pressed is the
+			// same fact for a reader who can't see the highlight.
+			cell.btn.setAttribute("aria-pressed", r?.mine ? "true" : "false");
 			cell.count.textContent = String(count);
 			cell.count.hidden = count === 0;
 			// An anonymous reader who un-reacts the last 👍 has to see the button
@@ -959,7 +963,7 @@ const buildReactions = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	};
 
 	const map = reactionsByKind(n.reactions);
-	for (const { kind, emoji } of REACTION_KINDS) {
+	for (const { kind, emoji, labelKey } of REACTION_KINDS) {
 		// Hide zero-count kinds unless the viewer is signed in (so signed-in
 		// users can react with a kind nobody else has used yet). Anonymous
 		// readers see only used kinds.
@@ -967,7 +971,18 @@ const buildReactions = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 		const btn = el("button", "gr-reaction");
 		btn.type = "button";
 		btn.dataset.kind = kind;
-		btn.appendChild(document.createTextNode(emoji));
+		// The label is hidden text rather than visible text: six labelled cells per
+		// comment would be more chrome than the comment. Hidden *in the tree*
+		// though, never an aria-label — that would become the whole accessible
+		// name and drop the count child, so a screen reader announced "Funny, not
+		// pressed" and never the number the button exists to report. The emoji is
+		// taken out of the name for the reason the label is needed at all: on a
+		// couple of them ("crying face") the glyph's own name reads as the wrong
+		// sentiment entirely.
+		btn.title = s(labelKey);
+		const emojiSpan = el("span", "gr-reaction-emoji", emoji);
+		emojiSpan.setAttribute("aria-hidden", "true");
+		btn.append(el("span", "gr-sr", s(labelKey)), emojiSpan);
 		const count = el("span", "gr-reaction-count", "");
 		btn.appendChild(count);
 		cells.set(kind, { btn, count });
@@ -1029,14 +1044,24 @@ const buildPageEngagement = (ctx: WidgetCtx): HTMLElement => {
 		{ btn: HTMLButtonElement; count: HTMLElement }
 	>();
 	if (ctx.pageReactionsEnabled) {
+		// The prompt is what turns a row of chips into an invitation — without it
+		// the bar reads as a tally of what other people did.
+		wrap.appendChild(
+			el("div", "gr-page-react-prompt", s("w.page.react_prompt")),
+		);
 		const reactWrap = el("div", "gr-page-reactions");
-		for (const { kind, emoji } of REACTION_KINDS) {
-			const btn = el("button", "gr-reaction");
+		for (const { kind, emoji, labelKey } of REACTION_KINDS) {
+			const btn = el("button", "gr-reaction gr-reaction-labelled");
 			btn.type = "button";
 			btn.dataset.kind = kind;
-			btn.appendChild(document.createTextNode(emoji));
+			// Emoji and count on one line, label under it. Unlike the per-comment
+			// row there is space for the label here, and it is the only thing that
+			// says what the emoji is *for* before the reader commits to a click.
+			const face = el("span", "gr-reaction-face");
+			face.appendChild(el("span", "gr-reaction-emoji", emoji));
 			const count = el("span", "gr-reaction-count", "0");
-			btn.appendChild(count);
+			face.appendChild(count);
+			btn.append(face, el("span", "gr-reaction-label", s(labelKey)));
 			reactCells.set(kind, { btn, count });
 			reactWrap.appendChild(btn);
 		}
@@ -1050,8 +1075,10 @@ const buildPageEngagement = (ctx: WidgetCtx): HTMLElement => {
 		const mineSet = new Set(mine);
 		for (const [kind, cell] of reactCells) {
 			cell.count.textContent = String(totals[kind] ?? 0);
-			if (mineSet.has(kind)) cell.btn.dataset.mine = "1";
+			const isMine = mineSet.has(kind);
+			if (isMine) cell.btn.dataset.mine = "1";
 			else delete cell.btn.dataset.mine;
+			cell.btn.setAttribute("aria-pressed", isMine ? "true" : "false");
 		}
 	};
 
@@ -1080,6 +1107,7 @@ const buildPageEngagement = (ctx: WidgetCtx): HTMLElement => {
 			}
 			if (body.added) cell.btn.dataset.mine = "1";
 			else delete cell.btn.dataset.mine;
+			cell.btn.setAttribute("aria-pressed", body.added ? "true" : "false");
 		} catch {
 			// leave UI as-is; user can retry
 		} finally {
@@ -1174,6 +1202,157 @@ const buildPageEngagement = (ctx: WidgetCtx): HTMLElement => {
 		}
 	})();
 
+	return wrap;
+};
+
+/**
+ * Subscribe-to-thread bell for the thread toolbar.
+ *
+ * Until this existed, the only way to subscribe was the composer's notify
+ * checkbox — so a reader who wanted replies by email but had nothing to say
+ * could not subscribe at all. No new endpoint: `POST /api/v1/subscribe` already
+ * accepts a standalone `{post_slug, email?}` with double opt-in, a per-address
+ * pending cap and a global send budget.
+ *
+ * **This is an action, never a state toggle, and that is a security property
+ * rather than a simplification.** The endpoint deliberately returns a constant
+ * shape unless the caller proved they own the inbox, because mirroring the
+ * stored `confirmed_at` would make it a subscription oracle — an unauthenticated
+ * prober could learn "this address already follows this post", from a branch
+ * that sends no mail, so the victim would never see it. A bell that rendered
+ * subscribed-vs-not would have to ask that question. So: no state query, no
+ * localStorage marker, and no unsubscribe here (unsubscribing is token-based via
+ * the emailed link, which is the only way to do it without the oracle).
+ *
+ * Repeat clicks are therefore fine by design — the upsert is non-destructive and
+ * refunds send budget when no mail actually goes out.
+ */
+const buildSubscribeBell = (
+	apiBase: string,
+	slug: string,
+	signedIn: boolean,
+): HTMLElement => {
+	const wrap = el("div", "gr-subscribe");
+	const btn = el("button", "gr-subscribe-btn");
+	btn.type = "button";
+	btn.setAttribute("aria-label", s("w.subscribe"));
+	btn.title = s("w.subscribe");
+	btn.appendChild(el("span", "gr-reaction-emoji", "🔔"));
+	// Announce the outcome: the click's only visible result is this text, and a
+	// reader on a screen reader would otherwise get nothing back at all.
+	//
+	// It has to be a `statusBox`, not a hidden span promoted to a live region on
+	// use. A `hidden` element is outside the accessibility tree, so filling it and
+	// revealing it in the same task is not a mutation of a live region — it is a
+	// region appearing already-populated, which announces nothing. The box stays
+	// in the tree from mount and CSS collapses it while it is `:empty`, exactly as
+	// the composer's status box does.
+	const status = statusBox("gr-subscribe-status");
+
+	const say = (msg: string): void => {
+		status.textContent = msg;
+	};
+
+	// Anonymous readers need to supply an address; a signed-in reader's comes
+	// from the session (and auto-confirms when the provider vouched for it), so
+	// asking would be a worse experience *and* would let them subscribe an inbox
+	// that isn't theirs. Declared before `send` because `send` hides it on
+	// success.
+	const form = el("form", "gr-subscribe-form");
+	form.hidden = true;
+	const emailInput = el("input") as HTMLInputElement;
+	// Assigned only on the anonymous path: the signed-in bell posts straight from
+	// its own click and never builds a form, so `setBusy` has to tolerate null.
+	let submit: HTMLButtonElement | null = null;
+
+	// Disabling the bell alone left the form wide open — the submit button and the
+	// Enter key inside the input both reach `send` without going near the bell. So
+	// disable whichever control is actually live. Disabling the submit button also
+	// suppresses implicit submission, which is what closes the Enter-key path.
+	const setBusy = (busy: boolean): void => {
+		btn.disabled = busy;
+		if (submit) submit.disabled = busy;
+	};
+
+	// `message` is already localized by the server (it negotiates from ?lang=).
+	// Rendered via textContent — as every server string in this widget is — so a
+	// future message containing markup is text, not markup.
+	let inFlight = false;
+	const send = async (email: string): Promise<void> => {
+		// The disabled attributes are the affordance; this flag is the guarantee.
+		// A subscribe POST costs the operator send budget and the reader a
+		// duplicate email, so it is worth being certain rather than trusting that
+		// no path can re-enter while a request is open.
+		if (inFlight) return;
+		inFlight = true;
+		setBusy(true);
+		try {
+			const res = await fetch(apiUrl(apiBase, "/api/v1/subscribe"), {
+				method: "POST",
+				credentials: "include",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify(email ? { post_slug: slug, email } : { post_slug: slug }),
+			});
+			const body = (await res.json().catch(() => null)) as {
+				message?: string;
+			} | null;
+			if (!res.ok) {
+				// A rate limit is the one failure where "try again" is actively bad
+				// advice: the retry cannot succeed and each one pushes the window
+				// further out. Every other status keeps the generic message, which
+				// is honest — the widget cannot tell a bad address from an outage.
+				//
+				// Deliberately not rendering `body.error`: on some paths the server
+				// puts localized prose there, on others a machine code
+				// ("invalid_email"), and there is no way to tell them apart from
+				// here. Only `message`, on success, is contracted to be prose.
+				say(res.status === 429 ? s("w.subscribe.ratelimit") : s("w.subscribe.failed"));
+				return;
+			}
+			say(body?.message ?? s("w.subscribe.done"));
+			form.hidden = true;
+			btn.hidden = true;
+		} catch {
+			say(s("w.subscribe.failed"));
+		} finally {
+			inFlight = false;
+			setBusy(false);
+		}
+	};
+
+	if (!signedIn) {
+		emailInput.className = "gr-email-input";
+		emailInput.type = "email";
+		emailInput.required = true;
+		emailInput.placeholder = s("w.email_ph");
+		emailInput.autocomplete = "email";
+		submit = el("button", "gr-subscribe-submit", s("w.subscribe.submit"));
+		submit.type = "submit";
+		form.append(emailInput, submit);
+		// Only on this path is the bell a disclosure — signed in it posts straight
+		// away and controls nothing, and claiming otherwise would promise a panel
+		// that never opens. Safe to expose: this says whether the email field is
+		// showing, never whether the reader is subscribed, which is the one thing
+		// the endpoint refuses to reveal.
+		btn.setAttribute("aria-expanded", "false");
+		form.addEventListener("submit", (e) => {
+			e.preventDefault();
+			const email = emailInput.value.trim();
+			if (email) void send(email);
+		});
+	}
+
+	btn.addEventListener("click", () => {
+		if (signedIn) {
+			void send("");
+			return;
+		}
+		form.hidden = !form.hidden;
+		btn.setAttribute("aria-expanded", String(!form.hidden));
+		if (!form.hidden) emailInput.focus();
+	});
+
+	wrap.append(btn, form, status);
 	return wrap;
 };
 
@@ -1871,6 +2050,7 @@ const buildForm = (
 	apiBase: string,
 	siteKey: string | null,
 	signedIn: boolean,
+	subscriptionsEnabled: boolean,
 ): HTMLFormElement => {
 	const form = document.createElement("form");
 	form.className = "gr-form";
@@ -1909,30 +2089,38 @@ const buildForm = (
 
 	// Notify-me opt-in. Anonymous: an email field appears alongside the
 	// checkbox. Signed-in: we already have their email so just the box.
-	const notifyWrap = el("label", "gr-notify");
-	const notifyCb = el("input") as HTMLInputElement;
-	notifyCb.type = "checkbox";
-	notifyCb.className = "gr-notify-cb";
-	notifyCb.name = "notify";
-	// The leading space separates the label from its checkbox; it's layout, not
-	// copy, so it stays out of the string table.
-	const notifyText = document.createTextNode(` ${s("w.notify")}`);
-	notifyWrap.append(notifyCb, notifyText);
-	form.appendChild(notifyWrap);
+	//
+	// Skipped entirely on an install with no outbound mail configured. The
+	// endpoint 503s there, so the checkbox was an opt-in that could never
+	// deliver — the reader ticked it, posted, and simply never heard anything.
+	// The submit handler reads the checkbox out of the DOM, so its absence is
+	// also what stops the POST being attempted.
+	if (subscriptionsEnabled) {
+		const notifyWrap = el("label", "gr-notify");
+		const notifyCb = el("input") as HTMLInputElement;
+		notifyCb.type = "checkbox";
+		notifyCb.className = "gr-notify-cb";
+		notifyCb.name = "notify";
+		// The leading space separates the label from its checkbox; it's layout, not
+		// copy, so it stays out of the string table.
+		const notifyText = document.createTextNode(` ${s("w.notify")}`);
+		notifyWrap.append(notifyCb, notifyText);
+		form.appendChild(notifyWrap);
 
-	if (!signedIn) {
-		const emailInput = el("input") as HTMLInputElement;
-		emailInput.className = "gr-email-input";
-		emailInput.name = "email";
-		emailInput.type = "email";
-		emailInput.placeholder = s("w.email_ph");
-		emailInput.autocomplete = "email";
-		emailInput.hidden = true;
-		notifyCb.addEventListener("change", () => {
-			emailInput.hidden = !notifyCb.checked;
-			emailInput.required = notifyCb.checked;
-		});
-		form.appendChild(emailInput);
+		if (!signedIn) {
+			const emailInput = el("input") as HTMLInputElement;
+			emailInput.className = "gr-email-input";
+			emailInput.name = "email";
+			emailInput.type = "email";
+			emailInput.placeholder = s("w.email_ph");
+			emailInput.autocomplete = "email";
+			emailInput.hidden = true;
+			notifyCb.addEventListener("change", () => {
+				emailInput.hidden = !notifyCb.checked;
+				emailInput.required = notifyCb.checked;
+			});
+			form.appendChild(emailInput);
+		}
 	}
 
 	// Turnstile only renders for anonymous posts. Signed-in posts skip it
@@ -2317,6 +2505,10 @@ const loadOnce = async (
 	let downvotesEnabled = true;
 	let pageReactionsEnabled = false;
 	let pageVotesEnabled = false;
+	// True by default, and read below as `!== false`, so a server older than this
+	// bundle — which sends no such field — keeps offering the notify checkbox it
+	// has always offered. Only an explicit `false` hides the subscribe UI.
+	let subscriptionsEnabled = true;
 	// Defaults mirror the server (src/lib/settings.ts) so a failed/absent
 	// config fetch degrades gracefully to the same behavior.
 	let repliesPerThread = 3;
@@ -2350,6 +2542,7 @@ const loadOnce = async (
 				downvotes_enabled?: boolean;
 				page_reactions_enabled?: boolean;
 				page_votes_enabled?: boolean;
+				subscriptions_enabled?: boolean;
 				replies_per_thread?: number;
 				auto_collapse_depth?: number;
 				community_min_votes?: number;
@@ -2392,6 +2585,7 @@ const loadOnce = async (
 			downvotesEnabled = cfg.downvotes_enabled !== false;
 			pageReactionsEnabled = cfg.page_reactions_enabled === true;
 			pageVotesEnabled = cfg.page_votes_enabled === true;
+			subscriptionsEnabled = cfg.subscriptions_enabled !== false;
 			if (typeof cfg.replies_per_thread === "number")
 				repliesPerThread = cfg.replies_per_thread;
 			if (typeof cfg.auto_collapse_depth === "number")
@@ -2457,6 +2651,7 @@ const loadOnce = async (
 		downvotesEnabled,
 		pageReactionsEnabled,
 		pageVotesEnabled,
+		subscriptionsEnabled,
 		repliesPerThread,
 		autoCollapseDepth,
 		communityMinVotes,
@@ -2471,7 +2666,7 @@ const loadOnce = async (
 	// The composer is always built (its submit/Turnstile wiring lives further
 	// down) but only mounted when comments are enabled. When disabled, existing
 	// comments stay visible (read-only) and we show a "closed" notice instead.
-	const form = buildForm(apiBase, siteKey, me != null);
+	const form = buildForm(apiBase, siteKey, me != null, subscriptionsEnabled);
 	// Restore/persist the top-level composer draft (cleared on successful post
 	// in submit()). Reply-form drafts are wired separately in buildReplyForm.
 	const composer = form.querySelector(
@@ -2502,31 +2697,43 @@ const loadOnce = async (
 		wrap.appendChild(el("p", "gr-empty", closedNotice(closedReason)));
 	}
 
-	// Sort selector only when voting is on (no scores to rank without it).
-	if (votingEnabled) {
-		const sortWrap = el("div", "gr-sort");
-		const label = el("label");
-		const sel = el("select") as HTMLSelectElement;
-		const newOpt = el("option") as HTMLOptionElement;
-		newOpt.value = "new";
-		newOpt.textContent = s("w.sort.new");
-		const topOpt = el("option") as HTMLOptionElement;
-		topOpt.value = "top";
-		topOpt.textContent = s("w.sort.top");
-		sel.append(newOpt, topOpt);
-		sel.value = sort;
-		// The control sits inside the label, so the label text is split around it
-		// rather than hard-coded as a "Sort by " prefix — languages that put the
-		// control first (or wrap it) can say so in the string.
-		const [beforeSel, afterSel] = sAround("w.sort_by", "control");
-		label.append(beforeSel, sel, afterSel);
-		sortWrap.appendChild(label);
-		sel.addEventListener("change", () => {
-			const v = sel.value === "top" ? "top" : "new";
-			setSort(root, v);
-			reload();
-		});
-		wrap.appendChild(sortWrap);
+	// Thread toolbar: sort on the left, subscribe bell on the right. This row
+	// used to exist only to hold the sort selector, hence the generalization
+	// rather than a second row — the bell wants exactly this slot, immediately
+	// above the list.
+	if (votingEnabled || subscriptionsEnabled) {
+		const bar = el("div", "gr-threadbar");
+		// Sort selector still only when voting is on: there are no scores to rank
+		// by without it.
+		if (votingEnabled) {
+			const sortWrap = el("div", "gr-sort");
+			const label = el("label");
+			const sel = el("select") as HTMLSelectElement;
+			const newOpt = el("option") as HTMLOptionElement;
+			newOpt.value = "new";
+			newOpt.textContent = s("w.sort.new");
+			const topOpt = el("option") as HTMLOptionElement;
+			topOpt.value = "top";
+			topOpt.textContent = s("w.sort.top");
+			sel.append(newOpt, topOpt);
+			sel.value = sort;
+			// The control sits inside the label, so the label text is split around it
+			// rather than hard-coded as a "Sort by " prefix — languages that put the
+			// control first (or wrap it) can say so in the string.
+			const [beforeSel, afterSel] = sAround("w.sort_by", "control");
+			label.append(beforeSel, sel, afterSel);
+			sortWrap.appendChild(label);
+			sel.addEventListener("change", () => {
+				const v = sel.value === "top" ? "top" : "new";
+				setSort(root, v);
+				reload();
+			});
+			bar.appendChild(sortWrap);
+		}
+		if (subscriptionsEnabled) {
+			bar.appendChild(buildSubscribeBell(apiBase, slug, me != null));
+		}
+		wrap.appendChild(bar);
 	}
 
 	wrap.appendChild(list);

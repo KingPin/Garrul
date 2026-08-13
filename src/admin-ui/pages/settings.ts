@@ -9,8 +9,14 @@ import {
 	type ResolvedStrings,
 	numberBounds,
 } from "../../lib/settings";
+import { REACTION_KINDS } from "../../widget/reactions";
 import { renderSelect, renderStepper, renderSwitch, renderTabs } from "../controls";
 import { escapeHtml } from "../escape";
+
+// Read off the vocabulary rather than spelled out. The hand-written version
+// outlived the v2.10.0 `like` → `fire` rename by a release and only ever named
+// five of the six kinds; derived, the next rename updates this help text itself.
+const REACTION_GLYPHS = REACTION_KINDS.map((r) => r.emoji).join(" ");
 
 // Settings tabs. Email / Moderation tabs can slot in here later without
 // touching the panel-toggle wiring (each panel just keys off `tab`).
@@ -32,7 +38,7 @@ const FLAG_META: { key: FlagKey; label: string; help: string }[] = [
 	{
 		key: "reactions_enabled",
 		label: "Emoji reactions (comments)",
-		help: "Per-comment emoji reactions (like / love / laugh / hmm / cry).",
+		help: `Per-comment emoji reactions (${REACTION_GLYPHS}).`,
 	},
 	{
 		key: "votes_enabled",

@@ -177,8 +177,8 @@ describe("counts — include=votes,reactions when flags enabled", () => {
 			{ post_slug: "a", value: -1 },
 		],
 		reactions: [
-			{ post_slug: "a", kind: "like" },
-			{ post_slug: "a", kind: "like" },
+			{ post_slug: "a", kind: "fire" },
+			{ post_slug: "a", kind: "fire" },
 			{ post_slug: "a", kind: "love" },
 		],
 		settings: {
@@ -197,7 +197,7 @@ describe("counts — include=votes,reactions when flags enabled", () => {
 		};
 		expect(body.counts).toEqual({ a: 1 });
 		expect(body.votes.a).toEqual({ score_up: 2, score_down: 1 });
-		expect(body.reactions.a).toEqual({ like: 2, love: 1 });
+		expect(body.reactions.a).toEqual({ fire: 2, love: 1 });
 	});
 });
 
@@ -206,7 +206,7 @@ describe("counts — flag gating", () => {
 		const { app, env } = mkApp({
 			comments: [{ post_slug: "a", status: "approved" }],
 			votes: [{ post_slug: "a", value: 1 }],
-			reactions: [{ post_slug: "a", kind: "like" }],
+			reactions: [{ post_slug: "a", kind: "fire" }],
 			// no settings rows → page_* default OFF
 		});
 		const res = await get(app, env, "/?slugs=a&include=votes,reactions");
@@ -218,7 +218,7 @@ describe("counts — flag gating", () => {
 		const { app, env } = mkApp({
 			comments: [{ post_slug: "a", status: "approved" }],
 			votes: [{ post_slug: "a", value: 1 }],
-			reactions: [{ post_slug: "a", kind: "like" }],
+			reactions: [{ post_slug: "a", kind: "fire" }],
 			settings: { page_votes_enabled: "true" },
 		});
 		const res = await get(app, env, "/?slugs=a&include=votes,reactions");

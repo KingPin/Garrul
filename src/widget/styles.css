@@ -260,7 +260,8 @@
    harmless in the light theme only because a UA textarea is white and so is the
    default --garrul-input-bg; in dark mode it was a white box with black text. */
 .gr-form input, .gr-form textarea,
-.gr-reply-form input, .gr-reply-form textarea {
+.gr-reply-form input, .gr-reply-form textarea,
+.gr-subscribe-form input {
 	font: inherit; color: inherit;
 	background: var(--gr-input-bg);
 	border: 1px solid var(--gr-border);
@@ -426,6 +427,22 @@ button:active:not([disabled]) { opacity: 0.75; }
 	overflow: hidden;
 	clip-path: inset(50%);
 }
+/* Visible only to assistive tech. The rule above collapses a live region while
+   keeping it announceable; this one hides content permanently, for text that
+   belongs in an element's accessible name but not on screen. `clip-path` rather
+   than `display: none`, which takes it out of the a11y tree and so defeats the
+   point. No offsets are set, so it stays at its static position and cannot
+   extend the page. */
+.gr-sr {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	padding: 0;
+	border: 0;
+	overflow: hidden;
+	white-space: nowrap;
+	clip-path: inset(50%);
+}
 .gr-error.is-notice { color: var(--gr-notice); }
 /* Composer submit errors are inline (text only) — a box-in-a-box reads too
    heavy next to the composer. The :not(.is-notice) guard keeps the boxed
@@ -538,7 +555,9 @@ button:active:not([disabled]) { opacity: 0.75; }
 }
 .gr-page-reactions { display: flex; gap: 0.4rem; flex-wrap: wrap; }
 .gr-page-votes { display: flex; align-items: center; gap: 0.4rem; }
-.gr-page-vote-label { color: var(--gr-muted); font-size: 0.9em; }
+/* The two prompts are deliberately identical: "What's your reaction?" and "Was
+   this helpful?" are the same kind of label sitting in the same kind of slot. */
+.gr-page-vote-label, .gr-page-react-prompt { color: var(--gr-muted); font-size: 0.9em; }
 .gr-reactions { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-top: 0.4rem; }
 .gr-reaction {
 	font: inherit;
@@ -557,6 +576,37 @@ button:active:not([disabled]) { opacity: 0.75; }
 	border-color: var(--gr-accent);
 }
 .gr-reaction-count { margin-inline-start: 0.25em; font-variant-numeric: tabular-nums; }
+/* The widget ships no emoji artwork — 2-3KB gzipped of SVG for decoration would
+   spend bundle headroom that exists to absorb features. That makes the reader's
+   own font the renderer, so the stack has to be explicit: a Linux reader with a
+   monochrome fallback ahead of Noto Color Emoji gets outline glyphs, and
+   `font-variant-emoji` stops a browser rendering the text-default codepoints
+   (❤ in particular) as a black glyph. The families are listed only on the emoji
+   span so the count digits keep inheriting the host page's font. */
+.gr-reaction-emoji {
+	font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji",
+		"Twemoji Mozilla", "Android Emoji", sans-serif;
+	font-variant-emoji: emoji;
+	line-height: 1;
+}
+/* Article-bar cells only: emoji + count on one line, label under it. Six of
+   these per *comment* would be more chrome than the comment, so the per-comment
+   row keeps the compact pill and carries the same label as hidden text (.gr-sr)
+   inside the button instead. */
+.gr-reaction-labelled {
+	display: inline-flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 0.15em;
+	border-radius: 10px;
+	padding: 0.3em 0.6em;
+	min-width: 3.5em;
+}
+.gr-reaction-labelled .gr-reaction-emoji { font-size: 1.25em; }
+.gr-reaction-face { display: inline-flex; align-items: center; }
+/* Dimmed with opacity rather than a colour, so it stays legible against both
+   the resting background and the accent one [data-mine="1"] switches to. */
+.gr-reaction-label { font-size: 0.85em; opacity: 0.75; white-space: nowrap; }
 .gr-votes { display: flex; align-items: center; gap: 0.3rem; margin-top: 0.4rem; font-size: 0.85em; }
 .gr-vote {
 	font: inherit;
@@ -581,7 +631,73 @@ button:active:not([disabled]) { opacity: 0.75; }
 }
 .gr-vote[disabled] { opacity: 0.6; cursor: progress; }
 .gr-vote-score { font-variant-numeric: tabular-nums; min-width: 1.2em; text-align: center; }
-.gr-sort { display: flex; gap: 0.4rem; align-items: center; font-size: 0.85em; color: var(--gr-muted); margin-top: 0.5rem; }
+/* Thread toolbar: sort on the left, subscribe bell on the right. The row
+   predates the bell, when it held nothing but the selector — hence the
+   margin-top moving here from .gr-sort, which now has no reason to own it. */
+.gr-threadbar {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: space-between;
+	gap: 0.5rem;
+	margin-top: 0.5rem;
+}
+.gr-sort { display: flex; gap: 0.4rem; align-items: center; font-size: 0.85em; color: var(--gr-muted); }
+/* margin-inline-start:auto keeps the bell right-aligned when it is the row's
+   only child — space-between alone would park it on the left. */
+.gr-subscribe { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; margin-inline-start: auto; }
+/* Bordered like the sort select beside it, deliberately. A bare emoji floating
+   at the end of the row reads as decoration; the border is what says "press
+   me", and it is the only affordance a reader who never hovers will get, since
+   the meaning otherwise lives in title/aria-label alone. */
+.gr-subscribe-btn {
+	font: inherit;
+	background: var(--gr-input-bg);
+	border: 1px solid var(--gr-border);
+	padding: 0.2rem 0.45rem;
+	line-height: 1;
+	cursor: pointer;
+	border-radius: var(--gr-radius);
+}
+/* The bell and the submit both get disabled while a subscribe POST is open, so
+   they need the same busy treatment as the composer, the vote buttons and load
+   more — a control that stops responding without changing appearance reads as
+   broken. Declared before the :hover rule so specificity ascends; :hover still
+   matches a disabled button, hence the :not() guard. */
+.gr-subscribe-btn[disabled] { opacity: 0.6; cursor: progress; }
+.gr-subscribe-btn:hover:not([disabled]) { border-color: var(--gr-accent); }
+.gr-subscribe-form { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; }
+/* Smaller than the composer's submit — this is an inline confirmation, not the
+   primary action on the page. */
+.gr-subscribe-form input { padding: 0.3rem 0.5rem; font-size: 0.9em; }
+.gr-subscribe-submit {
+	font: inherit;
+	font-size: 0.9em;
+	background: var(--gr-accent);
+	color: var(--gr-accent-fg);
+	border: none;
+	border-radius: var(--gr-radius);
+	padding: 0.35rem 0.7rem;
+	cursor: pointer;
+}
+.gr-subscribe-submit[disabled] { opacity: 0.6; cursor: progress; }
+.gr-subscribe-submit:hover:not([disabled]) { background: var(--gr-accent-hover); }
+.gr-subscribe-form[hidden] { display: none; }
+.gr-subscribe-status { font-size: 0.85em; color: var(--gr-muted); }
+/* Same treatment as .gr-error:empty, and for the same reason: the box is a live
+   region that has to stay in the a11y tree from mount, so it cannot be hidden
+   between announcements. Absolute rather than zero-height because it is a flex
+   child of .gr-subscribe (gap 0.4rem) and a flex item earns its share of the gap
+   however small it is. No offsets, so it cannot extend the page. */
+.gr-subscribe-status:empty {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	padding: 0;
+	border: 0;
+	overflow: hidden;
+	clip-path: inset(50%);
+}
 .gr-sort select {
 	font: inherit;
 	background: var(--gr-input-bg);

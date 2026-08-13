@@ -312,14 +312,32 @@ host-page wiring:
 - **Anonymous viewers can vote.** They use the same IP-hashed ghost
   identity as anonymous comments — one vote per identity per comment.
   Authors cannot vote on their own comments.
+- **Reaction kinds** are `fire|love|wow|laugh|hmm|cry` (🔥❤️😮😂🤔😢).
+  **Changed in v2.10.0:** `like` 👍 was renamed to `fire` 🔥 (it duplicated
+  the up-vote sitting directly below it) and `wow` was added. Migration
+  0022 rewrites stored rows in both `reactions` and `page_reactions`, so
+  anything reading `reactions.like` off `/api/v1/counts` or a tree
+  response sees `reactions.fire` after upgrading. Both POST routes still
+  accept `like` on the wire for one release and store it as `fire`, so a
+  reader holding a cached pre-2.10.0 bundle keeps working. That
+  compatibility runs both ways: a POST in the deprecated spelling gets
+  its answer echoed in the same spelling, so the response carries both
+  `fire` and a `like` key with the identical count. Without the echo the
+  old bundle would look up a key that is no longer there and blank the
+  cell it just incremented. Emoji are native unicode — the widget ships
+  no icon artwork.
 - **Comment reactions patch in place** (since v2.9.0). Toggling an emoji
-  on a comment (`POST /api/v1/reactions` `{comment_id, kind}`, `kind` ∈
-  `like|love|laugh|hmm|cry`) no longer re-fetches and re-renders the
+  on a comment (`POST /api/v1/reactions` `{comment_id, kind}`) no longer
+  re-fetches and re-renders the
   thread — the response carries `{ok, added, reactions}` where
   `reactions` is `{kind: count}` for that one comment, and the widget
   updates just that row. Scroll position, open reply composers and typed
   drafts survive a reaction now. Zero-count kinds are absent from
-  `reactions`, matching the list payload.
+  `reactions`, matching the list payload — with one exception: the
+  deprecated-spelling echo above always carries a value, so a POST for
+  `like` that removes the last reaction answers `{"like": 0}`. Old
+  bundles drop non-positive counts on merge, which is exactly how they
+  clear the cell.
 - **Sorting** defaults to `new` (newest top-level threads first). `top`
   orders top-level threads by net score (`score_up - score_down`,
   newer-first on ties); replies inside a thread always stay
@@ -341,12 +359,44 @@ writing a comment. Both surfaces default **off** and are server-gated:
 - **API.** Initial state: `GET /api/v1/page-engagement?slug=<slug>` →
   `{ reactions, my_reactions, votes }` (only the enabled sections appear).
   Toggle a reaction: `POST /api/v1/page-engagement/reactions`
-  `{slug, kind}` (`kind` ∈ `like|love|laugh|hmm|cry`). Cast/clear a vote:
+  `{slug, kind}` (same vocabulary as comment reactions above). Cast/clear a vote:
   `POST /api/v1/page-engagement/votes` `{slug, value}` (`-1|0|1`; `0`
   clears). A disabled surface returns 403.
 - **Identity & dedup** mirror comments: authed users by session, anonymous
   viewers by the IP-hashed ghost — one reaction-kind and one vote per
   identity per page.
+- **Presentation** (since v2.10.0): the reaction bar opens with a
+  "What's your reaction?" prompt and each cell carries a word under the
+  emoji, so 🤔 isn't left ambiguous between "interesting" and "I doubt
+  that". Per-comment reactions stay compact — same label, but as the
+  button's accessible name rather than visible text.
+
+### Subscribing to a thread (since v2.10.0)
+
+A reader can follow a thread by email in two places, both server-gated
+and needing no host-page wiring:
+
+- the composer's "Email me about new comments" checkbox, and
+- a 🔔 in the thread toolbar, for a reader who wants replies but has
+  nothing to say. Signed-in readers subscribe in one click (the session
+  supplies the address; a provider-verified one confirms immediately);
+  anonymous readers get an inline email field and a confirmation mail.
+
+Both read `subscriptions_enabled` from `/api/v1/config` — a derived flag,
+true when the operator has set `EMAIL_FROM` and `PUBLIC_BASE_URL`. It is
+not an operator toggle and has no `data-*` attribute; when false, neither
+affordance renders, because `POST /api/v1/subscribe` fails closed with 503
+without those vars.
+
+Subscriptions are **thread-scoped** and unique per `(post_slug, email)`,
+so a subscriber hears about every new comment on the post, not only direct
+replies. The bell is an action, not a state toggle: the widget never
+displays whether an address is already subscribed, and there is no
+unsubscribe control in the widget — that is a tokenized link in the mail.
+This is deliberate. `POST /api/v1/subscribe` returns a constant response
+unless the caller proved they own the inbox, so that an unauthenticated
+prober cannot use it to discover which addresses follow which posts;
+rendering subscription state would require asking exactly that question.
 
 ### Markdown preview (since v1.10.0)
 
@@ -825,7 +875,10 @@ Since v1.10.0 you can also request page-engagement totals with
 unchanged (backward compatible); each extra is added only when requested
 **and** the matching page flag is enabled, gaining
 `votes: { slug: { score_up, score_down } }` and
-`reactions: { slug: { kind: count } }` — e.g. render "12 💬 · 30 👍".
+`reactions: { slug: { kind: count } }` — e.g. render "12 💬 · 30 🔥".
+The `kind` keys are the vocabulary listed under *Voting and reactions*
+above; note that `like` became `fire` in v2.10.0, so a listing page
+reading `reactions[slug].like` needs updating.
 
 ### `*.workers.dev`
 
