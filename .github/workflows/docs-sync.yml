@@ -107,11 +107,23 @@ jobs:
             # value in a config template doesn't demand a docs update.
             VARS=""
             if [ -n "${VAR_PATHS:-}" ]; then
-              # shellcheck disable=SC2086 # VAR_PATHS is a deliberate path list
-              VARS=$(git diff -U0 "$BASE_SHA" "$HEAD_SHA" -- $VAR_PATHS \
-                     | grep -E '^[+-][[:space:]]*#?[[:space:]]*[A-Z][A-Z0-9_]*[[:space:]]*=' \
-                     | sed -E 's/^[+-][[:space:]]*#?[[:space:]]*([A-Z][A-Z0-9_]*).*/\1/' \
-                     | sort -u || true)
+              # A name "changed" only if it appears on one side of the diff and
+              # not the other, so this is a symmetric difference and not a union.
+              # Collecting names from both +/- lines together would be wrong in
+              # the exact case this narrowing exists to spare: editing a
+              # placeholder value emits `-FOO=old` and `+FOO=new`, and a union
+              # reports FOO as changed when the set of names never moved.
+              names() {
+                # shellcheck disable=SC2086 # VAR_PATHS is a deliberate path list
+                git diff -U0 "$BASE_SHA" "$HEAD_SHA" -- $VAR_PATHS \
+                  | grep -E "^[$1][[:space:]]*#?[[:space:]]*[A-Z][A-Z0-9_]*[[:space:]]*=" \
+                  | sed -E "s/^.[[:space:]]*#?[[:space:]]*([A-Z][A-Z0-9_]*).*/\1/" \
+                  | sort -u || true
+              }
+              # Commented-out vars count as present: the `#?` above means a
+              # comment-out toggle cancels between the two sides, which is the
+              # intent — it changes whether a var is *set*, not whether it exists.
+              VARS=$(comm -3 <(names +) <(names -) | tr -d '\t' | sed '/^$/d')
               if [ -z "$VARS" ]; then
                 echo "Watched files changed, but no variable name was added or removed."
                 echo "Comment and value-only edits don't need a docs update — passing."
