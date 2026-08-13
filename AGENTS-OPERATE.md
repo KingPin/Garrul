@@ -809,6 +809,16 @@ to the session's own address and answer 404 — never 403 — for a row it
 does not own. `/admin/subscriptions` remains the operator's view and is
 unaffected.
 
+Their rate limiter keys on the **account**, not the client IP, and that
+is load-bearing rather than incidental. `GET /mine` is the only limited
+*read* on a per-page-view path — everything else the limiter guards is a
+write — so an IP-keyed bucket would spend one token of the shared per-IP
+global envelope (20/10s, 200/10min) every time a signed-in reader loaded
+a page. Behind one office NAT or a carrier CGNAT, readers merely *reading*
+the site would drain that envelope and the resulting `429` would surface
+on a different person trying to post a comment: a symptom nowhere near
+its cause. Keyed on the account, page views cannot starve the writes.
+
 ## 10. Operating the instance
 
 **Logs.** `npm run tail` (alias for `wrangler tail`). Every request
