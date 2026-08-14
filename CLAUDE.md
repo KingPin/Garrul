@@ -79,6 +79,11 @@ Use `src/lib/log.ts`. Every request gets an ID; every log line is JSON. Operator
 ### Lint
 `npm run lint` runs `biome lint`, deliberately **not** `biome check`. Biome classifies import sorting as an *assist* (`assist/source/organizeImports`), not a lint rule, so `check` reports it and `lint` does not. That convention has never been adopted here: `biome check` flags ~145 files, and this version also sorts named specifiers inside the braces, so adopting it means reordering imports nobody wrote wrong across the whole tree — a `git blame`-wrecking diff for zero runtime change. Don't "fix" it with a `--write` sweep. Keep new imports in sorted position where the surrounding file already is; leave the rest alone.
 
+### Type checking
+`tsconfig.json` sets `"types": ["node", "@cloudflare/workers-types"]`. **That order is load-bearing — it is not alphabetical drift, do not "tidy" it.** Since 5.20260810.1, `@cloudflare/workers-types` declares the `nodejs_compat` globals (`Buffer`, `process`, `global`) as `any`, colliding with the same globals from `@types/node`. `skipLibCheck` suppresses the duplicate-declaration error, so whichever package is listed *first* silently wins. With workers-types first, `process` becomes `any` across every Node script in `scripts/`, `src/db/migrate.ts` and the tooling tests — `process.argv`/`process.env` lose their types, and the only visible symptom is an unrelated-looking `TS7006 implicit any` on array callbacks. With `node` first, Node's `process` survives and the Worker types (`D1Database`, `KVNamespace`, `Request`, …) still resolve.
+
+Importing the module explicitly does **not** work around this: `@types/node` types `node:process` as `export = process`, so the import resolves to the same clobbered global. `tsconfig.widget.json` is unaffected — it sets `"types": []`.
+
 ### Tests
 Critical paths only: API contracts, sanitizer (XSS attempts), auth cookie roundtrip, rate-limit, depth cap. No coverage threshold. Tests must not require network or paid services — hand-rolled in-memory D1/KV stubs (see `tests/helpers/`), mocks for OAuth/email/Turnstile. Moving integration tests onto the Workers pool is future work; `@cloudflare/vitest-pool-workers` is deliberately *not* a dependency until then, so install it as part of that work (`vitest.config.ts:8-12`).
 
@@ -87,9 +92,7 @@ Critical paths only: API contracts, sanitizer (XSS attempts), auth cookie roundt
 
 Each override is temporary. Re-check them when bumping `wrangler`, and drop the entry once the upstream pin has caught up — a stale override silently holds a dependency *back*, which is the opposite of what it was added for.
 
-| Override | Why | Drop it when |
-| --- | --- | --- |
-| `undici: ^7.29.0` | `miniflare` (via `wrangler`) pins undici at exactly 7.28.0. Clears five advisories, including GHSA-4cwx-7wf7-3272 (high, cross-user disclosure + parse-time crash via degenerate private cache directives). | `miniflare` pins undici ≥ 7.29.0 itself. Note the ceiling: if miniflare moves to undici 8.x, this `^7` range would pin it back — widen or remove it. |
+There are no overrides today. The `undici: ^7.29.0` entry — added when `miniflare` pinned undici at exactly 7.28.0, to clear five advisories including GHSA-4cwx-7wf7-3272 (high, cross-user disclosure + parse-time crash via degenerate private cache directives) — was dropped once `miniflare` 5.20260804.0-alpha began pinning undici 7.29.0 itself. Resolution is unchanged without it: the lockfile is byte-identical either way.
 
 ### Commits
 Atomic commits per concern. Conventional-commits style (`feat:`, `fix:`, `refactor:`, `docs:`, `chore:`, `test:`). No giant "milestone done" commits.
