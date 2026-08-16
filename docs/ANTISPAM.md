@@ -131,6 +131,12 @@ Each term is checked against the comment body, the author's display name and the
 
 Limits: 200 terms, 100 characters and 4 wildcards each, and only the first 10,000 characters of each field are scanned. A term over those limits is skipped and the rest of the list still applies. The matcher is a plain string walk, not a compiled regex — a blocklist is operator-supplied input, and no arrangement of terms can make it backtrack.
 
+**Backtracking is not the same as free, so keep the list mostly literal.** "Cannot backtrack" is a bound on the *shape* of the work, not on the amount of it, and the two are easy to run together. A term with wildcards on both ends and a rare tail — `*a*z` — makes every occurrence of `a` a candidate start, so cost grows with the body length rather than the term length. Measured against a full 10,000-character field: about **2 ms** for one such term, about **130 ms** for a list of 200 of them.
+
+That second number is the one to know, because the Workers free plan allows **10 ms of CPU per request**. A list built entirely of wildcard-heavy terms can therefore exhaust the budget on the comment POST path, and the symptom is a `1102` "exceeded CPU time" error on posting — which points at the Worker, not at the list you last edited. The paid plan has far more headroom and would show it as latency instead.
+
+None of this is reachable by a commenter: the list is yours, and the cost is a property of what you wrote, not of what they typed. Nor is it a concern for a normal list — 200 plain words like `viagra` cost microseconds, because a literal term with no leading `*` is anchored and rejected at the first character in almost every position. The rule of thumb: use bare terms by default, reach for `*` when you actually need to catch a term inside a longer word, and if you find yourself pasting dozens of `*…*` entries, prefer a shorter list you review against your own queue.
+
 ### 5. Content classifier (`SPAM_PROVIDER`)
 
 Pluggable third-party content classification. Pick one of:
