@@ -556,6 +556,18 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
 		addedIn: "1.1.1",
 	},
 	{
+		name: "SPAM_BLOCKLIST",
+		kind: "var",
+		required: false,
+		group: "Anti-spam",
+		adminEditable: true,
+		hint: "muted words, one term per line",
+		description:
+			"Optional. Muted-words list, one term per line. A term matches whole words only (`ass` does not flag \"class\"); wrap it in `*` to match anywhere (`*casino*`), or trail one for a prefix (`t.me/*`). Matching is case- and accent-folded and ignores zero-width characters. Lines starting with `#` are comments. Not a regex — `.` and `(` are literal text. Checked against the comment body, author name and page URL; a hit routes the comment to the admin queue, never a silent drop. Usually maintained on the Settings page rather than here — this is the default a fresh deploy starts with.",
+		example: "casino\\n*viagra*\\nt.me/*",
+		addedIn: "2.12.0",
+	},
+	{
 		name: "SPAM_LINK_THRESHOLD",
 		kind: "var",
 		required: false,
