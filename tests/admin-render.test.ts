@@ -28,6 +28,8 @@ import {
 	type ResolvedNumbers,
 	type ResolvedStrings,
 	STRING_KEYS,
+	type ResolvedTexts,
+	TEXT_KEYS,
 	stringDefault,
 	stringOptions,
 } from "../src/lib/settings";
@@ -701,7 +703,10 @@ describe("renderSettings field-name contract", () => {
 	const strings = Object.fromEntries(
 		STRING_KEYS.map((k) => [k, stringDefault(k)]),
 	) as ResolvedStrings;
-	const html = renderSettings({} as Bindings, flags, numbers, strings);
+	const texts = Object.fromEntries(
+		TEXT_KEYS.map((k) => [k, ""]),
+	) as ResolvedTexts;
+	const html = renderSettings({} as Bindings, flags, numbers, strings, texts);
 
 	it("emits a switch for every flag key the POST handler whitelists", () => {
 		for (const key of FLAG_KEYS) {
@@ -724,6 +729,32 @@ describe("renderSettings field-name contract", () => {
 			expect(html).toContain(`name="${key}"`);
 			expect(html).toContain(`x-model="strs.${key}"`);
 		}
+	});
+
+	it("emits a textarea for every text key the POST handler whitelists", () => {
+		for (const key of TEXT_KEYS) {
+			expect(html).toContain(`name="${key}"`);
+			expect(html).toContain(`x-model="texts.${key}"`);
+		}
+	});
+
+	it("seeds every text key into Alpine state so save() round-trips it", () => {
+		// A textarea whose key is missing from the seed binds to undefined, and
+		// save() then posts `undefined` — the handler skips it, so the operator's
+		// edit vanishes with a "Settings saved" toast.
+		const seeded = renderSettings(
+			{} as Bindings,
+			flags,
+			numbers,
+			strings,
+			Object.fromEntries(
+				TEXT_KEYS.map((k) => [k, "seeded-value"]),
+			) as ResolvedTexts,
+		);
+		for (const key of TEXT_KEYS) {
+			expect(seeded).toContain(`&quot;${key}&quot;:&quot;seeded-value&quot;`);
+		}
+		expect(seeded).toContain("texts: this.texts");
 	});
 
 	it("offers only values the POST handler accepts for each string key", () => {
@@ -768,6 +799,7 @@ describe("renderSettings field-name contract", () => {
 			flags,
 			{ ...numbers, spam_honeypot_min_ms: 0 },
 			strings,
+			texts,
 		);
 		expect(off).toContain("hasFormTsSecret: false");
 		expect(off).toContain(
@@ -782,6 +814,7 @@ describe("renderSettings field-name contract", () => {
 			flags,
 			numbers,
 			strings,
+			texts,
 		);
 		expect(withSecret).toContain("hasFormTsSecret: true");
 	});

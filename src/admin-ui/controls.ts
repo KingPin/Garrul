@@ -136,6 +136,54 @@ export const renderSelect = ({
 </div>`;
 };
 
+export type TextareaOpts = {
+	name: string;
+	/** Alpine x-model expression, e.g. "texts.spam_blocklist". */
+	model: string;
+	label: string;
+	/** Help copy, rendered as HTML — callers pass their own escaped markup. */
+	help: string;
+	rows: number;
+	maxlength: number;
+	placeholder?: string;
+};
+
+/**
+ * A label + help block with a full-width monospace textarea beneath it, for
+ * settings whose value is free-form multi-line text.
+ *
+ * Stacked rather than laid out as a `field-row` like the other controls: the
+ * values here run to thousands of characters, and a box squeezed into the
+ * narrow control column would show about one line of it.
+ *
+ * `help` is interpolated as raw HTML so callers can mark up terms and examples
+ * (`<code>`), which is most of what makes this kind of setting legible; every
+ * caller is a developer-authored constant in this directory. `maxlength` is a
+ * courtesy stop for a cooperating browser — the server re-checks the length.
+ */
+export const renderTextarea = ({
+	name,
+	model,
+	label,
+	help,
+	rows,
+	maxlength,
+	placeholder,
+}: TextareaOpts): string => {
+	assertSafeExpr("renderTextarea", model);
+	const ph = placeholder ? ` placeholder="${escapeHtml(placeholder)}"` : "";
+	return `
+<div class="field-stack">
+  <span class="field-text">
+    <strong>${escapeHtml(label)}</strong>
+    <span class="muted">${help}</span>
+  </span>
+  <textarea name="${escapeHtml(name)}" x-model="${model}" rows="${rows}"
+            maxlength="${maxlength}" spellcheck="false"${ph}
+            style="width:100%;font-family:ui-monospace,monospace"></textarea>
+</div>`;
+};
+
 export type TabDef = { id: string; label: string };
 
 /**

@@ -14,6 +14,11 @@
  *   - the write is audited;
  *   - "reset" clears both flag AND number keys.
  *
+ * Plus the free-form `texts` group (muted words), whose rules differ from all
+ * three above: no clamp, no whitelist, over-long rejected rather than
+ * truncated, empty meaning empty, and the audit row recording a size instead
+ * of the value.
+ *
  * No Miniflare: hand-rolled D1 + KV stubs route by SQL substring / key, in
  * the same style as votes.test.ts. The admin gate (session → admin user) and
  * the same-origin CSRF check are satisfied with a seeded session + Origin
@@ -22,6 +27,7 @@
 import { describe, it, expect } from "vitest";
 import { Hono } from "hono";
 import { admin } from "../src/routes/admin";
+import { MAX_TEXT_SETTING_CHARS } from "../src/lib/settings";
 import type { Bindings } from "../src/index";
 
 // Real session ids are 64 lowercase hex chars (see newSessionId); readSession
@@ -309,8 +315,83 @@ describe("POST /admin/settings — string writes", () => {
 	});
 });
 
+describe("POST /admin/settings — text writes", () => {
+	it("stores a multi-line value verbatim and busts the settings cache", async () => {
+		const { env, kv, runs } = mkEnv();
+		const list = "viagra\n*casino*\n# a comment\nt.me/*";
+		const res = await postSettings(env, { texts: { spam_blocklist: list } });
+		expect(res.status).toBe(200);
+		expect(settingWrites(runs)).toContainEqual(["spam_blocklist", list]);
+		expect(kv.deletedKeys).toContain("settings:resolved");
+	});
+
+	// The one case where "empty means unset" would be actively wrong: an
+	// operator who clears the box wants the list gone, not silently replaced by
+	// whatever SPAM_BLOCKLIST the deploy shipped. Reset is the way back to that.
+	it("writes an empty string rather than treating it as absent", async () => {
+		const { env, runs } = mkEnv();
+		const res = await postSettings(env, { texts: { spam_blocklist: "" } });
+		expect(res.status).toBe(200);
+		expect(settingWrites(runs)).toContainEqual(["spam_blocklist", ""]);
+	});
+
+	it("rejects a non-string value with 400 invalid_text:<key>", async () => {
+		const { env, runs } = mkEnv();
+		const res = await postSettings(env, { texts: { spam_blocklist: 42 } });
+		expect(res.status).toBe(400);
+		expect(await res.json()).toEqual({ error: "invalid_text:spam_blocklist" });
+		expect(settingWrites(runs)).toEqual([]);
+	});
+
+	// Rejected, not truncated. The resolver truncates because it has nobody to
+	// tell; here there's an operator watching, and dropping the tail of a
+	// moderation list silently is how rules go missing with no visible cause.
+	it("rejects an over-long value with 400 text_too_long:<key>", async () => {
+		const { env, runs } = mkEnv();
+		const res = await postSettings(env, {
+			texts: { spam_blocklist: "x".repeat(MAX_TEXT_SETTING_CHARS + 1) },
+		});
+		expect(res.status).toBe(400);
+		expect(await res.json()).toEqual({ error: "text_too_long:spam_blocklist" });
+		expect(settingWrites(runs)).toEqual([]);
+	});
+
+	it("accepts a value exactly at the limit", async () => {
+		const { env, runs } = mkEnv();
+		const res = await postSettings(env, {
+			texts: { spam_blocklist: "x".repeat(MAX_TEXT_SETTING_CHARS) },
+		});
+		expect(res.status).toBe(200);
+		expect(settingWrites(runs).map(([k]) => k)).toEqual(["spam_blocklist"]);
+	});
+
+	it("ignores unknown text keys (whitelist)", async () => {
+		const { env, runs } = mkEnv();
+		const res = await postSettings(env, {
+			texts: { spam_blocklist: "casino", nonsense_key: "x" },
+		});
+		expect(res.status).toBe(200);
+		expect(settingWrites(runs).map(([k]) => k)).toEqual(["spam_blocklist"]);
+	});
+
+	// The audit log answers "who changed what, when" — it is not a revision
+	// store for a 20k-character moderation list, and a copy of every list an
+	// operator has ever typed is a liability, not a feature.
+	it("audits the size of a text setting, never its content", async () => {
+		const { env, runs } = mkEnv();
+		await postSettings(env, { texts: { spam_blocklist: "viagra\ncasino" } });
+		const audit = runs.find((r) => r.sql.includes("INSERT INTO audit_log"));
+		expect(audit).toBeDefined();
+		const meta = audit!.binds.find(
+			(b) => typeof b === "string" && b.includes("spam_blocklist"),
+		) as string;
+		expect(JSON.parse(meta).spam_blocklist).toBe("13 chars");
+		expect(meta).not.toContain("viagra");
+	});
+});
+
 describe("POST /admin/settings — reset", () => {
-	it("clears flag, number and string keys and busts all three caches", async () => {
+	it("clears flag, number, string and text keys and busts the cache", async () => {
 		const { env, kv, runs } = mkEnv();
 		const res = await postSettings(env, { reset: true });
 		expect(res.status).toBe(200);
@@ -324,6 +405,7 @@ describe("POST /admin/settings — reset", () => {
 		expect(del!.binds).toContain("comments_per_page");
 		expect(del!.binds).toContain("auto_collapse_depth");
 		expect(del!.binds).toContain("default_locale");
+		expect(del!.binds).toContain("spam_blocklist");
 
 		expect(kv.deletedKeys).toContain("settings:resolved");
 	});

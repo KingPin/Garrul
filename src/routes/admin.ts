@@ -117,10 +117,12 @@ import {
 	FLAG_KEYS,
 	loadNumbers,
 	loadSettings,
+	MAX_TEXT_SETTING_CHARS,
 	NUMBER_KEYS,
 	numberBounds,
 	STRING_KEYS,
 	stringOptions,
+	TEXT_KEYS,
 } from "../lib/settings";
 import { bustTreeCache } from "../lib/tree-cache";
 import { MAX_REPLY_DEPTH } from "../lib/tree";
@@ -793,7 +795,7 @@ admin.post("/api/telegram/digest", async (c) => {
 admin.get("/settings", async (c) => {
 	const user = await requireAdmin(c);
 	if (user instanceof Response) return user;
-	const [updateInfo, { flags, numbers, strings }] = await Promise.all([
+	const [updateInfo, { flags, numbers, strings, texts }] = await Promise.all([
 		peekCachedLatestVersion(c.env),
 		loadSettings(c.env),
 	]);
@@ -801,7 +803,7 @@ admin.get("/settings", async (c) => {
 		renderPage(
 			c,
 			"Settings",
-			renderSettings(c.env, flags, numbers, strings),
+			renderSettings(c.env, flags, numbers, strings, texts),
 			user,
 			updateInfo,
 		),
@@ -811,14 +813,16 @@ admin.get("/settings", async (c) => {
 // Persist runtime settings overrides. Body is either
 //   { flags: { comments_enabled: bool, … },     — boolean feature toggles
 //     numbers: { comments_per_page: 25, … },     — numeric display settings
-//     strings: { default_locale: "de", … } }     — enumerated string settings
+//     strings: { default_locale: "de", … },      — enumerated string settings
+//     texts: { spam_blocklist: "…", … } }        — free-form multi-line text
 //   { reset: true }                              — clear all overrides
-// The three groups are independent; any subset may be present.
+// The four groups are independent; any subset may be present.
 // Admin-only; same-origin CSRF check is enforced by the admin middleware.
 type SettingsBody = {
 	flags?: Record<string, unknown>;
 	numbers?: Record<string, unknown>;
 	strings?: Record<string, unknown>;
+	texts?: Record<string, unknown>;
 	reset?: unknown;
 };
 
@@ -833,6 +837,7 @@ admin.post("/settings", async (c) => {
 			...FLAG_KEYS,
 			...NUMBER_KEYS,
 			...STRING_KEYS,
+			...TEXT_KEYS,
 		]);
 		await bustSettingsCache(c.env);
 		await adminInsertAudit(c.env.DB, {
@@ -851,7 +856,9 @@ admin.post("/settings", async (c) => {
 		body.numbers && typeof body.numbers === "object" ? body.numbers : null;
 	const stringsObj =
 		body.strings && typeof body.strings === "object" ? body.strings : null;
-	if (!flagsObj && !numbersObj && !stringsObj) {
+	const textsObj =
+		body.texts && typeof body.texts === "object" ? body.texts : null;
+	if (!flagsObj && !numbersObj && !stringsObj && !textsObj) {
 		return c.json({ error: "settings_required" }, 400);
 	}
 
@@ -899,10 +906,41 @@ admin.post("/settings", async (c) => {
 		}
 	}
 
+	// Free-form text is neither clamped nor whitelisted, so the only check that
+	// applies at this layer is the length bound. Over-long is rejected rather
+	// than truncated: the resolver truncates silently because it has nobody to
+	// report to, but here there is an operator watching, and quietly discarding
+	// the tail of a moderation list is how you end up with rules that "didn't
+	// save" for no visible reason.
+	//
+	// Per-term problems are deliberately not errors — see `parseBlocklist`,
+	// which drops an over-long or too-wildcarded term and keeps the rest. The
+	// settings page reports what actually parsed so a dropped line is visible
+	// without one bad line rejecting the whole save.
+	const writtenTexts: Record<string, string> = {};
+	if (textsObj) {
+		for (const key of TEXT_KEYS) {
+			const raw = textsObj[key];
+			if (raw === undefined) continue;
+			if (typeof raw !== "string") {
+				return c.json({ error: `invalid_text:${key}` }, 400);
+			}
+			const value = raw.trim();
+			if (value.length > MAX_TEXT_SETTING_CHARS) {
+				return c.json({ error: `text_too_long:${key}` }, 400);
+			}
+			// An empty box means an empty list, not "inherit the env default" —
+			// an operator clearing a muted-words list has to be able to clear it.
+			// Reset (above) is the way back to the env/default value.
+			writtenTexts[key] = value;
+		}
+	}
+
 	if (
 		Object.keys(writtenFlags).length === 0 &&
 		Object.keys(writtenNumbers).length === 0 &&
-		Object.keys(writtenStrings).length === 0
+		Object.keys(writtenStrings).length === 0 &&
+		Object.keys(writtenTexts).length === 0
 	) {
 		return c.json({ error: "settings_required" }, 400);
 	}
@@ -916,12 +954,16 @@ admin.post("/settings", async (c) => {
 	for (const [key, value] of Object.entries(writtenStrings)) {
 		await setSetting(c.env.DB, key, value);
 	}
-	// One cache entry holds all three groups, so a write to any of them
+	for (const [key, value] of Object.entries(writtenTexts)) {
+		await setSetting(c.env.DB, key, value);
+	}
+	// One cache entry holds all four groups, so a write to any of them
 	// invalidates it. Still conditional: a no-op save shouldn't spend a KV write.
 	const wrote =
 		Object.keys(writtenFlags).length > 0 ||
 		Object.keys(writtenNumbers).length > 0 ||
-		Object.keys(writtenStrings).length > 0;
+		Object.keys(writtenStrings).length > 0 ||
+		Object.keys(writtenTexts).length > 0;
 	if (wrote) {
 		await bustSettingsCache(c.env);
 	}
@@ -930,13 +972,24 @@ admin.post("/settings", async (c) => {
 		action: "settings.update",
 		target_kind: "system",
 		target_id: "settings",
-		meta: { ...writtenFlags, ...writtenNumbers, ...writtenStrings },
+		meta: {
+			...writtenFlags,
+			...writtenNumbers,
+			...writtenStrings,
+			// Size, not content: a text setting can run to MAX_TEXT_SETTING_CHARS,
+			// and an audit row exists to say who changed what and when, not to
+			// keep a copy of every revision of the muted-words list.
+			...Object.fromEntries(
+				Object.entries(writtenTexts).map(([key, v]) => [key, `${v.length} chars`]),
+			),
+		},
 	});
 	return c.json({
 		ok: true,
 		flags: writtenFlags,
 		numbers: writtenNumbers,
 		strings: writtenStrings,
+		texts: writtenTexts,
 	});
 });
 

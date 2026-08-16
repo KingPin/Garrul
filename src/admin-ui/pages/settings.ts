@@ -7,10 +7,23 @@ import {
 	type ResolvedFlags,
 	type ResolvedNumbers,
 	type ResolvedStrings,
+	type ResolvedTexts,
+	MAX_TEXT_SETTING_CHARS,
 	numberBounds,
 } from "../../lib/settings";
+import {
+	MAX_TERMS,
+	MAX_TERM_CHARS,
+	MAX_WILDCARDS,
+} from "../../lib/spam/blocklist";
 import { REACTION_KINDS } from "../../widget/reactions";
-import { renderSelect, renderStepper, renderSwitch, renderTabs } from "../controls";
+import {
+	renderSelect,
+	renderStepper,
+	renderSwitch,
+	renderTabs,
+	renderTextarea,
+} from "../controls";
 import { escapeHtml } from "../escape";
 
 // Read off the vocabulary rather than spelled out. The hand-written version
@@ -225,6 +238,7 @@ export const renderSettings = (
 	flags: ResolvedFlags,
 	numbers: ResolvedNumbers,
 	strings: ResolvedStrings,
+	texts: ResolvedTexts,
 ): string => {
 	const rows: [string, string][] = [
 		["ENV", env.ENV ?? "(unset)"],
@@ -313,6 +327,30 @@ export const renderSettings = (
 		help: "Language for the widget, the Atom feed and notification emails. Comment text is never translated. An embed can override this per-page with data-lang. \"Follow the page\" reads the host page's <html lang> — reviewed translations only, so a machine-translated language has to be chosen here or on the embed.",
 	});
 
+	// The muted-words list. Caps come from the matcher's own exports rather than
+	// being retyped here, so tightening one can't leave the help text promising
+	// the old number.
+	const blocklistTextarea = renderTextarea({
+		name: "spam_blocklist",
+		model: "texts.spam_blocklist",
+		label: "Muted words",
+		help: `One term per line. A bare term matches whole words only, so
+		<code>ass</code> does not flag "class"; wrap it in <code>*</code> to match
+		anywhere (<code>*casino*</code>) or trail one for a prefix
+		(<code>t.me/*</code>). Case-insensitive, and lookalike forms
+		(<code>ｖｉａｇｒａ</code>) and zero-width characters are folded away —
+		but accents are kept and leetspeak is not decoded. This is not a regex:
+		<code>.</code> and <code>(</code> are literal. Lines starting with
+		<code>#</code> are comments. Checked against the comment body, author name
+		and page URL. A hit sends the comment to the queue; nothing is ever
+		silently dropped. Up to ${MAX_TERMS} terms, ${MAX_TERM_CHARS} characters
+		and ${MAX_WILDCARDS} wildcards each — a term over those limits is skipped,
+		the rest of the list still applies.`,
+		rows: 10,
+		maxlength: MAX_TEXT_SETTING_CHARS,
+		placeholder: "viagra\n*casino*\nt.me/*",
+	});
+
 	const initial = JSON.stringify(
 		Object.fromEntries(ALL_FLAG_META.map((f) => [f.key, flags[f.key]])),
 	);
@@ -320,6 +358,7 @@ export const renderSettings = (
 	// controls (auto_close_at, via the date picker) round-trip on save too.
 	const numInitial = JSON.stringify(numbers);
 	const strInitial = JSON.stringify(strings);
+	const textInitial = JSON.stringify(texts);
 
 	return `
 <div x-data="{
@@ -328,7 +367,16 @@ export const renderSettings = (
   flags: ${escapeHtml(initial)},
   nums: ${escapeHtml(numInitial)},
   strs: ${escapeHtml(strInitial)},
+  texts: ${escapeHtml(textInitial)},
   hasFormTsSecret: ${hasFormTsSecret},
+  // Deliberately just a line count, not a re-implementation of the matcher's
+  // parse rules: a second copy of the grammar in Alpine would drift from the
+  // server's, and the number an operator actually wants is "did my paste land".
+  get blocklistTermCount() {
+    return this.texts.spam_blocklist
+      .split('\\n')
+      .filter((l) => l.trim() !== '' && !l.trim().startsWith('#')).length;
+  },
   // Friendly proxy over the epoch-ms auto_close_at: the date picker reads/writes
   // a YYYY-MM-DD string; the canonical value stays the number in nums. Empty
   // string clears it to 0 (disabled). End-of-day UTC so the chosen date is fully
@@ -347,7 +395,7 @@ export const renderSettings = (
       const r = await fetch('/admin/settings', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ flags: this.flags, numbers: this.nums, strings: this.strs }),
+        body: JSON.stringify({ flags: this.flags, numbers: this.nums, strings: this.strs, texts: this.texts }),
       });
       if (!r.ok) {
         const j = await r.json().catch(() => ({}));
@@ -445,6 +493,15 @@ export const renderSettings = (
       <code>SPAM_FORM_TS_SECRET</code> to sign the form timestamp — without it an
       unsigned time is trivially forged, so the check is skipped. Set the secret
       with <code>wrangler secret put SPAM_FORM_TS_SECRET</code> and redeploy.</p>
+      ${blocklistTextarea}
+      <p class="muted" x-show="blocklistTermCount > 0" x-cloak>
+      <span x-text="blocklistTermCount"></span> term(s).
+      <span x-show="blocklistTermCount > ${MAX_TERMS}"><strong>Only the first
+      ${MAX_TERMS} are checked</strong> — the rest are ignored.</span></p>
+      <p class="muted">Clearing the box saves an <em>empty</em> list, which is not
+      the same as never having set one: it overrides whatever
+      <code>SPAM_BLOCKLIST</code> your deploy ships. "Reset to defaults" is the
+      way back to that.</p>
     </div>
 
     <div class="card" x-show="tab === 'moderation'" x-cloak>
