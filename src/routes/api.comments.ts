@@ -59,9 +59,11 @@ import { fireWebhook } from "../lib/webhook";
 import {
 	loadFlags,
 	loadNumbers,
+	loadTexts,
 	type ResolvedFlags,
 	type ResolvedNumbers,
 } from "../lib/settings";
+import { checkBlocklist, compileBlocklist } from "../lib/spam/blocklist";
 import { resolveThreadOpen } from "../lib/thread";
 import { bustTreeCache, TREE_CACHE_TTL, treeCacheKey } from "../lib/tree-cache";
 import {
@@ -262,8 +264,9 @@ type SpamEvaluation = {
 
 /**
  * Run the configured anti-spam signals against a candidate comment and
- * decide whether it goes in as `approved` or `pending`. The three heuristic
- * dials are runtime settings (DB override > env > default) so an operator can
+ * decide whether it goes in as `approved` or `pending`. The heuristic dials —
+ * honeypot timing, link count, muted words, first-comment — are all runtime
+ * settings (DB override > env > default) so an operator can
  * retune them from the Settings page while watching the queue; `SPAM_PROVIDER`
  * and the credentials stay deploy-time. Admins skip the check entirely.
  * Heuristics run first and short-circuit the (potentially paid) classifier call.
@@ -310,6 +313,30 @@ const evaluateSpam = async (
 		const n = countLinks(bodyMd);
 		heuristicsRaw.link_count = { count: n, threshold: linkThreshold };
 		if (n > linkThreshold) reasons.push(`link_count:${n}`);
+	}
+
+	// Operator-maintained muted words. Loaded here rather than threaded through
+	// the two call sites: unlike flags and numbers, nothing else on either path
+	// needs it, and `loadSettings` serves all three from one cached blob.
+	//
+	// Placed after the numeric heuristics and before the first-comment lookup
+	// because it is pure CPU on strings already in hand, so a hit spares both
+	// that DB round trip and the paid classifier call below.
+	const terms = compileBlocklist((await loadTexts(env)).spam_blocklist);
+	if (terms.length > 0) {
+		const blocked = checkBlocklist(terms, {
+			body_md: bodyMd,
+			author_name: author.name,
+			post_url: postUrl,
+		});
+		heuristicsRaw.blocklist = {
+			term: blocked?.term ?? null,
+			field: blocked?.field ?? null,
+		};
+		// The matched term is safe to name here: `reasons` reaches the operator's
+		// logs and the stored verdict, never the API response, so a spammer
+		// cannot bisect the list by watching which posts get held.
+		if (blocked) reasons.push(`blocklist:${blocked.field}:${blocked.term}`);
 	}
 
 	// Compute is_first_comment if either the moderate-on-first heuristic
