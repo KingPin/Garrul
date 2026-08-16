@@ -240,7 +240,8 @@ your local archive.
 
 ## Anti-spam
 
-Always on, no configuration: Turnstile on anonymous posts, a sliding-window
+Always on, no configuration: Turnstile on anonymous posts (`TURNSTILE_ALWAYS`
+challenges signed-in authors too), a sliding-window
 rate limit on the edge Cache API, a strict markdown sanitizer (no raw HTML,
 no images, every link `nofollow ugc noopener`), and a hidden-field honeypot.
 

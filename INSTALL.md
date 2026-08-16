@@ -82,7 +82,9 @@ Google's OAuth verification (7–10 business days).
 
 ## 3. Create a Turnstile widget
 
-Required for anonymous commenting. Signed-in users skip Turnstile.
+Required for anonymous commenting. Signed-in users skip Turnstile — set
+`TURNSTILE_ALWAYS = "true"` (or **Settings → Moderation → "Challenge
+signed-in commenters too"**) if you want them challenged as well.
 
 1. Open <https://dash.cloudflare.com/?to=/:account/turnstile>.
 2. Add a site. Hostname is your **blog**'s domain (the page that
@@ -292,6 +294,7 @@ goes — is section 5 of `AGENTS-OPERATE.md`, generated from
 | `OAUTH_CALLBACK_BASE`          | if OAuth enabled     | Same value as `PUBLIC_BASE_URL` in most setups. |
 | `IP_HASH_SECRET`               | yes                  | HMAC-SHA-256 pepper. Never store raw IPs. |
 | `TURNSTILE_SITE_KEY` / `_SECRET` | for anon commenting | From the Turnstile dashboard. |
+| `TURNSTILE_ALWAYS`             | optional             | `true` challenges signed-in commenters too, not just anonymous ones. Default off; needs the keys above. Overridable at runtime from Admin → Settings. |
 | `GH_CLIENT_ID` / `_SECRET`     | for GitHub sign-in   | From your GitHub OAuth app. |
 | `GOOGLE_CLIENT_ID` / `_SECRET` | for Google sign-in   | From your Google OAuth client. |
 | `FACEBOOK_CLIENT_ID` / `_SECRET` | for Facebook sign-in | From your Facebook app (developers.facebook.com). |
