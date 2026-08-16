@@ -53,13 +53,13 @@
     "marked": "^18.0.9"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.7",
-    "@cloudflare/workers-types": "^5.20260810.1",
+    "@biomejs/biome": "^2.5.8",
+    "@cloudflare/workers-types": "^5.20260813.1",
     "@types/node": "^24.13.3",
     "esbuild": "^0.28.2",
     "tsx": "^4.23.12",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10",
-    "wrangler": "^4.120.1"
+    "wrangler": "^4.123.0"
   }
 }
