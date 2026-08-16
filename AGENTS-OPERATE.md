@@ -1563,9 +1563,9 @@ Bumps so far:
 
 The admin UI shows a dismissible banner when GitHub reports a newer
 release. Dismissal is per-version (localStorage), so the banner
-reappears for each new tag. The check is cached in KV for 24h
+reappears for each new tag. The check is cached in KV for 1h
 (`meta:latest-release` in `TREE_CACHE`); a transient GitHub failure
-caches a null marker for 1h to avoid hammering the API. Set the
+caches a null marker for the same 1h to avoid hammering the API. Set the
 optional `GITHUB_TOKEN` secret if you hit GitHub's 60/hr unauth rate
 limit on shared Cloudflare egress IPs.
 

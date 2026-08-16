@@ -61,7 +61,7 @@ export const renderAbout = (releases: ReleaseSummary[] | null): string => {
 
 <div class="card">
   <h2>Recent releases</h2>
-  <p class="muted">Showing up to the 5 most recent releases from <code>${escapeHtml(REPO_OWNER)}/${escapeHtml(REPO_NAME)}</code>. Cached for 24h.</p>
+  <p class="muted">Showing up to the 5 most recent releases from <code>${escapeHtml(REPO_OWNER)}/${escapeHtml(REPO_NAME)}</code>. Cached for 1h.</p>
   ${releasesHtml}
 </div>`;
 };

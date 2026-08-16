@@ -333,7 +333,7 @@ Useful flags:
 | `--rerender`            | Run `npm run rerender -- --remote` after deploy (if the renderer version bumped). |
 
 The admin UI (`/admin`) shows a dismissible banner when a newer
-release is available; the check is cached in KV for 24h and only fires
+release is available; the check is cached in KV for 1h and only fires
 on admin requests.
 
 **If you prefer to step through manually:**

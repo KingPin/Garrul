@@ -49,8 +49,14 @@ type Env = {
 const CACHE_KEY = "meta:latest-release";
 const RELEASES_CACHE_KEY = "meta:recent-releases";
 const RECENT_RELEASES_LIMIT = 5;
-const OK_TTL_SEC = 86_400; // 24h
-const NULL_TTL_SEC = 3_600; // 1h on failure, so we don't hammer GitHub
+// 1h, not 24h: unauthenticated GitHub allows 60 req/hr per IP, and this costs
+// at most two of them — one per cache key — so an operator sees a new release
+// the hour it lands instead of up to a day later. Both TTLs also bound the KV
+// *write* rate (48/day worst case against a 1000/day account-wide free-tier
+// cap), which is the reason not to shorten this further; the refresh is behind
+// admin auth, so it is not a per-request write.
+const OK_TTL_SEC = 3_600;
+const NULL_TTL_SEC = 3_600; // same on failure, so we don't hammer GitHub
 
 const stripV = (s: string): string => s.replace(/^v/, "");
 
