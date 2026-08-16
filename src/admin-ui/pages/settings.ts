@@ -9,6 +9,7 @@ import {
 	type ResolvedStrings,
 	type ResolvedTexts,
 	MAX_TEXT_SETTING_CHARS,
+	TEXT_KEYS,
 	numberBounds,
 } from "../../lib/settings";
 import {
@@ -24,7 +25,7 @@ import {
 	renderTabs,
 	renderTextarea,
 } from "../controls";
-import { escapeHtml } from "../escape";
+import { escapeHtml, jsLiteralRaw } from "../escape";
 
 // Read off the vocabulary rather than spelled out. The hand-written version
 // outlived the v2.10.0 `like` → `fire` rename by a release and only ever named
@@ -358,7 +359,15 @@ export const renderSettings = (
 	// controls (auto_close_at, via the date picker) round-trip on save too.
 	const numInitial = JSON.stringify(numbers);
 	const strInitial = JSON.stringify(strings);
-	const textInitial = JSON.stringify(texts);
+	// The other three seeds get away with bare JSON.stringify because their
+	// values cannot be arbitrary: booleans, clamped numbers, and strings the
+	// handler whitelists. A text setting is whatever the operator typed, so it
+	// goes through jsLiteralRaw like every other free-form value embedded in an
+	// x-data blob — JSON.stringify leaves U+2028/U+2029 raw, and those are line
+	// terminators that end the string literal inside the Alpine expression.
+	const textInitial = `{${TEXT_KEYS.map(
+		(k) => `${jsLiteralRaw(k)}:${jsLiteralRaw(texts[k])}`,
+	).join(",")}}`;
 
 	return `
 <div x-data="{
