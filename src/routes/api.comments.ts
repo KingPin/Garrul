@@ -57,11 +57,11 @@ import { verifyTurnstile } from "../lib/turnstile";
 import { writeEvent } from "../lib/analytics";
 import { fireWebhook } from "../lib/webhook";
 import {
-	loadFlags,
 	loadNumbers,
-	loadTexts,
+	loadSettings,
 	type ResolvedFlags,
 	type ResolvedNumbers,
+	type ResolvedTexts,
 } from "../lib/settings";
 import { checkBlocklist, compileBlocklist } from "../lib/spam/blocklist";
 import { resolveThreadOpen } from "../lib/thread";
@@ -279,6 +279,7 @@ const evaluateSpam = async (
 	env: Bindings,
 	flags: ResolvedFlags,
 	numbers: ResolvedNumbers,
+	texts: ResolvedTexts,
 	author: User,
 	bodyMd: string,
 	postUrl: string | null,
@@ -315,14 +316,16 @@ const evaluateSpam = async (
 		if (n > linkThreshold) reasons.push(`link_count:${n}`);
 	}
 
-	// Operator-maintained muted words. Loaded here rather than threaded through
-	// the two call sites: unlike flags and numbers, nothing else on either path
-	// needs it, and `loadSettings` serves all three from one cached blob.
+	// Operator-maintained muted words. Passed in alongside flags and numbers
+	// rather than loaded here: the three groups share one KV entry, but each
+	// `load*` helper is its own `TREE_CACHE.get`, so resolving one of them inside
+	// this function would add a third round trip to the hot comment-POST path for
+	// a blob the caller has already read.
 	//
 	// Placed after the numeric heuristics and before the first-comment lookup
 	// because it is pure CPU on strings already in hand, so a hit spares both
 	// that DB round trip and the paid classifier call below.
-	const terms = compileBlocklist((await loadTexts(env)).spam_blocklist);
+	const terms = compileBlocklist(texts.spam_blocklist);
 	if (terms.length > 0) {
 		const blocked = checkBlocklist(terms, {
 			body_md: bodyMd,
@@ -424,7 +427,10 @@ comments.post("/", async (c) => {
 	// below is rendered verbatim by the widget, so without this a German reader
 	// gets a German widget and an English "comment is too long".
 	const t = c.get("t") ?? tFor(FALLBACK_LOCALE);
-	const flags = await loadFlags(c.env);
+	// One read for all three groups this handler needs. They share a single KV
+	// entry but each `load*` helper is its own `get`, so the per-group helpers
+	// would spend three round trips here to fetch the same blob three times.
+	const { flags, numbers, texts } = await loadSettings(c.env);
 	if (!flags.comments_enabled) {
 		return c.json({ error: "comments_disabled" }, 403);
 	}
@@ -584,7 +590,6 @@ comments.post("/", async (c) => {
 	// then 403). A post with no row yet is open unless a global/sunset rule says
 	// otherwise, so synthesize a default-open post for the resolver in that case.
 	const existing = await getPost(c.env.DB, slug);
-	const numbers = await loadNumbers(c.env);
 	const threadState = resolveThreadOpen(
 		existing ?? { closed: false, published_at: null, created_at: Date.now() },
 		flags,
@@ -633,6 +638,7 @@ comments.post("/", async (c) => {
 		c.env,
 		flags,
 		numbers,
+		texts,
 		author,
 		bodyCheck.body,
 		postUrl,
@@ -664,7 +670,9 @@ comments.post("/", async (c) => {
 	// Bust the cached first page. Older pages bypass cache, so there's
 	// nothing else to invalidate. Pending comments don't appear in the
 	// public tree but the cache key is the same; busting is still correct.
-	await bustTreeCache(c.env, c.req.url, slug);
+	// Hand over the settings resolved at the top rather than letting it read them
+	// again — this runs after the insert, with the user waiting on the response.
+	await bustTreeCache(c.env, c.req.url, slug, numbers);
 
 	// Persist whichever spam signals ran. Fire-and-forget so a slow D1
 	// write never adds latency to the user-visible POST. Mirror the
@@ -844,8 +852,10 @@ comments.get("/", async (c) => {
 
 	// Top-level threads per page, operator-tunable (DB > env > default 25),
 	// clamped to [1,200] in the settings layer. The full numbers object is also
-	// reused below to resolve the thread's accepting-comments state.
-	const numbers = await loadNumbers(c.env);
+	// reused below to resolve the thread's accepting-comments state, and `flags`
+	// gates deleted-comment placeholders further down — one read for both, since
+	// the per-group helpers would each `get` the same KV entry.
+	const { flags, numbers } = await loadSettings(c.env);
 	const pageSize = numbers.comments_per_page;
 
 	// Cached at the edge (Cache API, not KV — see response-cache.ts) for
@@ -934,7 +944,6 @@ comments.get("/", async (c) => {
 	// When the operator opts in, keep every deleted comment as a placeholder
 	// (leaf deletions included) rather than pruning them. A toggle change is
 	// reflected for anonymous viewers within the tree-cache TTL.
-	const flags = await loadFlags(c.env);
 	const keepAllDeleted = flags.show_deleted_placeholders;
 
 	const { threads: allThreads } = buildTree(rows, authors, reactionsById, myVotes, {
@@ -1080,7 +1089,9 @@ comments.patch("/:id", async (c) => {
 		return c.json({ error: t("err.not_found") }, 404);
 	}
 
-	const numbers = await loadNumbers(c.env);
+	// Same single read as the POST path: the edit window needs `numbers`, and the
+	// spam re-run below needs `flags` and `texts`, all from one KV entry.
+	const { flags, numbers, texts } = await loadSettings(c.env);
 	if (Date.now() - existing.created_at > editWindowMs(numbers)) {
 		return c.json({ error: t("err.edit.window_expired") }, 403);
 	}
@@ -1097,12 +1108,12 @@ comments.patch("/:id", async (c) => {
 	// get approved, then rewrite it inside the edit window" published arbitrary
 	// content straight past moderation — bustTreeCache below makes it live
 	// immediately.
-	const flags = await loadFlags(c.env);
 	const post = await getPost(c.env.DB, existing.post_slug);
 	const verdict = await evaluateSpam(
 		c.env,
 		flags,
 		numbers,
+		texts,
 		author,
 		bodyCheck.body,
 		post?.url ?? null,
@@ -1134,7 +1145,7 @@ comments.patch("/:id", async (c) => {
 		CURRENT_RENDERER_VERSION,
 		nextStatus === existing.status ? undefined : nextStatus,
 	);
-	await bustTreeCache(c.env, c.req.url, existing.post_slug);
+	await bustTreeCache(c.env, c.req.url, existing.post_slug, numbers);
 
 	// Same fire-and-forget shape as POST, so the moderator sees why the edit was
 	// held.
