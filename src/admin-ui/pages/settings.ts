@@ -380,7 +380,10 @@ export const renderSettings = (
   hasFormTsSecret: ${hasFormTsSecret},
   // Deliberately just a line count, not a re-implementation of the matcher's
   // parse rules: a second copy of the grammar in Alpine would drift from the
-  // server's, and the number an operator actually wants is "did my paste land".
+  // server's, and the number an operator actually wants is 'did my paste land'.
+  // Single quotes, not double: this whole blob is one double-quoted HTML
+  // attribute, so a double quote typed anywhere in it — comments included —
+  // ends the attribute early and dumps the rest onto the page as text.
   get blocklistTermCount() {
     return this.texts.spam_blocklist
       .split('\\n')

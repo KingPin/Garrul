@@ -8,6 +8,8 @@
  * users see, so HTML-escape regressions here are user-visible.
  */
 import { describe, it, expect } from "vitest";
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 import { renderQueue, type QueueFilters } from "../src/admin-ui/pages/queue";
 import { renderAudit, type AuditFilters } from "../src/admin-ui/pages/audit";
 import {
@@ -782,6 +784,26 @@ describe("renderSettings field-name contract", () => {
 		expect(seeded).not.toContain("</script>");
 	});
 
+	// The sibling test above covers hostile *data* reaching the x-data blob. This
+	// one covers hostile *authoring*: the blob is a multi-line double-quoted HTML
+	// attribute containing hand-written JS, so a single `"` typed anywhere in it —
+	// most easily inside one of its own `//` comments — ends the attribute early.
+	// The browser then parses the remainder of the object literal as attributes
+	// until the first `>` (which `=>` supplies), and dumps everything after that
+	// as visible text at the top of the settings page. v2.12.0 shipped exactly
+	// that. Nothing else in the suite notices, because every `toContain` above
+	// still passes on a page whose Alpine state never initialises.
+	it("keeps the x-data attribute closed at the end of the object literal", () => {
+		const attr = /x-data="([^"]*)"/.exec(html)?.[1];
+		expect(attr).toBeDefined();
+		// If a stray quote truncated it, the value stops mid-expression instead of
+		// on the object's closing brace.
+		expect(attr?.trimEnd().endsWith("}")).toBe(true);
+		// And the tail of the blob really is inside the attribute, not on the page.
+		expect(attr).toContain("async save()");
+		expect(attr).toContain("blocklistTermCount");
+	});
+
 	it("offers only values the POST handler accepts for each string key", () => {
 		// The select is the operator's whole vocabulary for these settings, and
 		// the handler rejects anything off its whitelist outright — so an option
@@ -842,5 +864,80 @@ describe("renderSettings field-name contract", () => {
 			texts,
 		);
 		expect(withSecret).toContain("hasFormTsSecret: true");
+	});
+});
+
+/**
+ * The class-level guard behind the settings-page test above.
+ *
+ * Every admin page hand-writes an Alpine object literal inside a double-quoted
+ * `x-data="…"` attribute, so any one of them can be broken by a single stray
+ * `"` — no data required, just a typo in a comment or a string. The rendered
+ * test above pins settings.ts because that is where it actually happened; this
+ * one scans the source of every page so the next occurrence fails in whichever
+ * file introduces it, without needing a fixture per renderer.
+ *
+ * Scanning source rather than output is the point: building call-fixtures for
+ * fourteen renderers to catch a lexical bug would be the expensive way to get a
+ * worse test.
+ */
+describe("admin Alpine x-data attributes are lexically well-formed", () => {
+	const roots = ["src/admin-ui", "src/routes"];
+
+	const tsFiles = (dir: string): string[] =>
+		readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+			const p = join(dir, e.name);
+			return e.isDirectory() ? tsFiles(p) : p.endsWith(".ts") ? [p] : [];
+		});
+
+	/**
+	 * Walks the template text of an `x-data="` attribute, skipping `${…}`
+	 * interpolations — a `"` inside one is ordinary TypeScript and never reaches
+	 * the browser, while a `"` outside one closes the attribute. Returns the
+	 * literal text the browser would actually receive.
+	 */
+	const attrLiteral = (src: string, from: number): string => {
+		let depth = 0;
+		let out = "";
+		for (let i = from; i < src.length; i++) {
+			const c = src[i];
+			if (c === "$" && src[i + 1] === "{") {
+				depth++;
+				i++;
+			} else if (depth > 0) {
+				if (c === "{") depth++;
+				else if (c === "}") depth--;
+			} else if (c === '"') {
+				break;
+			} else {
+				out += c;
+			}
+		}
+		return out;
+	};
+
+	it("never lets a stray quote close an x-data attribute early", () => {
+		const offenders: string[] = [];
+		for (const file of roots.flatMap(tsFiles)) {
+			const src = readFileSync(file, "utf8");
+			const re = /x-data="/g;
+			let m: RegExpExecArray | null = re.exec(src);
+			for (; m !== null; m = re.exec(src)) {
+				const lit = attrLiteral(src, m.index + m[0].length);
+				if (!lit.includes("{")) continue;
+				// An attribute that closes where its author intended has balanced
+				// braces; one truncated by a stray quote stops mid-object.
+				let depth = 0;
+				for (const c of lit) {
+					if (c === "{") depth++;
+					else if (c === "}") depth--;
+				}
+				if (depth !== 0) {
+					const line = src.slice(0, m.index).split("\n").length;
+					offenders.push(`${file}:${line} (brace depth ${depth} at close)`);
+				}
+			}
+		}
+		expect(offenders).toEqual([]);
 	});
 });
