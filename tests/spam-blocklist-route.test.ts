@@ -46,10 +46,18 @@ const makeD1 = (db: DatabaseSync): any => ({
 	},
 });
 
+// Counts reads of the resolved-settings entry, which is what makes the
+// "one settings read per request" test below possible. Every `load*` helper is
+// its own `get` against this one key, so the counter is the only thing that can
+// tell "read the blob once and destructured it" apart from "called three
+// helpers" — both produce identical responses.
+const settingsReads = { count: 0 };
+
 const makeKv = () => {
 	const store = new Map<string, string>();
 	return {
 		async get(key: string, type?: "json") {
+			if (key === "settings:resolved") settingsReads.count++;
 			const raw = store.get(key);
 			if (raw == null) return null;
 			return type === "json" ? JSON.parse(raw) : raw;
@@ -85,6 +93,7 @@ let env: Bindings;
 
 beforeEach(() => {
 	installMockCaches();
+	settingsReads.count = 0;
 	sqlite = new DatabaseSync(":memory:");
 	for (const file of readdirSync(MIGRATIONS_DIR)
 		.filter((f) => f.endsWith(".sql"))
@@ -202,5 +211,19 @@ describe("POST /comments — muted words", () => {
 		expect(verdict === undefined || !("blocklist" in JSON.parse(verdict.raw ?? "{}"))).toBe(
 			true,
 		);
+	});
+
+	it("resolves settings with a single KV read", async () => {
+		// The handler needs three groups: `flags` to gate comments_enabled,
+		// `numbers` for the thread-close rules, `texts` for this list. They live in
+		// one KV entry, but `loadFlags`/`loadNumbers`/`loadTexts` each fetch it
+		// separately — so reaching for a per-group helper here (or inside
+		// `evaluateSpam`, which is where the muted-words check would most naturally
+		// have loaded it) silently adds a round trip to the hottest write path.
+		//
+		// Pinned as a count rather than left to review: the failure is invisible in
+		// every response body, so nothing else in this suite can catch it.
+		expect((await post("a perfectly ordinary comment about gardening")).status).toBe(201);
+		expect(settingsReads.count).toBe(1);
 	});
 });
