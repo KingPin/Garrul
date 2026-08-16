@@ -4,6 +4,10 @@
  * Exposes:
  *   - turnstile_site_key (the public site key — safe to ship to the
  *     browser; the secret stays server-side in TURNSTILE_SECRET).
+ *   - turnstile_always: whether signed-in commenters get challenged too.
+ *     Default false (session = no challenge). The widget uses it to decide
+ *     whether to render the challenge slot for a signed-in reader, and the
+ *     POST handler resolves the same predicate before demanding a token.
  *   - providers: OAuth providers the operator has actually configured.
  *     Each entry requires BOTH client_id and client_secret to be set;
  *     the widget uses this to render only the login buttons that will work.
@@ -48,6 +52,7 @@ import type { Bindings } from "../index";
 import { PROVIDERS, type ProviderId } from "../lib/oauth";
 import { MAX_BODY_CHARS } from "../lib/markdown";
 import { loadSettings } from "../lib/settings";
+import { turnstileAlwaysOn } from "../lib/turnstile";
 import { FALLBACK_LOCALE, LOCALES } from "../i18n";
 import { resolveLocale } from "../i18n/negotiate";
 import { WIDGET_TABLES } from "../i18n/widget";
@@ -95,6 +100,14 @@ config.get("/", async (c) => {
 		locale,
 		...localized,
 		turnstile_site_key: c.env.TURNSTILE_SITE_KEY || null,
+		// Already folded together with the site key (turnstileAlwaysOn), so the
+		// widget never has to re-derive "is a challenge possible here" — an
+		// install with the flag on but no key reports false, exactly matching
+		// what the POST handler will enforce.
+		turnstile_always: turnstileAlwaysOn(
+			flags.turnstile_always,
+			c.env.TURNSTILE_SITE_KEY,
+		),
 		edit_window_minutes: numbers.edit_window_minutes,
 		providers,
 		branding_hidden: isTruthy(c.env.BRANDING_HIDDEN),

@@ -35,7 +35,8 @@ export type FlagKey =
 	| "page_votes_enabled"
 	| "show_deleted_placeholders"
 	| "spam_first_comment_moderate"
-	| "moderator_email_enabled";
+	| "moderator_email_enabled"
+	| "turnstile_always";
 
 export type ResolvedFlags = Record<FlagKey, boolean>;
 
@@ -103,6 +104,16 @@ const FLAGS: Record<FlagKey, { env: keyof Bindings; default: boolean }> = {
 	// accumulating a queue nobody drains.
 	moderator_email_enabled: {
 		env: "MODERATOR_EMAIL_ENABLED",
+		default: false,
+	},
+	// Challenge signed-in authors too, instead of only anonymous ones. OFF
+	// preserves the historical rule (session = no challenge); ON is for
+	// operators seeing scripted posting from throwaway OAuth accounts, who
+	// would rather every commenter solve a challenge than moderate the fallout.
+	// Inert without TURNSTILE_SITE_KEY — see turnstileAlwaysOn in lib/turnstile.ts
+	// for why the key is part of the predicate rather than a separate guard.
+	turnstile_always: {
+		env: "TURNSTILE_ALWAYS",
 		default: false,
 	},
 };

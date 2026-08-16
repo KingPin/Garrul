@@ -13,7 +13,8 @@
  * Auth:
  *   - Anonymous identity = ghost user keyed on hashed-IP (lib/db/queries.ts).
  *   - Session cookie holds user_id; cookie ⇒ KV-resolved ⇒ user_id check.
- *   - Anonymous POST requires Turnstile; rate-limited per-IP-hash.
+ *   - Anonymous POST requires Turnstile; rate-limited per-IP-hash. A signed-in
+ *     POST is challenged too when the operator sets `turnstile_always`.
  *
  * Body is sanitized to HTML and stored alongside the raw markdown so the
  * sanitizer can be re-run via scripts/rerender.ts (renderer_version bump).
@@ -53,7 +54,7 @@ import { CURRENT_RENDERER_VERSION, renderMarkdown, validateBody } from "../lib/m
 import { checkRateLimit } from "../lib/ratelimit";
 import { isActiveUser, requireActiveUser } from "../lib/active-user";
 import { readSession } from "../lib/session";
-import { verifyTurnstile } from "../lib/turnstile";
+import { turnstileAlwaysOn, verifyTurnstile } from "../lib/turnstile";
 import { writeEvent } from "../lib/analytics";
 import { fireWebhook } from "../lib/webhook";
 import {
@@ -491,6 +492,42 @@ comments.post("/", async (c) => {
 		return c.json({ error: t("err.ratelimit") }, 429);
 	};
 
+	// Siteverify for the token on this request. Returns an error response to
+	// hand back, or null when the token checks out. Shared by both identity
+	// paths: anonymous posts always come through here, signed-in ones only when
+	// the operator opted into `turnstile_always`. Callers check token
+	// *presence* themselves, before spending the write budget — see below.
+	const verifyChallenge = async (): Promise<Response | null> => {
+		// Turnstile binds the token to the hostname where the widget was
+		// SOLVED. The widget renders inside our same-origin iframe at
+		// GET /embed/turnstile-frame (the Shadow-DOM-dodging fix), so the
+		// hostname Cloudflare stamps on the token is *this Worker's own
+		// hostname* — not the embedding host page. Deriving expectedHostname
+		// from the request URL is therefore correct here.
+		let expectedHostname = new URL(c.req.url).hostname;
+		// Cloudflare's "always passes" dev test keys return a fixed
+		// data.hostname of "example.com" regardless of where the widget
+		// actually rendered. Override under ENV=dev so local wrangler dev
+		// (hostname=localhost) keeps exercising the hostname check.
+		if (c.env.ENV === "dev") {
+			expectedHostname = "example.com";
+		}
+		const rawClientIp = clientIp(c.req.raw);
+		const ts = await verifyTurnstile(
+			body.turnstile_token ?? "",
+			c.env.TURNSTILE_SECRET,
+			{
+				// `remoteip` is optional to siteverify, and requireIpHash above
+				// already refused the request if the edge header was missing
+				// outside dev — so this only omits it on the local-dev path.
+				...(rawClientIp ? { clientIp: rawClientIp } : {}),
+				expectedHostname,
+			},
+		);
+		if (!ts) return c.json({ error: t("err.turnstile.invalid") }, 400);
+		return null;
+	};
+
 	if (!session) {
 		// Name and token *presence* are checked first and deliberately cost
 		// nothing: at 1 request per 10s, making a typo spend the caller's slot
@@ -508,33 +545,8 @@ comments.post("/", async (c) => {
 		const denied = await enforceWriteBudget();
 		if (denied) return denied;
 
-		// Turnstile binds the token to the hostname where the widget was
-		// SOLVED. The widget renders inside our same-origin iframe at
-		// GET /embed/turnstile-frame (the Shadow-DOM-dodging fix), so the
-		// hostname Cloudflare stamps on the token is *this Worker's own
-		// hostname* — not the embedding host page. Deriving expectedHostname
-		// from the request URL is therefore correct here.
-		let expectedHostname = new URL(c.req.url).hostname;
-		// Cloudflare's "always passes" dev test keys return a fixed
-		// data.hostname of "example.com" regardless of where the widget
-		// actually rendered. Override under ENV=dev so local wrangler dev
-		// (hostname=localhost) keeps exercising the hostname check.
-		if (c.env.ENV === "dev") {
-			expectedHostname = "example.com";
-		}
-		const rawClientIp = clientIp(c.req.raw);
-		const ts = await verifyTurnstile(
-			body.turnstile_token,
-			c.env.TURNSTILE_SECRET,
-			{
-				// `remoteip` is optional to siteverify, and requireIpHash above
-				// already refused the request if the edge header was missing
-				// outside dev — so this only omits it on the local-dev path.
-				...(rawClientIp ? { clientIp: rawClientIp } : {}),
-				expectedHostname,
-			},
-		);
-		if (!ts) return c.json({ error: t("err.turnstile.invalid") }, 400);
+		const bad = await verifyChallenge();
+		if (bad) return bad;
 
 		author = await getOrCreateGhost(c.env.DB, ipHash, nameCheck.name);
 		// Same predicate as the signed-in branch below, so a ghost can't be
@@ -543,8 +555,21 @@ comments.post("/", async (c) => {
 		// anyway is what keeps that true.
 		if (!isActiveUser(author)) return c.json({ error: t("err.banned") }, 403);
 	} else {
-		// Nothing free to reject on this path — the session cookie is already
-		// verified — so the budget gates the user lookup too.
+		// Signed-in posts skip the challenge by default. `turnstile_always`
+		// opts out of that: the operator has decided an OAuth account is not
+		// enough of a cost by itself. Presence is checked here, before the
+		// budget, for the same reason as the anonymous path — a submit that
+		// raced its own token shouldn't also cost the reader their next slot.
+		const challenge = turnstileAlwaysOn(
+			flags.turnstile_always,
+			c.env.TURNSTILE_SITE_KEY,
+		);
+		if (challenge && !body.turnstile_token) {
+			return c.json({ error: t("err.turnstile.required") }, 400);
+		}
+
+		// Nothing else free to reject on this path — the session cookie is
+		// already verified — so the budget gates the user lookup too.
 		const denied = await enforceWriteBudget();
 		if (denied) return denied;
 
@@ -560,6 +585,14 @@ comments.post("/", async (c) => {
 		const u = await getUser(c.env.DB, session.user_id);
 		if (!u) return c.json({ error: t("err.session.expired") }, 401);
 		if (!isActiveUser(u)) return c.json({ error: t("err.banned") }, 403);
+
+		// Last, so a banned or vanished session doesn't spend an outbound
+		// siteverify call on its way to a rejection.
+		if (challenge) {
+			const bad = await verifyChallenge();
+			if (bad) return bad;
+		}
+
 		author = u;
 	}
 

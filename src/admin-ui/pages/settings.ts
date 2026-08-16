@@ -90,6 +90,11 @@ const MOD_FLAG_META: { key: FlagKey; label: string; help: string }[] = [
 		help: "Route the first-ever comment from each author to the moderation queue. Nothing is dropped — you approve or reject it.",
 	},
 	{
+		key: "turnstile_always",
+		label: "Challenge signed-in commenters too",
+		help: "Require a Turnstile challenge on every comment, not just anonymous ones. Off by default — a signed-in reader posts without one. Needs TURNSTILE_SITE_KEY and TURNSTILE_SECRET configured; without them this does nothing.",
+	},
+	{
 		key: "moderator_email_enabled",
 		label: "Email me about the queue",
 		help: "Send a digest to ADMIN_EMAILS (or MODERATOR_NOTIFY_EMAILS) when comments land in the queue or get reported. Needs email configured — EMAIL_PROVIDER, RESEND_API_KEY, EMAIL_FROM and PUBLIC_BASE_URL — and stays silent without it.",

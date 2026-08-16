@@ -168,6 +168,11 @@
       "addedIn": "1.0.0"
     },
     {
+      "name": "TURNSTILE_ALWAYS",
+      "required": false,
+      "addedIn": "2.13.0"
+    },
+    {
       "name": "EMAIL_PROVIDER",
       "required": false,
       "addedIn": "1.0.0"

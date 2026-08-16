@@ -52,6 +52,10 @@ export type Bindings = {
 	IP_HASH_SECRET: string;
 	TURNSTILE_SITE_KEY: string;
 	TURNSTILE_SECRET: string;
+	// Challenge signed-in commenters too, not just anonymous ones. Resolved
+	// through the settings layer (DB override > env > default false), so the
+	// admin Settings page can flip it without a redeploy.
+	TURNSTILE_ALWAYS: string;
 	GH_CLIENT_ID: string;
 	GH_CLIENT_SECRET: string;
 	GOOGLE_CLIENT_ID: string;
