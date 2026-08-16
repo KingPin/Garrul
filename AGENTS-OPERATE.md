@@ -454,12 +454,12 @@ server-side regardless.
 
 ### Optional extra anti-spam layers
 
-Three lightweight heuristics and a pluggable content classifier are
+Four lightweight heuristics and a pluggable content classifier are
 available on top of Turnstile. **All off by default.** Flagged comments
 flip to `status='pending'` and land in the admin queue rather than
 being silently dropped.
 
-The three heuristics are runtime settings: the env vars below set the
+The four heuristics are runtime settings: the env vars below set the
 deploy-time default, and **Admin → Settings → Moderation** overrides
 them without a redeploy (DB row > env var > built-in default). Retune
 them there while watching what the queue catches. `SPAM_PROVIDER` and
@@ -474,6 +474,13 @@ its credentials stay deploy-time.
   link.
 - `SPAM_FIRST_COMMENT_MODERATE=true` — every commenter's first-ever
   comment goes to pending until you approve once.
+- `SPAM_BLOCKLIST` — muted words, one term per line, checked against the
+  body, author name and page URL. Empty/unset = off. A bare term matches
+  whole words only; `*` is the sole wildcard (`*casino*`, `t.me/*`) and
+  everything else is literal. Case-insensitive, folds Unicode lookalikes
+  and zero-width characters; does not strip accents or decode leetspeak.
+  `#` starts a comment. Normally maintained on the Settings page — the
+  env var is just the default a fresh deploy starts with.
 - `SPAM_PROVIDER` — set to `akismet` or `workers-ai` to enable a
   content classifier (each has its own required secrets/bindings).
 

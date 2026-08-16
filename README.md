@@ -32,6 +32,14 @@ dashboard page); every other integration is optional.
 - **Moderator notifications by email** — a digest of what's sitting in
   the queue or has been reported, to `ADMIN_EMAILS` or a shared alias.
   Off by default; one switch in *Settings → Moderation*
+- **Layered anti-spam** — Turnstile, rate limiting and a strict markdown
+  sanitizer are always on; on top of those, four tunable heuristics
+  (fill-time, link count, first-comment hold, and a **muted-words list**
+  with word-boundary and wildcard terms) and an optional Akismet or
+  Workers AI classifier. Everything routes to the queue — nothing is
+  silently dropped — and all four heuristics retune from
+  *Settings → Moderation* without a redeploy —
+  [`docs/ANTISPAM.md`](docs/ANTISPAM.md)
 - **Import from Disqus** — upload an export in the admin UI, or run
   `npm run import-disqus -- ./export.xml --dry-run` to see the plan
   before it writes anything
