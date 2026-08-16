@@ -563,6 +563,7 @@ comments.post("/", async (c) => {
 		const challenge = turnstileAlwaysOn(
 			flags.turnstile_always,
 			c.env.TURNSTILE_SITE_KEY,
+			c.env.TURNSTILE_SECRET,
 		);
 		if (challenge && !body.turnstile_token) {
 			return c.json({ error: t("err.turnstile.required") }, 400);

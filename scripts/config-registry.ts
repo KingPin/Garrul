@@ -298,7 +298,7 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
 		group: "Turnstile",
 		hint: "challenge signed-in commenters too; defaults OFF",
 		description:
-			"Require a Turnstile challenge on **every** comment, not just anonymous ones. Defaults **off**: a signed-in author already paid for an OAuth account, and challenging them is friction for the commenters an operator least wants to annoy. Turn it on when throwaway accounts are being scripted. Inert without `TURNSTILE_SITE_KEY` — the widget can only render a challenge when it has one, so the server does not demand a token it could never receive. Also settable from `/admin/settings`.",
+			"Require a Turnstile challenge on **every** comment, not just anonymous ones. Defaults **off**: a signed-in author already paid for an OAuth account, and challenging them is friction for the commenters an operator least wants to annoy. Turn it on when throwaway accounts are being scripted. Inert unless both `TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET` are set — the widget can only render a challenge with the key and the server can only verify one with the secret, so it does not demand a token it could never receive or never accept. Also settable from `/admin/settings`.",
 		example: "false",
 		addedIn: "2.13.0",
 	},

@@ -9,11 +9,14 @@
  *      never touched the flag still posts without a token.
  *   2. ON actually verifies. Not just "a token was present" — a token siteverify
  *      rejects has to fail the POST, or the flag is theatre.
- *   3. ON without TURNSTILE_SITE_KEY is inert. The widget only renders a
- *      challenge when the config route hands it a site key, so an install that
- *      flipped the flag without configuring Turnstile would otherwise reject
- *      every comment from a composer that has no way to produce a token —
- *      turning a tightening dial into an outage.
+ *   3. ON without both Turnstile credentials is inert. The widget only renders
+ *      a challenge when the config route hands it a site key, and siteverify
+ *      can only succeed with a secret, so an install that flipped the flag
+ *      without configuring Turnstile would otherwise reject every comment —
+ *      either from a composer that has no way to produce a token, or from a
+ *      verifier that can never accept one — turning a tightening dial into an
+ *      outage. Both halves are covered because they fail at different points:
+ *      a missing key never renders, a missing secret never verifies.
  *
  * Real SQLite with every migration applied, so the accept path proves a row
  * actually landed rather than that a handler returned 201.
@@ -219,6 +222,18 @@ describe("POST /comments — turnstile_always ON", () => {
 		expect(res.status).toBe(201);
 		expect(countComments()).toBe(1);
 	});
+
+	it("stays inert without a secret, rather than blocking every comment", async () => {
+		// The failure mode a site-key-only predicate misses: the widget renders a
+		// challenge and the reader solves it, then verifyTurnstile short-circuits
+		// to false on the empty secret and rejects the token it just asked for.
+		const res = await postSignedIn(
+			makeEnv({ TURNSTILE_ALWAYS: "true", TURNSTILE_SECRET: "" }),
+		);
+		expect(res.status).toBe(201);
+		expect(countComments()).toBe(1);
+		expect(siteverify).not.toHaveBeenCalled();
+	});
 });
 
 describe("GET /config — turnstile_always", () => {
@@ -254,6 +269,17 @@ describe("GET /config — turnstile_always", () => {
 				await getConfig({
 					TURNSTILE_ALWAYS: "true",
 					TURNSTILE_SITE_KEY: "",
+				})
+			).turnstile_always,
+		).toBe(false);
+	});
+
+	it("stays false without a secret, matching what POST will enforce", async () => {
+		expect(
+			(
+				await getConfig({
+					TURNSTILE_ALWAYS: "true",
+					TURNSTILE_SECRET: "",
 				})
 			).turnstile_always,
 		).toBe(false);

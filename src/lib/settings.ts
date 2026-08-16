@@ -110,8 +110,9 @@ const FLAGS: Record<FlagKey, { env: keyof Bindings; default: boolean }> = {
 	// preserves the historical rule (session = no challenge); ON is for
 	// operators seeing scripted posting from throwaway OAuth accounts, who
 	// would rather every commenter solve a challenge than moderate the fallout.
-	// Inert without TURNSTILE_SITE_KEY — see turnstileAlwaysOn in lib/turnstile.ts
-	// for why the key is part of the predicate rather than a separate guard.
+	// Inert without TURNSTILE_SITE_KEY *and* TURNSTILE_SECRET — see
+	// turnstileAlwaysOn in lib/turnstile.ts for why both credentials are part of
+	// the predicate rather than separate guards.
 	turnstile_always: {
 		env: "TURNSTILE_ALWAYS",
 		default: false,

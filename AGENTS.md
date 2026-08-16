@@ -793,8 +793,10 @@ session already costs an attacker an account. Operators who want a
 challenge on *every* comment set `TURNSTILE_ALWAYS = "true"` (or flip
 "Challenge signed-in commenters too" on `/admin/settings`); the widget
 then renders Turnstile for signed-in readers as well and the Worker
-requires a token from them. It does nothing without a site key
-configured — the widget could not render a challenge to satisfy it.
+requires a token from them. It does nothing unless both Turnstile
+credentials are configured — without the site key the widget could not
+render a challenge to satisfy it, and without the secret the Worker
+could not verify one.
 
 ## 9. Privacy & data
 

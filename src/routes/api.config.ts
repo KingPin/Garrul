@@ -100,13 +100,15 @@ config.get("/", async (c) => {
 		locale,
 		...localized,
 		turnstile_site_key: c.env.TURNSTILE_SITE_KEY || null,
-		// Already folded together with the site key (turnstileAlwaysOn), so the
-		// widget never has to re-derive "is a challenge possible here" — an
-		// install with the flag on but no key reports false, exactly matching
-		// what the POST handler will enforce.
+		// Already folded together with both Turnstile credentials
+		// (turnstileAlwaysOn), so the widget never has to re-derive "is a
+		// challenge possible here" — an install with the flag on but no key or
+		// no secret reports false, exactly matching what the POST handler will
+		// enforce.
 		turnstile_always: turnstileAlwaysOn(
 			flags.turnstile_always,
 			c.env.TURNSTILE_SITE_KEY,
+			c.env.TURNSTILE_SECRET,
 		),
 		edit_window_minutes: numbers.edit_window_minutes,
 		providers,

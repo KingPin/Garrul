@@ -61,7 +61,7 @@ That trade stops paying if someone is scripting throwaway accounts. Set `TURNSTI
 
 Worth knowing before you turn it on:
 
-- **It needs `TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET`.** Without a site key the widget has no challenge to render, so the setting stays inert rather than rejecting every comment on the instance — the flag is a tightening dial, never an outage switch. `/api/v1/config` reports it as `false` in that state, which is also what the server enforces.
+- **It needs `TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET`.** Without the key the widget has no challenge to render; without the secret the server can't verify the token it gets back, and would reject every one. Missing either, the setting stays inert rather than rejecting every signed-in comment on the instance — the flag is a tightening dial, never an outage switch. `/api/v1/config` reports it as `false` in that state, which is also what the server enforces.
 - **Signed-in readers now pay the Turnstile download.** Same deferred mount as anonymous visitors — nothing loads until the composer is focused — but a regular commenter who used to have a zero-request composer no longer does.
 - **It does not replace the rate limit.** Signed-in authors keep their own per-user budget (3 per 10s, 60 per 10 min by default); a solved challenge does not buy extra slots.
 

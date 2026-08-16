@@ -38,13 +38,16 @@ const ENDPOINT = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
  * the `turnstile_always` flag (env `TURNSTILE_ALWAYS`, or the admin Settings
  * → Moderation toggle).
  *
- * The site key is part of the predicate, not an afterthought. The widget only
- * renders a challenge when `/api/v1/config` hands it a site key, so an
- * install that turned the flag on without configuring Turnstile would reject
- * every comment from a composer that has no way to produce a token — the flag
- * would take posting down entirely rather than tighten it. Both the config
- * route and the POST handler resolve the answer through here so the widget
- * and the server can never disagree about whether a token is expected.
+ * Both Turnstile credentials are part of the predicate, not an afterthought,
+ * because it takes both for a challenge to complete a round trip: the site key
+ * is what lets the widget *render* one (`/api/v1/config` only hands a key over
+ * when it has it), and the secret is what lets `verifyTurnstile` *check* the
+ * result — it returns false on an empty secret, so a missing one rejects every
+ * token that arrives. An install that turned the flag on with either half
+ * unconfigured would take signed-in posting down entirely rather than tighten
+ * it. Both the config route and the POST handler resolve the answer through
+ * here so the widget and the server can never disagree about whether a token
+ * is expected.
  *
  * The anonymous path does NOT use this: it requires a token unconditionally,
  * which is the older and deliberately fail-closed rule.
@@ -52,7 +55,8 @@ const ENDPOINT = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
 export const turnstileAlwaysOn = (
 	flag: boolean,
 	siteKey: string | undefined,
-): boolean => flag && !!siteKey;
+	secret: string | undefined,
+): boolean => flag && !!siteKey && !!secret;
 
 type SiteverifyResponse = {
 	success: boolean;
