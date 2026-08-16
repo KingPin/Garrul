@@ -157,6 +157,17 @@ OAUTH_CALLBACK_BASE = "https://comments.example.com"
 # SPAM_HONEYPOT_MIN_MS = "1500"        # flag if form submitted faster than N ms
 # SPAM_FIRST_COMMENT_MODERATE = "true" # first comment from a new author → pending
 #
+# Muted words, one term per line. This is only the default a fresh deploy
+# starts with — the list is normally maintained on /admin/settings, and a
+# saved setting there overrides whatever is set here. Terms match whole
+# words (`ass` does not flag "class"); wrap in `*` to match anywhere,
+# trail one for a prefix. Not a regex: `.` and `(` are literal.
+# SPAM_BLOCKLIST = """
+# casino
+# *viagra*
+# t.me/*
+# """
+#
 # For SPAM_PROVIDER = "workers-ai", also add this binding:
 # [ai]
 # binding = "AI"

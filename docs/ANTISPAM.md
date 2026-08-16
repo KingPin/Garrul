@@ -55,9 +55,9 @@ None of this is a security relaxation. The client-side latch was never the contr
 
 ## Optional layers
 
-All three heuristics + the classifier adapter flip a flagged comment to `status='pending'` so it lands in the admin queue at `/admin/queue?status=pending`. **Nothing is ever silently dropped.** You decide whether to approve.
+All four heuristics + the classifier adapter flip a flagged comment to `status='pending'` so it lands in the admin queue at `/admin/queue?status=pending`. **Nothing is ever silently dropped.** You decide whether to approve.
 
-**The three heuristics are runtime-tunable.** Each one has an env var below that sets the deploy-time default, but you can retune all three from **Admin → Settings → Moderation** without a redeploy — which is how you want to work while watching the queue. An admin save writes a `settings` row that overrides the env var (precedence is DB > env > built-in default); "Reset to defaults" clears the overrides and hands control back to `wrangler.toml`. The classifier in §4 stays deploy-time: it needs credentials, and a dropdown offering a provider the deploy can't reach is worse than an env var.
+**The four heuristics are runtime-tunable.** Each one has an env var below that sets the deploy-time default, but you can retune all four from **Admin → Settings → Moderation** without a redeploy — which is how you want to work while watching the queue. An admin save writes a `settings` row that overrides the env var (precedence is DB > env > built-in default); "Reset to defaults" clears the overrides and hands control back to `wrangler.toml`. The classifier in §5 stays deploy-time: it needs credentials, and a dropdown offering a provider the deploy can't reach is worse than an env var.
 
 ### 1. Honeypot timing (`SPAM_HONEYPOT_MIN_MS`)
 
@@ -99,9 +99,45 @@ SPAM_FIRST_COMMENT_MODERATE = "true"
 
 Tunable at runtime as **Hold every author's first comment**.
 
-Highest precision of the three heuristics. Cost: you have to log in and approve. Use on low-traffic blogs; skip on busy ones.
+Highest precision of the four heuristics. Cost: you have to log in and approve. Use on low-traffic blogs; skip on busy ones.
 
-### 4. Content classifier (`SPAM_PROVIDER`)
+### 4. Muted words (`SPAM_BLOCKLIST`)
+
+An operator-maintained list of terms. One per line; a hit routes the comment to the queue.
+
+```toml
+SPAM_BLOCKLIST = """
+viagra
+*casino*
+t.me/*
+"""
+```
+
+Empty (or unset) turns the check off. Maintained at runtime as **Muted words** — the env var is only the default a fresh deploy starts with, and most instances will never set it, because this is the one heuristic you tune by reading your own queue.
+
+**The grammar is three rules, and it is not a regex.**
+
+| Term | Matches | Does not match |
+| --- | --- | --- |
+| `viagra` | "buy viagra now", "Viagra." | "viagraceous" |
+| `*casino*` | "casino", "megacasinos" | — |
+| `t.me/*` | "t.me/spamchannel" | "at.me/x" |
+
+A bare term is anchored to word boundaries, which is what keeps `ass` from flagging "class" — the [Scunthorpe problem](https://en.wikipedia.org/wiki/Scunthorpe_problem) is the default failure mode of a naive blocklist, so wildcards are opt-in per term rather than the other way round. `*` is the only metacharacter: `.` and `(` are literal text, so a term copied out of a spam comment works as typed.
+
+Matching is case-insensitive and folds Unicode compatibility forms, so fullwidth `ｖｉａｇｒａ` is caught by `viagra`, as are terms padded with zero-width joiners and soft hyphens. It does **not** strip accents and does **not** decode leetspeak: `v1agra` needs its own line. Lines starting with `#` are comments.
+
+Each term is checked against the comment body, the author's display name and the page URL — author name matters, because a spammer whose comment is clean can still be posting as "Best Casino Bonus". The first hit wins, and the matched term is recorded in the stored verdict and the log, never in the API response, so nobody can bisect your list by watching which posts get held.
+
+Limits: 200 terms, 100 characters and 4 wildcards each, and only the first 10,000 characters of each field are scanned. A term over those limits is skipped and the rest of the list still applies. The matcher is a plain string walk, not a compiled regex — a blocklist is operator-supplied input, and no arrangement of terms can make it backtrack.
+
+**Backtracking is not the same as free, so keep the list mostly literal.** "Cannot backtrack" is a bound on the *shape* of the work, not on the amount of it, and the two are easy to run together. A term with wildcards on both ends and a rare tail — `*a*z` — makes every occurrence of `a` a candidate start, so cost grows with the body length rather than the term length. Measured against a full 10,000-character field: about **2 ms** for one such term, about **130 ms** for a list of 200 of them.
+
+That second number is the one to know, because the Workers free plan allows **10 ms of CPU per request**. A list built entirely of wildcard-heavy terms can therefore exhaust the budget on the comment POST path, and the symptom is a `1102` "exceeded CPU time" error on posting — which points at the Worker, not at the list you last edited. The paid plan has far more headroom and would show it as latency instead.
+
+None of this is reachable by a commenter: the list is yours, and the cost is a property of what you wrote, not of what they typed. Nor is it a concern for a normal list — 200 plain words like `viagra` cost microseconds, because a literal term with no leading `*` is anchored and rejected at the first character in almost every position. The rule of thumb: use bare terms by default, reach for `*` when you actually need to catch a term inside a longer word, and if you find yourself pasting dozens of `*…*` entries, prefer a shorter list you review against your own queue.
+
+### 5. Content classifier (`SPAM_PROVIDER`)
 
 Pluggable third-party content classification. Pick one of:
 

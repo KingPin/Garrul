@@ -16,7 +16,7 @@
  * "best-effort; a brief stale first page is acceptable" contract.
  */
 import { cacheKey, dropCache } from "./response-cache";
-import { loadNumbers } from "./settings";
+import { loadNumbers, type ResolvedNumbers } from "./settings";
 import type { Bindings } from "../index";
 
 // Edge cache max-age for the first page. Shorter than the old 300s KV TTL
@@ -64,13 +64,20 @@ export const treeCacheKey = (
  * read; if that fails we skip the drop and let the TTL expire the entry.
  * `reqUrl` (the mutation's `c.req.url`) keys the deletes on the same Worker
  * origin the GET reads used.
+ *
+ * `resolved` lets a caller that already holds the settings hand them over. Every
+ * `load*` helper is its own `TREE_CACHE.get`, so without it a handler that
+ * resolved settings for its own gates pays a second read here — on the write
+ * path, after the insert, where the user is waiting. Callers with nothing in
+ * hand (the delete path, reactions, admin) omit it and take the read.
  */
 export const bustTreeCache = async (
 	env: Bindings,
 	reqUrl: string,
 	slug: string,
+	resolved?: ResolvedNumbers,
 ): Promise<void> => {
-	const numbers = await loadNumbers(env).catch(() => null);
+	const numbers = resolved ?? (await loadNumbers(env).catch(() => null));
 	if (!numbers) return;
 	const pageSize = numbers.comments_per_page;
 	await Promise.all([

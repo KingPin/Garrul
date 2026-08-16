@@ -32,6 +32,14 @@ dashboard page); every other integration is optional.
 - **Moderator notifications by email** — a digest of what's sitting in
   the queue or has been reported, to `ADMIN_EMAILS` or a shared alias.
   Off by default; one switch in *Settings → Moderation*
+- **Layered anti-spam** — Turnstile, rate limiting and a strict markdown
+  sanitizer are always on; on top of those, four tunable heuristics
+  (fill-time, link count, first-comment hold, and a **muted-words list**
+  with word-boundary and wildcard terms) and an optional Akismet or
+  Workers AI classifier. Everything routes to the queue — nothing is
+  silently dropped — and all four heuristics retune from
+  *Settings → Moderation* without a redeploy —
+  [`docs/ANTISPAM.md`](docs/ANTISPAM.md)
 - **Import from Disqus** — upload an export in the admin UI, or run
   `npm run import-disqus -- ./export.xml --dry-run` to see the plan
   before it writes anything
@@ -229,6 +237,49 @@ your local archive.
   `ADMIN_EMAILS`).
 - **Re-render**: bumping the markdown sanitizer? Run
   `npm run rerender` to re-render stored comments in place.
+
+## Anti-spam
+
+Always on, no configuration: Turnstile on anonymous posts, a sliding-window
+rate limit on the edge Cache API, a strict markdown sanitizer (no raw HTML,
+no images, every link `nofollow ugc noopener`), and a hidden-field honeypot.
+
+On top of those, four heuristics you tune from **Settings → Moderation**
+without a redeploy. Each has an env var that sets the deploy-time default;
+an admin save overrides it (DB row > env var > built-in default), and
+"Reset to defaults" hands control back to `wrangler.toml`. All off by
+default:
+
+| Setting | Env var | Flags a comment when |
+| --- | --- | --- |
+| Minimum fill time | `SPAM_HONEYPOT_MIN_MS` | it arrives faster than *N* ms after the form loaded (needs `SPAM_FORM_TS_SECRET`) |
+| Link threshold | `SPAM_LINK_THRESHOLD` | it carries more than *N* links |
+| Hold first comment | `SPAM_FIRST_COMMENT_MODERATE` | it's an author's first-ever comment |
+| Muted words | `SPAM_BLOCKLIST` | it matches a term on your list |
+
+Muted words is one term per line, matched against the comment body, the
+author's display name and the page URL:
+
+```
+viagra          # whole words only — does not flag "viagraceous"
+*casino*        # * is the only wildcard; matches anywhere
+t.me/*          # prefix
+# lines starting with # are comments
+```
+
+Not a regex — `.` and `(` are literal, so a term copied out of a spam
+comment works as typed. Case-insensitive, and folds Unicode lookalikes
+(`ｖｉａｇｒａ`) and zero-width padding; it does *not* strip accents or
+decode leetspeak, so `v1agra` needs its own line.
+
+Optionally, a content classifier (`SPAM_PROVIDER` = `akismet` or
+`workers-ai`) runs when no heuristic has already flagged. It stays
+deploy-time because it needs credentials.
+
+**Nothing is ever silently dropped.** Every layer routes to
+`/admin/queue?status=pending`; you decide what gets approved. Full detail,
+including the Turnstile mount timing and its four visitor-facing messages,
+in [`docs/ANTISPAM.md`](docs/ANTISPAM.md).
 
 ## Access control
 

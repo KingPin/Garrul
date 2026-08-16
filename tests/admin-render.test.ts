@@ -28,6 +28,8 @@ import {
 	type ResolvedNumbers,
 	type ResolvedStrings,
 	STRING_KEYS,
+	type ResolvedTexts,
+	TEXT_KEYS,
 	stringDefault,
 	stringOptions,
 } from "../src/lib/settings";
@@ -701,7 +703,10 @@ describe("renderSettings field-name contract", () => {
 	const strings = Object.fromEntries(
 		STRING_KEYS.map((k) => [k, stringDefault(k)]),
 	) as ResolvedStrings;
-	const html = renderSettings({} as Bindings, flags, numbers, strings);
+	const texts = Object.fromEntries(
+		TEXT_KEYS.map((k) => [k, ""]),
+	) as ResolvedTexts;
+	const html = renderSettings({} as Bindings, flags, numbers, strings, texts);
 
 	it("emits a switch for every flag key the POST handler whitelists", () => {
 		for (const key of FLAG_KEYS) {
@@ -724,6 +729,57 @@ describe("renderSettings field-name contract", () => {
 			expect(html).toContain(`name="${key}"`);
 			expect(html).toContain(`x-model="strs.${key}"`);
 		}
+	});
+
+	it("emits a textarea for every text key the POST handler whitelists", () => {
+		for (const key of TEXT_KEYS) {
+			expect(html).toContain(`name="${key}"`);
+			expect(html).toContain(`x-model="texts.${key}"`);
+		}
+	});
+
+	it("seeds every text key into Alpine state so save() round-trips it", () => {
+		// A textarea whose key is missing from the seed binds to undefined, and
+		// save() then posts `undefined` — the handler skips it, so the operator's
+		// edit vanishes with a "Settings saved" toast.
+		const seeded = renderSettings(
+			{} as Bindings,
+			flags,
+			numbers,
+			strings,
+			Object.fromEntries(
+				TEXT_KEYS.map((k) => [k, "seeded-value"]),
+			) as ResolvedTexts,
+		);
+		for (const key of TEXT_KEYS) {
+			expect(seeded).toContain(`&quot;${key}&quot;:&quot;seeded-value&quot;`);
+		}
+		expect(seeded).toContain("texts: this.texts");
+	});
+
+	// `texts` is the first settings group whose value is arbitrary operator
+	// input rather than a boolean, a clamped number, or a whitelisted enum, so
+	// it is the first that can carry characters the bare-JSON.stringify seeding
+	// used by the other three does not handle. U+2028/U+2029 are the sharp ones:
+	// JSON.stringify emits them raw, and they are line terminators that end the
+	// string literal inside the Alpine expression, taking the whole settings
+	// page's x-data with them.
+	it("escapes markup and line separators in a seeded text value", () => {
+		const hostile = `</script><img src=x onerror=alert(1)>\u2028\u2029"'&`;
+		const seeded = renderSettings(
+			{} as Bindings,
+			flags,
+			numbers,
+			strings,
+			Object.fromEntries(TEXT_KEYS.map((k) => [k, hostile])) as ResolvedTexts,
+		);
+		expect(seeded).not.toContain("\u2028");
+		expect(seeded).not.toContain("\u2029");
+		expect(seeded).toContain("\\u2028");
+		// No raw angle bracket or quote survives into the attribute: they are
+		// either \uXXXX-escaped by jsLiteralRaw or entity-encoded by escapeHtml.
+		expect(seeded).not.toContain("<img");
+		expect(seeded).not.toContain("</script>");
 	});
 
 	it("offers only values the POST handler accepts for each string key", () => {
@@ -768,6 +824,7 @@ describe("renderSettings field-name contract", () => {
 			flags,
 			{ ...numbers, spam_honeypot_min_ms: 0 },
 			strings,
+			texts,
 		);
 		expect(off).toContain("hasFormTsSecret: false");
 		expect(off).toContain(
@@ -782,6 +839,7 @@ describe("renderSettings field-name contract", () => {
 			flags,
 			numbers,
 			strings,
+			texts,
 		);
 		expect(withSecret).toContain("hasFormTsSecret: true");
 	});

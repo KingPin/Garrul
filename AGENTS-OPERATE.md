@@ -202,6 +202,7 @@ between the two is a build error, not a silent misclassification.
 | `AKISMET_API_KEY` | secret | Optional. Akismet API key. Required when `SPAM_PROVIDER=akismet`. | `...` | `wrangler secret put` / `.dev.vars` |
 | `AKISMET_SITE_URL` | secret | Optional. Public site URL sent to Akismet alongside each check. Required when `SPAM_PROVIDER=akismet`. | `https://yourblog.example.com` | `wrangler secret put` / `.dev.vars` |
 | `SPAM_FORM_TS_SECRET` | secret | Optional. HMAC key for signed form-timestamp tokens. Set when `SPAM_HONEYPOT_MIN_MS` is in use, otherwise the timing check cannot be trusted. | ``openssl rand -base64 32` output` | `wrangler secret put` / `.dev.vars` |
+| `SPAM_BLOCKLIST` | var | Optional. Muted-words list, one term per line. A term matches whole words only (`ass` does not flag "class"); wrap it in `*` to match anywhere (`*casino*`), or trail one for a prefix (`t.me/*`). Matching is case-insensitive, folds Unicode lookalike forms (fullwidth `ｖｉａｇｒａ` matches `viagra`) and ignores zero-width characters. Accents are *not* stripped and leetspeak is *not* decoded. Lines starting with `#` are comments. Not a regex — `.` and `(` are literal text. Checked against the comment body, author name and page URL; a hit routes the comment to the admin queue, never a silent drop. Usually maintained on the Settings page rather than here — this is the default a fresh deploy starts with. | `casino\n*viagra*\nt.me/*` | `wrangler.toml` default; **Admin → Settings** overrides |
 | `SPAM_LINK_THRESHOLD` | var | Optional. Flag a comment to `pending` when it contains more than N URLs. Unset (or `-1`) = off; `0` flags any comment containing a link. Tripped signals never silently drop a comment — they route it to the admin queue. | `3` | `wrangler.toml` default; **Admin → Settings** overrides |
 | `SPAM_HONEYPOT_MIN_MS` | var | Optional. Flag a comment to `pending` when the form was submitted faster than N milliseconds. Pair with `SPAM_FORM_TS_SECRET` — without it the timestamp is unsigned and the check is skipped. Unset or `0` = off. | `1500` | `wrangler.toml` default; **Admin → Settings** overrides |
 | `SPAM_FIRST_COMMENT_MODERATE` | var | Optional. Route the first comment from any new author to `pending`. Unset = off. | `true` | `wrangler.toml` default; **Admin → Settings** overrides |
@@ -453,12 +454,12 @@ server-side regardless.
 
 ### Optional extra anti-spam layers
 
-Three lightweight heuristics and a pluggable content classifier are
+Four lightweight heuristics and a pluggable content classifier are
 available on top of Turnstile. **All off by default.** Flagged comments
 flip to `status='pending'` and land in the admin queue rather than
 being silently dropped.
 
-The three heuristics are runtime settings: the env vars below set the
+The four heuristics are runtime settings: the env vars below set the
 deploy-time default, and **Admin → Settings → Moderation** overrides
 them without a redeploy (DB row > env var > built-in default). Retune
 them there while watching what the queue catches. `SPAM_PROVIDER` and
@@ -473,6 +474,13 @@ its credentials stay deploy-time.
   link.
 - `SPAM_FIRST_COMMENT_MODERATE=true` — every commenter's first-ever
   comment goes to pending until you approve once.
+- `SPAM_BLOCKLIST` — muted words, one term per line, checked against the
+  body, author name and page URL. Empty/unset = off. A bare term matches
+  whole words only; `*` is the sole wildcard (`*casino*`, `t.me/*`) and
+  everything else is literal. Case-insensitive, folds Unicode lookalikes
+  and zero-width characters; does not strip accents or decode leetspeak.
+  `#` starts a comment. Normally maintained on the Settings page — the
+  env var is just the default a fresh deploy starts with.
 - `SPAM_PROVIDER` — set to `akismet` or `workers-ai` to enable a
   content classifier (each has its own required secrets/bindings).
 

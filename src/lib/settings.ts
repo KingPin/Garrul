@@ -61,6 +61,10 @@ export type StringSettingKey = "default_locale";
 
 export type ResolvedStrings = Record<StringSettingKey, string>;
 
+export type TextSettingKey = "spam_blocklist";
+
+export type ResolvedTexts = Record<TextSettingKey, string>;
+
 // Each flag's env-var source and hardcoded default. `votes_enabled` /
 // `downvotes_enabled` keep their legacy env names so existing wrangler.toml
 // vars keep working.
@@ -308,6 +312,40 @@ const STRINGS: Record<
 
 export const STRING_KEYS = Object.keys(STRINGS) as StringSettingKey[];
 
+/**
+ * Upper bound on a stored text setting, in characters.
+ *
+ * Free-form operator text is the one settings shape that can't be made safe by
+ * clamping (numbers) or by a whitelist (strings), so the safety property here is
+ * *boundedness*: the value rides in the KV settings blob read on every widget
+ * mount, and it is re-parsed on the comment-POST path. 20k characters is far
+ * more than any real muted-words list and still leaves the blob small.
+ *
+ * Per-term limits are the matcher's business, not this layer's — see
+ * `parseBlocklist` in src/lib/spam/blocklist.ts, which drops individual terms
+ * that are too long or too wildcard-heavy. This cap only stops the *setting*
+ * from becoming unbounded.
+ */
+export const MAX_TEXT_SETTING_CHARS = 20_000;
+
+// Free-form text settings. Same precedence chain as everything above
+// (DB > env > default), but neither clamped nor whitelisted — see
+// MAX_TEXT_SETTING_CHARS for why boundedness is the invariant instead.
+//
+// Values are stored raw and parsed at the point of use. Storing the parsed form
+// here would push a parser's output through the KV cache, so a change to the
+// grammar would then need a cache-shape migration to take effect; a raw string
+// re-parsed downstream costs microseconds and can never go stale against the
+// code that reads it.
+const TEXTS: Record<TextSettingKey, { env: keyof Bindings; default: string }> = {
+	// Operator-maintained muted-words list, one term per line. Empty by default:
+	// this is a moderation policy, and an upgrade must never start holding
+	// comments against a list the operator didn't write.
+	spam_blocklist: { env: "SPAM_BLOCKLIST", default: "" },
+};
+
+export const TEXT_KEYS = Object.keys(TEXTS) as TextSettingKey[];
+
 /** The accepted values for a string setting (used by the admin UI + save path). */
 export const stringOptions = (key: StringSettingKey): string[] =>
 	STRINGS[key].options();
@@ -399,6 +437,44 @@ export const parseStringSetting = (
 	return options.find((opt) => opt.toLowerCase() === v) ?? fallback;
 };
 
+/**
+ * Resolve a free-form text setting: trim, then truncate to the cap.
+ *
+ * Truncation is deliberately silent and lossy at *read* time, because a
+ * resolver has no way to report. The admin save path rejects an over-long value
+ * outright (see POST /admin/settings) so the only way to reach the cap here is
+ * an env var, where a truncated muted-words list still fails safe: terms are
+ * newline-delimited and a clipped tail drops terms rather than corrupting the
+ * ones before it.
+ */
+export const parseTextSetting = (
+	raw: string | undefined,
+	fallback: string,
+): string => {
+	if (raw == null) return fallback;
+	const v = raw.trim();
+	if (v === "") return fallback;
+	return v.length > MAX_TEXT_SETTING_CHARS
+		? v.slice(0, MAX_TEXT_SETTING_CHARS)
+		: v;
+};
+
+const resolveTexts = (
+	env: Bindings,
+	dbSettings: Record<string, string>,
+): ResolvedTexts => {
+	const out = {} as ResolvedTexts;
+	for (const key of TEXT_KEYS) {
+		const spec = TEXTS[key];
+		const raw =
+			key in dbSettings
+				? dbSettings[key]
+				: (env[spec.env] as string | undefined);
+		out[key] = parseTextSetting(raw, spec.default);
+	}
+	return out;
+};
+
 const resolveStrings = (
 	env: Bindings,
 	dbSettings: Record<string, string>,
@@ -453,15 +529,24 @@ export interface ResolvedSettings {
 	readonly flags: ResolvedFlags;
 	readonly numbers: ResolvedNumbers;
 	readonly strings: ResolvedStrings;
+	readonly texts: ResolvedTexts;
 }
 
 /**
  * Shape check on the cached blob.
  *
- * A `get(..., "json")` hit is only trusted if it carries all three groups. The
+ * A `get(..., "json")` hit is only trusted if it carries all four groups. The
  * key name makes a foreign shape unreachable today (see `CACHE_KEY_RESOLVED`),
  * but a partial blob would otherwise resolve every setting in the missing group
  * to `undefined` — a silent wrong answer, where a miss is merely a D1 read.
+ *
+ * Requiring a group added in a later version is also what makes adding one safe
+ * during a rolling deploy, which is why `texts` was added here rather than
+ * renaming the cache key. A new isolate reading a pre-`texts` blob fails this
+ * check and re-derives; an old isolate reading a post-`texts` blob still finds
+ * the three groups it knows about and ignores the fourth. Neither direction can
+ * read a group as `undefined`, and the cost is bounded to one extra derivation
+ * per colo during the rollout.
  */
 const isResolvedSettings = (v: unknown): v is ResolvedSettings => {
 	if (typeof v !== "object" || v === null) return false;
@@ -472,7 +557,9 @@ const isResolvedSettings = (v: unknown): v is ResolvedSettings => {
 		typeof c.numbers === "object" &&
 		c.numbers !== null &&
 		typeof c.strings === "object" &&
-		c.strings !== null
+		c.strings !== null &&
+		typeof c.texts === "object" &&
+		c.texts !== null
 	);
 };
 
@@ -483,6 +570,7 @@ const deriveSettings = async (env: Bindings): Promise<ResolvedSettings> => {
 		flags: resolve(env, dbSettings),
 		numbers: resolveNumbers(env, dbSettings),
 		strings: resolveStrings(env, dbSettings),
+		texts: resolveTexts(env, dbSettings),
 	};
 	await env.TREE_CACHE.put(CACHE_KEY_RESOLVED, JSON.stringify(resolved), {
 		expirationTtl: CACHE_TTL_SEC,
@@ -548,6 +636,17 @@ export const loadNumbers = async (env: Bindings): Promise<ResolvedNumbers> =>
  */
 export const loadStrings = async (env: Bindings): Promise<ResolvedStrings> =>
 	(await loadSettings(env)).strings;
+
+/**
+ * Resolved free-form text settings.
+ *
+ * Deliberately *not* exposed through `GET /api/v1/config`: the muted-words list
+ * is moderation policy, and handing it to the widget would publish the operator's
+ * blocklist to anyone who can read a network tab — which is a map of exactly what
+ * to avoid typing.
+ */
+export const loadTexts = async (env: Bindings): Promise<ResolvedTexts> =>
+	(await loadSettings(env)).texts;
 
 /** Drop the cached settings so the next read reflects a fresh save. */
 export const bustSettingsCache = (env: Bindings): Promise<void> =>

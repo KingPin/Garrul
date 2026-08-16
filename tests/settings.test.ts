@@ -555,11 +555,11 @@ describe("settings cache — one entry for all groups", () => {
 
 const mkGatedEnv = (cachedFlags: Partial<Record<FlagKey, boolean>>) => {
 	const kv = makeKv();
-	// A full-shaped entry: the loader rejects a blob missing a group, so the
-	// other two have to be present even when only the flags matter here.
+	// A full-shaped entry: the loader rejects a blob missing a group, so every
+	// other group has to be present even when only the flags matter here.
 	kv.store.set(
 		"settings:resolved",
-		JSON.stringify({ flags: cachedFlags, numbers: {}, strings: {} }),
+		JSON.stringify({ flags: cachedFlags, numbers: {}, strings: {}, texts: {} }),
 	);
 	return {
 		TREE_CACHE: kv,

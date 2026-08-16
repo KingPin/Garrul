@@ -202,6 +202,10 @@ const mkApp = (flags: Record<string, boolean>) => {
 						},
 						numbers: {},
 						strings: {},
+						// Every group the shape guard knows about has to be present
+						// or the blob is rejected as stale and the flags above are
+						// silently re-derived from the (empty) DB.
+						texts: {},
 					}
 				: null,
 		put: async () => {},

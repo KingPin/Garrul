@@ -307,6 +307,11 @@ kbd { background: var(--surface-2); border: 1px solid var(--border);
 .field-row, .switch-row { display: flex; gap: 0.75rem; align-items: flex-start;
                           padding: 0.6rem 0; border-bottom: 1px solid var(--border); }
 .field-row:last-child, .switch-row:last-child { border-bottom: 0; }
+/* Same row rhythm as .field-row, but label above and control below, for
+   controls too wide to sit in the narrow column (see renderTextarea). */
+.field-stack { display: flex; flex-direction: column; gap: 0.4rem;
+               padding: 0.6rem 0; border-bottom: 1px solid var(--border); }
+.field-stack:last-child { border-bottom: 0; }
 .switch-row { cursor: pointer; }
 .field-text { display: flex; flex-direction: column; gap: 0.1rem; min-width: 0; }
 .field-text .muted { font-size: 0.8rem; }
