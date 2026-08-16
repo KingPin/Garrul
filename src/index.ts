@@ -98,6 +98,11 @@ export type Bindings = {
 	SPAM_HONEYPOT_MIN_MS?: string;
 	SPAM_FIRST_COMMENT_MODERATE?: string;
 	SPAM_FORM_TS_SECRET?: string;
+	// Operator-editable muted-words list, one term per line. Env-var *default*;
+	// a `settings` row overrides at runtime (see src/lib/settings.ts), which is
+	// where operators actually maintain it — this exists so a fresh deploy can
+	// ship with a list already in place.
+	SPAM_BLOCKLIST?: string;
 	// Global ceiling on outbound subscription-confirmation email, counted in D1
 	// (src/lib/email-budget.ts). Env-var *default*; a `settings` row overrides at
 	// runtime (see src/lib/settings.ts). The windows stay constants — it's the
