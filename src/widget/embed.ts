@@ -13,7 +13,11 @@
  * Behavior:
  *   1. Mount a Shadow DOM on DOMContentLoaded.
  *   2. Render a skeleton so the slot reserves height within ~50ms.
- *   3. Fetch GET /api/v1/comments?slug=<slug> in parallel.
+ *   3. Fetch GET /api/v1/bootstrap?slug=<slug> — one call carrying the config,
+ *      the session user, the first page of comments, and (when those surfaces
+ *      are on) page engagement and subscribe-bell state. A self-hosted Worker
+ *      older than this bundle answers 404 and the widget falls back to the five
+ *      calls it replaced; see fetchBootstrap.
  *   4. Render the threaded tree once data arrives.
  *   5. On submit, POST /api/v1/comments. Reload list on success.
  *   6. "Load more" appends older top-level threads via ?before=<cursor>.
@@ -43,6 +47,18 @@ import {
 	mergeReactionTotals,
 } from "./reactions";
 import { absoluteTime, isoTime, relativeTime } from "./time";
+// The mount request and the wire shapes it carries. Kept out of this file so the
+// fallback rule can be tested without a DOM — see boot.ts's header.
+import {
+	type ConfigResponse,
+	type EngagementSection,
+	type MountSeed,
+	type PageVoteState,
+	type SortKey,
+	type SubscriptionSection,
+	fetchBootstrap,
+	fetchConfig,
+} from "./boot";
 // Generated from styles.css by scripts/build-styles.ts (gitignored, rebuilt by
 // build:assets). Edit styles.css, never the .gen file.
 import { STYLE_CSS } from "./styles.gen";
@@ -142,8 +158,6 @@ type ReactionResponse = {
 	 *  cached embed.js against a newer API is the shape that does happen. */
 	reactions?: Record<string, number>;
 };
-
-type SortKey = "new" | "top";
 
 type ListResponse = {
 	post: unknown;
@@ -634,6 +648,9 @@ type WidgetCtx = {
 	// (and downvotes are on). ratio 0 = disabled.
 	communityMinVotes: number;
 	communityCollapseRatio: number;
+	// What the mount's bootstrap call already answered, so the engagement bar and
+	// the subscribe bell render from it instead of each firing their own GET.
+	seed: MountSeed;
 	reload: () => void;
 };
 
@@ -1029,15 +1046,13 @@ const buildReactions = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	return wrap;
 };
 
-type PageVoteState = { score_up: number; score_down: number; my_vote: -1 | 0 | 1 };
-
 /**
  * Article-level engagement bar (emoji reactions + a helpful/up vote tally)
  * shown above the thread. Gated by ctx.pageReactionsEnabled /
- * pageVotesEnabled. Built synchronously, then populated from
- * GET /api/v1/page-engagement; clicks optimistically patch from the
- * authoritative totals each POST returns (same no-cache-bust pattern as
- * comment votes).
+ * pageVotesEnabled. Built synchronously, then populated from the mount's
+ * bootstrap payload (or GET /api/v1/page-engagement on the legacy path); clicks
+ * optimistically patch from the authoritative totals each POST returns (same
+ * no-cache-bust pattern as comment votes).
  */
 const buildPageEngagement = (ctx: WidgetCtx): HTMLElement => {
 	const wrap = el("div", "gr-page-engage");
@@ -1184,27 +1199,33 @@ const buildPageEngagement = (ctx: WidgetCtx): HTMLElement => {
 
 	// Populate initial state. Anonymous viewers get totals only (their own
 	// state appears after they first interact) — matches the GET endpoint.
-	void (async () => {
-		try {
-			const res = await fetch(
-				apiUrl(
-					ctx.apiBase,
-					`/api/v1/page-engagement?slug=${encodeURIComponent(ctx.slug)}`,
-				),
-				{ credentials: "include" },
-			);
-			if (!res.ok) return;
-			const body = (await res.json()) as {
-				reactions?: Record<string, number>;
-				my_reactions?: string[];
-				votes?: PageVoteState;
-			};
-			if (body.reactions) setReactions(body.reactions, body.my_reactions ?? []);
-			if (body.votes) setVote(body.votes);
-		} catch {
-			// initial counts stay at 0; interaction still works
-		}
-	})();
+	const apply = (body: EngagementSection): void => {
+		if (body.reactions) setReactions(body.reactions, body.my_reactions ?? []);
+		if (body.votes) setVote(body.votes);
+	};
+	// The mount's bootstrap call already carried this, so the seed is the normal
+	// path and the GET below only runs on the legacy fallback. This bar exists
+	// only when a page_* flag is on, which is the same condition bootstrap emits
+	// `engagement` under, so a bootstrapped mount always has a seed to apply.
+	if (ctx.seed.bootstrapped) {
+		if (ctx.seed.engagement) apply(ctx.seed.engagement);
+	} else {
+		void (async () => {
+			try {
+				const res = await fetch(
+					apiUrl(
+						ctx.apiBase,
+						`/api/v1/page-engagement?slug=${encodeURIComponent(ctx.slug)}`,
+					),
+					{ credentials: "include" },
+				);
+				if (!res.ok) return;
+				apply((await res.json()) as EngagementSection);
+			} catch {
+				// initial counts stay at 0; interaction still works
+			}
+		})();
+	}
 
 	return wrap;
 };
@@ -1231,8 +1252,9 @@ const buildPageEngagement = (ctx: WidgetCtx): HTMLElement => {
  * the emailed link). Repeat clicks are fine by design — the upsert is
  * non-destructive and refunds send budget when no mail actually goes out.
  *
- * *Session with a provider-verified address*: a real toggle, reading
- * `GET /api/v1/subscribe/mine?post_slug=` on mount and cancelling through
+ * *Session with a provider-verified address*: a real toggle, whose mount state
+ * arrives in the bootstrap payload (`GET /api/v1/subscribe/mine?post_slug=` on
+ * the legacy path) and which cancels through
  * `DELETE /api/v1/subscribe/mine/:id`. There is no oracle to leak here, because
  * the only address in play is one the session already proved it owns — the
  * question "does this address follow this post" is being asked by the address.
@@ -1247,6 +1269,7 @@ const buildSubscribeBell = (
 	apiBase: string,
 	slug: string,
 	sessionEmail: string | null,
+	seed: MountSeed,
 ): HTMLElement => {
 	// The whole managed/unmanaged split in one flag. `sessionEmail` itself is
 	// never sent — the server reads the address off the session — but its
@@ -1334,6 +1357,15 @@ const buildSubscribeBell = (
 	manageBtn.setAttribute("aria-expanded", "false");
 	let panelLoaded = false;
 
+	const applyState = (body: SubscriptionSection): void => {
+		// Both halves or neither: a `subscribed` with no id is a server too old
+		// to have sent one, and a toggle with no id to cancel is a button that
+		// lies. Falling back to the unlit bell leaves subscribing working.
+		subId = body.subscribed && body.id ? body.id : null;
+		pending = subId != null && body.pending === true;
+		renderBell();
+	};
+
 	const loadState = async (): Promise<void> => {
 		try {
 			const res = await fetch(
@@ -1344,17 +1376,7 @@ const buildSubscribeBell = (
 				{ credentials: "include" },
 			);
 			if (!res.ok) return;
-			const body = (await res.json()) as {
-				subscribed?: boolean;
-				pending?: boolean;
-				id?: string | null;
-			};
-			// Both halves or neither: a `subscribed` with no id is a server too old
-			// to have sent one, and a toggle with no id to cancel is a button that
-			// lies. Falling back to the unlit bell leaves subscribing working.
-			subId = body.subscribed && body.id ? body.id : null;
-			pending = subId != null && body.pending === true;
-			renderBell();
+			applyState((await res.json()) as SubscriptionSection);
 		} catch {
 			// Fail soft, matching the reactions block: the bell stays unlit and
 			// subscribing still works, which is exactly what it did before it had
@@ -1564,7 +1586,14 @@ const buildSubscribeBell = (
 	wrap.append(form, status);
 	if (managed) {
 		wrap.append(panel);
-		void loadState();
+		// Seeded from the mount request when there was one. An omitted section on a
+		// bootstrapped mount is an answer — see MountSeed — so the bell stays unlit
+		// rather than spending a request to be told so.
+		if (seed.bootstrapped) {
+			if (seed.subscription) applyState(seed.subscription);
+		} else {
+			void loadState();
+		}
 	}
 	return wrap;
 };
@@ -2653,6 +2682,7 @@ const fetchMe = async (apiBase: string): Promise<Me> => {
 	}
 };
 
+
 // Squash overlapping load() invocations: if a load is in flight when a
 // second one is requested (e.g. the user reacts and submits quickly), we
 // just flag a follow-up and re-run once after the current one finishes.
@@ -2743,43 +2773,18 @@ const loadOnce = async (
 	let autoCollapseDepth = 3;
 	let communityMinVotes = 5;
 	let communityCollapseRatio = 0;
+	// The mount request. `null` means this Worker cannot answer it, and every
+	// branch below then does exactly what it did before the endpoint existed.
+	const boot = await fetchBootstrap(apiBase, slug, sort, langExplicit, langHint);
 	try {
-		// The one call that can't go through apiUrl(): it is what resolves the
-		// locale, so it sends the raw negotiation inputs instead. `hl` is kept
-		// separate from `lang` because the server treats them differently — an
-		// unreviewed translation is reachable only through the operator's
-		// explicit data-lang, never through a theme's stray <html lang>.
-		const cfgQs = new URLSearchParams();
-		if (langExplicit) cfgQs.set("lang", langExplicit);
-		if (langHint) cfgQs.set("hl", langHint);
-		const cfgQuery = cfgQs.toString();
-		const cfgRes = await fetch(
-			`${apiBase}/api/v1/config${cfgQuery ? `?${cfgQuery}` : ""}`,
-			{ credentials: "include" },
-		);
-		if (cfgRes.ok) {
-			const cfg = (await cfgRes.json()) as {
-				turnstile_site_key?: string;
-				turnstile_always?: boolean;
-				edit_window_minutes?: number;
-				max_body_chars?: number;
-				providers?: string[];
-				branding_hidden?: boolean;
-				comments_enabled?: boolean;
-				reactions_enabled?: boolean;
-				voting_enabled?: boolean;
-				downvotes_enabled?: boolean;
-				page_reactions_enabled?: boolean;
-				page_votes_enabled?: boolean;
-				subscriptions_enabled?: boolean;
-				replies_per_thread?: number;
-				auto_collapse_depth?: number;
-				community_min_votes?: number;
-				community_collapse_ratio?: number;
-				locale?: string;
-				strings?: Record<string, string | Record<string, string>>;
-				rtl?: boolean;
-			};
+		// Bootstrap's `config` section is byte-identical to /api/v1/config's body
+		// (pinned by tests/bootstrap.test.ts), which is what lets one block parse
+		// either — including the defensive reads below, so a field missing from a
+		// bootstrap payload degrades exactly as one missing from /config does.
+		const cfg: ConfigResponse | null = boot
+			? (boot.config ?? null)
+			: await fetchConfig(apiBase, langExplicit, langHint);
+		if (cfg) {
 			// Install the locale before anything renders below. The table is the
 			// locale's own overrides, not a merged copy — makeS falls back to the
 			// bundled English per key, so a partial translation renders English
@@ -2828,22 +2833,34 @@ const loadOnce = async (
 				communityCollapseRatio = cfg.community_collapse_ratio;
 		}
 	} catch {
-		// /api/v1/config is optional; the widget still renders without Turnstile
-		// (the server will reject anonymous POSTs in that case).
+		// The config is optional; the widget still renders without Turnstile (the
+		// server will reject anonymous POSTs in that case). Only the legacy branch
+		// can throw here — fetchBootstrap swallows its own failures and reports them
+		// as `null`, and its config section is already in hand by this point.
 	}
 
-	const [me, dataResult] = await Promise.all([
-		fetchMe(apiBase),
-		fetchPage(apiBase, slug, null, sort).catch((err: unknown) => err),
-	]);
-	if (dataResult instanceof Error) {
-		// renderError replaces the shadow tree, so the composer this handle
-		// belongs to is about to vanish.
-		destroyTopComposerTurnstile();
-		renderError(root, dataResult);
-		return;
+	let me: Me;
+	let data: ListResponse;
+	if (boot) {
+		// boot.ts hands these two through uncast on purpose — see BootstrapResponse.
+		// The same casts the legacy branch below makes on its own two responses.
+		me = (boot.user ?? null) as Me;
+		data = boot.comments as ListResponse;
+	} else {
+		const [meResult, dataResult] = await Promise.all([
+			fetchMe(apiBase),
+			fetchPage(apiBase, slug, null, sort).catch((err: unknown) => err),
+		]);
+		if (dataResult instanceof Error) {
+			// renderError replaces the shadow tree, so the composer this handle
+			// belongs to is about to vanish.
+			destroyTopComposerTurnstile();
+			renderError(root, dataResult);
+			return;
+		}
+		me = meResult;
+		data = dataResult as ListResponse;
 	}
-	const data = dataResult as ListResponse;
 
 	// Per-post acceptance: the server resolves the global flag, per-post close,
 	// and auto-close into one boolean + reason. Fall back to the global flag for
@@ -2889,6 +2906,11 @@ const loadOnce = async (
 		autoCollapseDepth,
 		communityMinVotes,
 		communityCollapseRatio,
+		seed: {
+			bootstrapped: boot != null,
+			engagement: boot?.engagement,
+			subscription: boot?.subscription,
+		},
 		reload,
 	};
 	// Article-level engagement bar sits at the very top, above the composer.
@@ -2974,7 +2996,9 @@ const loadOnce = async (
 			// `me?.email`, not `me != null` — a session with no address (X/Twitter,
 			// or an anonymous ghost) cannot drive the stateful bell. See the note on
 			// buildSubscribeBell.
-			bar.appendChild(buildSubscribeBell(apiBase, slug, me?.email ?? null));
+			bar.appendChild(
+				buildSubscribeBell(apiBase, slug, me?.email ?? null, ctx.seed),
+			);
 		}
 		wrap.appendChild(bar);
 	}
