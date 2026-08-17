@@ -123,13 +123,64 @@ varies. One-line summary of where to put it and how to fill `data-slug`
 Full runnable starters for each framework live in `examples/` (one
 directory per stack).
 
+### The mount request (since v2.15.0)
+
+The widget opens with **one** Worker request:
+
+```
+GET /api/v1/bootstrap?slug=<slug>&sort=new|top&lang=<x>&hl=<y>
+```
+
+It answers, in a single invocation, everything the mount used to ask
+for separately:
+
+```jsonc
+{
+  "config":       { /* identical to GET /api/v1/config */ },
+  "user":         { /* identical to GET /api/v1/auth/me's user */ } | null,
+  "comments":     { /* identical to GET /api/v1/comments */ },
+  "engagement":   { "reactions": …, "my_reactions": …, "votes": … },
+  "subscription": { "subscribed": …, "pending": …, "id": … }
+}
+```
+
+Every section is byte-identical to what its standalone endpoint
+returns for the same inputs. The last two are **omitted entirely**
+rather than nulled — `engagement` unless a page-level reaction or vote
+surface is on, `subscription` unless the reader is signed in on an
+install configured to send mail.
+
+Before v2.15.0 the mount cost up to five requests, in two serial
+waves: `/api/v1/config` had to be fully awaited (the tree request
+needs the resolved locale) before `/api/v1/auth/me` and
+`/api/v1/comments?slug=…` could go out in parallel, plus
+`/api/v1/page-engagement` and `/api/v1/subscribe/mine` from their own
+surfaces. The Workers free tier allows 100,000 requests/day, so mount
+cost is what sets the ceiling on pageviews an install can serve: ~33k/day
+at the three a default install fired, ~20k/day with every surface on,
+approaching 100k at one.
+
+**Nothing was removed.** `/api/v1/config`, `/api/v1/auth/me`,
+`/api/v1/comments`, `/api/v1/page-engagement` and
+`/api/v1/subscribe/mine` all still exist and still behave identically
+— they are public API, `/api/v1/comments` is still how the widget
+pages load-more, and a widget served from this repo has to keep
+working against an older self-hosted Worker that has no `/bootstrap`.
+When the endpoint answers a 404 (or anything else unusable), the
+widget silently falls back to exactly the pre-v2.15.0 call sequence.
+
+`/api/v1/comments/form-token` is deliberately **not** folded in. Its
+signed timestamp feeds the anti-spam minimum-elapsed-time heuristic,
+and baking one into a shared payload would hand every reader the same
+start time.
+
 ### Lazy-loading (recommended for read-heavy hosts)
 
-The eager `<script defer>` snippet above triggers three Worker
-requests per pageview on mount (`/api/v1/config`, `/api/v1/auth/me`,
-`/api/v1/comments?slug=…`) before the reader has scrolled. On a blog
-or docs site where most visitors bounce above the comments section,
-that is the bulk of Cloudflare Worker usage.
+The eager `<script defer>` snippet above triggers a Worker request per
+pageview on mount (`/api/v1/bootstrap?slug=…`) before the reader has
+scrolled. On a blog or docs site where most visitors bounce above the
+comments section, that is the bulk of Cloudflare Worker usage — one
+request instead of the pre-v2.15.0 five, but still one per bouncer.
 
 Turnstile is **not** in that list. The anti-spam iframe
 (`/embed/turnstile-frame`, which in turn pulls Cloudflare's `api.js` and
@@ -747,9 +798,20 @@ that set it, so a sibling subdomain can't plant a session id; it needs
 HTTP uses the unprefixed `garrul_sess` instead.
 
 **Endpoints integrators may call client-side**: `GET /api/v1/auth/me`
-returns the current session user (or `{user:null}`); `POST
-/api/v1/auth/signout` revokes the KV session and clears the cookie. Both
-go through the same session middleware as the comment routes.
+returns the current session user (or `{user:null}`); `GET
+/api/v1/bootstrap?slug=…` returns the same user under a `user` key
+alongside the rest of the mount payload (see "The mount request" in
+section 3); `POST /api/v1/auth/signout` revokes the KV session and
+clears the cookie. All three go through the same session middleware as
+the comment routes.
+
+A banned or erased identity still gets a `user` from both read
+endpoints — that field is identity, not authorization. What a banned
+reader cannot do is write; the POST paths enforce that. The one
+difference is `bootstrap`'s `subscription` section, which is omitted
+for an identity that may not act, because `/api/v1/subscribe/mine`
+answers those callers a 403 and there is no 403 to return inside a 200
+envelope.
 
 ## 8. Anonymous comments
 

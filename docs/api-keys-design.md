@@ -91,6 +91,27 @@ Comma-separated string column for simplicity. Initial vocabulary:
 | `read:config` | GET `/api/v1/config` |
 | `admin` | All admin routes (rarely issued; prefer session-based admin) |
 
+**`GET /api/v1/bootstrap` has no row on purpose.** It is one response
+spanning `read:config` *and* `read:comments` plus session-derived state
+(the caller's `user`, their page reactions and votes, their subscription
+to the thread), so a single scope cannot describe it. Whichever way this
+design lands, it needs a deliberate decision rather than a row:
+
+- **Require every scope it spans** — the conservative reading, and the
+  one to default to. A key holding only `read:comments` gets a 403
+  rather than a partial envelope.
+- **Or exclude it from key auth entirely.** It exists to save the
+  *widget* a Worker invocation on mount, and the widget authenticates
+  with a session cookie, not a key. An API consumer has no reason to
+  want five payloads welded together, and the endpoints it composes are
+  each individually scoped.
+
+Do **not** let it emit a partial envelope shaped by the key's scopes.
+Sections in this response are omitted for real reasons already
+(`engagement` when the surface is off, `subscription` when the caller
+may not act), so a scope-shaped omission would be indistinguishable
+from "there is nothing here" to any client parsing it.
+
 **Scope check semantics.** Parse the column into a token set first,
 then check exact membership — never substring-match the raw string.
 Otherwise a future narrow scope like `read:comments_private` would

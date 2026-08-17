@@ -276,13 +276,17 @@ slice an enormous in-memory page) can never reach the slice/render paths —
 out-of-range values clamp, non-numeric values fall back to the default.
 
 - `COMMENTS_PER_PAGE` is consumed **server-side**: it drives the top-level
-  slice in `GET /api/v1/comments` and is baked into the first-page edge-cache
-  key (keyed by slug, sort, and size), so changing it never serves a
-  stale-sized page. Both `sort=new` and `sort=top` paginate, so shrinking the
-  page size never hides top-voted threads past the first page.
+  slice in `GET /api/v1/comments` (and the `comments` section of
+  `GET /api/v1/bootstrap`, which shares that code path and that cache entry)
+  and is baked into the first-page edge-cache key (keyed by slug, sort, and
+  size), so changing it never serves a stale-sized page. Both `sort=new` and
+  `sort=top` paginate, so shrinking the page size never hides top-voted
+  threads past the first page.
 - `REPLIES_PER_THREAD` and `AUTO_COLLAPSE_DEPTH` are consumed **client-side**:
-  the widget reads them from `/api/v1/config` and uses them purely for reply
-  folding (no API/payload change — all replies still arrive in one response).
+  the widget reads them from the config payload (the `config` section of
+  `/api/v1/bootstrap` on mount, or `/api/v1/config` on the fallback path) and
+  uses them purely for reply folding (no API/payload change — all replies
+  still arrive in one response).
 
 **Upgrade note:** installs upgrading to v1.11.0 that never set `COMMENTS_PER_PAGE`
 will see **25** initial comments instead of the previous ~100. Set it to `100`
@@ -1154,6 +1158,52 @@ routes = [
 Wrangler provisions the proxied subdomain on first deploy (first cert
 issuance ~30 seconds). Don't use `*.workers.dev` in production —
 third-party-cookie blocking in Safari/Brave breaks sign-in.
+
+### Mount cost and free-tier headroom (since v2.15.0)
+
+The Workers free tier allows **100,000 requests/day**, and what a
+comment widget spends that on is almost entirely *mounts* — a request
+happens on every pageview whether or not the reader engages. So mount
+cost is what sets the pageview ceiling for an install, and it is the
+one number worth knowing before you worry about anything else on this
+page.
+
+The widget mounts with **one** request, `GET /api/v1/bootstrap?slug=…`,
+which returns the config, the session user, the first page of comments,
+and page-level engagement and subscription state when those surfaces
+are on. Before v2.15.0 that was three requests for a default install
+(`/api/v1/config`, then `/api/v1/auth/me` and `/api/v1/comments` in
+parallel) and five with page reactions/votes and subscriptions enabled.
+Roughly: ~33k pageviews/day of headroom became ~100k, and an install
+running every surface went from ~20k.
+
+Two consequences worth planning around:
+
+- **Enabling page reactions, page votes or subscriptions no longer
+  costs you a request per pageview.** Those two sections ride along in
+  the mount payload. They still cost D1 reads.
+- **Lazy-loading matters less than it used to.** Deferring `embed.js`
+  until the comments section scrolls into view still takes a bouncer
+  from one request to zero, so it is still worth doing on a high-traffic
+  blog — but the saving is 1 request per bounce, not 3.
+
+Nothing was removed. Every endpoint the old mount called still exists
+and still behaves identically, and a widget bundle newer than the
+Worker serving it falls back to the old sequence on a 404, so a
+rollback or a pinned `embed.js` from another origin keeps working.
+
+The tree portion of the bootstrap response is edge-cached for anonymous
+readers exactly as `GET /api/v1/comments` is, and *in the same cache
+entry* — a first page warmed by either route serves the other, and the
+existing invalidation on a comment mutation covers both. Signed-in
+readers still bypass that cache entirely. The bootstrap response as a
+whole carries no cache headers, because it varies by session and by
+locale.
+
+You can watch the effect on **`/admin/usage`**, which reads Cloudflare
+analytics for request counts (needs `CF_API_TOKEN` + `CF_ACCOUNT_ID`).
+Expect requests-per-pageview to drop on the first deploy after the
+upgrade, with a tail from readers still running a cached older bundle.
 
 ## 11. Backups and data export
 
