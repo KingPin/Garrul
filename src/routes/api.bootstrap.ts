@@ -142,10 +142,10 @@ bootstrap.get("/", async (c) => {
 		flags,
 		numbers,
 	});
-	// A hit is already-serialized JSON; embed it as-is rather than parse-and-
-	// re-stringify, which is both wasted work and a chance to alter the bytes.
-	const comments =
-		"cached" in tree ? JSON.parse(tree.cached) : tree.payload;
+	// A hit is the exact body `/comments` would have served. Reviving it into the
+	// envelope keeps this section equal to that endpoint's for free — the values
+	// came from there — and skips the D1 read the miss path pays.
+	const comments = "cached" in tree ? JSON.parse(tree.cached) : tree.payload;
 	// Warm the shared entry when this page is storable. Same key, same TTL, same
 	// body as `/comments` would have written, so a tree warmed by either route
 	// serves the other.
