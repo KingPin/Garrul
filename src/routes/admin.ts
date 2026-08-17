@@ -1747,6 +1747,39 @@ admin.post("/api/comments/:id/reply", async (c) => {
 	return c.json({ ok: true, id: inserted.id, notified: notify });
 });
 
+// POST /admin/api/preview  { body_md } -> { html }
+//
+// Render markdown for the reply composer without persisting. A saved reply was
+// vetted when it was written; ad hoc text is not, and it posts publicly under
+// the moderator's own name, so seeing it first matters.
+//
+// Deliberately not a call to POST /api/v1/preview: that route is anonymous and
+// rate-limited to 5 requests / 10s per IP on a shared bucket, which is the
+// wrong shape for an authenticated moderator editing a reply. Here requireMod
+// is the gate, and the admin middleware's same-origin check comes for free.
+//
+// Returning HTML for the page to inject is safe for exactly the reason the
+// widget's preview is: renderMarkdown is the strict-allowlist sanitizer, and it
+// is the same function that produces the stored body_html.
+admin.post("/api/preview", async (c) => {
+	const user = await requireMod(c);
+	if (user instanceof Response) return user;
+	const body = await c.req.json<{ body_md?: unknown }>().catch(() => null);
+	if (!body) return c.json({ error: "invalid_body" }, 400);
+	const valid = validateBody(
+		typeof body.body_md === "string" ? body.body_md : "",
+	);
+	if (!valid.ok) {
+		return c.json(
+			valid.key === "err.body.too_long"
+				? { error: "body_too_long", max: valid.max }
+				: { error: "body_required" },
+			400,
+		);
+	}
+	return c.json({ html: renderMarkdown(valid.body) });
+});
+
 admin.post("/api/comments/:id", async (c) => {
 	const user = await requireMod(c);
 	if (user instanceof Response) return user;
