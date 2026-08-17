@@ -122,7 +122,12 @@ const comments = new Hono<{
 }>();
 
 const MAX_NAME = 40;
-const SLUG_RE = /^[a-zA-Z0-9_\-./]{1,200}$/;
+/**
+ * Exported for `GET /api/v1/bootstrap`, which embeds this route's tree and so
+ * has to accept and reject exactly the same slugs — a divergence there would
+ * mean the two boot paths disagree about which posts exist.
+ */
+export const SLUG_RE = /^[a-zA-Z0-9_\-./]{1,200}$/;
 const HONEYPOT_FIELD = "website";
 
 // Signed-in writes get their own, looser budget. Signing in is a real cost to

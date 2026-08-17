@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { health } from "./routes/health";
+import { bootstrap } from "./routes/api.bootstrap";
 import { comments } from "./routes/api.comments";
 import { reports } from "./routes/api.reports";
 import { config } from "./routes/api.config";
@@ -314,6 +315,10 @@ app.use("/api/*", sessionMiddleware());
 app.use("/api/*", localeMiddleware());
 
 app.route("/api/v1/health", health);
+// The widget's mount call — everything /config, /auth/me, /comments,
+// /page-engagement and /subscribe/mine would have answered, in one invocation.
+// Additive: all five remain mounted below and still work.
+app.route("/api/v1/bootstrap", bootstrap);
 app.route("/api/v1/comments", comments);
 app.route("/api/v1/comments", reports);
 app.route("/api/v1/reactions", reactions);
