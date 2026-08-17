@@ -104,6 +104,37 @@ export const jsonResponse = (
 };
 
 /**
+ * Store `json` under `key` for `ttlSec`, without producing a client response.
+ *
+ * The stored copy always carries `public, max-age=<ttl>` so the Cache API will
+ * keep it. Best-effort: a cache error never propagates. When `waitUntil` is
+ * given the put runs after the response is sent; otherwise it is awaited (keeps
+ * unit tests deterministic).
+ *
+ * Split out of `cacheJson` because a caller can need the *cache write* without
+ * the write's JSON being what it sends back — `GET /api/v1/bootstrap` warms the
+ * shared comment-tree entry while returning a larger envelope that embeds it.
+ */
+export const putCache = async (
+	key: Request,
+	json: string,
+	ttlSec: number,
+	waitUntil?: (p: Promise<unknown>) => void,
+): Promise<void> => {
+	const cache = edgeCache();
+	if (!cache) return;
+	const stored = new Response(json, {
+		headers: {
+			"content-type": "application/json; charset=UTF-8",
+			"cache-control": `public, max-age=${ttlSec}`,
+		},
+	});
+	const put = cache.put(key, stored).catch(() => {});
+	if (waitUntil) waitUntil(put);
+	else await put;
+};
+
+/**
  * Cache `json` under `key` for `ttlSec` (edge copy), returning the Response to
  * send to the client.
  *
@@ -125,18 +156,7 @@ export const cacheJson = async (
 	waitUntil?: (p: Promise<unknown>) => void,
 	clientCacheControl?: string,
 ): Promise<Response> => {
-	const cache = edgeCache();
-	if (cache) {
-		const stored = new Response(json, {
-			headers: {
-				"content-type": "application/json; charset=UTF-8",
-				"cache-control": `public, max-age=${ttlSec}`,
-			},
-		});
-		const put = cache.put(key, stored).catch(() => {});
-		if (waitUntil) waitUntil(put);
-		else await put;
-	}
+	await putCache(key, json, ttlSec, waitUntil);
 	return jsonResponse(json, clientCacheControl);
 };
 

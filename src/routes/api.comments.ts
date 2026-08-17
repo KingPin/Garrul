@@ -822,7 +822,7 @@ const loadAuthors = async (
 	return out;
 };
 
-type ListPayload = {
+export type ListPayload = {
 	post: Awaited<ReturnType<typeof getPost>>;
 	threads: TreeNode[];
 	next_cursor: string | null;
@@ -867,29 +867,63 @@ const decodeTopCursor = (raw: string | null): TopCursor | null => {
 	return { score, id };
 };
 
-comments.get("/", async (c) => {
-	const t = c.get("t") ?? tFor(FALLBACK_LOCALE);
-	const slug = (c.req.query("slug") ?? "").trim();
-	if (!slug) return c.json({ error: t("err.post.required") }, 400);
-	if (!SLUG_RE.test(slug)) return c.json({ error: t("err.post.invalid") }, 400);
+/**
+ * The outcome of building one page of the comment tree.
+ *
+ * `cached` is a ready-to-send JSON body that came straight from the edge: no D1
+ * read happened and there is nothing to store. Otherwise the caller gets the
+ * assembled payload plus `store` — the cache key to write it under, or null when
+ * this page must not be stored at all (see the invariants in `buildTreePage`).
+ */
+export type TreePageResult =
+	| { cached: string }
+	| { payload: ListPayload; store: Request | null };
 
-	const sortParam = (c.req.query("sort") ?? "new").trim();
-	const sort: "new" | "top" = sortParam === "top" ? "top" : "new";
+/**
+ * Build one page of the comment tree, including the edge-cache read and the
+ * decision about whether the result may be written back.
+ *
+ * Shared by `GET /api/v1/comments` and `GET /api/v1/bootstrap` so both serve a
+ * byte-identical tree from the SAME cache entry: bootstrap introduces no second
+ * key, and `bustTreeCache` keeps covering both paths without knowing they exist.
+ * Two invariants live here rather than in the callers, because a caller that
+ * forgot either one would leak data or hand an attacker a cache amplifier:
+ *
+ *   - a signed-in viewer neither reads nor writes the shared entry (the payload
+ *     carries their `my_vote`, reaction `mine` flags and own `pending` comments);
+ *   - an empty non-first page is never stored.
+ *
+ * What the routes resolve differently — slug validation, locale, and *how* the
+ * session and settings were obtained — stays with the routes.
+ */
+export const buildTreePage = async (
+	env: Bindings,
+	/** `c.req.url`; only its origin is used, to build the cache key. */
+	reqUrl: string,
+	opts: {
+		slug: string;
+		sort: "new" | "top";
+		/** Raw `?before=` value, decoded here so both sorts normalize alike. */
+		beforeRaw: string | null;
+		session: { sid: string; user_id: string } | null;
+		flags: ResolvedFlags;
+		numbers: ResolvedNumbers;
+	},
+): Promise<TreePageResult> => {
+	const { slug, sort, beforeRaw, session, flags, numbers } = opts;
 
 	// Each sort has its own cursor encoding: `new` pages by ULID (id < cursor),
 	// `top` pages by a composite score:id (see decodeTopCursor). A cursor from
 	// the wrong sort decodes to null → treated as the first page.
-	const beforeRaw = c.req.query("before") ?? null;
 	const cursor = sort === "new" ? decodeCursor(beforeRaw) : null;
 	const topCursor = sort === "top" ? decodeTopCursor(beforeRaw) : null;
-	const session = await readSession(c);
 
 	// Top-level threads per page, operator-tunable (DB > env > default 25),
-	// clamped to [1,200] in the settings layer. The full numbers object is also
-	// reused below to resolve the thread's accepting-comments state, and `flags`
-	// gates deleted-comment placeholders further down — one read for both, since
-	// the per-group helpers would each `get` the same KV entry.
-	const { flags, numbers } = await loadSettings(c.env);
+	// clamped to [1,200] in the settings layer. `numbers` is also used below to
+	// resolve the thread's accepting-comments state, and `flags` gates
+	// deleted-comment placeholders — the caller reads both groups in one
+	// `loadSettings`, since the per-group helpers would each `get` the same KV
+	// entry.
 	const pageSize = numbers.comments_per_page;
 
 	// Cached at the edge (Cache API, not KV — see response-cache.ts) for
@@ -908,17 +942,17 @@ comments.get("/", async (c) => {
 	const cursorKey = topCursor
 		? `${topCursor.score}:${topCursor.id}`
 		: (cursor ?? null);
-	const cacheReq = treeCacheKey(c.req.url, slug, sort, pageSize, cursorKey);
+	const cacheReq = treeCacheKey(reqUrl, slug, sort, pageSize, cursorKey);
 	const cacheable = !session;
 	if (cacheable) {
 		const hit = await matchCache(cacheReq);
-		// Re-emit the body WITHOUT the edge copy's public Cache-Control: the
-		// widget fetches this credentialed, and a browser-cached anonymous page
-		// must never be reused for the same user after they sign in.
-		if (hit) return jsonResponse(await hit.text());
+		// The caller re-emits this body WITHOUT the edge copy's public
+		// Cache-Control: the widget fetches credentialed, and a browser-cached
+		// anonymous page must never be reused for the same user after they sign in.
+		if (hit) return { cached: await hit.text() };
 	}
 
-	const post = await getPost(c.env.DB, slug);
+	const post = await getPost(env.DB, slug);
 
 	// Pagination happens in SQL. One query picks this page's top-level threads
 	// in the sort's own order; a second pulls just those threads' subtrees. The
@@ -930,7 +964,7 @@ comments.get("/", async (c) => {
 	// moderated post visibly landed); that predicate is pushed into both queries
 	// rather than merged from a third, and those responses are uncached.
 	const viewerId = session?.user_id ?? null;
-	const refs = await listThreadRefsForPost(c.env.DB, slug, {
+	const refs = await listThreadRefsForPost(env.DB, slug, {
 		sort,
 		// One extra row, purely to learn whether a further page exists. Its
 		// subtree is deliberately NOT fetched.
@@ -942,7 +976,7 @@ comments.get("/", async (c) => {
 	const more = refs.length > pageSize;
 
 	const { rows, truncated } = await listCommentsForThreads(
-		c.env.DB,
+		env.DB,
 		pageRefs.map((r) => r.id),
 		viewerId,
 	);
@@ -954,11 +988,11 @@ comments.get("/", async (c) => {
 			limit: TREE_ROW_LIMIT,
 		});
 	}
-	const authors = await loadAuthors(c.env.DB, rows);
+	const authors = await loadAuthors(env.DB, rows);
 
-	const reactionRows = await listReactionsForPost(c.env.DB, slug);
+	const reactionRows = await listReactionsForPost(env.DB, slug);
 	const mineSet = session
-		? await listUserReactionsOnPost(c.env.DB, slug, session.user_id)
+		? await listUserReactionsOnPost(env.DB, slug, session.user_id)
 		: new Set<string>();
 	const reactionsById = new Map<string, ReactionCount[]>();
 	for (const r of reactionRows) {
@@ -972,7 +1006,7 @@ comments.get("/", async (c) => {
 	}
 
 	const myVotes = session
-		? await getUserVotesOnPost(c.env.DB, slug, session.user_id)
+		? await getUserVotesOnPost(env.DB, slug, session.user_id)
 		: new Map<string, -1 | 1>();
 
 	// When the operator opts in, keep every deleted comment as a placeholder
@@ -1022,24 +1056,52 @@ comments.get("/", async (c) => {
 		closed_reason: threadState.reason ?? null,
 	};
 
-	// Write-through to the edge cache; the put runs after the response when an
-	// ExecutionContext is available (real requests), else inline.
-	//
 	// An empty cursor page is deliberately NOT stored. A cursor is unvalidated
 	// against the data — any well-formed ULID decodes fine and simply matches no
 	// thread — so caching those would let one client mint unlimited distinct
 	// cache entries from a random-ULID loop. Real pages are bounded by the
 	// thread count.
-	if (cacheable && (cursorKey === null || page.length > 0)) {
+	const storable = cacheable && (cursorKey === null || page.length > 0);
+	return { payload, store: storable ? cacheReq : null };
+};
+
+comments.get("/", async (c) => {
+	const t = c.get("t") ?? tFor(FALLBACK_LOCALE);
+	const slug = (c.req.query("slug") ?? "").trim();
+	if (!slug) return c.json({ error: t("err.post.required") }, 400);
+	if (!SLUG_RE.test(slug)) return c.json({ error: t("err.post.invalid") }, 400);
+
+	const sortParam = (c.req.query("sort") ?? "new").trim();
+	const sort: "new" | "top" = sortParam === "top" ? "top" : "new";
+
+	const session = await readSession(c);
+	// One read rather than two per-group ones: this route needs both flags and
+	// numbers, and they share a single cache entry.
+	const { flags, numbers } = await loadSettings(c.env);
+
+	const built = await buildTreePage(c.env, c.req.url, {
+		slug,
+		sort,
+		beforeRaw: c.req.query("before") ?? null,
+		session,
+		flags,
+		numbers,
+	});
+	// Re-emit an edge hit WITHOUT its public Cache-Control — see buildTreePage.
+	if ("cached" in built) return jsonResponse(built.cached);
+
+	// Write-through to the edge cache; the put runs after the response when an
+	// ExecutionContext is available (real requests), else inline.
+	if (built.store) {
 		return cacheJson(
-			cacheReq,
-			JSON.stringify(payload),
+			built.store,
+			JSON.stringify(built.payload),
 			TREE_CACHE_TTL,
 			tryWaitUntil(c),
 		);
 	}
 
-	return c.json(payload);
+	return c.json(built.payload);
 });
 
 /**
