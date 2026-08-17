@@ -8,6 +8,10 @@ import type {
 } from "../../db/queries";
 import { identiconSvg } from "../../lib/identicon";
 import { sanitizeForEmail as resanitizeBodyHtml } from "../../lib/markdown";
+import {
+	commentIdLiteral,
+	replyComposer,
+} from "../components/reply-composer";
 import { escapeHtml, jsLiteral } from "../escape";
 
 const formatTs = (ts: number): string =>
@@ -213,6 +217,8 @@ const actionsFor = (status: CommentStatus): string => {
 export const renderCommentDetail = (
 	d: AdminCommentDetail,
 	isAdmin = false,
+	/** Signed-in moderator's display name, shown as the reply composer's identity. */
+	modName = "",
 ): string => {
 	const { comment, parent, replies, ip_siblings, user_recent, verdicts, reports, audit } = d;
 	const parentSection = parent
@@ -241,6 +247,21 @@ export const renderCommentDetail = (
 		     ${user_recent.map((s) => commentCard(s, `Recent`)).join("")}
 		   </div>`
 		: "";
+	// Same gate the action buttons use: there is nothing to answer on a deleted
+	// comment. Unlike the queue's modal this composer is always mounted — this
+	// page is where a considered reply gets written, with the thread, the spam
+	// verdicts and any reader reports all on screen.
+	const replySection =
+		comment.status === "deleted"
+			? ""
+			: `<div class="card">
+	     <h3>Reply</h3>
+	     ${replyComposer({
+				commentIdExpr: commentIdLiteral(comment.id),
+				modName,
+				onPosted: "setTimeout(() => location.reload(), 600);",
+			})}
+	   </div>`;
 
 	return `
 <a href="/admin/queue" class="muted">← back to queue</a>
@@ -272,6 +293,7 @@ export const renderCommentDetail = (
   <pre style="white-space:pre-wrap;font-size:0.85rem">${escapeHtml(comment.body_md)}</pre>
 </div>
 
+${replySection}
 ${reportsSection(comment.id, reports)}
 ${verdictsSection(verdicts)}
 ${parentSection}

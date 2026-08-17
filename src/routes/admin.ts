@@ -47,6 +47,7 @@ import {
 	deleteSettings,
 	deleteTelegramLinkByUser,
 	deleteWebhookEndpoint,
+	enqueueNotification,
 	exportUserData,
 	getComment,
 	getTelegramLinkByUser,
@@ -60,6 +61,7 @@ import {
 	isSavedReplyScope,
 	isUserRole,
 	isWebhookAdapter,
+	listActiveSubscriptionsForPost,
 	listSavedRepliesForUser,
 	listWebhookEndpoints,
 	markSubscriptionUnsubscribed,
@@ -145,7 +147,11 @@ import {
 	renderSubscriptions,
 	type SubscriptionsFilters,
 } from "../admin-ui/pages/subscriptions";
-import { CURRENT_RENDERER_VERSION, renderMarkdown } from "../lib/markdown";
+import {
+	CURRENT_RENDERER_VERSION,
+	renderMarkdown,
+	validateBody,
+} from "../lib/markdown";
 import { MAX_XML_BYTES, runDisqusImport } from "../lib/disqus-import";
 import { rerenderBatch, rerenderStats } from "../db/rerender";
 import {
@@ -426,6 +432,7 @@ admin.get("/queue", async (c) => {
 				hosts,
 				postState,
 				reportCounts,
+				user.name,
 			),
 			user,
 			updateInfo,
@@ -446,7 +453,7 @@ admin.get("/comments/:id", async (c) => {
 		renderPage(
 			c,
 			`Comment ${id.slice(0, 8)}`,
-			renderCommentDetail(detail, user.role === "admin"),
+			renderCommentDetail(detail, user.role === "admin", user.name),
 			user,
 			updateInfo,
 		),
@@ -1315,12 +1322,12 @@ admin.delete("/api/webhooks/:id", async (c) => {
 //     Even an admin can't modify another mod's reply through the API — they
 //     can sign in as that user via OAuth if they really need to.
 //
-// Post-as-reply:
-//   - POST /admin/api/saved-replies/:id/post with { comment_id } posts a
-//     top-level reply on the same post as the target comment, authored by
-//     the mod's own user, status=approved (bypassing Turnstile/spam — the
-//     mod has already vouched for the content). Body is the saved reply's
-//     markdown, optionally edited.
+// Posting one is not a saved-reply operation any more: a mod posts through
+// POST /admin/api/comments/:id/reply (see "Moderator replies" below) with the
+// preset's markdown as the request body, and an optional `saved_reply_id` for
+// audit provenance only. Saved replies are a *prefill* source, not a posting
+// path — the dedicated `saved-replies/:id/post` endpoint was removed when free
+// text became the canonical reply input.
 
 // Exported so tests can assert the parser against the real values
 // instead of pinning literal numbers that would silently drift.
@@ -1526,38 +1533,77 @@ admin.delete("/api/saved-replies/:id", async (c) => {
 	return c.json({ ok: true, id });
 });
 
-// Post a saved reply as a top-level reply on a comment. Body is the
-// saved reply's markdown by default; the mod can override (`body_md`) to
-// tweak before sending. Always re-rendered through renderMarkdown — we
-// never trust stored HTML.
-admin.post("/api/saved-replies/:id/post", async (c) => {
+// --------------------------- Moderator replies -----------------------------
+//
+// POST /admin/api/comments/:id/reply
+//   { body_md, saved_reply_id?, notify? }
+//
+// The canonical way a moderator answers a comment from the admin panel. Free
+// text is the general case; a saved reply is only a *prefill* of it, which is
+// why this route is keyed on the comment being answered rather than on a saved
+// reply. `saved_reply_id` is provenance for the audit row and nothing else.
+//
+// The reply is a child of the target (not a top-level comment), authored by the
+// moderator's own user, status=approved — Turnstile and the spam pipeline are
+// bypassed because a mod posting under their own name has already vouched for
+// the content. Body is always re-rendered through renderMarkdown at post time;
+// we never trust stored HTML.
+//
+// Length is bounded by the *comment* cap (MAX_BODY_CHARS, via validateBody),
+// not SAVED_REPLY_BODY_MAX. What we insert here is a comment, so it gets the
+// comment's rules; a saved reply's 8k body always fits inside that.
+admin.post("/api/comments/:id/reply", async (c) => {
 	const user = await requireMod(c);
 	if (user instanceof Response) return user;
-	const id = c.req.param("id");
-	const reply = await getSavedReply(c.env.DB, id);
-	if (!reply) return c.json({ error: "not_found" }, 404);
-	// Visibility check mirrors the GET — only the owner or shared replies.
-	if (reply.owner_id !== user.id && reply.scope !== "shared") {
-		return c.json({ error: "not_found" }, 404);
-	}
 	const body = await c.req
-		.json<{ comment_id?: unknown; body_md?: unknown }>()
+		.json<{
+			body_md?: unknown;
+			saved_reply_id?: unknown;
+			notify?: unknown;
+		}>()
 		.catch(() => null);
-	if (!body || typeof body.comment_id !== "string") {
+	if (!body) return c.json({ error: "invalid_body" }, 400);
+
+	const valid = validateBody(
+		typeof body.body_md === "string" ? body.body_md : "",
+	);
+	if (!valid.ok) {
+		return c.json(
+			valid.key === "err.body.too_long"
+				? { error: "body_too_long", max: valid.max }
+				: { error: "body_required" },
+			400,
+		);
+	}
+
+	// Optional, but not coercible: `"false"` and `0` are what a buggy client sends
+	// when it means "don't email anyone", and silently reading either as true
+	// mails the whole thread. Absent stays absent; anything present must be a
+	// real boolean.
+	if (body.notify != null && typeof body.notify !== "boolean") {
 		return c.json({ error: "invalid_body" }, 400);
 	}
-	const target = await getComment(c.env.DB, body.comment_id);
+
+	// Provenance is optional, but when claimed it has to be a reply this mod can
+	// actually see — otherwise the audit row could name someone else's private
+	// saved reply. A 400 rather than a 404: the reply body is fine, the claim
+	// about where it came from is not.
+	let savedReplyId: string | null = null;
+	if (body.saved_reply_id != null) {
+		if (typeof body.saved_reply_id !== "string") {
+			return c.json({ error: "invalid_body" }, 400);
+		}
+		const source = await getSavedReply(c.env.DB, body.saved_reply_id);
+		if (!source || (source.owner_id !== user.id && source.scope !== "shared")) {
+			return c.json({ error: "saved_reply_not_visible" }, 400);
+		}
+		savedReplyId = source.id;
+	}
+
+	const target = await getComment(c.env.DB, c.req.param("id"));
 	if (!target) return c.json({ error: "comment_not_found" }, 404);
 	if (target.status === "deleted") {
 		return c.json({ error: "comment_deleted" }, 400);
-	}
-	// Allow the mod to override the body before posting.
-	const rawBody =
-		typeof body.body_md === "string" && body.body_md.trim().length > 0
-			? body.body_md
-			: reply.body_md;
-	if (rawBody.length > SAVED_REPLY_BODY_MAX) {
-		return c.json({ error: "body_too_long" }, 400);
 	}
 	// The nesting cap applies to moderators too: the O(N^2) tree-assembly cost
 	// it guards doesn't care who created the chain. Reply higher up instead.
@@ -1565,29 +1611,38 @@ admin.post("/api/saved-replies/:id/post", async (c) => {
 	if (depth > MAX_REPLY_DEPTH) {
 		return c.json({ error: "thread_too_deep" }, 400);
 	}
-	const body_html = renderMarkdown(rawBody);
+
 	const inserted = await insertComment(c.env.DB, {
 		post_slug: target.post_slug,
 		parent_id: target.id,
 		user_id: user.id,
-		body_md: rawBody,
-		body_html,
+		body_md: valid.body,
+		body_html: renderMarkdown(valid.body),
 		renderer_version: CURRENT_RENDERER_VERSION,
 		status: "approved",
 		ip_hash: null,
 		user_agent: null,
 		depth,
 	});
+
+	// Default on: this is a real comment on a real thread, so the people
+	// following that thread should hear about it the same way they hear about a
+	// reader's reply. The composer's checkbox exists so a housekeeping note
+	// ("dupe, see above") doesn't have to email everyone.
+	const notify = body.notify ?? true;
 	await adminInsertAudit(c.env.DB, {
 		admin_id: user.id,
-		action: "saved_reply.post",
+		action: "comment.reply",
 		target_kind: "comment",
 		target_id: inserted.id,
 		meta: {
-			from_saved_reply: true,
-			saved_reply_id: reply.id,
+			from_saved_reply: savedReplyId != null,
+			saved_reply_id: savedReplyId,
 			parent_id: target.id,
 			post_slug: target.post_slug,
+			// The operator's choice, not a delivery count — the fan-out below is
+			// deferred, and a number here would be a guess at what it will write.
+			notify_subscribers: notify,
 		},
 	});
 	// Bust the post's tree caches so the new reply is visible immediately.
@@ -1597,9 +1652,65 @@ admin.post("/api/saved-replies/:id/post", async (c) => {
 		comment_id: inserted.id,
 		post_slug: target.post_slug,
 		user_id: user.id,
-		ts: Date.now(),
+		ts: inserted.created_at,
 	});
-	return c.json({ ok: true, id: inserted.id });
+
+	if (notify) {
+		const fanout = (async () => {
+			const subs = await listActiveSubscriptionsForPost(
+				c.env.DB,
+				target.post_slug,
+			);
+			// Skip our own address for the same reason the widget path does: being
+			// emailed about your own comment reads as a bug.
+			const selfEmail = user.email?.toLowerCase() ?? null;
+			for (const sub of subs) {
+				if (selfEmail && sub.email === selfEmail) continue;
+				await enqueueNotification(c.env.DB, sub.id, inserted.id);
+			}
+		})();
+		// Always wait for the enqueue to finish — same reasoning as the widget
+		// fan-out in routes/api.comments.ts: without an executionCtx the runtime
+		// can cancel the orphan promise once the response settles, and a lost row
+		// here is a notification nobody ever gets.
+		if (c.executionCtx) c.executionCtx.waitUntil(fanout);
+		else await fanout;
+	}
+
+	return c.json({ ok: true, id: inserted.id, notified: notify });
+});
+
+// POST /admin/api/preview  { body_md } -> { html }
+//
+// Render markdown for the reply composer without persisting. A saved reply was
+// vetted when it was written; ad hoc text is not, and it posts publicly under
+// the moderator's own name, so seeing it first matters.
+//
+// Deliberately not a call to POST /api/v1/preview: that route is anonymous and
+// rate-limited to 5 requests / 10s per IP on a shared bucket, which is the
+// wrong shape for an authenticated moderator editing a reply. Here requireMod
+// is the gate, and the admin middleware's same-origin check comes for free.
+//
+// Returning HTML for the page to inject is safe for exactly the reason the
+// widget's preview is: renderMarkdown is the strict-allowlist sanitizer, and it
+// is the same function that produces the stored body_html.
+admin.post("/api/preview", async (c) => {
+	const user = await requireMod(c);
+	if (user instanceof Response) return user;
+	const body = await c.req.json<{ body_md?: unknown }>().catch(() => null);
+	if (!body) return c.json({ error: "invalid_body" }, 400);
+	const valid = validateBody(
+		typeof body.body_md === "string" ? body.body_md : "",
+	);
+	if (!valid.ok) {
+		return c.json(
+			valid.key === "err.body.too_long"
+				? { error: "body_too_long", max: valid.max }
+				: { error: "body_required" },
+			400,
+		);
+	}
+	return c.json({ html: renderMarkdown(valid.body) });
 });
 
 admin.post("/api/comments/:id", async (c) => {

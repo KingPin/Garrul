@@ -921,7 +921,7 @@ Pages (top nav):
 | `/admin/settings` | Editable form for feature flags, display/pagination numbers, and the moderation dials (edit window, thread auto-close, community auto-collapse, the three anti-spam heuristics), saved to the `settings` D1 table (no redeploy — see section 5). Also renders a read-only `(set)`/`(unset)` summary of deploy-time config (Turnstile, email, OAuth, spam provider), which still changes via `wrangler secret put` / `wrangler.toml`. |
 | `/admin/webhooks` | Outbound webhook endpoints: add/pause/delete, per-endpoint secret + event filter, adapter (`generic` / `slack` / `discord` / `telegram`), failure counts and retry status. |
 | `/admin/telegram` | **Admin-only.** Telegram operator bot: shows whether the bot token/webhook secret are set, links your personal Telegram account (one-time code or deep link), toggles the daily digest, and unlinks. See `docs/telegram.md`. |
-| `/admin/saved-replies` | Moderator saved replies: create/edit canned responses, private or shared scope, postable onto a comment from the queue. |
+| `/admin/saved-replies` | Moderator saved replies: create/edit canned responses, private or shared scope. Presets are a *prefill* for the reply composer, not the only way to reply — see **Replying from the admin panel** below. |
 | `/admin/usage` | Cloudflare analytics (requests, comments by domain). Requires `CF_API_TOKEN` + `CF_ACCOUNT_ID`; renders setup instructions when unset. |
 
 State-changing endpoints (all under `/admin/api/...`, all require admin
@@ -931,6 +931,7 @@ responding):
 - `POST /admin/api/comments/:id` — `{action: approve|spam|delete|restore, reason?}`
 - `POST /admin/api/comments/bulk` — `{ids: string[], action}` (cap 100)
 - `POST /admin/api/comments/:id/reports/resolve` — clears open reader reports on a comment (audited `report.resolve`)
+- `POST /admin/api/comments/:id/reply` — `{body_md, saved_reply_id?, notify?}` posts a moderator reply nested under `:id` (audited `comment.reply`; `notify` must be a real boolean when present, defaults to true, and fans out to the post's confirmed subscribers; `saved_reply_id` is audit provenance only and must be a preset this mod can see)
 - `POST /admin/api/posts/close` — `{slug, closed: boolean}` (per-post close/open; audited `post.close` / `post.open`; busts the cached first page)
 - `POST /admin/api/users/:id` — `{banned: boolean, reason?, from_comment?}` (one-click ban-author records the originating comment in audit meta; admin-only)
 - `POST /admin/api/users/:id/role` — `{role: user|mod|admin, reason?}` (admin-only; refuses self-change and the last-admin demotion)
@@ -940,6 +941,13 @@ responding):
 - `POST /admin/api/ops/seed-demo` — disabled when `ENV=production`
 - `POST /admin/api/ops/ip-retention` — manual drain of the IP-hash sweep; no body. `400 retention_disabled` when `IP_HASH_RETENTION_DAYS` is `0` or below the 7-day floor. Audits `ip_retention.sweep` only when it actually cleared something.
 - `POST /admin/api/ops/audit-retention` — same shape for the audit-log sweep, gated on `AUDIT_LOG_RETENTION_DAYS` and a 30-day floor, audited `audit_retention.sweep`.
+
+One POST is unaudited, because it neither changes nor stores anything:
+
+- `POST /admin/api/preview` — `{body_md}` → `{html}`, the reply composer's
+  markdown preview. Renders through the same allowlist sanitizer as a real
+  comment and persists nothing. Separate from the widget's
+  `/api/v1/preview`, which is anonymous and IP-rate-limited.
 
 One admin read is listed here too, because of what it returns:
 
@@ -1061,11 +1069,39 @@ bodies over 64 KB skip the retry queue (logged, inline attempt still
 made). An endpoint that fails 10 consecutive times auto-disables —
 re-enable it from the admin page after fixing the receiver.
 
+**Replying from the admin panel.** A mod can answer a comment without
+leaving the admin UI, from either the queue's **Reply** modal or the
+single-comment view (`/admin/comments/:id`, which is the better surface
+for a considered reply — the thread, the spam verdicts and any reader
+reports are all on screen). The composer is free text: type the reply,
+optionally **Preview** the rendered markdown, then post. It inserts a
+regular comment nested under the target, authored by the signed-in
+moderator, `status='approved'` — no Turnstile, no spam check, and no
+`ip_hash`/`user_agent` stored. The moderator's name is shown above the
+box, because a shared admin login otherwise puts the wrong face on
+every reply. Audited as `comment.reply`.
+
+**Notify thread subscribers** is a checkbox on the composer, **default
+on**: the reply fans out to every confirmed, still-subscribed email
+subscriber on that post — the same fan-out a reader's reply uses, and
+the same batched digest drains it, with no moderator/reader distinction
+in the email. Uncheck it for a housekeeping note ("dupe, see above")
+that shouldn't email the thread. The mod's own address is always
+skipped. Subscriptions are per *post*, not per comment, so this notifies
+thread followers rather than only the person being replied to.
+
 **Saved replies.** Canned moderator responses, managed on
 `/admin/saved-replies`. Each reply is owned by its author and scoped
 `private` (only the owner sees it) or `shared` (every mod/admin sees
-it). The queue's reply box offers a picker; posting one inserts it as a
-regular comment from the moderator's identity.
+it). In the composer they sit behind a collapsed **Insert a saved
+reply** picker and only prefill the textarea — edit freely afterwards.
+The reverse works too: **Save for reuse** turns whatever is in the box
+into a new preset (title + scope). Presets cap at 8 000 characters
+while a comment allows 10 000, so a long reply can be postable and
+still too long to save; the button says so rather than failing. When a
+preset prefilled the body its id is recorded in the audit row's
+`saved_reply_id`, and it is cleared if the text is edited away from the
+preset — provenance is never claimed for text the mod actually wrote.
 
 **Disqus import.** Two entry points, both idempotent (deduplicated by
 Disqus comment ID, tracked in `0009_import_tracking.sql`; re-running

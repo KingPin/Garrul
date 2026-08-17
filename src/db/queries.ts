@@ -2425,7 +2425,15 @@ export const ADMIN_ACTIONS = [
 	"saved_reply.create",
 	"saved_reply.update",
 	"saved_reply.delete",
+	// Retired in favour of `comment.reply` when the moderator reply path stopped
+	// being keyed on a saved reply. Nothing writes it any more, but this array is
+	// the allowlist both the audit dropdown and the `?action=` query validate
+	// against (see `ip_retention.sweep` above for what dropping an entry costs),
+	// so removing it would make every historical row unfilterable.
 	"saved_reply.post",
+	// A moderator reply posted from the admin panel. Free text, optionally
+	// prefilled from a saved reply — `meta.saved_reply_id` records which.
+	"comment.reply",
 	"import.disqus",
 	"settings.update",
 	"post.close",
