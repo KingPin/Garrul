@@ -453,7 +453,7 @@ admin.get("/comments/:id", async (c) => {
 		renderPage(
 			c,
 			`Comment ${id.slice(0, 8)}`,
-			renderCommentDetail(detail, user.role === "admin"),
+			renderCommentDetail(detail, user.role === "admin", user.name),
 			user,
 			updateInfo,
 		),
