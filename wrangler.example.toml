@@ -95,6 +95,11 @@ OAUTH_CALLBACK_BASE = "https://comments.example.com"
 # belong somewhere else, such as a shared moderation@ alias.
 # MODERATOR_EMAIL_ENABLED = "false"
 # MODERATOR_NOTIFY_EMAILS = "moderation@example.com"
+# Require a Turnstile challenge on every comment instead of only anonymous
+# ones (default off — a signed-in author posts without one). Does nothing
+# unless TURNSTILE_SITE_KEY/TURNSTILE_SECRET are set. Also editable at
+# runtime from the admin Settings page:
+# TURNSTILE_ALWAYS = "false"
 # Display & pagination (all optional; clamped server-side). Also editable at
 # runtime from the admin Settings page. Top-level comments per initial load /
 # "Load older" click (default 25, range 1-200 — set 100 for pre-v1.10 behavior):

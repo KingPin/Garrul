@@ -125,7 +125,16 @@ describe("loadFlags — defaults", () => {
 			show_deleted_placeholders: false,
 			spam_first_comment_moderate: false,
 			moderator_email_enabled: false,
+			turnstile_always: false,
 		});
+	});
+
+	it("always-on Turnstile defaults OFF", async () => {
+		// The upgrade case: an install that lands this version keeps challenging
+		// only anonymous posts. Defaulting ON would put a challenge in front of
+		// every signed-in commenter on every existing instance without asking.
+		const { env } = mkEnv();
+		expect((await loadFlags(env)).turnstile_always).toBe(false);
 	});
 
 	it("moderator email defaults OFF", async () => {

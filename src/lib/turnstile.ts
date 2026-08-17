@@ -6,7 +6,8 @@
  *
  * Returns true if the token is valid AND was issued for the expected
  * hostname. Anonymous comment POSTs MUST go through this. OAuth-
- * authenticated comments skip Turnstile.
+ * authenticated comments skip Turnstile unless the operator opted into
+ * `turnstile_always` — see `turnstileAlwaysOn` below.
  *
  * The hostname check matters because a Turnstile sitekey is not bound
  * to a single domain — Cloudflare lets operators list multiple. Without
@@ -26,6 +27,36 @@
  * expectedHostname so the check stays exercised.
  */
 const ENDPOINT = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
+
+/**
+ * Whether a *signed-in* comment also has to carry a Turnstile token.
+ *
+ * The default answer is no: an OAuth session already costs an attacker an
+ * account, and challenging every reply from a known author is friction for
+ * the people an operator least wants to annoy. Operators who would rather
+ * pay that friction than field scripted posting from throwaway accounts flip
+ * the `turnstile_always` flag (env `TURNSTILE_ALWAYS`, or the admin Settings
+ * → Moderation toggle).
+ *
+ * Both Turnstile credentials are part of the predicate, not an afterthought,
+ * because it takes both for a challenge to complete a round trip: the site key
+ * is what lets the widget *render* one (`/api/v1/config` only hands a key over
+ * when it has it), and the secret is what lets `verifyTurnstile` *check* the
+ * result — it returns false on an empty secret, so a missing one rejects every
+ * token that arrives. An install that turned the flag on with either half
+ * unconfigured would take signed-in posting down entirely rather than tighten
+ * it. Both the config route and the POST handler resolve the answer through
+ * here so the widget and the server can never disagree about whether a token
+ * is expected.
+ *
+ * The anonymous path does NOT use this: it requires a token unconditionally,
+ * which is the older and deliberately fail-closed rule.
+ */
+export const turnstileAlwaysOn = (
+	flag: boolean,
+	siteKey: string | undefined,
+	secret: string | undefined,
+): boolean => flag && !!siteKey && !!secret;
 
 type SiteverifyResponse = {
 	success: boolean;

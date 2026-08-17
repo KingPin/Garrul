@@ -240,9 +240,11 @@ your local archive.
 
 ## Anti-spam
 
-Always on, no configuration: Turnstile on anonymous posts, a sliding-window
-rate limit on the edge Cache API, a strict markdown sanitizer (no raw HTML,
-no images, every link `nofollow ugc noopener`), and a hidden-field honeypot.
+Always on: Turnstile on anonymous posts once the Turnstile keys are set
+(`TURNSTILE_ALWAYS` challenges signed-in authors too), plus three layers that
+need no configuration at all — a sliding-window rate limit on the edge Cache
+API, a strict markdown sanitizer (no raw HTML, no images, every link
+`nofollow ugc noopener`), and a hidden-field honeypot.
 
 On top of those, four heuristics you tune from **Settings → Moderation**
 without a redeploy. Each has an env var that sets the deploy-time default;

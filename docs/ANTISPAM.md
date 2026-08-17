@@ -6,7 +6,7 @@ Garrul defends against spam in layers. The base protections below are **always o
 
 These don't need configuration; they ship with every Garrul instance:
 
-- **Turnstile** — Cloudflare's CAPTCHA-alternative. Required for anonymous POSTs whenever `TURNSTILE_SITE_KEY` is set. See [Turnstile mount timing](#turnstile-mount-timing) for when it loads and what its four visitor-facing messages mean.
+- **Turnstile** — Cloudflare's CAPTCHA-alternative. Required for anonymous POSTs whenever `TURNSTILE_SITE_KEY` is set; signed-in authors skip it unless you turn on [`TURNSTILE_ALWAYS`](#who-gets-challenged-turnstile_always). See [Turnstile mount timing](#turnstile-mount-timing) for when it loads and what its four visitor-facing messages mean.
 - **Rate-limit** — sliding window on the edge Cache API (not KV), keyed on the hashed client IP for anonymous callers and on the user id for signed-in ones. 1 anonymous comment per 10s and 5 per 10 min by default; signed-in authors get 3 per 10s and 60 per 10 min. Every caller is also held under one shared per-identity envelope across all endpoints. An optional [Durable Object backend](#the-durable-object-backend-opt-in) makes the counting atomic and global. **Read [Rate-limit accuracy](#rate-limit-accuracy-known-limitations) before you rely on these numbers as a hard ceiling** — they are not one.
 - **Markdown sanitizer** — strict allowlist; only `https:`/`http:`/`mailto:` links survive, raw HTML and `<img>` are dropped, every link gets `rel="nofollow ugc noopener" target="_blank"`.
 - **Field honeypot** — a hidden `website` input in the embed form. If a bot fills it, the POST is rejected with HTTP 400.
@@ -52,6 +52,18 @@ The widget also renders the challenge with `retry: "never"`, turning off Turnsti
 **During the first five minutes after an upgrade, expect the old behavior.** The frame document is cached with `max-age=300`, and an older copy sends no error code — which the widget treats as "the frame never came up" and latches, exactly as it did before. That is the deliberate fail-safe direction: version skew degrades to latching, never to a blind retry loop.
 
 None of this is a security relaxation. The client-side latch was never the control — `POST /api/v1/comments` rejects a missing or invalid `turnstile_token` unconditionally, server-side, so the worst a retry can produce is one more failed submit against an already rate-limited endpoint.
+
+## Who gets challenged (`TURNSTILE_ALWAYS`)
+
+By default the challenge is an **anonymous-only** control: a reader who signed in with GitHub, Google, Facebook, X or Discord posts without solving anything. The reasoning is that an OAuth account is already a cost — an attacker has to acquire one, and once they abuse it you can ban a durable identity rather than an IP hash — while a challenge in front of your regulars is friction for exactly the people you least want to annoy.
+
+That trade stops paying if someone is scripting throwaway accounts. Set `TURNSTILE_ALWAYS = "true"` (or flip **Admin → Settings → Moderation → "Challenge signed-in commenters too"**, no redeploy) and every comment carries a token: the widget renders the challenge for signed-in readers as well, and `POST /api/v1/comments` requires and verifies a token on both paths.
+
+Worth knowing before you turn it on:
+
+- **It needs `TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET`.** Without the key the widget has no challenge to render; without the secret the server can't verify the token it gets back, and would reject every one. Missing either, the setting stays inert rather than rejecting every signed-in comment on the instance — the flag is a tightening dial, never an outage switch. `/api/v1/config` reports it as `false` in that state, which is also what the server enforces.
+- **Signed-in readers now pay the Turnstile download.** Same deferred mount as anonymous visitors — nothing loads until the composer is focused — but a regular commenter who used to have a zero-request composer no longer does.
+- **It does not replace the rate limit.** Signed-in authors keep their own per-user budget (3 per 10s, 60 per 10 min by default); a solved challenge does not buy extra slots.
 
 ## Optional layers
 

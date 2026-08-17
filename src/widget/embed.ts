@@ -599,6 +599,10 @@ type WidgetCtx = {
 	me: Me;
 	editWindowMs: number;
 	turnstileSiteKey: string | null;
+	// Operator opted into challenging signed-in commenters as well. The server
+	// already folded the site key into this answer, so it is only ever true on
+	// an install that can actually render a challenge.
+	turnstileAlways: boolean;
 	commentsEnabled: boolean;
 	// Per-post acceptance (folds in the global flag, per-post close, and
 	// auto-close). Drives Reply visibility and the composer/closed-notice
@@ -1822,7 +1826,9 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	// after `submit` and `errBox` exist so the error-callback closure can
 	// disable/notify them; we just reserve the DOM slot here.
 	const tsSlot =
-		ctx.turnstileSiteKey && !ctx.me ? el("div", "gr-turnstile") : null;
+		ctx.turnstileSiteKey && (!ctx.me || ctx.turnstileAlways)
+			? el("div", "gr-turnstile")
+			: null;
 	if (tsSlot) wrap.appendChild(tsSlot);
 
 	const actions = el("div", "gr-reply-actions");
@@ -2261,9 +2267,12 @@ const buildForm = (
 	signedIn: boolean,
 	subscriptionsEnabled: boolean,
 	// Separate from `signedIn` on purpose: it governs one branch, the notify
-	// checkbox's email field. Everything else here — the name field, Turnstile —
-	// keys off the session existing, which is a different question.
+	// checkbox's email field. The name field keys off the session existing,
+	// which is a different question.
 	sessionEmail: string | null,
+	// Operator opted into challenging signed-in commenters too, so the Turnstile
+	// slot is no longer implied by `!signedIn` alone.
+	turnstileAlways: boolean,
 ): HTMLFormElement => {
 	const form = document.createElement("form");
 	form.className = "gr-form";
@@ -2340,17 +2349,18 @@ const buildForm = (
 		}
 	}
 
-	// Turnstile only renders for anonymous posts. Signed-in posts skip it
-	// server-side, so don't include the widget either. This just reserves the
-	// slot in the right spot relative to siblings; loadOnce wires the gate that
-	// fills it on the visitor's first composer focus.
+	// Turnstile renders for anonymous posts, and for signed-in ones too when the
+	// operator set `turnstile_always`. Otherwise a signed-in post skips the
+	// challenge server-side, so don't include the widget either. This just
+	// reserves the slot in the right spot relative to siblings; loadOnce wires
+	// the gate that fills it on the visitor's first composer focus.
 	//
 	// Keep this immediately before the submit button. The mount grows the slot
 	// from 0 to ~78px synchronously, so anything focusable *below* it would move
 	// out from under the cursor between mousedown and mouseup and lose the
 	// click. The focusin trigger excludes the submit button for exactly that
 	// reason — moving the slot means revisiting that exclusion.
-	if (siteKey && !signedIn) {
+	if (siteKey && (!signedIn || turnstileAlways)) {
 		form.appendChild(el("div", "gr-turnstile"));
 	}
 
@@ -2711,6 +2721,7 @@ const loadOnce = async (
 	sort: SortKey,
 ) => {
 	let siteKey: string | null = null;
+	let turnstileAlways = false;
 	// Only used when /api/v1/config never answers — the server always sends a
 	// resolved value. Mirrors the server default (src/lib/settings.ts).
 	let editWindowMinutes = 15;
@@ -2749,6 +2760,7 @@ const loadOnce = async (
 		if (cfgRes.ok) {
 			const cfg = (await cfgRes.json()) as {
 				turnstile_site_key?: string;
+				turnstile_always?: boolean;
 				edit_window_minutes?: number;
 				max_body_chars?: number;
 				providers?: string[];
@@ -2785,6 +2797,9 @@ const loadOnce = async (
 				if (cfg.rtl === true) host.dir = "rtl";
 			}
 			siteKey = cfg.turnstile_site_key ?? null;
+			// Absent on an older server, which is the same as off — that server
+			// won't demand a token from a signed-in post either.
+			turnstileAlways = cfg.turnstile_always === true;
 			editWindowMinutes = cfg.edit_window_minutes ?? 15;
 			// Guard the value rather than trusting it: a zero or negative ceiling
 			// from a mis-deployed Worker would put every composer permanently in
@@ -2860,6 +2875,7 @@ const loadOnce = async (
 		me,
 		editWindowMs: editWindowMinutes * 60_000,
 		turnstileSiteKey: siteKey,
+		turnstileAlways,
 		commentsEnabled,
 		acceptingComments,
 		closedReason,
@@ -2889,6 +2905,7 @@ const loadOnce = async (
 		me != null,
 		subscriptionsEnabled,
 		me?.email ?? null,
+		turnstileAlways,
 	);
 	// Restore/persist the top-level composer draft (cleared on successful post
 	// in submit()). Reply-form drafts are wired separately in buildReplyForm.
@@ -3034,8 +3051,8 @@ const loadOnce = async (
 	// touches the composer never pays for it (#49). The cost is that a submit
 	// can now outrun the token; `submit()` waits for one.
 	const tsBox = form.querySelector(".gr-turnstile") as HTMLElement | null;
-	// Slot presence already encodes `siteKey && !signedIn` (see buildForm), so
-	// only the accepting-comments condition is left to check.
+	// Slot presence already encodes `siteKey && (!signedIn || turnstileAlways)`
+	// (see buildForm), so only the accepting-comments condition is left here.
 	if (tsBox && acceptingComments) {
 		const submitBtn = form.querySelector(
 			"button[type=submit]",
@@ -3240,7 +3257,7 @@ const submit = async (
 		const emailInput = form.querySelector(".gr-email-input") as HTMLInputElement | null;
 		if (notifyCb?.checked) {
 			// Field presence encodes "the session carries no address" (see
-			// buildForm), much as the Turnstile slot encodes `!signedIn`. No field
+			// buildForm), much as the Turnstile slot encodes its own gate. No field
 			// means the server has an address to fall back to, so omitting it is
 			// safe. Guarding on a non-empty `email` alone made the checkbox a
 			// silent no-op for every signed-in reader.
