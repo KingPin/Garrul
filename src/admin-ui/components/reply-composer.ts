@@ -205,7 +205,7 @@ ${
       </select>
     </label>
     <p style="margin-top:0.5rem">
-      <button :disabled="saving || !saveTitle.trim() || tooLongToSave" @click="saveForReuse()">Save</button>
+      <button :disabled="saving || !saveTitle.trim() || !body.trim() || tooLongToSave" @click="saveForReuse()">Save</button>
       <button :disabled="saving" class="btn" @click="saveOpen = false">Cancel</button>
     </p>
   </div>
