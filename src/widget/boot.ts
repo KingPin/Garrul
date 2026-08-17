@@ -131,6 +131,24 @@ const localeParams = (
 };
 
 /**
+ * Send the session cookie. Both mount calls are cross-site by definition — the
+ * widget runs on the host page's origin and the Worker is somewhere else — so
+ * without this every reader is permanently signed out and `user` and
+ * `subscription` are always absent.
+ *
+ * It is a constant, and cast, for one reason: `credentials` is a browser-only
+ * `RequestInit` field, and `tests/widget-boot.test.ts` imports this module into
+ * the *Worker*-typed program (`tsconfig.json` excludes `src/widget`, which stops
+ * it being compiled on its own but not from being pulled in by an import), where
+ * `@cloudflare/workers-types` declares a `RequestInit` that has no such field.
+ * The authoritative check on this file is still `tsconfig.widget.json`. The cast
+ * is the seam between those two global type sets, not a claim about the value —
+ * so keep it to this one line rather than casting at a call site, and keep the
+ * rest of the module free of browser-only API surface.
+ */
+const CREDENTIALED = { credentials: "include" } as unknown as RequestInit;
+
+/**
  * `GET /api/v1/config`. Only the legacy boot path calls this — a bootstrapped
  * mount already has the same body in hand.
  *
@@ -148,7 +166,7 @@ export const fetchConfig = async (
 	const query = qs.toString();
 	const res = await fetch(
 		`${apiBase}/api/v1/config${query ? `?${query}` : ""}`,
-		{ credentials: "include" },
+		CREDENTIALED,
 	);
 	return res.ok ? ((await res.json()) as ConfigResponse) : null;
 };
@@ -177,9 +195,10 @@ export const fetchBootstrap = async (
 		const qs = new URLSearchParams({ slug });
 		if (sort !== "new") qs.set("sort", sort);
 		localeParams(qs, langExplicit, langHint);
-		const res = await fetch(`${apiBase}/api/v1/bootstrap?${qs.toString()}`, {
-			credentials: "include",
-		});
+		const res = await fetch(
+			`${apiBase}/api/v1/bootstrap?${qs.toString()}`,
+			CREDENTIALED,
+		);
 		if (!res.ok) return null;
 		const body = (await res.json()) as BootstrapResponse | null;
 		if (!body) return null;
