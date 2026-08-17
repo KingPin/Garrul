@@ -6,6 +6,7 @@ import type {
 import { identiconSvg } from "../../lib/identicon";
 import { sanitizeForEmail as resanitizeBodyHtml } from "../../lib/markdown";
 import { renderHostFilter } from "../components/host-filter";
+import { replyComposer } from "../components/reply-composer";
 import { escapeHtml, jsLiteral } from "../escape";
 
 const relTime = (ts: number, now: number = Date.now()): string => {
@@ -145,7 +146,7 @@ const actionButtons = (id: string, status: CommentStatus): string => {
 			`<button :disabled="busy" class="bad" @click="${rowAct(id, "delete", "Deleted")}">Delete</button>`,
 		);
 	}
-	// Reply opens the saved-replies picker — mods only see it on
+	// Reply opens the free-text composer — mods only see it on
 	// approved/pending comments. No point replying to deleted/spam.
 	if (status !== "deleted" && status !== "spam") {
 		parts.push(
@@ -169,6 +170,8 @@ export const renderQueue = (
 	hosts: string[] = [],
 	post: PostLifecycle | null = null,
 	reportCounts: Record<string, number> = {},
+	/** Signed-in moderator's display name, shown as the reply composer's identity. */
+	modName = "",
 ): string => {
 	const statusTabs = ["all", "approved", "pending", "spam", "deleted"]
 		.map((s) => {
@@ -285,57 +288,10 @@ export const renderQueue = (
 <div class="filter-bar"><span class="muted">filter:</span> ${tabs}</div>
 ${filterBar}
 ${lifecycleBar}
-<div x-data="{
-  open: false,
-  commentId: null,
-  replies: [],
-  selected: null,
-  busy: false,
-  body: '',
-  loaded: false,
-  async load() {
-    if (this.loaded) return;
-    this.busy = true;
-    try {
-      const r = await fetch('/admin/api/saved-replies', { headers: { accept: 'application/json' } });
-      if (!r.ok) throw new Error('Could not load saved replies');
-      const j = await r.json();
-      this.replies = Array.isArray(j.replies) ? j.replies : [];
-      this.loaded = true;
-    } catch (e) {
-      this.$dispatch('toast', { text: e.message || 'Load failed', kind: 'bad' });
-    } finally {
-      this.busy = false;
-    }
-  },
-  pick(r) {
-    this.selected = r;
-    this.body = r.body_md;
-  },
-  async send() {
-    if (!this.selected || !this.commentId) return;
-    this.busy = true;
-    try {
-      const r = await fetch('/admin/api/saved-replies/' + this.selected.id + '/post', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ comment_id: this.commentId, body_md: this.body }),
-      });
-      if (!r.ok) {
-        const j = await r.json().catch(() => ({}));
-        throw new Error(j.error || ('Post failed: ' + r.status));
-      }
-      this.$dispatch('toast', { text: 'Reply posted' });
-      this.open = false;
-    } catch (e) {
-      this.$dispatch('toast', { text: e.message || 'Post failed', kind: 'bad' });
-    } finally {
-      this.busy = false;
-    }
-  }
-}"
-@open-reply.window="open=true; commentId=$event.detail.id; selected=null; body=''; load();"
-@keydown.escape.window="open=false">
+<div x-data="{ open: false, commentId: null }"
+@open-reply.window="open = true; commentId = $event.detail.id;"
+@reply-posted="open = false"
+@keydown.escape.window="open = false">
 <div class="card" x-data="{
   selected: [],
   bulkBusy: false,
@@ -391,36 +347,24 @@ ${lifecycleBar}
     <button :disabled="bulkBusy" @click="selected = []">Clear</button>
   </div>
 </div>
-<div class="reply-modal" x-show="open" x-cloak role="dialog" aria-label="Reply with a saved reply"
+<div class="reply-modal" x-show="open" x-cloak role="dialog" aria-label="Reply to this comment"
      @click.self="open=false">
   <div class="reply-modal-inner">
-    <h3 style="margin-top:0">Reply with a saved reply</h3>
-    <p class="muted" x-show="!replies.length && loaded">
-      No saved replies yet — <a href="/admin/saved-replies/new">create one</a>.
-    </p>
-    <ul class="reply-list" x-show="replies.length">
-      <template x-for="r in replies" :key="r.id">
-        <li>
-          <button type="button"
-                  :class="selected && selected.id === r.id ? 'reply-pick active' : 'reply-pick'"
-                  @click="pick(r)">
-            <strong x-text="r.title"></strong>
-            <span class="muted" x-text="r.scope"></span>
-          </button>
-        </li>
-      </template>
-    </ul>
-    <div x-show="selected">
-      <label>Body (markdown)<br>
-        <textarea x-model="body" rows="8" maxlength="8000"
-                  style="width:100%;min-height:160px;font-family:ui-monospace,monospace"></textarea>
-      </label>
-      <p>
-        <button :disabled="busy || !body.trim()" @click="send()">Post reply</button>
-        <button :disabled="busy" @click="open=false" class="btn">Cancel</button>
-      </p>
-    </div>
-    <p x-show="!selected && replies.length" class="muted">Pick a reply above to preview and post.</p>
+    <h3 style="margin-top:0">Reply to this comment</h3>
+    <!-- x-if rather than x-show so each open mounts a fresh composer: closing
+         the modal must not leave last time's draft, preview or notify choice
+         sitting in the next reply. -->
+    <template x-if="open">
+${replyComposer({
+	commentIdExpr: "commentId",
+	modName,
+	// The composer has its own Alpine scope, so assigning `open` there would
+	// create a new property on the child instead of closing the modal. Bubble an
+	// event to the wrapper's @reply-posted handler instead.
+	onPosted: "this.$dispatch('reply-posted');",
+})}
+    </template>
+    <p><button class="btn" @click="open=false">Cancel</button></p>
   </div>
 </div>
 </div>`;

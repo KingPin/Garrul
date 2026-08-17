@@ -432,6 +432,7 @@ admin.get("/queue", async (c) => {
 				hosts,
 				postState,
 				reportCounts,
+				user.name,
 			),
 			user,
 			updateInfo,

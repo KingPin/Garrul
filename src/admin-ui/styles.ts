@@ -247,6 +247,12 @@ button:disabled, .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .reply-pick:hover { background: var(--surface-2); }
 .reply-pick.active { background: var(--accent); color: var(--accent-fg); }
 .reply-pick.active .muted { color: var(--accent-fg); opacity: 0.85; }
+/* Preview renders the same allowlisted HTML a posted comment would store, so it
+   is boxed to read as output rather than as more of the form. */
+.reply-preview { border: 1px solid var(--border); border-radius: 6px;
+                 padding: 0.5rem 0.75rem; background: var(--surface-2); }
+.reply-preview > div > :first-child { margin-top: 0; }
+.reply-preview > div > :last-child { margin-bottom: 0; }
 .comment-card { border: 1px solid var(--border); border-radius: 6px;
                 padding: 0.75rem; margin: 0.5rem 0; }
 .comment-card-head { display: flex; justify-content: space-between;
