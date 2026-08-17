@@ -931,7 +931,7 @@ responding):
 - `POST /admin/api/comments/:id` — `{action: approve|spam|delete|restore, reason?}`
 - `POST /admin/api/comments/bulk` — `{ids: string[], action}` (cap 100)
 - `POST /admin/api/comments/:id/reports/resolve` — clears open reader reports on a comment (audited `report.resolve`)
-- `POST /admin/api/comments/:id/reply` — `{body_md, saved_reply_id?, notify?}` posts a moderator reply nested under `:id` (audited `comment.reply`; `notify` defaults to true and fans out to the post's confirmed subscribers; `saved_reply_id` is audit provenance only and must be a preset this mod can see)
+- `POST /admin/api/comments/:id/reply` — `{body_md, saved_reply_id?, notify?}` posts a moderator reply nested under `:id` (audited `comment.reply`; `notify` must be a real boolean when present, defaults to true, and fans out to the post's confirmed subscribers; `saved_reply_id` is audit provenance only and must be a preset this mod can see)
 - `POST /admin/api/posts/close` — `{slug, closed: boolean}` (per-post close/open; audited `post.close` / `post.open`; busts the cached first page)
 - `POST /admin/api/users/:id` — `{banned: boolean, reason?, from_comment?}` (one-click ban-author records the originating comment in audit meta; admin-only)
 - `POST /admin/api/users/:id/role` — `{role: user|mod|admin, reason?}` (admin-only; refuses self-change and the last-admin demotion)

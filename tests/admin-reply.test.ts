@@ -378,6 +378,18 @@ describe("POST /admin/api/comments/:id/reply — validation", () => {
 		expect(replies()).toHaveLength(1);
 	});
 
+	it("rejects a non-boolean notify instead of coercing it", async () => {
+		// The failure this guards is one-directional: a client meaning "don't
+		// email" that sends `"false"` or `0` would otherwise mail the thread.
+		const target = await seedComment();
+		for (const notify of ["false", 0, "true", {}]) {
+			const res = await reply(target, { body_md: "hi", notify });
+			expect(res.status).toBe(400);
+			expect(await res.json()).toEqual({ error: "invalid_body" });
+		}
+		expect(replies()).toHaveLength(0);
+	});
+
 	it("refuses to exceed MAX_REPLY_DEPTH", async () => {
 		const target = await seedComment({ depth: MAX_REPLY_DEPTH });
 		const res = await reply(target, { body_md: "too deep" });

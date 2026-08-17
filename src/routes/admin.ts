@@ -1576,6 +1576,14 @@ admin.post("/api/comments/:id/reply", async (c) => {
 		);
 	}
 
+	// Optional, but not coercible: `"false"` and `0` are what a buggy client sends
+	// when it means "don't email anyone", and silently reading either as true
+	// mails the whole thread. Absent stays absent; anything present must be a
+	// real boolean.
+	if (body.notify != null && typeof body.notify !== "boolean") {
+		return c.json({ error: "invalid_body" }, 400);
+	}
+
 	// Provenance is optional, but when claimed it has to be a reply this mod can
 	// actually see — otherwise the audit row could name someone else's private
 	// saved reply. A 400 rather than a 404: the reply body is fine, the claim
@@ -1621,7 +1629,7 @@ admin.post("/api/comments/:id/reply", async (c) => {
 	// following that thread should hear about it the same way they hear about a
 	// reader's reply. The composer's checkbox exists so a housekeeping note
 	// ("dupe, see above") doesn't have to email everyone.
-	const notify = body.notify !== false;
+	const notify = body.notify ?? true;
 	await adminInsertAudit(c.env.DB, {
 		admin_id: user.id,
 		action: "comment.reply",
