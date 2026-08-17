@@ -75,8 +75,11 @@ import { FALLBACK_LOCALE, tFor } from "../i18n";
 import type { LocaleVars } from "../lib/locale";
 
 type SessionVars = {
-	userId: string | null;
-	sessionId: string | null;
+	// Optional because the route is mountable without `sessionMiddleware` — see
+	// the read below. Hono returns `undefined` for a key that was never set,
+	// which is what distinguishes "no middleware" from "no session".
+	userId?: string | null;
+	sessionId?: string | null;
 };
 
 const bootstrap = new Hono<{
@@ -101,9 +104,22 @@ bootstrap.get("/", async (c) => {
 	// across the mount's requests, so they all saw the same aged record and all
 	// decided to write — up to ~5 writes where 1 would do, against a 1000/day
 	// account-wide KV write cap.
+	//
+	// `sessionMiddleware` already did that read for everything under `/api/*`, so
+	// reuse its answer rather than paying the KV reads (and a possible second TTL
+	// slide) a second time on the one request the whole mount now hangs off.
+	// `readSession` stays as the fallback for a mount without the middleware —
+	// `tests/bootstrap.test.ts` routes this app directly, and so may an embedder.
 	const resolved = await loadSettings(c.env);
 	const { flags, numbers } = resolved;
-	const session = await readSession(c);
+	const mwUserId = c.get("userId");
+	const mwSessionId = c.get("sessionId");
+	const session =
+		mwUserId === undefined
+			? await readSession(c)
+			: mwUserId && mwSessionId
+				? { sid: mwSessionId, user_id: mwUserId }
+				: null;
 
 	// Full locale negotiation, including the operator's default_locale — the
 	// same call `/config` makes, so the widget learns its language here and

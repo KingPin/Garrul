@@ -29,6 +29,7 @@ import { pageEngagement } from "../src/routes/api.page-engagement";
 import { subscriptions } from "../src/routes/api.subscriptions";
 import { auth } from "../src/routes/auth";
 import { localeMiddleware } from "../src/lib/locale";
+import { sessionMiddleware } from "../src/lib/session";
 import { treeCacheKey } from "../src/lib/tree-cache";
 import {
 	installMockCaches,
@@ -201,6 +202,78 @@ describe("bootstrap — section equivalence", () => {
 		expect(boot.user).toBeNull();
 		const me = await json("/api/v1/auth/me");
 		expect(boot.user).toEqual(me.user);
+	});
+});
+
+describe("bootstrap — session reads", () => {
+	/**
+	 * The app above routes bootstrap directly, which is the mount that has to keep
+	 * working; this one adds the middleware every real `/api/*` request runs
+	 * through, so both branches of the session read are covered.
+	 */
+	const mounted = () =>
+		new Hono<{ Bindings: Bindings }>()
+			.use("/api/*", localeMiddleware())
+			.use("/api/*", sessionMiddleware() as never)
+			.route("/api/v1/bootstrap", bootstrap);
+
+	/** Wraps SESSIONS so a test can see which keys were fetched, and how often. */
+	const countKeys = () => {
+		const inner = env.SESSIONS;
+		const keys: string[] = [];
+		(env as { SESSIONS: unknown }).SESSIONS = {
+			async get(key: string) {
+				keys.push(key);
+				return inner.get(key);
+			},
+			async put() {},
+			async delete() {},
+		};
+		return keys;
+	};
+
+	it("reads the session record once when the middleware already has it", async () => {
+		// The whole mount now hangs off this one request, so a second readSession
+		// here is two KV reads — and a second chance at a TTL-slide write — on
+		// every signed-in pageview.
+		const keys = countKeys();
+		const res = await mounted().request(
+			`http://localhost/api/v1/bootstrap?slug=${SLUG}`,
+			{ headers: { cookie: `garrul_sess=${SID}` } },
+			env as unknown as Record<string, unknown>,
+			execCtx,
+		);
+		expect(res.status).toBe(200);
+		expect(keys.filter((k) => k === `sess:${SID}`)).toHaveLength(1);
+	});
+
+	it("resolves the same identity through the middleware as without it", async () => {
+		const viaMiddleware = (await (
+			await mounted().request(
+				`http://localhost/api/v1/bootstrap?slug=${SLUG}`,
+				{ headers: { cookie: `garrul_sess=${SID}` } },
+				env as unknown as Record<string, unknown>,
+				execCtx,
+			)
+		).json()) as Record<string, any>;
+		const direct = await json(`/api/v1/bootstrap?slug=${SLUG}`, SID);
+		expect(viaMiddleware.user).toEqual(direct.user);
+		expect(viaMiddleware.user.id).toBe(USER);
+		expect(viaMiddleware.comments).toEqual(direct.comments);
+	});
+
+	it("reports an anonymous reader through the middleware", async () => {
+		// `userId` is set-but-null here, which must not be confused with the
+		// never-set case that falls back to readSession.
+		const boot = (await (
+			await mounted().request(
+				`http://localhost/api/v1/bootstrap?slug=${SLUG}`,
+				{},
+				env as unknown as Record<string, unknown>,
+				execCtx,
+			)
+		).json()) as Record<string, any>;
+		expect(boot.user).toBeNull();
 	});
 });
 
