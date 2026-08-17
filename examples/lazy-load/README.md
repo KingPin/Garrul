@@ -1,21 +1,26 @@
 # Garrul — lazy-loading the widget
 
 By default, the embed script runs as soon as the page parses, which
-fires one Worker request per pageview before the reader has scrolled
-anywhere near the comments (`/api/v1/bootstrap?slug=...`, which returns
-the config, the session user and the first page of comments together).
-On a busy blog where most visitors bounce without engaging, that one
-request is still the bulk of your Cloudflare Worker usage — it happens
-on every pageview, engaged or not.
+fires two Worker requests per pageview before the reader has scrolled
+anywhere near the comments:
+
+- `/api/v1/bootstrap?slug=...` — the config, the session user and the
+  first page of comments, together.
+- `/api/v1/comments/form-token` — a signed form-render timestamp for the
+  anti-spam timing check, fetched when the comment box renders.
+
+On a busy blog where most visitors bounce without engaging, those two
+are still the bulk of your Cloudflare Worker usage — they happen on
+every pageview, engaged or not.
 
 Two patterns to defer it. The first is what we recommend.
 
-> **Since v2.15.0** the mount is a single request. It used to be three
+> **Since v2.15.0** the mount is two requests. It used to be four
 > (`/api/v1/config`, then `/api/v1/auth/me` and
-> `/api/v1/comments?slug=...`), or five with page reactions/votes and
-> thread subscriptions enabled. Deferring the script still takes a
-> bouncer from one request to zero, so it's still worth doing at
-> volume — the payoff is just smaller than it was.
+> `/api/v1/comments?slug=...`, plus the form token), or six with page
+> reactions/votes and thread subscriptions enabled. Deferring the script
+> still takes a bouncer to zero, so it's still worth doing at volume —
+> the payoff is just smaller than it was.
 
 ## 1. Scroll-into-view (recommended)
 
@@ -134,18 +139,20 @@ isn't enough.
 
 A rough sketch — your real numbers will vary:
 
-| Pattern        | Worker requests per pageview               |
-| -------------- | ------------------------------------------ |
-| Default        | **1** (the bootstrap call)                  |
-| Scroll-in-view | **1** for engaged readers, **0** for bouncers |
-| Click-to-load  | **0** unless the reader clicks             |
+| Pattern        | Worker requests per pageview                  |
+| -------------- | --------------------------------------------- |
+| Default        | **2** (bootstrap + form token)                |
+| Scroll-in-view | **2** for engaged readers, **0** for bouncers |
+| Click-to-load  | **0** unless the reader clicks                |
 
-The Workers free tier allows 100,000 requests/day, so a single-request
-mount is roughly a 100k-pageview/day ceiling before any deferral. If
-your bounce rate at the comments section is high (typical for blog
-content), scroll-into-view still captures most of what's left of the
-savings without the UX cost — but it is now a smaller lever, and worth
-reaching for only when you're actually near the ceiling.
+The Workers free tier allows 100,000 requests/day, so a two-request
+mount is roughly a 50k-pageview/day ceiling before any deferral —
+`/embed.js` itself doesn't count against that, because it ships
+`s-maxage=86400` and the edge serves it. If your bounce rate at the
+comments section is high (typical for blog content), scroll-into-view
+still captures most of what's left of the savings without the UX cost —
+but it is now a smaller lever, and worth reaching for only when you're
+actually near the ceiling.
 
 Nothing here counts what an *engaged* reader costs after mount:
 focusing the comment box loads the Turnstile frame, and signing in,

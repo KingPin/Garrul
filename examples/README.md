@@ -19,7 +19,7 @@ configured in `wrangler.toml` (`[[routes]]` for a custom domain, or the
 | [`jekyll/`](./jekyll/)             | `_includes/comments.html` + `_config.yml` settings             | Your blog is built with Jekyll (incl. GitHub Pages)                       |
 | [`wordpress/`](./wordpress/)       | Child-theme enqueue + `comments.php` replacement               | You're on WordPress (classic or block themes)                             |
 | [`iframe/`](./iframe/)             | `<iframe>` embed with `postMessage` height sync                | Your host has a strict CSP and can't allow inline `<script>`              |
-| [`lazy-load/`](./lazy-load/)       | Scroll-into-view and click-to-load deferred loaders            | You want to cut the one mount request bouncers cost you, at high traffic  |
+| [`lazy-load/`](./lazy-load/)       | Scroll-into-view and click-to-load deferred loaders            | You want to cut the two mount requests bouncers cost you, at high traffic |
 
 The framework recipes are deliberately near-identical at the HTML level —
 the only thing that varies is how each platform renders the four `data-*`

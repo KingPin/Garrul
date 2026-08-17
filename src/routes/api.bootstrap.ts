@@ -7,8 +7,16 @@
  * on. This folds the first five into one invocation, which is the whole point:
  * the Workers free tier allows 100,000 requests/day (see
  * `src/admin-ui/pages/usage.ts`), so mount cost is what sets the ceiling on
- * pageviews an install can serve. At three calls that ceiling is ~33k
- * pageviews/day; at one it approaches 100k.
+ * pageviews an install can serve.
+ *
+ * Measured against a real browser mount, a post with the composer rendered now
+ * costs **two** Worker requests, not one: this endpoint and
+ * `/comments/form-token`, which is prefetched when the composer renders (see
+ * `prefetchFormToken` in the widget) and stays separate on purpose — see below.
+ * That is a ~50k pageview/day ceiling, up from ~25k at the four calls a default
+ * install used to make and ~16k with every surface on. `/embed.js` is not in the
+ * count: it ships `s-maxage=86400`, so the edge serves it and the Worker sees it
+ * once per colo per day rather than once per pageview.
  *
  * It is also a latency win, not just an accounting one. The old boot fully
  * awaited `/config` before it could fetch the tree, because the tree request

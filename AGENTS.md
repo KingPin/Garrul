@@ -125,7 +125,7 @@ directory per stack).
 
 ### The mount request (since v2.15.0)
 
-The widget opens with **one** Worker request:
+The widget opens with a single call for everything it needs to render:
 
 ```
 GET /api/v1/bootstrap?slug=<slug>&sort=new|top&lang=<x>&hl=<y>
@@ -155,10 +155,20 @@ waves: `/api/v1/config` had to be fully awaited (the tree request
 needs the resolved locale) before `/api/v1/auth/me` and
 `/api/v1/comments?slug=…` could go out in parallel, plus
 `/api/v1/page-engagement` and `/api/v1/subscribe/mine` from their own
-surfaces. The Workers free tier allows 100,000 requests/day, so mount
-cost is what sets the ceiling on pageviews an install can serve: ~33k/day
-at the three a default install fired, ~20k/day with every surface on,
-approaching 100k at one.
+surfaces.
+
+**Count the whole mount, not just this endpoint.** A post with the
+comment box rendered costs **two** Worker requests: `/api/v1/bootstrap`
+and `/api/v1/comments/form-token`, which the widget prefetches when the
+composer renders. The Workers free tier allows 100,000 requests/day, so
+that is roughly a **50k pageview/day** ceiling — up from ~25k at the
+four requests a default install used to make, and ~16k with page
+reactions/votes and subscriptions on.
+
+`/embed.js` is not in that count. It ships
+`Cache-Control: public, max-age=3600, s-maxage=86400`, so the
+Cloudflare edge serves it and the Worker sees it about once per colo per
+day rather than once per pageview.
 
 **Nothing was removed.** `/api/v1/config`, `/api/v1/auth/me`,
 `/api/v1/comments`, `/api/v1/page-engagement` and
@@ -169,18 +179,22 @@ working against an older self-hosted Worker that has no `/bootstrap`.
 When the endpoint answers a 404 (or anything else unusable), the
 widget silently falls back to exactly the pre-v2.15.0 call sequence.
 
-`/api/v1/comments/form-token` is deliberately **not** folded in. Its
-signed timestamp feeds the anti-spam minimum-elapsed-time heuristic,
-and baking one into a shared payload would hand every reader the same
-start time.
+`/api/v1/comments/form-token` is deliberately **not** folded in, which
+is why the mount is two requests and not one. Its signed timestamp
+feeds the anti-spam minimum-elapsed-time heuristic, and baking one into
+a shared payload would hand every reader the same start time. It is
+also an invocation even when that heuristic is off — the route 404s and
+the widget treats the absence as "no timing check", but a 404 still
+costs a request.
 
 ### Lazy-loading (recommended for read-heavy hosts)
 
-The eager `<script defer>` snippet above triggers a Worker request per
-pageview on mount (`/api/v1/bootstrap?slug=…`) before the reader has
-scrolled. On a blog or docs site where most visitors bounce above the
-comments section, that is the bulk of Cloudflare Worker usage — one
-request instead of the pre-v2.15.0 five, but still one per bouncer.
+The eager `<script defer>` snippet above triggers two Worker requests
+per pageview on mount (`/api/v1/bootstrap?slug=…` and
+`/api/v1/comments/form-token`) before the reader has scrolled. On a blog
+or docs site where most visitors bounce above the comments section, that
+is the bulk of Cloudflare Worker usage — two requests instead of the
+pre-v2.15.0 four to six, but still two per bouncer.
 
 Turnstile is **not** in that list. The anti-spam iframe
 (`/embed/turnstile-frame`, which in turn pulls Cloudflare's `api.js` and

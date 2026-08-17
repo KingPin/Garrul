@@ -56,7 +56,7 @@ docs/                   # THEMING.md, ANTISPAM.md, troubleshooting.md, webhooks.
 All HTTP API routes live under `/api/v1/...`. Future breaking changes ship as `/api/v2`. Health is `/api/v1/health`.
 
 ### The mount payload
-`GET /api/v1/bootstrap?slug=…` is the widget's single mount call: config, session user, first page of comments, plus page-engagement and subscription state when those apply. Mount cost is what sets an install's free-tier pageview ceiling (100,000 Worker requests/day), so **new mount-time state belongs in this payload, not in a sixth endpoint.**
+`GET /api/v1/bootstrap?slug=…` carries all of the widget's mount-time state in one call: config, session user, first page of comments, plus page-engagement and subscription state when those apply. Measured against a real browser mount, a post with the composer rendered costs **two** Worker requests — this one and `/comments/form-token` — so ~50k pageviews/day against the 100,000 requests/day free tier. Mount cost is what sets that ceiling, so **new mount-time state belongs in this payload, not in a sixth endpoint.**
 
 Two rules keep it safe, and both are load-bearing:
 
