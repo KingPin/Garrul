@@ -1322,12 +1322,12 @@ admin.delete("/api/webhooks/:id", async (c) => {
 //     Even an admin can't modify another mod's reply through the API — they
 //     can sign in as that user via OAuth if they really need to.
 //
-// Post-as-reply:
-//   - POST /admin/api/saved-replies/:id/post with { comment_id } posts a
-//     top-level reply on the same post as the target comment, authored by
-//     the mod's own user, status=approved (bypassing Turnstile/spam — the
-//     mod has already vouched for the content). Body is the saved reply's
-//     markdown, optionally edited.
+// Posting one is not a saved-reply operation any more: a mod posts through
+// POST /admin/api/comments/:id/reply (see "Moderator replies" below) with the
+// preset's markdown as the request body, and an optional `saved_reply_id` for
+// audit provenance only. Saved replies are a *prefill* source, not a posting
+// path — the dedicated `saved-replies/:id/post` endpoint was removed when free
+// text became the canonical reply input.
 
 // Exported so tests can assert the parser against the real values
 // instead of pinning literal numbers that would silently drift.
@@ -1531,82 +1531,6 @@ admin.delete("/api/saved-replies/:id", async (c) => {
 		meta: { title: existing.title, scope: existing.scope },
 	});
 	return c.json({ ok: true, id });
-});
-
-// Post a saved reply as a top-level reply on a comment. Body is the
-// saved reply's markdown by default; the mod can override (`body_md`) to
-// tweak before sending. Always re-rendered through renderMarkdown — we
-// never trust stored HTML.
-admin.post("/api/saved-replies/:id/post", async (c) => {
-	const user = await requireMod(c);
-	if (user instanceof Response) return user;
-	const id = c.req.param("id");
-	const reply = await getSavedReply(c.env.DB, id);
-	if (!reply) return c.json({ error: "not_found" }, 404);
-	// Visibility check mirrors the GET — only the owner or shared replies.
-	if (reply.owner_id !== user.id && reply.scope !== "shared") {
-		return c.json({ error: "not_found" }, 404);
-	}
-	const body = await c.req
-		.json<{ comment_id?: unknown; body_md?: unknown }>()
-		.catch(() => null);
-	if (!body || typeof body.comment_id !== "string") {
-		return c.json({ error: "invalid_body" }, 400);
-	}
-	const target = await getComment(c.env.DB, body.comment_id);
-	if (!target) return c.json({ error: "comment_not_found" }, 404);
-	if (target.status === "deleted") {
-		return c.json({ error: "comment_deleted" }, 400);
-	}
-	// Allow the mod to override the body before posting.
-	const rawBody =
-		typeof body.body_md === "string" && body.body_md.trim().length > 0
-			? body.body_md
-			: reply.body_md;
-	if (rawBody.length > SAVED_REPLY_BODY_MAX) {
-		return c.json({ error: "body_too_long" }, 400);
-	}
-	// The nesting cap applies to moderators too: the O(N^2) tree-assembly cost
-	// it guards doesn't care who created the chain. Reply higher up instead.
-	const depth = target.depth + 1;
-	if (depth > MAX_REPLY_DEPTH) {
-		return c.json({ error: "thread_too_deep" }, 400);
-	}
-	const body_html = renderMarkdown(rawBody);
-	const inserted = await insertComment(c.env.DB, {
-		post_slug: target.post_slug,
-		parent_id: target.id,
-		user_id: user.id,
-		body_md: rawBody,
-		body_html,
-		renderer_version: CURRENT_RENDERER_VERSION,
-		status: "approved",
-		ip_hash: null,
-		user_agent: null,
-		depth,
-	});
-	await adminInsertAudit(c.env.DB, {
-		admin_id: user.id,
-		action: "saved_reply.post",
-		target_kind: "comment",
-		target_id: inserted.id,
-		meta: {
-			from_saved_reply: true,
-			saved_reply_id: reply.id,
-			parent_id: target.id,
-			post_slug: target.post_slug,
-		},
-	});
-	// Bust the post's tree caches so the new reply is visible immediately.
-	await bustTreeCache(c.env, c.req.url, target.post_slug);
-	fireWebhook(c.env, c.executionCtx, {
-		event: "comment.posted",
-		comment_id: inserted.id,
-		post_slug: target.post_slug,
-		user_id: user.id,
-		ts: Date.now(),
-	});
-	return c.json({ ok: true, id: inserted.id });
 });
 
 // --------------------------- Moderator replies -----------------------------
