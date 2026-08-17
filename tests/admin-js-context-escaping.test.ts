@@ -24,6 +24,10 @@ import {
 	renderWebhookForm,
 } from "../src/admin-ui/pages/webhooks";
 import { renderSavedReplyForm } from "../src/admin-ui/pages/saved-replies";
+import {
+	commentIdLiteral,
+	replyComposer,
+} from "../src/admin-ui/components/reply-composer";
 import { accessDeniedHtml } from "../src/admin-ui/layout";
 
 // A single quote closes the JS literal, `<` opens a tag once the attribute is
@@ -142,6 +146,45 @@ describe("the escaped literal survives the browser's decode", () => {
 		// JSON.parse accepts the same escapes JS string literals do, including
 		// the / / < that jsLiteral adds.
 		expect(JSON.parse(decodeEntities(literal ?? ""))).toBe(HOSTILE);
+	});
+});
+
+describe("replyComposer", () => {
+	// The composer is the one component whose Alpine blob is assembled from two
+	// different kinds of value: a comment id that ends up inside a JS string
+	// literal (jsLiteral), and the moderator's display name that ends up as HTML
+	// text (escapeHtml). Getting either helper backwards is invisible until the
+	// value is hostile.
+	it("embeds a hostile comment id as a JS literal in the fetch URL", () => {
+		const html = replyComposer({
+			commentIdExpr: commentIdLiteral(HOSTILE),
+			modName: "Mod",
+		});
+		expectNoBreakout(html);
+		expect(html).toContain("'/admin/api/comments/' + &quot;");
+	});
+
+	it("HTML-escapes the moderator name", () => {
+		const html = replyComposer({
+			commentIdExpr: "commentId",
+			modName: '<img src=x onerror=alert(1)>',
+		});
+		expect(html).not.toContain("<img src=x");
+		expect(html).toContain("&lt;img src=x");
+	});
+
+	it("keeps the x-data attribute intact — the id cannot close it", () => {
+		// The blob is written raw into a double-quoted attribute, so a raw `"`
+		// anywhere in the interpolated literal would truncate the expression and
+		// silently break the composer (the failure mode the section above records).
+		const html = replyComposer({
+			commentIdExpr: commentIdLiteral(HOSTILE),
+			modName: "Mod",
+		});
+		const attr = /x-data="([\s\S]*?)"\s*>/.exec(html)?.[1];
+		expect(attr).toBeDefined();
+		expect(attr).toContain("send()");
+		expect(attr).toContain("saveForReuse()");
 	});
 });
 
