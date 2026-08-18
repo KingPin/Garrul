@@ -459,6 +459,36 @@ describe("bootstrap — tree cache is the same entry /comments uses", () => {
 		expect(boot.comments.threads).toHaveLength(1);
 	});
 
+	it("rebuilds from D1 when the cached entry will not parse", async () => {
+		// Bootstrap is the only one of the two routes that looks inside the cached
+		// body — /comments re-emits the bytes and lets the reader's parser deal
+		// with them. That asymmetry must not turn a truncated entry into a 500 on
+		// the whole mount.
+		cache.store.set(
+			keyUrl("/api/v1/comments"),
+			new Response('{"threads":[{"id":"c1"'),
+		);
+		const res = await get(`/api/v1/bootstrap?slug=${SLUG}`);
+		expect(res.status).toBe(200);
+		const boot = (await res.json()) as Record<string, any>;
+		expect(boot.comments.threads).toHaveLength(1);
+	});
+
+	it("overwrites the bad entry rather than leaving it to expire", async () => {
+		// The rebuild is storable, so the write-back heals the entry for every
+		// later reader — including /comments, which would otherwise keep serving
+		// the truncated bytes for the rest of the TTL.
+		cache.store.set(
+			keyUrl("/api/v1/comments"),
+			new Response('{"threads":[{"id":"c1"'),
+		);
+		await get(`/api/v1/bootstrap?slug=${SLUG}`);
+		const healed = (await cache.store
+			.get(keyUrl("/api/v1/comments"))
+			?.json()) as Record<string, any>;
+		expect(healed.threads).toHaveLength(1);
+	});
+
 	it("carries no Cache-Control of its own", async () => {
 		// It varies by locale and by session; a browser-cached copy reused across
 		// auth states would hand one reader another's identity.

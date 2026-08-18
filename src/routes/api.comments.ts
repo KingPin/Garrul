@@ -913,6 +913,14 @@ export const buildTreePage = async (
 		session: { sid: string; user_id: string } | null;
 		flags: ResolvedFlags;
 		numbers: ResolvedNumbers;
+		/**
+		 * Build from D1 and ignore any edge copy. Only `/bootstrap` sets it, and
+		 * only on the second attempt: it has to *parse* the cached body to nest it
+		 * in the envelope, so unlike `/comments` — which re-emits the bytes
+		 * verbatim and never looks inside — it can discover an entry is corrupt.
+		 * This is how it treats that as a miss rather than 500ing the mount.
+		 */
+		skipCache?: boolean;
 	},
 ): Promise<TreePageResult> => {
 	const { slug, sort, beforeRaw, session, flags, numbers } = opts;
@@ -949,7 +957,7 @@ export const buildTreePage = async (
 		: (cursor ?? null);
 	const cacheReq = treeCacheKey(reqUrl, slug, sort, pageSize, cursorKey);
 	const cacheable = !session;
-	if (cacheable) {
+	if (cacheable && !opts.skipCache) {
 		const hit = await matchCache(cacheReq);
 		// The caller re-emits this body WITHOUT the edge copy's public
 		// Cache-Control: the widget fetches credentialed, and a browser-cached

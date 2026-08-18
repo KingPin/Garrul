@@ -134,18 +134,38 @@ bootstrap.get("/", async (c) => {
 	// `/auth/me` and `/subscribe/mine` each read it separately today.
 	const user = session ? await getUser(c.env.DB, session.user_id) : null;
 
-	const tree = await buildTreePage(c.env, c.req.url, {
+	const treeOpts = {
 		slug,
 		sort,
 		beforeRaw: c.req.query("before") ?? null,
 		session,
 		flags,
 		numbers,
-	});
+	};
+	let tree = await buildTreePage(c.env, c.req.url, treeOpts);
 	// A hit is the exact body `/comments` would have served. Reviving it into the
 	// envelope keeps this section equal to that endpoint's for free — the values
 	// came from there — and skips the D1 read the miss path pays.
-	const comments = "cached" in tree ? JSON.parse(tree.cached) : tree.payload;
+	//
+	// Parsing is also the one thing `/comments` never does: it re-emits the
+	// cached bytes verbatim, so a truncated entry fails in the reader's own
+	// parser and only that request suffers. Here an unguarded parse would throw
+	// out of the handler and 500 the whole mount instead. Rebuild from D1 on a
+	// bad entry — the rebuild is storable, so the write-back overwrites it.
+	let comments: unknown;
+	if ("cached" in tree) {
+		try {
+			comments = JSON.parse(tree.cached);
+		} catch {
+			tree = await buildTreePage(c.env, c.req.url, {
+				...treeOpts,
+				skipCache: true,
+			});
+		}
+	}
+	// Set for the miss path and for a retry after a bad entry; `skipCache` means
+	// that retry cannot come back cached, so this covers both.
+	if (!("cached" in tree)) comments = tree.payload;
 	// Warm the shared entry when this page is storable. Same key, same TTL, same
 	// body as `/comments` would have written, so a tree warmed by either route
 	// serves the other.
