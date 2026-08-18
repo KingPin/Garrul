@@ -397,7 +397,7 @@ bundle). Each is meant to be fetched by readers, feed readers and
 crawlers, so none of them can require one.
 
 **Build-time fetchers get 403s.** A static-site generator that reads
-comments at deploy time looks exactly like a scraper to the Worker — no
+comments at deploy time looks exactly like a scraper to the Worker: no
 `Origin`, gated path. Consume `GET /feed/:slug` instead until the planned
 API-keys system ships; the design is in
 [`docs/api-keys-design.md`](docs/api-keys-design.md) and is **not**

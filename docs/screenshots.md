@@ -27,8 +27,8 @@ Follows the host page's `prefers-color-scheme` by default, or force it with
 
 ![The widget at a 390px viewport, with the reaction bar, the vote control, the composer and the start of a threaded discussion](screenshots/widget-mobile.png)
 
-Every control stacks rather than shrinking, and long lines — URLs, inline code,
-fenced blocks — scroll inside their own box rather than widening the host page.
+Every control stacks rather than shrinking, and long lines (URLs, inline code,
+fenced blocks) scroll inside their own box rather than widening the host page.
 
 ## Admin UI
 

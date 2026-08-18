@@ -12,35 +12,35 @@ billing, your data stays in your account.
 
 Self-hosted, but not the hard kind: **there is no container, no VPS, and
 no database server**. Nothing to patch, no uptime to monitor, no TLS to
-renew — Cloudflare keeps point-in-time backups of D1 for you. It is one
-Worker, and keeping it current is a single dry-runnable command per
+renew, and Cloudflare keeps point-in-time backups of D1 for you. It is
+one Worker, and keeping it current is a single dry-runnable command per
 release. Two credentials to get started (a Turnstile key pair, from one
 dashboard page); every other integration is optional.
 
-- **Threaded comments** — markdown, reactions, an edit/delete window, and
+- **Threaded comments**: markdown, reactions, an edit/delete window, and
   a newest/oldest/top sort readers can switch
 - **OAuth sign-in** (GitHub, Google, Facebook, X, Discord) plus anonymous
   posting, rate-limited and Turnstile-gated
-- **Embeddable widget** — CI-capped at 30 KB gzipped, Shadow-DOM
-  isolated, themeable, with an iframe alternative
-- **Reply notifications by email**, built in — readers opt in from the
+- **Embeddable widget**: CI-capped at 30 KB gzipped, Shadow-DOM isolated,
+  themeable, with an iframe alternative
+- **Reply notifications by email**, built in: readers opt in from the
   widget, confirm by double opt-in, get a debounced digest, and leave in
-  one click from Gmail's own Unsubscribe button. Bring a Resend key —
-  [`docs/notifications.md`](docs/notifications.md)
-- **Moderator notifications by email** — a digest of what's queued or
+  one click from Gmail's own Unsubscribe button. Bring a Resend key
+  ([`docs/notifications.md`](docs/notifications.md))
+- **Moderator notifications by email**: a digest of what's queued or
   reported. Off by default; one switch in *Settings → Moderation*
-- **Layered anti-spam** — Turnstile, rate limiting and a strict markdown
+- **Layered anti-spam**: Turnstile, rate limiting and a strict markdown
   sanitizer always on, four tunable heuristics and an optional classifier
-  on top, everything routed to the queue —
-  [`docs/ANTISPAM.md`](docs/ANTISPAM.md)
-- **Import from Disqus** — upload an export in the admin UI, or run
+  on top, everything routed to the queue
+  ([`docs/ANTISPAM.md`](docs/ANTISPAM.md))
+- **Import from Disqus**: upload an export in the admin UI, or run
   `npm run import-disqus -- ./export.xml --dry-run` first
-- **Admin UI** — moderation queue, user management, and settings you
+- **Admin UI**: moderation queue, user management, and settings you
   change without a redeploy
 - **RSS feeds**, comment counts, permalinks
-- **Webhook out** on every comment event — generic, Slack, Discord, or
+- **Webhook out** on every comment event: generic, Slack, Discord, or
   Telegram
-- **Telegram operator bot** — moderate from your phone with inline
+- **Telegram operator bot**: moderate from your phone with inline
   buttons, `/queue` and `/stats`, optional daily digest
 
 Every doc in the repo, grouped by task:
@@ -53,8 +53,8 @@ can't collide with it:
 
 ![Garrul comment widget on a host page, showing the page reaction bar, the markdown composer, and a threaded discussion](docs/screenshots/widget-light.png)
 
-The admin dashboard — counts at a glance, your embed snippet ready to copy,
-30-day comment volume:
+The admin dashboard, with counts at a glance, your embed snippet ready to
+copy, and 30-day comment volume:
 
 ![Admin dashboard showing comment and user counts, the embed snippet, and a comments-per-day chart](docs/screenshots/admin-dashboard.png)
 
@@ -63,24 +63,24 @@ inline:
 
 ![Moderation queue listing pending comments with author, body, metadata and per-row actions](docs/screenshots/admin-queue-pending.png)
 
-More — dark mode, mobile, and the rest of the admin UI:
+More, including dark mode, mobile, and the rest of the admin UI:
 [`docs/screenshots.md`](docs/screenshots.md).
 
 ## Install
 
-Deploying to production takes ~20 minutes the first time — and then
-`npm run upgrade` per release, one command with a `--dry-run` that prints
+Deploying to production takes ~20 minutes the first time, and then
+`npm run upgrade` per release: one command with a `--dry-run` that prints
 its plan before touching anything. That is the whole maintenance story;
 there is no OS to patch and no service to restart.
 
-Step-by-step — prerequisites, OAuth setup, Turnstile, custom domain,
-remote migrations, deploy, smoke test — lives in
-[`INSTALL.md`](INSTALL.md); upgrades in
+The step-by-step guide covers prerequisites, OAuth setup, Turnstile,
+custom domain, remote migrations, deploy and smoke test:
+[`INSTALL.md`](INSTALL.md). Upgrades are in
 [`INSTALL.md#updating`](INSTALL.md#updating).
 
 **Want to try it first? No Cloudflare account needed.**
-`.dev.vars.example` ships working dev defaults — including Cloudflare's
-"always passes" Turnstile test keys — so this runs with zero edits and
+`.dev.vars.example` ships working dev defaults, including Cloudflare's
+"always passes" Turnstile test keys, so this runs with zero edits and
 zero credentials:
 
 ```bash
@@ -119,20 +119,20 @@ an AI assistant at your instance:
 
 ## Running it
 
-- **Theming** — the widget mounts in Shadow DOM, so host-page CSS doesn't
+- **Theming**: the widget mounts in Shadow DOM, so host-page CSS doesn't
   leak in. Restyle by overriding CSS custom properties on the host
-  element; those names are part of the public, semver-protected API —
-  [`docs/THEMING.md`](docs/THEMING.md).
-- **Admin UI** — `/admin`, for an OAuth sign-in whose email is in
+  element; those names are part of the public, semver-protected API
+  ([`docs/THEMING.md`](docs/THEMING.md)).
+- **Admin UI**: `/admin`, for an OAuth sign-in whose email is in
   `ADMIN_EMAILS`.
-- **Logs** — `wrangler tail`. Every request emits a JSON line with a
+- **Logs**: `wrangler tail`. Every request emits a JSON line with a
   request id. No PII (names, emails, comment bodies) is logged.
-- **Metrics** — Workers Analytics Engine writes `comment.posted`,
+- **Metrics**: Workers Analytics Engine writes `comment.posted`,
   `oauth.complete`, `ratelimit.hit` and friends; read them in the
   Cloudflare dashboard under your Worker.
-- **Backups** — `npm run db:export` writes a `.sql` dump for your local
+- **Backups**: `npm run db:export` writes a `.sql` dump for your local
   archive. Cloudflare keeps point-in-time backups of D1 as well.
-- **Re-render** — bumped the markdown sanitizer? `npm run rerender`
+- **Re-render**: bumped the markdown sanitizer? `npm run rerender`
   rewrites stored comment HTML in place.
 
 Day-to-day operation in full: [`AGENTS-OPERATE.md`](AGENTS-OPERATE.md).
@@ -141,11 +141,11 @@ Day-to-day operation in full: [`AGENTS-OPERATE.md`](AGENTS-OPERATE.md).
 
 Always on, with no configuration at all: a sliding-window rate limit on
 the edge Cache API, a strict markdown sanitizer (no raw HTML, no images,
-every link `nofollow ugc noopener`), and a hidden-field honeypot — plus
-Turnstile on anonymous posts once the Turnstile keys are set
-(`TURNSTILE_ALWAYS` challenges signed-in authors too).
+every link `nofollow ugc noopener`), and a hidden-field honeypot.
+Turnstile covers anonymous posts once the Turnstile keys are set, and
+`TURNSTILE_ALWAYS` challenges signed-in authors too.
 
-On top of those, four heuristics — minimum fill time, link count, hold an
+On top of those, four heuristics: minimum fill time, link count, hold an
 author's first comment, and a **muted-words list** with word-boundary and
 wildcard terms. All off by default, each with an env var that sets the
 deploy-time default, and all four retunable from **Settings → Moderation**
@@ -161,8 +161,8 @@ mount timing with its four visitor-facing messages:
 ## Access control
 
 Your instance is gated by `ALLOWED_ORIGINS` (set in `wrangler.toml`,
-comma-separated, no wildcards). Every request under `/api/*` — including
-plain GET reads of comment trees, counts, and config — must carry a
+comma-separated, no wildcards). Every request under `/api/*`, including
+plain GET reads of comment trees, counts, and config, must carry a
 matching `Origin` header. Browser fetches from your own sites send it
 automatically; direct curl or scraper hits return
 `403 err.origin.forbidden`. Uptime probes, the OAuth callbacks, the Atom
@@ -193,7 +193,7 @@ fill in and link from your footer, and
 personal-data inventory, the data-subject rights mapped to the mechanisms
 that serve them, CCPA/CPRA categories, a subprocessor register, and a DSAR
 runbook. Not legal advice, and it does not claim Garrul "is GDPR
-compliant" — compliance is a property of a deployment.
+compliant": compliance is a property of a deployment.
 
 ## Troubleshooting
 
@@ -202,7 +202,7 @@ across setup, embedding, OAuth, cookies and sessions, notification email,
 and performance. The two that bite most often: Safari readers can't sign
 in unless you serve over HTTPS, because cookies are
 `SameSite=None; Secure; Partitioned`; and `*.workers.dev` shouldn't be
-used in production — map a custom subdomain.
+used in production, so map a custom subdomain.
 
 ## Contributing
 
