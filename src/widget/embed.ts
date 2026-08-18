@@ -50,6 +50,7 @@ import { absoluteTime, isoTime, relativeTime } from "./time";
 // The mount request and the wire shapes it carries. Kept out of this file so the
 // fallback rule can be tested without a DOM — see boot.ts's header.
 import {
+	type BootstrapResponse,
 	type ConfigResponse,
 	type EngagementSection,
 	type MountSeed,
@@ -2774,8 +2775,20 @@ const loadOnce = async (
 	let communityMinVotes = 5;
 	let communityCollapseRatio = 0;
 	// The mount request. `null` means this Worker cannot answer it, and every
-	// branch below then does exactly what it did before the endpoint existed.
-	const boot = await fetchBootstrap(apiBase, slug, sort, langExplicit, langHint);
+	// branch below then does exactly what it did before the endpoint existed. A
+	// throw means the edge answered and refused, where the fallback would only
+	// spend five more requests to be refused five more times — so it renders the
+	// error here, exactly as the legacy tree fetch does further down.
+	let boot: BootstrapResponse | null;
+	try {
+		boot = await fetchBootstrap(apiBase, slug, sort, langExplicit, langHint);
+	} catch (err) {
+		// renderError replaces the shadow tree, so the composer this handle
+		// belongs to is about to vanish.
+		destroyTopComposerTurnstile();
+		renderError(root, err as Error);
+		return;
+	}
 	try {
 		// Bootstrap's `config` section is byte-identical to /api/v1/config's body
 		// (pinned by tests/bootstrap.test.ts), which is what lets one block parse
@@ -2835,8 +2848,8 @@ const loadOnce = async (
 	} catch {
 		// The config is optional; the widget still renders without Turnstile (the
 		// server will reject anonymous POSTs in that case). Only the legacy branch
-		// can throw here — fetchBootstrap swallows its own failures and reports them
-		// as `null`, and its config section is already in hand by this point.
+		// can throw here — a bootstrapped mount already has its config section in
+		// hand, and fetchBootstrap's own throw was handled before this block.
 	}
 
 	let me: Me;

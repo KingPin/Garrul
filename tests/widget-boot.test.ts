@@ -110,13 +110,6 @@ describe("fetchBootstrap — falls back", () => {
 		expect(await fetchBootstrap(API, SLUG, "new", "", "")).toBeNull();
 	});
 
-	for (const status of [400, 403, 429, 500, 502]) {
-		it(`on ${status}`, async () => {
-			stubFetch(() => jsonRes({ error: "nope" }, status));
-			expect(await fetchBootstrap(API, SLUG, "new", "", "")).toBeNull();
-		});
-	}
-
 	// Each of these is a 200 the widget must still refuse: an error envelope, a
 	// null body, a tree-shaped key holding the wrong type. Rendering any of them
 	// as "no comments" is the failure mode this whole rule exists to prevent.
@@ -142,11 +135,32 @@ describe("fetchBootstrap — falls back", () => {
 	});
 
 	it("on a network failure", async () => {
+		// Deliberately *not* in the throwing block below. Cloudflare answers an
+		// over-quota request with an HTTP response, not a dead connection, so this
+		// case amplifies nothing — and it is the one where something could be
+		// blocking this path while the five older ones still work.
 		stubFetch(() => {
 			throw new TypeError("Failed to fetch");
 		});
 		expect(await fetchBootstrap(API, SLUG, "new", "", "")).toBeNull();
 	});
+});
+
+describe("fetchBootstrap — refuses to fall back", () => {
+	// The edge answered and said no. The five calls the fallback would make get
+	// refused the same way, so falling back turns one rejected request into six
+	// on an install that is already over its cap. These must throw, not answer
+	// `null`; the caller renders the error instead of amplifying the load.
+	for (const status of [400, 403, 429, 500, 502]) {
+		it(`throws on ${status} rather than spending five more requests`, async () => {
+			stubFetch(() => jsonRes({ error: "nope" }, status));
+			await expect(
+				fetchBootstrap(API, SLUG, "new", "", ""),
+			).rejects.toThrow(`HTTP ${status}`);
+		});
+	}
+	// 404 is the one status that stays in the `null` bucket — see the first case
+	// in the block above, which is what stops this from widening to `!res.ok`.
 });
 
 describe("fetchBootstrap — the request it sends", () => {
@@ -385,10 +399,14 @@ describe("fetchBootstrap — against the real handler", () => {
 		expect(boot?.config?.locale).toBe("de");
 	});
 
-	it("falls back when the Worker rejects the slug", async () => {
+	it("surfaces the Worker rejecting the slug rather than falling back", async () => {
 		// A 400 is not a payload to render around, and the legacy path takes the
 		// same 400 on /comments — which is the call whose failure shows an error.
+		// So the fallback only ever reached that error the long way round, one
+		// rejected request per endpoint. Throwing gets there directly.
 		routeToWorker();
-		expect(await fetchBootstrap("http://localhost", "a b<c>", "new", "", "")).toBeNull();
+		await expect(
+			fetchBootstrap("http://localhost", "a b<c>", "new", "", ""),
+		).rejects.toThrow("HTTP 400");
 	});
 });

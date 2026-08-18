@@ -176,8 +176,18 @@ day rather than once per pageview.
 — they are public API, `/api/v1/comments` is still how the widget
 pages load-more, and a widget served from this repo has to keep
 working against an older self-hosted Worker that has no `/bootstrap`.
-When the endpoint answers a 404 (or anything else unusable), the
-widget silently falls back to exactly the pre-v2.15.0 call sequence.
+When the endpoint answers a 404 — what a Worker without the route
+returns — the widget silently falls back to exactly the pre-v2.15.0
+call sequence. So does a 200 whose body carries no comment tree, and a
+request that never lands.
+
+Any **other** non-2xx does not fall back: it surfaces as an error, the
+same one a failed `/api/v1/comments` would render. The fallback is only
+worth running when it will succeed. An over-quota 429, a 5xx or a WAF
+403 refuses the five replacement calls exactly as it refused this one,
+so falling back would turn one rejected request into six on an install
+that has already hit its cap — driving usage up, and recovery down,
+precisely when neither can afford it.
 
 `/api/v1/comments/form-token` is deliberately **not** folded in, which
 is why the mount is two requests and not one. Its signed timestamp

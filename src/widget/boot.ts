@@ -175,14 +175,24 @@ export const fetchConfig = async (
  * The mount request: config, session, the first page of comments, and the two
  * optional surfaces, in one Worker invocation instead of up to five.
  *
- * Answers `null` for *any* unusable response — a 404 from a Worker that predates
- * the endpoint, any other non-2xx, a body with no comment tree in it, or a
- * network failure. The caller then runs exactly the boot path this replaced.
+ * Answers `null` when the fallback is the *right* answer, and throws when it is
+ * merely the *equivalent* one. The two are not the same, and the difference is
+ * paid in requests at the worst possible moment.
  *
- * One bucket on purpose: the fallback *is* the old code, so *why* bootstrap
- * could not answer changes nothing about what to do next. A genuine outage still
- * surfaces to the reader as an error, because the legacy tree fetch fails too
- * and that is the call whose failure renders one.
+ * `null` — a 404 (the Worker predates the endpoint), a body with no comment tree
+ * in it, or a request that never landed. The caller runs the five calls this
+ * replaced, and they succeed, because nothing is refusing them.
+ *
+ * Throws — any other non-2xx. The edge answered, and answered no: an over-quota
+ * 429, a 5xx, a WAF 403. The five fallback calls get refused the same way, so
+ * running them turns one rejected request into six on an install that is already
+ * over its cap, and slows its recovery. The error is the same `HTTP <status>`
+ * the legacy tree fetch throws, so the reader sees what they'd have seen anyway.
+ *
+ * A network rejection stays in the `null` bucket deliberately. Cloudflare's
+ * over-quota answer is an HTTP response, not a failed connection, so nothing is
+ * amplified here — and a fetch that never lands is the one case where something
+ * could be blocking this path specifically while the older ones still work.
  */
 export const fetchBootstrap = async (
 	apiBase: string,
@@ -191,15 +201,29 @@ export const fetchBootstrap = async (
 	langExplicit: string,
 	langHint: string,
 ): Promise<BootstrapResponse | null> => {
+	const qs = new URLSearchParams({ slug });
+	if (sort !== "new") qs.set("sort", sort);
+	localeParams(qs, langExplicit, langHint);
+
+	// Only the request is guarded here. Widening this to cover the status check
+	// below would swallow the throw it exists to make.
+	let res: Response;
 	try {
-		const qs = new URLSearchParams({ slug });
-		if (sort !== "new") qs.set("sort", sort);
-		localeParams(qs, langExplicit, langHint);
-		const res = await fetch(
+		res = await fetch(
 			`${apiBase}/api/v1/bootstrap?${qs.toString()}`,
 			CREDENTIALED,
 		);
-		if (!res.ok) return null;
+	} catch {
+		return null;
+	}
+	// What a Hono router answers for a route it does not have, which is the whole
+	// population this fallback exists for.
+	if (res.status === 404) return null;
+	// Matches fetchPage's throw verbatim so a refused mount and a refused tree
+	// fetch render the same error rather than two spellings of it.
+	if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+	try {
 		const body = (await res.json()) as BootstrapResponse | null;
 		if (!body) return null;
 		// A thread array is what "this is a mountable answer" means. Anything else
