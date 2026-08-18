@@ -19,7 +19,7 @@ tag's docs rather than `main`.
 | Doc | Covers |
 | --- | --- |
 | [`../examples/README.md`](../examples/README.md) | Copy-paste integrations for Astro, Hugo, Jekyll, WordPress, plain HTML, the iframe variant, and lazy-loading. Start here. |
-| [`../README.md#embedding`](../README.md#embedding) | The embed contract: script tag, `data-*` attributes, iframe fallback. |
+| [`embedding.md`](embedding.md) | What the recipes don't cover: host Content-Security-Policy, the iframe variant, `data-lang`, lazy-loading, and pointing an AI assistant at your instance. |
 | [`THEMING.md`](THEMING.md) | CSS variables, dark mode, which names are stable. |
 | [`i18n.md`](i18n.md) | Which language your readers see and how it's chosen, the shipped locales and which are machine-seeded, what is never translated, and how timestamps render. |
 | [`../AGENTS.md`](../AGENTS.md) | AI-targeted integration guide. Also served live at `https://<your-host>/AGENTS.md` with your host pre-filled — point an assistant at that URL. |

@@ -389,6 +389,20 @@ Rules:
   `GET /api/v1/auth/*/{start,callback}` bypass the gate because they're
   invoked without an `Origin` header (uptime probes + top-level OAuth).
 
+Four more surfaces are reachable without an `Origin` because they sit
+outside the `/api/*` gate entirely, not because of a carve-out:
+`GET /feed/:slug` (Atom), `GET /c/:id` (comment permalinks),
+`GET /embed/:slug` (the iframe variant) and `GET /embed.js` (the widget
+bundle). Each is meant to be fetched by readers, feed readers and
+crawlers, so none of them can require one.
+
+**Build-time fetchers get 403s.** A static-site generator that reads
+comments at deploy time looks exactly like a scraper to the Worker — no
+`Origin`, gated path. Consume `GET /feed/:slug` instead until the planned
+API-keys system ships; the design is in
+[`docs/api-keys-design.md`](docs/api-keys-design.md) and is **not**
+implemented.
+
 Test the allowlist with curl. Replace `comments.example.com` with the
 Worker host and `blog.example.com` with the embedding site:
 
