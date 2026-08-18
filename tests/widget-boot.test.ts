@@ -32,7 +32,22 @@ import { localeMiddleware } from "../src/lib/locale";
 import { installMockCaches, uninstallMockCaches } from "./helpers/mock-caches";
 import type { Bindings } from "../src/index";
 
-const API = "https://comments.example.com";
+/**
+ * A fresh origin per test, not a shared constant.
+ *
+ * `fetchBootstrap` remembers which API bases answered 404 so a reload doesn't
+ * re-probe a Worker that has already said it has no such route. That memo is
+ * module state with no reset hook — deliberately, since a reset exists only for
+ * tests and would ship in the bundle — so tests isolate themselves by never
+ * reusing an origin. It also keeps the memo honest: a test that leaked into the
+ * next one would be asserting against a base some earlier 404 had poisoned.
+ */
+let API = "";
+let origins = 0;
+beforeEach(() => {
+	API = `https://comments-${++origins}.example.com`;
+});
+
 const SLUG = "hello-world";
 
 const realFetch = globalThis.fetch;
@@ -161,6 +176,49 @@ describe("fetchBootstrap — refuses to fall back", () => {
 	}
 	// 404 is the one status that stays in the `null` bucket — see the first case
 	// in the block above, which is what stops this from widening to `!res.ok`.
+});
+
+describe("fetchBootstrap — probes a 404'd Worker only once", () => {
+	// loadOnce re-runs on every reload(), so without the memo a reader on a
+	// Worker that predates the endpoint pays a doomed request plus a serial
+	// round-trip on each post, edit, delete and sort change.
+	it("stops asking after the first 404", async () => {
+		const calls = stubFetch(() => jsonRes({ error: "not found" }, 404));
+		for (let i = 0; i < 4; i++) {
+			expect(await fetchBootstrap(API, SLUG, "new", "", "")).toBeNull();
+		}
+		expect(calls).toHaveLength(1);
+	});
+
+	it("keeps the answer to one origin", async () => {
+		// A page may mount widgets against two Workers. One operator running an
+		// old deploy must not push another's reader onto the legacy path.
+		const other = `${API}-two`;
+		const calls = stubFetch((url) =>
+			url.startsWith(other) ? jsonRes(MOUNTABLE) : jsonRes({}, 404),
+		);
+		expect(await fetchBootstrap(API, SLUG, "new", "", "")).toBeNull();
+		expect(await fetchBootstrap(other, SLUG, "new", "", "")).not.toBeNull();
+		expect(await fetchBootstrap(other, SLUG, "new", "", "")).not.toBeNull();
+		expect(calls).toHaveLength(3);
+	});
+
+	it("does not memoize a transient failure", async () => {
+		// A dead connection or a captive portal is a property of the moment, not
+		// of the deployment. Caching either would strand a healthy Worker on the
+		// legacy path for the life of the page.
+		let first = true;
+		const calls = stubFetch(() => {
+			if (first) {
+				first = false;
+				throw new TypeError("Failed to fetch");
+			}
+			return jsonRes(MOUNTABLE);
+		});
+		expect(await fetchBootstrap(API, SLUG, "new", "", "")).toBeNull();
+		expect(await fetchBootstrap(API, SLUG, "new", "", "")).not.toBeNull();
+		expect(calls).toHaveLength(2);
+	});
 });
 
 describe("fetchBootstrap — the request it sends", () => {

@@ -172,6 +172,26 @@ export const fetchConfig = async (
 };
 
 /**
+ * API bases whose Worker has already answered 404 for `/api/v1/bootstrap`.
+ *
+ * The probe is worth making once per origin, not once per mount. `loadOnce` runs
+ * again on every `reload()` — posting a comment, editing, deleting, changing
+ * sort — so against a Worker that predates the endpoint an unmemoized probe
+ * costs a doomed request *and* a serial round-trip every single time. A reader
+ * who posts twice pays it three times.
+ *
+ * Only 404 is remembered, because only 404 is a property of the deployment. A
+ * 5xx no longer reaches here (it throws), and an unusable body or a failed
+ * connection are transient — caching either would strand a healthy Worker on the
+ * legacy path for the life of the page.
+ *
+ * Keyed by base rather than a bare boolean: a page may mount widgets against
+ * more than one origin, and one operator's old Worker must not decide anything
+ * about another's.
+ */
+const noBootstrap = new Set<string>();
+
+/**
  * The mount request: config, session, the first page of comments, and the two
  * optional surfaces, in one Worker invocation instead of up to five.
  *
@@ -201,6 +221,8 @@ export const fetchBootstrap = async (
 	langExplicit: string,
 	langHint: string,
 ): Promise<BootstrapResponse | null> => {
+	if (noBootstrap.has(apiBase)) return null;
+
 	const qs = new URLSearchParams({ slug });
 	if (sort !== "new") qs.set("sort", sort);
 	localeParams(qs, langExplicit, langHint);
@@ -217,8 +239,12 @@ export const fetchBootstrap = async (
 		return null;
 	}
 	// What a Hono router answers for a route it does not have, which is the whole
-	// population this fallback exists for.
-	if (res.status === 404) return null;
+	// population this fallback exists for. Remembered so the next reload against
+	// this Worker goes straight to the legacy path.
+	if (res.status === 404) {
+		noBootstrap.add(apiBase);
+		return null;
+	}
 	// Matches fetchPage's throw verbatim so a refused mount and a refused tree
 	// fetch render the same error rather than two spellings of it.
 	if (!res.ok) throw new Error(`HTTP ${res.status}`);

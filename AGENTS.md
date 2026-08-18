@@ -179,7 +179,9 @@ working against an older self-hosted Worker that has no `/bootstrap`.
 When the endpoint answers a 404 — what a Worker without the route
 returns — the widget silently falls back to exactly the pre-v2.15.0
 call sequence. So does a 200 whose body carries no comment tree, and a
-request that never lands.
+request that never lands. The 404 is remembered per API base, so a
+reader on such a Worker probes once and every later reload — posting,
+editing, deleting, changing sort — goes straight to the legacy calls.
 
 Any **other** non-2xx does not fall back: it surfaces as an error, the
 same one a failed `/api/v1/comments` would render. The fallback is only
