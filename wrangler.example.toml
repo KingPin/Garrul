@@ -112,6 +112,10 @@ OAUTH_CALLBACK_BASE = "https://comments.example.com"
 # default) follows the host page's <html lang>; an explicit tag overrides it.
 # Comment text itself is never translated.
 # DEFAULT_LOCALE = "auto"
+# Order top-level comments load in when the embed doesn't ask: "new" (newest
+# first, the default), "old" (oldest first — chronological) or "top" (highest
+# score, needs VOTING_ENABLED). Readers can still switch order in the widget.
+# DEFAULT_SORT = "new"
 # Thread lifecycle — auto-close threads to new comments (existing comments,
 # reactions and votes stay live). Evaluated lazily at read/write time, no cron.
 # Both default 0 = disabled. Close a thread N days after its article was

@@ -105,6 +105,7 @@ export const fr = {
 	"w.closed.other": "Les commentaires sont fermés.",
 	"w.sort_by": "Trier par {control}",
 	"w.sort.new": "Plus récents",
+	"w.sort.old": "Plus anciens",
 	"w.sort.top": "Meilleurs",
 	"w.subscribe": "M'avertir par e-mail des nouveaux commentaires sur cet article",
 	"w.subscribe.submit": "S'abonner",

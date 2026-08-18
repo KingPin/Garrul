@@ -108,6 +108,7 @@ export const de = {
 	"w.closed.other": "Kommentare sind geschlossen.",
 	"w.sort_by": "Sortieren nach {control}",
 	"w.sort.new": "Neueste",
+	"w.sort.old": "Älteste",
 	"w.sort.top": "Beste",
 	"w.subscribe": "Bei neuen Kommentaren zu diesem Beitrag benachrichtigen",
 	"w.subscribe.submit": "Abonnieren",

@@ -67,7 +67,12 @@ import { readSession } from "../lib/session";
 import { loadSettings } from "../lib/settings";
 import { putCache, tryWaitUntil } from "../lib/response-cache";
 import { TREE_CACHE_TTL } from "../lib/tree-cache";
-import { buildTreePage, SLUG_RE } from "./api.comments";
+import {
+	buildTreePage,
+	parseSortParam,
+	resolveDefaultSort,
+	SLUG_RE,
+} from "./api.comments";
 import { buildConfigPayload, resolveConfigLocale } from "./api.config";
 import { reactionTotals } from "./api.page-engagement";
 import { publicUser } from "./auth";
@@ -95,9 +100,6 @@ bootstrap.get("/", async (c) => {
 	if (!slug) return c.json({ error: t("err.post.required") }, 400);
 	if (!SLUG_RE.test(slug)) return c.json({ error: t("err.post.invalid") }, 400);
 
-	const sortParam = (c.req.query("sort") ?? "new").trim();
-	const sort: "new" | "top" = sortParam === "top" ? "top" : "new";
-
 	// One settings read and one session read for what used to be three and four.
 	// `readSession` costs two KV reads and, once a session ages past its refresh
 	// window, a KV *write* to slide the TTL. Those calls used to be concurrent
@@ -112,6 +114,14 @@ bootstrap.get("/", async (c) => {
 	// `tests/bootstrap.test.ts` routes this app directly, and so may an embedder.
 	const resolved = await loadSettings(c.env);
 	const { flags, numbers } = resolved;
+
+	// Resolved the same way `/comments` resolves it, from the same helper: the
+	// two must agree on what an absent `?sort=` means, or bootstrap's comments
+	// section stops matching the endpoint it is supposed to be byte-identical to.
+	const sort =
+		parseSortParam(c.req.query("sort")) ??
+		resolveDefaultSort(resolved.strings, flags);
+
 	const mwUserId = c.get("userId");
 	const mwSessionId = c.get("sessionId");
 	const session =

@@ -21,7 +21,7 @@
  * can be masked by a warm cache for up to the TTL; acceptable.)
  */
 import type { Bindings } from "../index";
-import { getAllSettings } from "../db/queries";
+import { COMMENT_SORTS, getAllSettings } from "../db/queries";
 import { LOCALES } from "../i18n";
 import { AUTO_LOCALE } from "../i18n/negotiate";
 import { MAX_DEPTH } from "./tree";
@@ -58,7 +58,7 @@ export type NumberKey =
 
 export type ResolvedNumbers = Record<NumberKey, number>;
 
-export type StringSettingKey = "default_locale";
+export type StringSettingKey = "default_locale" | "default_sort";
 
 export type ResolvedStrings = Record<StringSettingKey, string>;
 
@@ -319,6 +319,26 @@ const STRINGS: Record<
 		env: "DEFAULT_LOCALE",
 		default: AUTO_LOCALE,
 		options: () => [AUTO_LOCALE, ...Object.keys(LOCALES)],
+	},
+	// The order a thread is served in when the embed doesn't ask for one.
+	//
+	// No `auto` sentinel here, unlike default_locale: there is no host-page hint
+	// to fall through to, so "never configured" and "chose newest" want the same
+	// behavior and a sentinel would only add a state with nothing behind it.
+	//
+	// `new` stays the default because it is what every existing install already
+	// serves — an upgrade must not silently reorder every thread on the site.
+	// Operators who want chronological order now have one place to say so.
+	//
+	// Options come from COMMENT_SORTS so the whitelist can't drift from the
+	// sorts the query layer actually implements; `top` among them is why
+	// resolveDefaultSort exists (see api.comments) — it is meaningless with
+	// voting off and is coerced there rather than being hidden here, so turning
+	// voting back on restores the operator's stated preference.
+	default_sort: {
+		env: "DEFAULT_SORT",
+		default: "new",
+		options: () => [...COMMENT_SORTS],
 	},
 };
 

@@ -41,7 +41,9 @@ import {
 	TREE_ROW_LIMIT,
 	updateCommentBody,
 	upsertPost,
+	COMMENT_SORTS,
 	type Comment,
+	type CommentSort,
 	type SpamVerdictSource,
 	type SpamVerdictValue,
 	type TreeComment,
@@ -62,6 +64,7 @@ import {
 	loadSettings,
 	type ResolvedFlags,
 	type ResolvedNumbers,
+	type ResolvedStrings,
 	type ResolvedTexts,
 } from "../lib/settings";
 import { checkBlocklist, compileBlocklist } from "../lib/spam/blocklist";
@@ -831,6 +834,17 @@ export type ListPayload = {
 	post: Awaited<ReturnType<typeof getPost>>;
 	threads: TreeNode[];
 	next_cursor: string | null;
+	/**
+	 * The sort this page was actually built in.
+	 *
+	 * The widget cannot work this out for itself on the first request: when it
+	 * omits `?sort=`, the answer is the operator's `default_sort`, and on the
+	 * bootstrap path the config section that would carry that setting arrives in
+	 * the *same* response. Echoing the resolved sort lets the widget seed its
+	 * selector and its load-more cursor from the reply it already has, instead of
+	 * mounting in one order and correcting to another.
+	 */
+	sort: CommentSort;
 	/** Whether the widget should show the composer (vs. a closed notice). */
 	accepting_comments: boolean;
 	/** Why the thread is closed, for the closed-notice copy; null if open. */
@@ -840,10 +854,14 @@ export type ListPayload = {
 const ULID_RE = /^[0-9A-HJKMNP-TV-Z]{26}$/;
 
 /**
- * `new`-sort cursor: just the ULID of the oldest top-level thread on the
- * current page. Threads are sorted DESC by created_at, so the next page is
- * `id < cursor`. The ULID (lexicographically-comparable, time-prefixed)
+ * Chronological-sort cursor: just the ULID of the last top-level thread on the
+ * current page. The ULID (lexicographically-comparable, time-prefixed)
  * sidesteps the timestamp-collision edge case.
+ *
+ * Shared by `new` and `old`, which differ only in which direction the query
+ * reads it — `id < cursor` for DESC, `id > cursor` for ASC (see
+ * listThreadRefsForPost). The encoding is identical because the position it
+ * names is identical; only the sort decides which way "next" runs.
  */
 const decodeCursor = (raw: string | null): string | null => {
 	if (!raw) return null;
@@ -870,6 +888,58 @@ const decodeTopCursor = (raw: string | null): TopCursor | null => {
 	const id = raw.slice(sep + 1);
 	if (!Number.isFinite(score) || !ULID_RE.test(id)) return null;
 	return { score, id };
+};
+
+/**
+ * Narrow a raw `?sort=` value to a known sort, or null when it names none.
+ *
+ * Null rather than a baked-in `"new"` because the caller — not this parser —
+ * owns what "unspecified" means, and the answer is the operator's `default_sort`
+ * setting. Shared by `/comments` and `/bootstrap` so the two cannot drift: they
+ * must resolve the same request to the same sort, or bootstrap's tree stops
+ * being byte-identical to the endpoint it composes.
+ *
+ * An *unknown* value collapses into the same null as an absent one, so a typo'd
+ * `?sort=oldd` serves the operator's default rather than `new`. That is the
+ * intent, not an oversight: the alternative renders the thread in an order the
+ * operator explicitly didn't choose, which is exactly the hardcoded default
+ * `default_sort` exists to remove. Nothing about it is hidden — the resolved
+ * sort is echoed in the response and is what keys the cache entry, so a caller
+ * can always see which order it actually got. Rejecting with a 400 would be the
+ * other defensible answer; it is not taken because every other query parameter
+ * on this route parses leniently, and a reader following a mangled link should
+ * still see the thread.
+ */
+export const parseSortParam = (
+	raw: string | null | undefined,
+): CommentSort | null => {
+	const value = (raw ?? "").trim();
+	return (COMMENT_SORTS as readonly string[]).includes(value)
+		? (value as CommentSort)
+		: null;
+};
+
+/**
+ * The sort to serve when the request didn't name one: the operator's
+ * `default_sort` setting, with `top` coerced away when voting is off.
+ *
+ * The coercion is here rather than in the settings whitelist so the preference
+ * survives the round trip — an operator who turns voting off temporarily gets
+ * their chosen `top` back when they turn it on again, instead of finding the
+ * setting silently rewritten to `new`. Without it, a `top` default on a
+ * voting-off install orders every thread by a score column that is always zero,
+ * which reads as "sorted at random" to the operator and has no visible cause.
+ *
+ * An *explicit* `?sort=top` is deliberately left alone: it is a deliberate act
+ * by a caller who can see what they asked for, and the API has no reason to
+ * second-guess it. This only decides what "no preference" means.
+ */
+export const resolveDefaultSort = (
+	strings: ResolvedStrings,
+	flags: ResolvedFlags,
+): CommentSort => {
+	const configured = parseSortParam(strings.default_sort) ?? "new";
+	return configured === "top" && !flags.votes_enabled ? "new" : configured;
 };
 
 /**
@@ -907,8 +977,8 @@ export const buildTreePage = async (
 	reqUrl: string,
 	opts: {
 		slug: string;
-		sort: "new" | "top";
-		/** Raw `?before=` value, decoded here so both sorts normalize alike. */
+		sort: CommentSort;
+		/** Raw `?before=` value, decoded here so every sort normalizes alike. */
 		beforeRaw: string | null;
 		session: { sid: string; user_id: string } | null;
 		flags: ResolvedFlags;
@@ -925,10 +995,11 @@ export const buildTreePage = async (
 ): Promise<TreePageResult> => {
 	const { slug, sort, beforeRaw, session, flags, numbers } = opts;
 
-	// Each sort has its own cursor encoding: `new` pages by ULID (id < cursor),
-	// `top` pages by a composite score:id (see decodeTopCursor). A cursor from
-	// the wrong sort decodes to null → treated as the first page.
-	const cursor = sort === "new" ? decodeCursor(beforeRaw) : null;
+	// Two cursor encodings, not three: the chronological sorts (`new`, `old`)
+	// both page by bare ULID, while `top` pages by a composite score:id (see
+	// decodeTopCursor). A cursor from the wrong family decodes to null → treated
+	// as the first page.
+	const cursor = sort === "top" ? null : decodeCursor(beforeRaw);
 	const topCursor = sort === "top" ? decodeTopCursor(beforeRaw) : null;
 
 	// Top-level threads per page, operator-tunable (DB > env > default 25),
@@ -1065,6 +1136,7 @@ export const buildTreePage = async (
 		post,
 		threads: page,
 		next_cursor,
+		sort,
 		accepting_comments: threadState.open,
 		closed_reason: threadState.reason ?? null,
 	};
@@ -1084,13 +1156,15 @@ comments.get("/", async (c) => {
 	if (!slug) return c.json({ error: t("err.post.required") }, 400);
 	if (!SLUG_RE.test(slug)) return c.json({ error: t("err.post.invalid") }, 400);
 
-	const sortParam = (c.req.query("sort") ?? "new").trim();
-	const sort: "new" | "top" = sortParam === "top" ? "top" : "new";
-
 	const session = await readSession(c);
-	// One read rather than two per-group ones: this route needs both flags and
-	// numbers, and they share a single cache entry.
-	const { flags, numbers } = await loadSettings(c.env);
+	// One read rather than three per-group ones: this route needs flags, numbers
+	// and strings, and they share a single cache entry.
+	const { flags, numbers, strings } = await loadSettings(c.env);
+
+	// Settings first, then the sort — an absent `?sort=` means "whatever the
+	// operator configured", which isn't known until they're resolved.
+	const sort =
+		parseSortParam(c.req.query("sort")) ?? resolveDefaultSort(strings, flags);
 
 	const built = await buildTreePage(c.env, c.req.url, {
 		slug,

@@ -6,7 +6,9 @@
  *   1. `comments_per_page` (DB > env > default 25) drives the top-level slice —
  *      the default, an env override, a DB-row override, and the hostile-value
  *      clamp.
- *   2. `sort=new` walks pages via the ULID `before` cursor (id < cursor).
+ *   2. `sort=new` walks pages via the ULID `before` cursor (id < cursor), and
+ *      `sort=old` walks the same cursor the other way (id > cursor) — the pair
+ *      has to flip order and cursor direction together or it skips threads.
  *   3. `sort=top` paginates too (composite score:id cursor), so a small page
  *      size can't hide top-voted threads past the first page.
  *   4. The first-page edge-cache key varies with the page size, so a size
@@ -209,6 +211,7 @@ type ListResp = {
 		replies: unknown[];
 	}[];
 	next_cursor: string | null;
+	sort: string;
 };
 
 const get = async (env: Bindings, query: string): Promise<ListResp> => {
@@ -337,6 +340,135 @@ describe("GET /comments — sort=new cursor walks pages", () => {
 		const page = await get(mkEnv(), `slug=${SLUG}&before=not-a-ulid`);
 		expect(page.threads).toHaveLength(5);
 		expect(page.threads[0]!.id).toBe(mkUlid(5));
+	});
+});
+
+describe("GET /comments — sort=old cursor walks pages", () => {
+	it("walks oldest-first and terminates, with no thread skipped or repeated", async () => {
+		seedThreads(30);
+		setSetting("comments_per_page", "10");
+		const env = mkEnv();
+		const first = await get(env, `slug=${SLUG}&sort=old`);
+		expect(first.threads).toHaveLength(10);
+		// old-sort is oldest-first: the mirror image of sort=new, so page 1
+		// starts at the lowest id rather than the highest.
+		expect(first.threads[0]!.id).toBe(mkUlid(1));
+
+		const second = await get(env, `slug=${SLUG}&sort=old&before=${first.next_cursor}`);
+		const third = await get(env, `slug=${SLUG}&sort=old&before=${second.next_cursor}`);
+		expect(second.threads).toHaveLength(10);
+		expect(third.threads).toHaveLength(10);
+		expect(third.next_cursor).toBeNull();
+
+		// The property that a half-flipped sort (ASC order, DESC cursor) breaks:
+		// every thread appears exactly once, ascending.
+		const ids = [...first.threads, ...second.threads, ...third.threads].map(
+			(t) => t.id,
+		);
+		expect(new Set(ids).size).toBe(30);
+		expect(ids[0]).toBe(mkUlid(1));
+		expect(ids[29]).toBe(mkUlid(30));
+	});
+
+	it("treats a malformed cursor as the first page", async () => {
+		seedThreads(5);
+		const page = await get(mkEnv(), `slug=${SLUG}&sort=old&before=not-a-ulid`);
+		expect(page.threads).toHaveLength(5);
+		expect(page.threads[0]!.id).toBe(mkUlid(1));
+	});
+
+	it("keys its own cache entry, so it cannot serve sort=new's page", async () => {
+		seedThreads(5);
+		const env = mkEnv();
+		const newest = await get(env, `slug=${SLUG}&sort=new`);
+		const oldest = await get(env, `slug=${SLUG}&sort=old`);
+		expect(newest.threads[0]!.id).toBe(mkUlid(5));
+		expect(oldest.threads[0]!.id).toBe(mkUlid(1));
+	});
+
+	// An unknown sort resolves the same way an absent one does — to the
+	// operator's default, not to a hardcoded `new`. `default_sort` is set to
+	// `old` here on purpose: without it this test passes under either rule,
+	// which is how it went on asserting a `new` fallback the route had stopped
+	// making.
+	it("treats an unknown sort as unspecified, so the operator's default wins", async () => {
+		seedThreads(5);
+		setSetting("default_sort", "old");
+		const page = await get(mkEnv(), `slug=${SLUG}&sort=sideways`);
+		expect(page.threads[0]!.id).toBe(mkUlid(1));
+		expect(page.sort).toBe("old");
+	});
+});
+
+/**
+ * An absent `?sort=` means "whatever the operator configured", not a hardcoded
+ * `new`. The widget depends on this: on the bootstrap path it cannot know the
+ * setting before the response carrying it arrives, so the server has to apply
+ * the default and echo back what it used.
+ */
+describe("GET /comments — default_sort", () => {
+	it("serves the operator's default when the request names no sort", async () => {
+		seedThreads(5);
+		setSetting("default_sort", "old");
+		const page = await get(mkEnv(), `slug=${SLUG}`);
+		expect(page.threads[0]!.id).toBe(mkUlid(1));
+		expect(page.sort).toBe("old");
+	});
+
+	it("reads the default from the env var when no DB row overrides it", async () => {
+		seedThreads(5);
+		const page = await get(mkEnv({ DEFAULT_SORT: "old" }), `slug=${SLUG}`);
+		expect(page.threads[0]!.id).toBe(mkUlid(1));
+	});
+
+	it("lets an explicit ?sort= win over the operator default", async () => {
+		seedThreads(5);
+		setSetting("default_sort", "old");
+		const page = await get(mkEnv(), `slug=${SLUG}&sort=new`);
+		expect(page.threads[0]!.id).toBe(mkUlid(5));
+		expect(page.sort).toBe("new");
+	});
+
+	it("stays on 'new' for an install that never set it", async () => {
+		seedThreads(5);
+		const page = await get(mkEnv(), `slug=${SLUG}`);
+		expect(page.sort).toBe("new");
+		expect(page.threads[0]!.id).toBe(mkUlid(5));
+	});
+
+	it("falls back to 'new' when the default is 'top' but voting is off", async () => {
+		// Scores descend with index, so a real `top` page would start at c1 —
+		// which is what makes this assertion able to tell the two apart.
+		seedThreads(5, [9, 7, 5, 3, 1]);
+		setSetting("default_sort", "top");
+		setSetting("votes_enabled", "false");
+		const page = await get(mkEnv(), `slug=${SLUG}`);
+		expect(page.sort).toBe("new");
+		expect(page.threads[0]!.id).toBe(mkUlid(5));
+	});
+
+	it("honors a 'top' default once voting is on, so the setting was kept not rewritten", async () => {
+		seedThreads(5, [9, 7, 5, 3, 1]);
+		setSetting("default_sort", "top");
+		setSetting("votes_enabled", "true");
+		const page = await get(mkEnv(), `slug=${SLUG}`);
+		expect(page.sort).toBe("top");
+		expect(page.threads[0]!.id).toBe(mkUlid(1));
+	});
+
+	it("does not coerce an explicit ?sort=top when voting is off", async () => {
+		seedThreads(5, [9, 7, 5, 3, 1]);
+		setSetting("votes_enabled", "false");
+		const page = await get(mkEnv(), `slug=${SLUG}&sort=top`);
+		expect(page.sort).toBe("top");
+		expect(page.threads[0]!.id).toBe(mkUlid(1));
+	});
+
+	it("ignores an unknown stored default rather than serving nothing", async () => {
+		seedThreads(5);
+		setSetting("default_sort", "chronological");
+		const page = await get(mkEnv(), `slug=${SLUG}`);
+		expect(page.sort).toBe("new");
 	});
 });
 

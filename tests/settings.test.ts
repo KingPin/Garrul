@@ -812,7 +812,12 @@ describe("parseStringSetting", () => {
 describe("loadStrings", () => {
 	it("returns built-in defaults when no DB rows and no env vars", async () => {
 		const { env } = mkEnv();
-		expect(await loadStrings(env)).toEqual({ default_locale: "auto" });
+		expect(await loadStrings(env)).toEqual({
+			default_locale: "auto",
+			// `new` deliberately, not `old`: an upgrade must not reorder every
+			// thread on an existing install.
+			default_sort: "new",
+		});
 	});
 
 	it("resolves a value for every canonical string key", async () => {

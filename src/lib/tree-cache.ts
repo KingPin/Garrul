@@ -17,6 +17,7 @@
  */
 import { cacheKey, dropCache } from "./response-cache";
 import { loadNumbers, type ResolvedNumbers } from "./settings";
+import { COMMENT_SORTS, type CommentSort } from "../db/queries";
 import type { Bindings } from "../index";
 
 // Edge cache max-age for the first page. Shorter than the old 300s KV TTL
@@ -24,7 +25,7 @@ import type { Bindings } from "../index";
 // cross-colo staleness after a mutation.
 export const TREE_CACHE_TTL = 60; // seconds
 
-export type CommentSort = "new" | "top";
+export type { CommentSort };
 
 /**
  * Cache-key Request for one page of a comment tree. `reqUrl` is the handling
@@ -58,7 +59,7 @@ export const treeCacheKey = (
 	});
 
 /**
- * Drop a slug's cached first pages (both sorts, current page size) in the
+ * Drop a slug's cached first pages (every sort, current page size) in the
  * handling colo. Best-effort: never rejects, because every comment mutation
  * awaits it on the user-visible path. Resolving the page size needs a settings
  * read; if that fails we skip the drop and let the TTL expire the entry.
@@ -80,8 +81,16 @@ export const bustTreeCache = async (
 	const numbers = resolved ?? (await loadNumbers(env).catch(() => null));
 	if (!numbers) return;
 	const pageSize = numbers.comments_per_page;
-	await Promise.all([
-		dropCache(treeCacheKey(reqUrl, slug, "new", pageSize)),
-		dropCache(treeCacheKey(reqUrl, slug, "top", pageSize)),
-	]);
+	// Driven off COMMENT_SORTS rather than a hand-written list: a sort added
+	// without a matching drop here would serve a stale first page for a full TTL
+	// after every mutation, which is invisible until someone reports it.
+	//
+	// `old` is dropped for the same reasons the others are even though a *new*
+	// comment lands on its last page, never its first — an edit, delete or
+	// moderation action changes page one in any order.
+	await Promise.all(
+		COMMENT_SORTS.map((sort) =>
+			dropCache(treeCacheKey(reqUrl, slug, sort, pageSize)),
+		),
+	);
 };

@@ -791,6 +791,18 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
 		addedIn: "2.7.0",
 	},
 	{
+		name: "DEFAULT_SORT",
+		kind: "var",
+		required: false,
+		group: "Display & pagination",
+		hint: "order threads are served in when the embed doesn't ask (new/old/top)",
+		description:
+			"Order top-level threads are served in when the embed doesn't request one. `new` (the default) is newest-first, `old` is oldest-first — chronological, the way a blog comment thread usually reads — and `top` ranks by net score. Readers can still switch order in the widget; this only sets where they start. `top` requires voting to be enabled and falls back to `new` without it, so the preference is kept rather than rewritten if voting is turned off and on again. An unknown value falls back to `new`.",
+		example: "new",
+		adminEditable: true,
+		addedIn: "2.16.0",
+	},
+	{
 		name: "AUTO_COLLAPSE_DEPTH",
 		kind: "var",
 		required: false,

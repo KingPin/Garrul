@@ -202,6 +202,13 @@ export type Bindings = {
 	// `<html lang>` select a locale. An explicit `en` means English regardless
 	// of what the page says. Unknown values fall back to `auto`.
 	DEFAULT_LOCALE?: string;
+	// Order a thread is served in when the embed doesn't ask for one:
+	// `new` (default), `old` or `top`. Env-var *default*; a `settings` row
+	// overrides at runtime (see src/lib/settings.ts).
+	//
+	// `top` needs voting enabled to mean anything and is coerced to `new`
+	// without it. Unknown values fall back to `new`.
+	DEFAULT_SORT?: string;
 	// Optional: atomic, cross-colo-accurate rate limiting via a Durable
 	// Object. Unbound (the default) leaves the limiter on the edge Cache API —
 	// see docs/ANTISPAM.md § "Rate-limit accuracy" for what that costs.

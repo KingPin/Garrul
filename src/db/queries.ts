@@ -624,23 +624,45 @@ export const TREE_ROW_LIMIT = 2000;
 export type ThreadRef = { id: string; score: number };
 
 /**
+ * The sort orders a comment tree can be served in.
+ *
+ * Declared here, at the layer that writes the ORDER BY, and imported by
+ * everything downstream (cache key, routes, settings whitelist) rather than
+ * respelled as an inline union at each site — a fourth hand-written copy is a
+ * fourth place to forget when a sort is added.
+ *
+ * The runtime array is the source of truth and the type is derived from it,
+ * because two of the consumers need to *enumerate* the sorts, not just narrow
+ * to one: `bustTreeCache` drops a cached first page per sort, and the
+ * `default_sort` setting whitelists its options. Both would silently go stale
+ * against a type-only union.
+ */
+export const COMMENT_SORTS = ["new", "top", "old"] as const;
+export type CommentSort = (typeof COMMENT_SORTS)[number];
+
+/**
  * One page of top-level thread ids in the requested sort order, plus their net
  * score (the `top` cursor needs it).
  *
  * `limit` should be pageSize + 1: the caller uses the extra row purely to learn
  * whether another page exists, and must not fetch its subtree.
  *
- * Both sorts page on a total order so no thread can be skipped or repeated:
- *   - new: (created_at DESC, id DESC), cursor `id < ?` — ULIDs are
- *     time-prefixed and unique, so id order tracks created_at order and breaks
- *     same-millisecond ties.
+ * Every sort pages on a total order so no thread can be skipped or repeated.
+ * ULIDs are time-prefixed and unique, so id order tracks created_at order and
+ * breaks same-millisecond ties — which is what lets both chronological sorts
+ * page on id alone:
+ *   - new: (created_at DESC, id DESC), cursor `id < ?`.
+ *   - old: (created_at ASC, id ASC), cursor `id > ?` — the same cursor value as
+ *     `new`, read in the opposite direction. Ordering and cursor direction have
+ *     to be flipped together; flipping one alone silently skips or repeats
+ *     threads instead of failing.
  *   - top: (score DESC, id DESC), cursor "ranked strictly after (score, id)".
  */
 export const listThreadRefsForPost = async (
 	db: D1Database,
 	post_slug: string,
 	opts: {
-		sort: "new" | "top";
+		sort: CommentSort;
 		limit: number;
 		cursor?: { score?: number; id: string } | null;
 		viewer_id?: string | null;
@@ -654,13 +676,15 @@ export const listThreadRefsForPost = async (
 		              OR ((score_up - score_down) = ? AND id < ?))`;
 		binds.push(opts.cursor.score, opts.cursor.score, opts.cursor.id);
 	} else if (opts.cursor) {
-		cursorSql = "AND id < ?";
+		cursorSql = opts.sort === "old" ? "AND id > ?" : "AND id < ?";
 		binds.push(opts.cursor.id);
 	}
 	const order =
 		opts.sort === "top"
 			? "(score_up - score_down) DESC, id DESC"
-			: "created_at DESC, id DESC";
+			: opts.sort === "old"
+				? "created_at ASC, id ASC"
+				: "created_at DESC, id DESC";
 	binds.push(opts.limit);
 
 	const result = await db

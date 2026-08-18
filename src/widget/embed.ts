@@ -164,6 +164,13 @@ type ListResponse = {
 	post: unknown;
 	threads: TreeNode[];
 	next_cursor: string | null;
+	// The order this page was actually built in. Optional: a server older than
+	// `default_sort` omits it, and the widget then keeps whatever it asked for —
+	// falling back to `new` when it asked for nothing, which is the mount case:
+	// the reader's preference starts null because choosing the default is the
+	// server's job, and a server too old to send `sort` is also too old to have
+	// applied one.
+	sort?: SortKey;
 	// Per-post thread-lifecycle state (src/lib/thread.ts). The widget shows the
 	// composer only when accepting_comments is true; closed_reason picks the
 	// notice copy. Both optional so an older server (pre-thread-lifecycle) that
@@ -2650,11 +2657,11 @@ const fetchPage = async (
 	apiBase: string,
 	slug: string,
 	cursor: string | null,
-	sort: SortKey = "new",
+	sort: SortKey | null = null,
 ): Promise<ListResponse> => {
 	const qs = new URLSearchParams({ slug });
 	if (cursor) qs.set("before", cursor);
-	if (sort !== "new") qs.set("sort", sort);
+	if (sort) qs.set("sort", sort);
 	const res = await fetch(apiUrl(apiBase, `/api/v1/comments?${qs.toString()}`), {
 		credentials: "include",
 	});
@@ -2689,10 +2696,13 @@ const fetchMe = async (apiBase: string): Promise<Me> => {
 // just flag a follow-up and re-run once after the current one finishes.
 // Prevents two concurrent root.replaceChildren() calls racing each other.
 // `sort` is sticky across reloads on the same mount so an in-flight reload
-// triggered by a reply doesn't drop the user's "Top" selection.
+// triggered by a reply doesn't drop the reader's selection. It starts `null`
+// — "no preference", i.e. whatever the operator's `default_sort` resolves to —
+// and is pinned to the order the first response reports, so a reload can't
+// silently land in a different order than the page the reader is looking at.
 const loadState = new WeakMap<
 	ShadowRoot,
-	{ running: boolean; queued: boolean; sort: SortKey }
+	{ running: boolean; queued: boolean; sort: SortKey | null }
 >();
 
 const load = async (
@@ -2703,7 +2713,7 @@ const load = async (
 ): Promise<void> => {
 	let st = loadState.get(root);
 	if (!st) {
-		st = { running: false, queued: false, sort: "new" };
+		st = { running: false, queued: false, sort: null };
 		loadState.set(root, st);
 	}
 	if (st.running) {
@@ -2749,7 +2759,7 @@ const loadOnce = async (
 	slug: string,
 	apiBase: string,
 	host: HTMLElement,
-	sort: SortKey,
+	sort: SortKey | null,
 ) => {
 	let siteKey: string | null = null;
 	let turnstileAlways = false;
@@ -2875,6 +2885,16 @@ const loadOnce = async (
 		data = dataResult as ListResponse;
 	}
 
+	// The order this page is actually in, which is only the same as `sort` once
+	// the reader has chosen one: until then `sort` is null and the server picked.
+	// Pinned into the mount state so the next reload asks for it explicitly —
+	// otherwise an operator changing `default_sort` mid-session would reorder the
+	// thread under a reader who never touched the control. Load-more reads it for
+	// the same reason, one step sharper: `next_cursor` is a keyset cursor into
+	// *this* order and means something else in any other one.
+	const activeSort: SortKey = data.sort ?? sort ?? "new";
+	setSort(root, activeSort);
+
 	// Per-post acceptance: the server resolves the global flag, per-post close,
 	// and auto-close into one boolean + reason. Fall back to the global flag for
 	// an older server that doesn't send these fields.
@@ -2976,22 +2996,35 @@ const loadOnce = async (
 	// used to exist only to hold the sort selector, hence the generalization
 	// rather than a second row — the bell wants exactly this slot, immediately
 	// above the list.
-	if (votingEnabled || subscriptionsEnabled) {
+	// Chronological order needs no scores, so the selector is no longer gated on
+	// voting — only on there being something to sort. A post with no comments
+	// used to render "Sort by" over "No comments yet" wherever voting was on;
+	// ungating without this check would have spread that to every install.
+	const showSort = data.threads.length > 0;
+	if (showSort || subscriptionsEnabled) {
 		const bar = el("div", "gr-threadbar");
-		// Sort selector still only when voting is on: there are no scores to rank
-		// by without it.
-		if (votingEnabled) {
+		if (showSort) {
 			const sortWrap = el("div", "gr-sort");
 			const label = el("label");
 			const sel = el("select") as HTMLSelectElement;
-			const newOpt = el("option") as HTMLOptionElement;
-			newOpt.value = "new";
-			newOpt.textContent = s("w.sort.new");
-			const topOpt = el("option") as HTMLOptionElement;
-			topOpt.value = "top";
-			topOpt.textContent = s("w.sort.top");
-			sel.append(newOpt, topOpt);
-			sel.value = sort;
+			const opts: ReadonlyArray<readonly [SortKey, string]> = [
+				["new", s("w.sort.new")],
+				["old", s("w.sort.old")],
+				// Ranking needs scores. Kept when it is the order on screen even so:
+				// voting can be switched off while a reader is sorted by it, and an
+				// option that vanishes under the value it holds leaves the control
+				// naming an order other than the one being displayed.
+				...(votingEnabled || activeSort === "top"
+					? ([["top", s("w.sort.top")]] as const)
+					: []),
+			];
+			for (const [value, text] of opts) {
+				const opt = el("option") as HTMLOptionElement;
+				opt.value = value;
+				opt.textContent = text;
+				sel.appendChild(opt);
+			}
+			sel.value = activeSort;
 			// The control sits inside the label, so the label text is split around it
 			// rather than hard-coded as a "Sort by " prefix — languages that put the
 			// control first (or wrap it) can say so in the string.
@@ -2999,8 +3032,9 @@ const loadOnce = async (
 			label.append(beforeSel, sel, afterSel);
 			sortWrap.appendChild(label);
 			sel.addEventListener("change", () => {
-				const v = sel.value === "top" ? "top" : "new";
-				setSort(root, v);
+				const picked = opts.find(([value]) => value === sel.value);
+				if (!picked) return;
+				setSort(root, picked[0]);
 				reload();
 			});
 			bar.appendChild(sortWrap);
@@ -3026,7 +3060,7 @@ const loadOnce = async (
 			if (!cursor) return;
 			more.disabled = true;
 			try {
-				const page = await fetchPage(apiBase, slug, cursor, sort);
+				const page = await fetchPage(apiBase, slug, cursor, activeSort);
 				appendThreads(list, page.threads, ctx);
 				cursor = page.next_cursor;
 				if (cursor) {

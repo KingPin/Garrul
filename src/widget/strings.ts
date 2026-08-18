@@ -135,6 +135,7 @@ export const EN = {
 	"w.closed.other": "Comments are closed.",
 	"w.sort_by": "Sort by {control}",
 	"w.sort.new": "Newest",
+	"w.sort.old": "Oldest",
 	"w.sort.top": "Top",
 	// Subscribing without commenting. `w.subscribe` is the bell's accessible name
 	// and tooltip; the visible glyph is 🔔.

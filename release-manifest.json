@@ -1,5 +1,5 @@
 {
-  "version": "2.15.0",
+  "version": "2.16.0",
   "minPreviousVersion": "1.0.0",
   "renderer": {
     "version": 2,
@@ -286,6 +286,11 @@
       "name": "DEFAULT_LOCALE",
       "required": false,
       "addedIn": "2.7.0"
+    },
+    {
+      "name": "DEFAULT_SORT",
+      "required": false,
+      "addedIn": "2.16.0"
     },
     {
       "name": "AUTO_COLLAPSE_DEPTH",

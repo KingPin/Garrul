@@ -20,8 +20,17 @@
  * does not throw — it renders an empty comment list on a post that has comments.
  */
 
-/** Newest-first or by rank. Matches `?sort=` on both mount calls. */
-export type SortKey = "new" | "top";
+/**
+ * Chronological either way, or by rank. Matches `?sort=` on both mount calls,
+ * and mirrors `COMMENT_SORTS` in src/db/queries.ts.
+ *
+ * A `SortKey | null` elsewhere in the widget means "no preference": the
+ * parameter is omitted and the server applies the operator's `default_sort`,
+ * which the response then echoes back. The widget cannot pick that default
+ * itself — on the bootstrap path the setting arrives in the *same* response as
+ * the comments it would have to order.
+ */
+export type SortKey = "new" | "old" | "top";
 
 export type PageVoteState = {
 	score_up: number;
@@ -217,14 +226,14 @@ const noBootstrap = new Set<string>();
 export const fetchBootstrap = async (
 	apiBase: string,
 	slug: string,
-	sort: SortKey,
+	sort: SortKey | null,
 	langExplicit: string,
 	langHint: string,
 ): Promise<BootstrapResponse | null> => {
 	if (noBootstrap.has(apiBase)) return null;
 
 	const qs = new URLSearchParams({ slug });
-	if (sort !== "new") qs.set("sort", sort);
+	if (sort) qs.set("sort", sort);
 	localeParams(qs, langExplicit, langHint);
 
 	// Only the request is guarded here. Widening this to cover the status check
