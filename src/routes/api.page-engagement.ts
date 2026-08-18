@@ -60,7 +60,8 @@ const validateSlug = (raw: string): string | null => {
 	return slug;
 };
 
-const reactionTotals = (
+/** Exported for `GET /api/v1/bootstrap`, which folds in this route's GET body. */
+export const reactionTotals = (
 	rows: { kind: string; count: number }[],
 ): Record<string, number> => {
 	const out: Record<string, number> = {};

@@ -123,13 +123,90 @@ varies. One-line summary of where to put it and how to fill `data-slug`
 Full runnable starters for each framework live in `examples/` (one
 directory per stack).
 
+### The mount request (since v2.15.0)
+
+The widget opens with a single call for everything it needs to render:
+
+```
+GET /api/v1/bootstrap?slug=<slug>&sort=new|top&lang=<x>&hl=<y>
+```
+
+It answers, in a single invocation, everything the mount used to ask
+for separately:
+
+```jsonc
+{
+  "config":       { /* identical to GET /api/v1/config */ },
+  "user":         { /* identical to GET /api/v1/auth/me's user */ } | null,
+  "comments":     { /* identical to GET /api/v1/comments */ },
+  "engagement":   { "reactions": …, "my_reactions": …, "votes": … },
+  "subscription": { "subscribed": …, "pending": …, "id": … }
+}
+```
+
+Every section is byte-identical to what its standalone endpoint
+returns for the same inputs. The last two are **omitted entirely**
+rather than nulled — `engagement` unless a page-level reaction or vote
+surface is on, `subscription` unless the reader is signed in on an
+install configured to send mail.
+
+Before v2.15.0 the mount cost up to five requests, in two serial
+waves: `/api/v1/config` had to be fully awaited (the tree request
+needs the resolved locale) before `/api/v1/auth/me` and
+`/api/v1/comments?slug=…` could go out in parallel, plus
+`/api/v1/page-engagement` and `/api/v1/subscribe/mine` from their own
+surfaces.
+
+**Count the whole mount, not just this endpoint.** A post with the
+comment box rendered costs **two** Worker requests: `/api/v1/bootstrap`
+and `/api/v1/comments/form-token`, which the widget prefetches when the
+composer renders. The Workers free tier allows 100,000 requests/day, so
+that is roughly a **50k pageview/day** ceiling — up from ~25k at the
+four requests a default install used to make, and ~16k with page
+reactions/votes and subscriptions on.
+
+`/embed.js` is not in that count. It ships
+`Cache-Control: public, max-age=3600, s-maxage=86400`, so the
+Cloudflare edge serves it and the Worker sees it about once per colo per
+day rather than once per pageview.
+
+**Nothing was removed.** `/api/v1/config`, `/api/v1/auth/me`,
+`/api/v1/comments`, `/api/v1/page-engagement` and
+`/api/v1/subscribe/mine` all still exist and still behave identically
+— they are public API, `/api/v1/comments` is still how the widget
+pages load-more, and a widget served from this repo has to keep
+working against an older self-hosted Worker that has no `/bootstrap`.
+When the endpoint answers a 404 — what a Worker without the route
+returns — the widget silently falls back to exactly the pre-v2.15.0
+call sequence. So does a 200 whose body carries no comment tree, and a
+request that never lands. The 404 is remembered per API base, so a
+reader on such a Worker probes once and every later reload — posting,
+editing, deleting, changing sort — goes straight to the legacy calls.
+
+Any **other** non-2xx does not fall back: it surfaces as an error, the
+same one a failed `/api/v1/comments` would render. The fallback is only
+worth running when it will succeed. An over-quota 429, a 5xx or a WAF
+403 refuses the five replacement calls exactly as it refused this one,
+so falling back would turn one rejected request into six on an install
+that has already hit its cap — driving usage up, and recovery down,
+precisely when neither can afford it.
+
+`/api/v1/comments/form-token` is deliberately **not** folded in, which
+is why the mount is two requests and not one. Its signed timestamp
+feeds the anti-spam minimum-elapsed-time heuristic, and baking one into
+a shared payload would hand every reader the same start time. It is
+also an invocation even when that heuristic is off — the route 404s and
+the widget treats the absence as "no timing check", but a 404 still
+costs a request.
+
 ### Lazy-loading (recommended for read-heavy hosts)
 
-The eager `<script defer>` snippet above triggers three Worker
-requests per pageview on mount (`/api/v1/config`, `/api/v1/auth/me`,
-`/api/v1/comments?slug=…`) before the reader has scrolled. On a blog
-or docs site where most visitors bounce above the comments section,
-that is the bulk of Cloudflare Worker usage.
+The eager `<script defer>` snippet above triggers two Worker requests
+per pageview on mount (`/api/v1/bootstrap?slug=…` and
+`/api/v1/comments/form-token`) before the reader has scrolled. On a blog
+or docs site where most visitors bounce above the comments section, that
+is the bulk of Cloudflare Worker usage — two requests instead of the
+pre-v2.15.0 four to six, but still two per bouncer.
 
 Turnstile is **not** in that list. The anti-spam iframe
 (`/embed/turnstile-frame`, which in turn pulls Cloudflare's `api.js` and
@@ -747,9 +824,20 @@ that set it, so a sibling subdomain can't plant a session id; it needs
 HTTP uses the unprefixed `garrul_sess` instead.
 
 **Endpoints integrators may call client-side**: `GET /api/v1/auth/me`
-returns the current session user (or `{user:null}`); `POST
-/api/v1/auth/signout` revokes the KV session and clears the cookie. Both
-go through the same session middleware as the comment routes.
+returns the current session user (or `{user:null}`); `GET
+/api/v1/bootstrap?slug=…` returns the same user under a `user` key
+alongside the rest of the mount payload (see "The mount request" in
+section 3); `POST /api/v1/auth/signout` revokes the KV session and
+clears the cookie. All three go through the same session middleware as
+the comment routes.
+
+A banned or erased identity still gets a `user` from both read
+endpoints — that field is identity, not authorization. What a banned
+reader cannot do is write; the POST paths enforce that. The one
+difference is `bootstrap`'s `subscription` section, which is omitted
+for an identity that may not act, because `/api/v1/subscribe/mine`
+answers those callers a 403 and there is no 403 to return inside a 200
+envelope.
 
 ## 8. Anonymous comments
 

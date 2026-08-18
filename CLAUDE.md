@@ -21,12 +21,15 @@ Self-hosted comment system on Cloudflare Workers + D1 + KV + Turnstile. This fil
 ```
 src/
   index.ts              # Hono app entry, route mounting
-  routes/               # one file per logical surface (api.comments, auth, admin, embed, rss, health)
+  routes/               # one file per logical surface (api.comments, api.bootstrap, auth, admin,
+                        #   embed, rss, health)
   db/                   # migrations + typed query wrappers
   lib/                  # session, markdown, turnstile, ratelimit, oauth, ulid, identicon, ip-hash,
                         #   webhook, webhook-sig, cors, log, settings, thread, email (Resend), disqus-import
   i18n/                 # en.ts string table; t(key) shim
   widget/               # embed.ts (source), embed.bundled.ts (generated), load-error.ts
+                        #   boot.ts — the mount fetches + fallback rule; DOM-free so it is the one
+                        #   part of the boot path testable without a browser
                         #   the iframe variant is a route, not a widget file: routes/embed-iframe.ts
   admin-ui/             # layout + per-page renderers (server-rendered HTML + Alpine attrs)
                         #   layout.ts, styles.ts, escape.ts
@@ -51,6 +54,16 @@ docs/                   # THEMING.md, ANTISPAM.md, troubleshooting.md, webhooks.
 
 ### API versioning
 All HTTP API routes live under `/api/v1/...`. Future breaking changes ship as `/api/v2`. Health is `/api/v1/health`.
+
+### The mount payload
+`GET /api/v1/bootstrap?slug=…` carries all of the widget's mount-time state in one call: config, session user, first page of comments, plus page-engagement and subscription state when those apply. Measured against a real browser mount, a post with the composer rendered costs **two** Worker requests — this one and `/comments/form-token` — so ~50k pageviews/day against the 100,000 requests/day free tier. Mount cost is what sets that ceiling, so **new mount-time state belongs in this payload, not in a sixth endpoint.**
+
+Two rules keep it safe, and both are load-bearing:
+
+- **Compose, never cache the envelope.** The response varies by session *and* by locale, so it carries no `Cache-Control`. The comments section is edge-cached by reusing `/api/v1/comments`' own `treeCacheKey` entry — same key, same TTL, same bytes — so bootstrap adds no second cache key and `bustTreeCache` keeps covering both paths without knowing bootstrap exists. Caching the whole envelope would need locale *and* session in the key; don't.
+- **Every section stays byte-identical to its standalone endpoint.** That is what lets the widget parse both boot paths with one set of code, and it is what makes the legacy fallback equivalent rather than merely similar. `tests/bootstrap.test.ts` pins it by diffing against the real endpoints rather than against literals, so it cannot drift silently.
+
+The endpoints it composes all remain — public API, `/comments` still serves load-more, and a widget bundle can outlive the Worker it talks to. `src/widget/boot.ts` falls back — one `null`, then the old five-call sequence — on a 404, a body with no thread array, or a request that never landed. It does **not** fall back on any other non-2xx; those throw and render an error. The distinction is cost, not behavior: the fallback is only worth running when it will succeed, and an edge that answered 429 or 5xx will refuse the five replacement calls too, turning one rejected request into six on an install already over its cap. Do not fold in `/comments/form-token` — its signed timestamp is the anti-spam minimum-elapsed-time heuristic, and a shared one hands every reader the same start time.
 
 ### Cookies
 Session cookies are `SameSite=None; Secure; HttpOnly; Partitioned`. Cross-site embed depends on this; do not change without understanding Safari ITP and Chrome 3PC behavior. Dev fallback: `SameSite=Lax` only when `ENV=dev`.

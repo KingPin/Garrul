@@ -186,16 +186,23 @@ translated, and how timestamps render:
 
 ### Lazy-loading (saving Worker invocations)
 
-By default the widget fires three Worker requests on page load
-(`/api/v1/config`, `/api/v1/auth/me`, `/api/v1/comments?slug=…`),
-before the reader has scrolled. On read-heavy blogs that's most of
-your Cloudflare usage spent on bouncers.
+By default the widget fires **two** Worker requests on page load
+(`/api/v1/bootstrap?slug=…`, which returns the config, the session user
+and the first page of comments together, plus a signed form token for
+the anti-spam timing check), before the reader has scrolled. On
+read-heavy blogs that's still most of your Cloudflare usage, spent on
+bouncers.
 
 See [`examples/lazy-load`](examples/lazy-load/README.md) for two
 deferred-loading patterns: a scroll-into-view loader (recommended —
 zero cost for bouncers, seamless for engaged readers) and a
 click-to-load button (more savings, but documented caveats around
 discussion visibility and engagement).
+
+> Before v2.15.0 the mount cost four requests, or six with page
+> reactions/votes and subscriptions enabled. Deferring the script is
+> still worth it on a high-traffic blog, but it now saves two requests
+> per bounce rather than four to six.
 
 ### Using an AI assistant?
 

@@ -25,7 +25,7 @@ import {
 	issueState,
 	verifyState,
 } from "../lib/oauth";
-import { upsertOauthUser } from "../db/queries";
+import { getUser, upsertOauthUser, type User } from "../db/queries";
 import {
 	buildShortCookie,
 	clearShortCookie,
@@ -348,38 +348,39 @@ auth.post("/session/exchange", async (c) => {
 	return c.json({ ok: true });
 });
 
+/**
+ * The `user` object `GET /api/v1/auth/me` answers with — the subset of the row
+ * the widget is allowed to see.
+ *
+ * Everything omitted is omitted on purpose: `provider_id` is the provider's
+ * opaque account identifier, and `is_banned` / `erased_at` are moderation state
+ * the widget has no rendering for and no business holding. Note a banned or
+ * erased identity still gets a `user` here — this answers "who is this cookie",
+ * not "may they act"; every write path runs the separate `requireActiveUser`
+ * gate.
+ *
+ * Shared with `GET /api/v1/bootstrap`, which embeds the same object under `user`
+ * so the widget's sign-in handling is identical on both boot paths. A second
+ * spelling of this projection is how a field would silently start leaking on one
+ * route and not the other.
+ */
+export const publicUser = (u: User): Record<string, unknown> => ({
+	id: u.id,
+	provider: u.provider,
+	name: u.name,
+	email: u.email,
+	avatar_url: u.avatar_url,
+	is_admin: u.is_admin,
+	role: u.role,
+});
+
 auth.get("/me", async (c) => {
 	const session = await readSession(c);
 	if (!session) return c.json({ user: null });
-	const u = await c.env.DB
-		.prepare(
-			`SELECT id, provider, name, email, avatar_url, is_admin, role
-			 FROM users WHERE id = ?`,
-		)
-		.bind(session.user_id)
-		.first<{
-			id: string;
-			provider: string;
-			name: string;
-			email: string | null;
-			avatar_url: string | null;
-			is_admin: number;
-			role: string | null;
-		}>();
+	const u = await getUser(c.env.DB, session.user_id);
+	// A session outliving its row: report anonymous rather than 500.
 	if (!u) return c.json({ user: null });
-	const role: "user" | "mod" | "admin" =
-		u.role === "mod" || u.role === "admin" ? u.role : "user";
-	return c.json({
-		user: {
-			id: u.id,
-			provider: u.provider,
-			name: u.name,
-			email: u.email,
-			avatar_url: u.avatar_url,
-			is_admin: u.is_admin === 1,
-			role,
-		},
-	});
+	return c.json({ user: publicUser(u) });
 });
 
 export { auth };

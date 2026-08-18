@@ -51,7 +51,7 @@ import { Hono } from "hono";
 import type { Bindings } from "../index";
 import { PROVIDERS, type ProviderId } from "../lib/oauth";
 import { MAX_BODY_CHARS } from "../lib/markdown";
-import { loadSettings } from "../lib/settings";
+import { loadSettings, type ResolvedSettings } from "../lib/settings";
 import { turnstileAlwaysOn } from "../lib/turnstile";
 import { FALLBACK_LOCALE, LOCALES } from "../i18n";
 import { resolveLocale } from "../i18n/negotiate";
@@ -62,29 +62,53 @@ const config = new Hono<{ Bindings: Bindings }>();
 const isTruthy = (v: string | undefined): boolean =>
 	v === "1" || v?.toLowerCase() === "true";
 
-config.get("/", async (c) => {
+/**
+ * Resolve the widget's locale from the request's negotiation inputs.
+ *
+ * Full negotiation, including the operator's `default_locale` — which the
+ * `/api/*` locale middleware deliberately skips, since it would put a settings
+ * read on every API request to answer a question only the widget's boot call
+ * asks. The widget takes the answer from here and echoes it as `?lang=`
+ * afterwards, so the middleware still sees the resolved locale on every later
+ * call.
+ *
+ * Shared with `GET /api/v1/bootstrap`, which serves the same config section and
+ * must resolve the locale identically — a second spelling of this would be a
+ * silent way for the two boot paths to disagree about language.
+ */
+export const resolveConfigLocale = (
+	requested: string | undefined,
+	hostPage: string | undefined,
+	operatorDefault: string,
+): string =>
+	resolveLocale({ requested, operatorDefault, hostPage });
+
+/**
+ * Build the public widget config body.
+ *
+ * Pure: every input is passed in, so the caller decides how settings and the
+ * locale were obtained. `GET /api/v1/config` loads its own settings;
+ * `GET /api/v1/bootstrap` already holds them (it needs the same object for the
+ * comment tree) and hands them over rather than paying a second read.
+ *
+ * The shape returned here is the *whole* contract for both callers — the
+ * bootstrap route embeds it verbatim under a `config` key, and
+ * `tests/bootstrap.test.ts` pins that the two stay byte-identical.
+ */
+export const buildConfigPayload = (
+	env: Bindings,
+	resolved: ResolvedSettings,
+	locale: string,
+): Record<string, unknown> => {
+	const { flags, numbers } = resolved;
 	// Provider client-id/secret env-var names are typed as plain strings on
 	// ProviderConfig, so index the bindings through a string-keyed view.
-	const env = c.env as unknown as Record<string, string | undefined>;
+	const envRecord = env as unknown as Record<string, string | undefined>;
 	const providers = (Object.keys(PROVIDERS) as ProviderId[]).filter((p) => {
 		const cfg = PROVIDERS[p];
-		return !!env[cfg.client_id_env] && !!env[cfg.client_secret_env];
-	});
-	// Flags, numeric display settings and string settings, all resolved with
-	// DB-override > env > default precedence. One call rather than three
-	// per-group ones: this route needs every group, and they share a cache entry
-	// and a single D1 read — asking for them separately would just be three
-	// concurrent misses racing to derive the same object.
-	const { flags, numbers, strings } = await loadSettings(c.env);
-	// Full negotiation, including the operator's default_locale — which the
-	// /api/* locale middleware deliberately skips, since it would put a settings
-	// read on every API request to answer a question only this route asks. The
-	// widget takes the answer from here and echoes it as ?lang= afterwards, so
-	// the middleware still sees the resolved locale on every later call.
-	const locale = resolveLocale({
-		requested: c.req.query("lang"),
-		operatorDefault: strings.default_locale,
-		hostPage: c.req.query("hl"),
+		return (
+			!!envRecord[cfg.client_id_env] && !!envRecord[cfg.client_secret_env]
+		);
 	});
 	// English costs zero bytes: EN is compiled into the widget bundle. Other
 	// locales get their own table only — missing keys fall back to English per
@@ -96,10 +120,10 @@ config.get("/", async (c) => {
 					strings: WIDGET_TABLES[locale] ?? {},
 					rtl: LOCALES[locale]?.rtl === true,
 				};
-	return c.json({
+	return {
 		locale,
 		...localized,
-		turnstile_site_key: c.env.TURNSTILE_SITE_KEY || null,
+		turnstile_site_key: env.TURNSTILE_SITE_KEY || null,
 		// Already folded together with both Turnstile credentials
 		// (turnstileAlwaysOn), so the widget never has to re-derive "is a
 		// challenge possible here" — an install with the flag on but no key or
@@ -107,12 +131,12 @@ config.get("/", async (c) => {
 		// enforce.
 		turnstile_always: turnstileAlwaysOn(
 			flags.turnstile_always,
-			c.env.TURNSTILE_SITE_KEY,
-			c.env.TURNSTILE_SECRET,
+			env.TURNSTILE_SITE_KEY,
+			env.TURNSTILE_SECRET,
 		),
 		edit_window_minutes: numbers.edit_window_minutes,
 		providers,
-		branding_hidden: isTruthy(c.env.BRANDING_HIDDEN),
+		branding_hidden: isTruthy(env.BRANDING_HIDDEN),
 		comments_enabled: flags.comments_enabled,
 		reactions_enabled: flags.reactions_enabled,
 		voting_enabled: flags.votes_enabled,
@@ -133,7 +157,7 @@ config.get("/", async (c) => {
 		// deliberately not part of the test — it is a secret, and a widget that
 		// went dark when the key alone was missing would hide the misconfiguration
 		// rather than surface it (the route logs and refunds send budget instead).
-		subscriptions_enabled: !!(c.env.EMAIL_FROM && c.env.PUBLIC_BASE_URL),
+		subscriptions_enabled: !!(env.EMAIL_FROM && env.PUBLIC_BASE_URL),
 		// Display/pagination. comments_per_page drives the server-side page
 		// slice (included here for parity/debuggability); the widget consumes
 		// replies_per_thread and auto_collapse_depth for client-side reply
@@ -152,7 +176,22 @@ config.get("/", async (c) => {
 		// stale against the cached score the widget already shows. 0 ratio = off.
 		community_min_votes: numbers.community_min_votes,
 		community_collapse_ratio: numbers.community_collapse_ratio,
-	});
+	};
+};
+
+config.get("/", async (c) => {
+	// Flags, numeric display settings and string settings, all resolved with
+	// DB-override > env > default precedence. One call rather than three
+	// per-group ones: this route needs every group, and they share a cache entry
+	// and a single D1 read — asking for them separately would just be three
+	// concurrent misses racing to derive the same object.
+	const resolved = await loadSettings(c.env);
+	const locale = resolveConfigLocale(
+		c.req.query("lang"),
+		c.req.query("hl"),
+		resolved.strings.default_locale,
+	);
+	return c.json(buildConfigPayload(c.env, resolved, locale));
 });
 
 export { config };
