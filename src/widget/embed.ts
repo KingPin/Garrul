@@ -165,7 +165,11 @@ type ListResponse = {
 	threads: TreeNode[];
 	next_cursor: string | null;
 	// The order this page was actually built in. Optional: a server older than
-	// `default_sort` omits it, and the widget then keeps whatever it asked for.
+	// `default_sort` omits it, and the widget then keeps whatever it asked for —
+	// falling back to `new` when it asked for nothing, which is the mount case:
+	// the reader's preference starts null because choosing the default is the
+	// server's job, and a server too old to send `sort` is also too old to have
+	// applied one.
 	sort?: SortKey;
 	// Per-post thread-lifecycle state (src/lib/thread.ts). The widget shows the
 	// composer only when accepting_comments is true; closed_reason picks the

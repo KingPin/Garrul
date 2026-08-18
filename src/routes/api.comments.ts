@@ -898,6 +898,17 @@ const decodeTopCursor = (raw: string | null): TopCursor | null => {
  * setting. Shared by `/comments` and `/bootstrap` so the two cannot drift: they
  * must resolve the same request to the same sort, or bootstrap's tree stops
  * being byte-identical to the endpoint it composes.
+ *
+ * An *unknown* value collapses into the same null as an absent one, so a typo'd
+ * `?sort=oldd` serves the operator's default rather than `new`. That is the
+ * intent, not an oversight: the alternative renders the thread in an order the
+ * operator explicitly didn't choose, which is exactly the hardcoded default
+ * `default_sort` exists to remove. Nothing about it is hidden — the resolved
+ * sort is echoed in the response and is what keys the cache entry, so a caller
+ * can always see which order it actually got. Rejecting with a 400 would be the
+ * other defensible answer; it is not taken because every other query parameter
+ * on this route parses leniently, and a reader following a mangled link should
+ * still see the thread.
  */
 export const parseSortParam = (
 	raw: string | null | undefined,

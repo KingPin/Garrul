@@ -386,10 +386,17 @@ describe("GET /comments — sort=old cursor walks pages", () => {
 		expect(oldest.threads[0]!.id).toBe(mkUlid(1));
 	});
 
-	it("falls back to sort=new when the sort is unknown", async () => {
+	// An unknown sort resolves the same way an absent one does — to the
+	// operator's default, not to a hardcoded `new`. `default_sort` is set to
+	// `old` here on purpose: without it this test passes under either rule,
+	// which is how it went on asserting a `new` fallback the route had stopped
+	// making.
+	it("treats an unknown sort as unspecified, so the operator's default wins", async () => {
 		seedThreads(5);
+		setSetting("default_sort", "old");
 		const page = await get(mkEnv(), `slug=${SLUG}&sort=sideways`);
-		expect(page.threads[0]!.id).toBe(mkUlid(5));
+		expect(page.threads[0]!.id).toBe(mkUlid(1));
+		expect(page.sort).toBe("old");
 	});
 });
 
