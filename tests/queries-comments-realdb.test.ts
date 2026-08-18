@@ -18,6 +18,7 @@ import { DatabaseSync } from "node:sqlite";
 import {
 	insertComment,
 	getComment,
+	listThreadRefsForPost,
 	softDeleteComment,
 	updateCommentStatus,
 } from "../src/db/queries";
@@ -144,6 +145,104 @@ describe("comment write paths (real SQLite)", () => {
 		expect(row!.status).toBe("approved");
 		expect(row!.deleted_by).toBeNull();
 		expect(row!.deleted_at).toBeNull();
+	});
+});
+
+/**
+ * Thread paging runs on a keyset cursor, and each sort keys on a different
+ * column in a different direction. The substring-matching D1 stubs never
+ * execute an ORDER BY or a cursor predicate, so a sort whose ordering and
+ * whose cursor direction disagree would pass every stub test while skipping or
+ * repeating threads in production — the one failure mode that matters here.
+ * Real SQLite is the only place that can be proven.
+ */
+describe("listThreadRefsForPost paging (real SQLite)", () => {
+	let db: any;
+	let sqlite: DatabaseSync;
+
+	// ULIDs are time-prefixed, so id order tracks created_at order — the
+	// invariant every cursor here leans on. Seeded ids agree with their
+	// timestamps for exactly that reason; a test that let them disagree would
+	// be testing a row shape the writer cannot produce.
+	const threadId = (i: number) => `01J${String(i).padStart(23, "0")}`;
+
+	beforeEach(() => {
+		sqlite = new DatabaseSync(":memory:");
+		applyMigrations(sqlite, migrationFiles());
+		db = makeD1(sqlite);
+		sqlite.exec(
+			"INSERT INTO posts (slug, title, url, created_at) VALUES ('hello', 'Hello', NULL, 1700000000000)",
+		);
+		sqlite.exec(
+			"INSERT INTO users (id, provider, provider_id, name, created_at) VALUES ('u1', 'anon', NULL, 'u1', 1700000000000)",
+		);
+	});
+
+	const seedThread = (
+		i: number,
+		opts: { status?: string; score?: number; parent_id?: string | null } = {},
+	) => {
+		sqlite
+			.prepare(
+				`INSERT INTO comments
+				   (id, post_slug, parent_id, user_id, body_md, body_html, status,
+				    score_up, score_down, depth, created_at)
+				 VALUES (?, 'hello', ?, 'u1', 'x', '<p>x</p>', ?, ?, 0, ?, ?)`,
+			)
+			.run(
+				threadId(i),
+				opts.parent_id ?? null,
+				opts.status ?? "approved",
+				opts.score ?? 0,
+				opts.parent_id ? 2 : 1,
+				1_700_000_000_000 + i,
+			);
+	};
+
+	/**
+	 * Walk every page the way the route does: fetch pageSize + 1, keep pageSize,
+	 * and cursor from the last row actually kept.
+	 */
+	const walk = async (sort: "new" | "top" | "old", pageSize: number) => {
+		const seen: string[] = [];
+		let cursor: { score?: number; id: string } | null = null;
+		for (let guard = 0; guard < 20; guard++) {
+			const refs = await listThreadRefsForPost(db, "hello", {
+				sort,
+				limit: pageSize + 1,
+				cursor,
+			});
+			const page = refs.slice(0, pageSize);
+			seen.push(...page.map((r) => r.id));
+			const last = page[page.length - 1];
+			if (refs.length <= pageSize || !last) break;
+			cursor = sort === "top" ? { score: last.score, id: last.id } : { id: last.id };
+		}
+		return seen;
+	};
+
+	it("pages 'old' oldest-first without skipping or repeating a thread", async () => {
+		for (let i = 1; i <= 7; i++) seedThread(i);
+		const seen = await walk("old", 3);
+		expect(seen).toEqual([1, 2, 3, 4, 5, 6, 7].map(threadId));
+		expect(new Set(seen).size).toBe(7);
+	});
+
+	it("pages 'new' newest-first without skipping or repeating a thread", async () => {
+		for (let i = 1; i <= 7; i++) seedThread(i);
+		const seen = await walk("new", 3);
+		expect(seen).toEqual([7, 6, 5, 4, 3, 2, 1].map(threadId));
+		expect(new Set(seen).size).toBe(7);
+	});
+
+	it("'old' excludes replies, spam and pending just as 'new' does", async () => {
+		seedThread(1);
+		seedThread(2, { status: "spam" });
+		seedThread(3, { status: "pending" });
+		seedThread(4);
+		seedThread(5, { parent_id: threadId(1) });
+		const seen = await walk("old", 10);
+		expect(seen).toEqual([threadId(1), threadId(4)]);
 	});
 });
 
