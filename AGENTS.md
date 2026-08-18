@@ -128,7 +128,7 @@ directory per stack).
 The widget opens with a single call for everything it needs to render:
 
 ```
-GET /api/v1/bootstrap?slug=<slug>&sort=new|top&lang=<x>&hl=<y>
+GET /api/v1/bootstrap?slug=<slug>&sort=new|old|top&lang=<x>&hl=<y>
 ```
 
 It answers, in a single invocation, everything the mount used to ask
@@ -367,8 +367,23 @@ Notes for integrators:
 ### Voting and sorting
 
 Since v1.8.0 the widget renders up/down vote buttons on each comment
-and a sort selector (`new` / `top`) above the list. Neither needs any
-host-page wiring:
+and a sort selector above the list. Neither needs any host-page wiring:
+
+- **The sort selector offers `new` / `old` / `top`,** and appears
+  whenever the post has comments. `top` is listed only when voting is
+  on — there are no scores to rank by otherwise — but `new` and `old`
+  need nothing, so since v2.16.0 the control is no longer gated on
+  voting the way it was when `top` was its only alternative.
+- **The order a thread opens in is the operator's**, set with
+  `DEFAULT_SORT` (default `new`) or at runtime from Settings → Display &
+  pagination. The widget omits `?sort=` on the mount request to mean "no
+  preference"; the server resolves the default and **echoes the sort it
+  used** back on the comments payload, which is what the control
+  displays and what `next_cursor` is a cursor into. It cannot be derived
+  client-side: on the bootstrap path the setting arrives in the same
+  response as the comments it orders. A stored `top` with voting off
+  resolves to `new` rather than being rewritten, so re-enabling voting
+  restores the operator's choice.
 
 - **Voting is instance-wide and server-controlled.** The widget reads
   `voting_enabled` / `downvotes_enabled` from `/api/v1/config` at boot;
@@ -575,7 +590,7 @@ see AGENTS-OPERATE.md §5) control the volume:
 
 - **Top-level paging.** The list loads `COMMENTS_PER_PAGE` threads (default
   **25**) with a **"Load older comments"** button that appends the next batch.
-  Paging is server-side and cursor-based; both `new` and `top` sorts paginate,
+  Paging is server-side and cursor-based; every sort paginates,
   so a small page size never hides high-scoring threads. **Behavior change:**
   pre-v1.11.0 installs rendered up to ~100 at once — set `COMMENTS_PER_PAGE=100`
   to restore that.

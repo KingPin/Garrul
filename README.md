@@ -17,7 +17,9 @@ Worker, and keeping it current is a single dry-runnable command per
 release. Two credentials to get started (a Turnstile key pair, from one
 dashboard page); every other integration is optional.
 
-- **Threaded comments** with markdown, reactions, edit/delete window
+- **Threaded comments** with markdown, reactions, edit/delete window,
+  and a newest/oldest/top sort readers can switch — you pick which one a
+  page opens in
 - **OAuth sign-in** (GitHub, Google, Facebook, X, Discord) + anonymous
   posting with rate limiting and Turnstile
 - **Embeddable widget**, CI-capped at 30 KB gzipped, with Shadow-DOM
