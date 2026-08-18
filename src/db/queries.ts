@@ -627,11 +627,18 @@ export type ThreadRef = { id: string; score: number };
  * The sort orders a comment tree can be served in.
  *
  * Declared here, at the layer that writes the ORDER BY, and imported by
- * everything downstream (cache key, routes, widget contract) rather than
+ * everything downstream (cache key, routes, settings whitelist) rather than
  * respelled as an inline union at each site — a fourth hand-written copy is a
  * fourth place to forget when a sort is added.
+ *
+ * The runtime array is the source of truth and the type is derived from it,
+ * because two of the consumers need to *enumerate* the sorts, not just narrow
+ * to one: `bustTreeCache` drops a cached first page per sort, and the
+ * `default_sort` setting whitelists its options. Both would silently go stale
+ * against a type-only union.
  */
-export type CommentSort = "new" | "top" | "old";
+export const COMMENT_SORTS = ["new", "top", "old"] as const;
+export type CommentSort = (typeof COMMENT_SORTS)[number];
 
 /**
  * One page of top-level thread ids in the requested sort order, plus their net

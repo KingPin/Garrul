@@ -6,7 +6,9 @@
  *   1. `comments_per_page` (DB > env > default 25) drives the top-level slice —
  *      the default, an env override, a DB-row override, and the hostile-value
  *      clamp.
- *   2. `sort=new` walks pages via the ULID `before` cursor (id < cursor).
+ *   2. `sort=new` walks pages via the ULID `before` cursor (id < cursor), and
+ *      `sort=old` walks the same cursor the other way (id > cursor) — the pair
+ *      has to flip order and cursor direction together or it skips threads.
  *   3. `sort=top` paginates too (composite score:id cursor), so a small page
  *      size can't hide top-voted threads past the first page.
  *   4. The first-page edge-cache key varies with the page size, so a size
@@ -336,6 +338,56 @@ describe("GET /comments — sort=new cursor walks pages", () => {
 		seedThreads(5);
 		const page = await get(mkEnv(), `slug=${SLUG}&before=not-a-ulid`);
 		expect(page.threads).toHaveLength(5);
+		expect(page.threads[0]!.id).toBe(mkUlid(5));
+	});
+});
+
+describe("GET /comments — sort=old cursor walks pages", () => {
+	it("walks oldest-first and terminates, with no thread skipped or repeated", async () => {
+		seedThreads(30);
+		setSetting("comments_per_page", "10");
+		const env = mkEnv();
+		const first = await get(env, `slug=${SLUG}&sort=old`);
+		expect(first.threads).toHaveLength(10);
+		// old-sort is oldest-first: the mirror image of sort=new, so page 1
+		// starts at the lowest id rather than the highest.
+		expect(first.threads[0]!.id).toBe(mkUlid(1));
+
+		const second = await get(env, `slug=${SLUG}&sort=old&before=${first.next_cursor}`);
+		const third = await get(env, `slug=${SLUG}&sort=old&before=${second.next_cursor}`);
+		expect(second.threads).toHaveLength(10);
+		expect(third.threads).toHaveLength(10);
+		expect(third.next_cursor).toBeNull();
+
+		// The property that a half-flipped sort (ASC order, DESC cursor) breaks:
+		// every thread appears exactly once, ascending.
+		const ids = [...first.threads, ...second.threads, ...third.threads].map(
+			(t) => t.id,
+		);
+		expect(new Set(ids).size).toBe(30);
+		expect(ids[0]).toBe(mkUlid(1));
+		expect(ids[29]).toBe(mkUlid(30));
+	});
+
+	it("treats a malformed cursor as the first page", async () => {
+		seedThreads(5);
+		const page = await get(mkEnv(), `slug=${SLUG}&sort=old&before=not-a-ulid`);
+		expect(page.threads).toHaveLength(5);
+		expect(page.threads[0]!.id).toBe(mkUlid(1));
+	});
+
+	it("keys its own cache entry, so it cannot serve sort=new's page", async () => {
+		seedThreads(5);
+		const env = mkEnv();
+		const newest = await get(env, `slug=${SLUG}&sort=new`);
+		const oldest = await get(env, `slug=${SLUG}&sort=old`);
+		expect(newest.threads[0]!.id).toBe(mkUlid(5));
+		expect(oldest.threads[0]!.id).toBe(mkUlid(1));
+	});
+
+	it("falls back to sort=new when the sort is unknown", async () => {
+		seedThreads(5);
+		const page = await get(mkEnv(), `slug=${SLUG}&sort=sideways`);
 		expect(page.threads[0]!.id).toBe(mkUlid(5));
 	});
 });
