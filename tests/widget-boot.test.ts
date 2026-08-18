@@ -26,6 +26,7 @@ import {
 	type BootstrapResponse,
 	fetchBootstrap,
 	fetchConfig,
+	type SortKey,
 } from "../src/widget/boot";
 import { bootstrap } from "../src/routes/api.bootstrap";
 import { localeMiddleware } from "../src/lib/locale";
@@ -223,7 +224,7 @@ describe("fetchBootstrap — probes a 404'd Worker only once", () => {
 
 describe("fetchBootstrap — the request it sends", () => {
 	const askFor = async (
-		sort: "new" | "top",
+		sort: SortKey | null,
 		langExplicit = "",
 		langHint = "",
 	): Promise<URL> => {
@@ -232,15 +233,22 @@ describe("fetchBootstrap — the request it sends", () => {
 		return new URL(calls[0]?.url ?? "");
 	};
 
-	it("sends the slug and nothing else by default", async () => {
-		const url = await askFor("new");
+	it("sends the slug and nothing else when no sort is chosen", async () => {
+		const url = await askFor(null);
 		expect(url.pathname).toBe("/api/v1/bootstrap");
 		expect([...url.searchParams]).toEqual([["slug", SLUG]]);
 	});
 
-	it("sends sort only for the non-default sort", async () => {
+	// `null` is the mount's opening state and the only thing that omits the
+	// parameter, because omitting it is what asks the server for the operator's
+	// default_sort. A chosen "new" is a different request from no choice at all:
+	// it has to pin newest-first even against an install whose default is "old",
+	// so it goes on the wire like any other sort.
+	it("sends every chosen sort, and omits only the absent one", async () => {
 		expect((await askFor("top")).searchParams.get("sort")).toBe("top");
-		expect((await askFor("new")).searchParams.has("sort")).toBe(false);
+		expect((await askFor("old")).searchParams.get("sort")).toBe("old");
+		expect((await askFor("new")).searchParams.get("sort")).toBe("new");
+		expect((await askFor(null)).searchParams.has("sort")).toBe(false);
 	});
 
 	it("keeps lang and hl as separate params", async () => {
@@ -322,6 +330,9 @@ const COMMENT = "01HC00000000000000000001";
  */
 const threadsOf = (boot: BootstrapResponse | null): unknown[] | undefined =>
 	(boot?.comments as { threads?: unknown[] } | null | undefined)?.threads;
+
+const sortOf = (boot: BootstrapResponse | null): string | undefined =>
+	(boot?.comments as { sort?: string } | null | undefined)?.sort;
 
 const makeD1 = (db: DatabaseSync): any => ({
 	prepare(sql: string) {
@@ -443,12 +454,29 @@ describe("fetchBootstrap — against the real handler", () => {
 		expect((boot?.user as { id?: string } | null)?.id).toBe(USER);
 	});
 
-	it("sends a sort the Worker honours", async () => {
-		// The widget's `sort` vocabulary and the endpoint's have to be the same two
-		// words; a mismatch would silently fall back on every "Top" mount.
+	it("sends sorts the Worker honours, and is told which one it got", async () => {
+		// The widget's `sort` vocabulary and the endpoint's have to be the same
+		// words; a mismatch would silently fall back on every mount that uses one.
 		routeToWorker();
-		const boot = await fetchBootstrap("http://localhost", SLUG, "top", "", "");
+		for (const sort of ["new", "old", "top"] as const) {
+			const boot = await fetchBootstrap("http://localhost", SLUG, sort, "", "");
+			expect(threadsOf(boot)).toHaveLength(1);
+			expect(sortOf(boot)).toBe(sort);
+		}
+	});
+
+	it("omits the sort and learns the operator's default from the answer", async () => {
+		// The mount opens with no preference, so the order is `default_sort` — a
+		// value that arrives in this same response, on the same request as the
+		// comments it orders. The echo is the only thing that lets the widget label
+		// the control and page the cursor correctly on the first render; without it
+		// it would have to assume "new" and be wrong on every install that changed
+		// the setting.
+		env.DEFAULT_SORT = "old";
+		routeToWorker();
+		const boot = await fetchBootstrap("http://localhost", SLUG, null, "", "");
 		expect(threadsOf(boot)).toHaveLength(1);
+		expect(sortOf(boot)).toBe("old");
 	});
 
 	it("negotiates the locale the Worker resolves", async () => {
