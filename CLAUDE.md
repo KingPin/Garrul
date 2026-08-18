@@ -113,6 +113,15 @@ Atomic commits per concern. Conventional-commits style (`feat:`, `fix:`, `refact
 ### Releases
 Every tagged release must ship a concise, operator-focused changelog in the **GitHub Release body** — that's what `npm run upgrade` fetches and prints before the drift plan (`scripts/upgrade.ts`). `generate_release_notes: true` in `release.yml` is a starting point, not the final body: review and rewrite it before publishing.
 
+Every release also gets a **title**, not just a tag. The default title `softprops/action-gh-release` writes is the bare tag, which makes the releases page a column of version numbers that says nothing about which one you want. Set it with `gh release edit vX.Y.Z --title "..."` in the same pass that rewrites the body.
+
+- Format is `vX.Y.Z — <what changed>`, em dash, the phrase lowercase unless it opens on a proper noun (`v2.9.0 — moderator email notifications`, `v2.13.0 — Turnstile challenges for signed-in commenters`). Keep the tag in the title: GitHub shows the name alone in notification emails and the Atom feed, so a title without it loses the version.
+- Name the operator-visible change, not the internal one — same test as the body. One clause for a single feature (`v2.14.0 — ad hoc moderator replies`), two joined by *and* when a release has a headline pair (`v2.10.0 — reaction vocabulary re-cut and a subscribe bell`).
+- Patch releases get titles too, and this is where they earn the most: `v2.7.1 — upgrade plan stops replaying old breaking changes` tells a self-hoster whether to bother. Describe the fix's effect, not the bug's name.
+- Unlike the body, the title is **not** part of the upgrade contract — `scripts/upgrade.ts` reads `tag_name`, `body` and `html_url`, never `name`. It is for humans scanning the releases page and for whoever gets the GitHub notification, which is why it can be retitled after the fact without breaking anything.
+
+The body rules:
+
 - Group by `feat:` / `fix:` / `chore:` or `Highlights:` / `Notes:`. 3–6 lines is usually enough.
 - Focus on what changes for someone running the upgrade (new env vars, new endpoints, behavior changes), not internal refactors.
 - Patch releases get notes too, even one line. Never publish a stub body like `"v1.5.1"`.
@@ -151,7 +160,7 @@ Multi-site/multi-tenant per Worker, real-time updates, image uploads, WordPress 
 GitHub Actions workflows ship in `.github/workflows/` and run unconditionally — the repo is public.
 
 - `ci.yml` — `lint`, `typecheck`, `test`, `manifest:check`, `build`, `size`. Runs on push/PR to `main` plus `workflow_dispatch`.
-- `release.yml` — fires on `v*` tags. Remember the auto-generated release body is a stub; rewrite it (see Releases above).
+- `release.yml` — fires on `v*` tags. Remember the auto-generated release body is a stub and the auto-generated title is the bare tag; rewrite both (see Releases above).
 - `docs-sync.yml` — two independent doc gates, one per audience. Bypass labels are **per gate**, so waving off one can't silently wave off the other.
   - *AGENTS docs sync* — a PR touching watched source paths must update `AGENTS.md` / `AGENTS-OPERATE.md`. Bypass: `agents-docs-ok`.
   - *Human docs sync* — a PR that adds or removes an env var in `wrangler.example.toml`, `.dev.vars.example`, or `secrets.example.env` must update `README.md`, `INSTALL.md`, or a page under `docs/`. Bypass: `human-docs-ok`.
