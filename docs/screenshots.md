@@ -2,7 +2,7 @@
 
 A visual tour of the reader-facing widget and the admin UI.
 
-> Screenshots reflect **v2.5.1** and may lag the current UI. They are
+> Screenshots reflect **v2.16.0** and may lag the current UI. They are
 > regenerated from seeded demo data, not from a live instance — every name,
 > avatar, comment, email address and webhook URL below is invented.
 
@@ -25,10 +25,10 @@ Follows the host page's `prefers-color-scheme` by default, or force it with
 
 ### Mobile
 
-![The widget at a 390px viewport, with the reaction bar, composer and a comment containing a fenced code block that scrolls within its own box](screenshots/widget-mobile.png)
+![The widget at a 390px viewport, with the reaction bar, the vote control, the composer and the start of a threaded discussion](screenshots/widget-mobile.png)
 
-Long lines in fenced code blocks scroll inside the block rather than widening
-the host page.
+Every control stacks rather than shrinking, and long lines — URLs, inline code,
+fenced blocks — scroll inside their own box rather than widening the host page.
 
 ## Admin UI
 
