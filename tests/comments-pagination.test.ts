@@ -211,6 +211,7 @@ type ListResp = {
 		replies: unknown[];
 	}[];
 	next_cursor: string | null;
+	sort: string;
 };
 
 const get = async (env: Bindings, query: string): Promise<ListResp> => {
@@ -389,6 +390,78 @@ describe("GET /comments — sort=old cursor walks pages", () => {
 		seedThreads(5);
 		const page = await get(mkEnv(), `slug=${SLUG}&sort=sideways`);
 		expect(page.threads[0]!.id).toBe(mkUlid(5));
+	});
+});
+
+/**
+ * An absent `?sort=` means "whatever the operator configured", not a hardcoded
+ * `new`. The widget depends on this: on the bootstrap path it cannot know the
+ * setting before the response carrying it arrives, so the server has to apply
+ * the default and echo back what it used.
+ */
+describe("GET /comments — default_sort", () => {
+	it("serves the operator's default when the request names no sort", async () => {
+		seedThreads(5);
+		setSetting("default_sort", "old");
+		const page = await get(mkEnv(), `slug=${SLUG}`);
+		expect(page.threads[0]!.id).toBe(mkUlid(1));
+		expect(page.sort).toBe("old");
+	});
+
+	it("reads the default from the env var when no DB row overrides it", async () => {
+		seedThreads(5);
+		const page = await get(mkEnv({ DEFAULT_SORT: "old" }), `slug=${SLUG}`);
+		expect(page.threads[0]!.id).toBe(mkUlid(1));
+	});
+
+	it("lets an explicit ?sort= win over the operator default", async () => {
+		seedThreads(5);
+		setSetting("default_sort", "old");
+		const page = await get(mkEnv(), `slug=${SLUG}&sort=new`);
+		expect(page.threads[0]!.id).toBe(mkUlid(5));
+		expect(page.sort).toBe("new");
+	});
+
+	it("stays on 'new' for an install that never set it", async () => {
+		seedThreads(5);
+		const page = await get(mkEnv(), `slug=${SLUG}`);
+		expect(page.sort).toBe("new");
+		expect(page.threads[0]!.id).toBe(mkUlid(5));
+	});
+
+	it("falls back to 'new' when the default is 'top' but voting is off", async () => {
+		// Scores descend with index, so a real `top` page would start at c1 —
+		// which is what makes this assertion able to tell the two apart.
+		seedThreads(5, [9, 7, 5, 3, 1]);
+		setSetting("default_sort", "top");
+		setSetting("votes_enabled", "false");
+		const page = await get(mkEnv(), `slug=${SLUG}`);
+		expect(page.sort).toBe("new");
+		expect(page.threads[0]!.id).toBe(mkUlid(5));
+	});
+
+	it("honors a 'top' default once voting is on, so the setting was kept not rewritten", async () => {
+		seedThreads(5, [9, 7, 5, 3, 1]);
+		setSetting("default_sort", "top");
+		setSetting("votes_enabled", "true");
+		const page = await get(mkEnv(), `slug=${SLUG}`);
+		expect(page.sort).toBe("top");
+		expect(page.threads[0]!.id).toBe(mkUlid(1));
+	});
+
+	it("does not coerce an explicit ?sort=top when voting is off", async () => {
+		seedThreads(5, [9, 7, 5, 3, 1]);
+		setSetting("votes_enabled", "false");
+		const page = await get(mkEnv(), `slug=${SLUG}&sort=top`);
+		expect(page.sort).toBe("top");
+		expect(page.threads[0]!.id).toBe(mkUlid(1));
+	});
+
+	it("ignores an unknown stored default rather than serving nothing", async () => {
+		seedThreads(5);
+		setSetting("default_sort", "chronological");
+		const page = await get(mkEnv(), `slug=${SLUG}`);
+		expect(page.sort).toBe("new");
 	});
 });
 

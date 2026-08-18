@@ -64,6 +64,7 @@ import {
 	loadSettings,
 	type ResolvedFlags,
 	type ResolvedNumbers,
+	type ResolvedStrings,
 	type ResolvedTexts,
 } from "../lib/settings";
 import { checkBlocklist, compileBlocklist } from "../lib/spam/blocklist";
@@ -833,6 +834,17 @@ export type ListPayload = {
 	post: Awaited<ReturnType<typeof getPost>>;
 	threads: TreeNode[];
 	next_cursor: string | null;
+	/**
+	 * The sort this page was actually built in.
+	 *
+	 * The widget cannot work this out for itself on the first request: when it
+	 * omits `?sort=`, the answer is the operator's `default_sort`, and on the
+	 * bootstrap path the config section that would carry that setting arrives in
+	 * the *same* response. Echoing the resolved sort lets the widget seed its
+	 * selector and its load-more cursor from the reply it already has, instead of
+	 * mounting in one order and correcting to another.
+	 */
+	sort: CommentSort;
 	/** Whether the widget should show the composer (vs. a closed notice). */
 	accepting_comments: boolean;
 	/** Why the thread is closed, for the closed-notice copy; null if open. */
@@ -894,6 +906,29 @@ export const parseSortParam = (
 	return (COMMENT_SORTS as readonly string[]).includes(value)
 		? (value as CommentSort)
 		: null;
+};
+
+/**
+ * The sort to serve when the request didn't name one: the operator's
+ * `default_sort` setting, with `top` coerced away when voting is off.
+ *
+ * The coercion is here rather than in the settings whitelist so the preference
+ * survives the round trip — an operator who turns voting off temporarily gets
+ * their chosen `top` back when they turn it on again, instead of finding the
+ * setting silently rewritten to `new`. Without it, a `top` default on a
+ * voting-off install orders every thread by a score column that is always zero,
+ * which reads as "sorted at random" to the operator and has no visible cause.
+ *
+ * An *explicit* `?sort=top` is deliberately left alone: it is a deliberate act
+ * by a caller who can see what they asked for, and the API has no reason to
+ * second-guess it. This only decides what "no preference" means.
+ */
+export const resolveDefaultSort = (
+	strings: ResolvedStrings,
+	flags: ResolvedFlags,
+): CommentSort => {
+	const configured = parseSortParam(strings.default_sort) ?? "new";
+	return configured === "top" && !flags.votes_enabled ? "new" : configured;
 };
 
 /**
@@ -1090,6 +1125,7 @@ export const buildTreePage = async (
 		post,
 		threads: page,
 		next_cursor,
+		sort,
 		accepting_comments: threadState.open,
 		closed_reason: threadState.reason ?? null,
 	};
@@ -1109,12 +1145,15 @@ comments.get("/", async (c) => {
 	if (!slug) return c.json({ error: t("err.post.required") }, 400);
 	if (!SLUG_RE.test(slug)) return c.json({ error: t("err.post.invalid") }, 400);
 
-	const sort = parseSortParam(c.req.query("sort")) ?? "new";
-
 	const session = await readSession(c);
-	// One read rather than two per-group ones: this route needs both flags and
-	// numbers, and they share a single cache entry.
-	const { flags, numbers } = await loadSettings(c.env);
+	// One read rather than three per-group ones: this route needs flags, numbers
+	// and strings, and they share a single cache entry.
+	const { flags, numbers, strings } = await loadSettings(c.env);
+
+	// Settings first, then the sort — an absent `?sort=` means "whatever the
+	// operator configured", which isn't known until they're resolved.
+	const sort =
+		parseSortParam(c.req.query("sort")) ?? resolveDefaultSort(strings, flags);
 
 	const built = await buildTreePage(c.env, c.req.url, {
 		slug,

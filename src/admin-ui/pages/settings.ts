@@ -336,6 +336,29 @@ export const renderSettings = (
 	// The muted-words list. Caps come from the matcher's own exports rather than
 	// being retyped here, so tightening one can't leave the help text promising
 	// the old number.
+	// "Top" needs voting to mean anything, but it is still *offered* with voting
+	// off — dropping the option would make an already-saved `top` unrepresentable
+	// in the control, and the next save would silently rewrite it to `new`. That
+	// is the one outcome the server's coercion exists to prevent, so the option
+	// stays and says it is inactive instead (the same "say so rather than hide
+	// it" treatment as the spam dial above).
+	const sortSelect = renderSelect({
+		name: "default_sort",
+		model: "strs.default_sort",
+		options: [
+			{ value: "new", label: "Newest first" },
+			{ value: "old", label: "Oldest first — chronological" },
+			{
+				value: "top",
+				label: flags.votes_enabled
+					? "Top — highest score first"
+					: "Top — highest score first (inactive: voting is off)",
+			},
+		],
+		label: "Default order",
+		help: "Order top-level comments load in. Readers can still switch order themselves; this is only where they start. \"Top\" needs voting enabled — with voting off it serves newest first instead, and your choice here is kept for if you turn voting back on.",
+	});
+
 	const blocklistTextarea = renderTextarea({
 		name: "spam_blocklist",
 		model: "texts.spam_blocklist",
@@ -464,6 +487,7 @@ export const renderSettings = (
       replies collapse. Smaller values keep a busy thread from pushing the rest
       of the page down.</p>
       ${numberInputs}
+      ${sortSelect}
       ${localeSelect}
     </div>
 
