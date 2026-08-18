@@ -158,6 +158,13 @@ tbody tr:nth-child(even) { background: var(--surface-2); }
 tbody tr:hover { background: var(--accent-weak); }
 .row-body { color: var(--text); width: 45%; min-width: 340px; overflow-wrap: anywhere; }
 .row-body .md { font-size: 0.9rem; }
+/* A fenced code block does not wrap, so one comment containing a <pre> would
+   widen the whole queue table past the viewport and the auto-layout would
+   collapse the meta column to one character per line. overflow-x alone does not
+   help — the table sizes columns from intrinsic content, which ignores both the
+   scroll container and a percentage max-width — so take the block's inline size
+   out of that calculation and let it scroll in place instead. */
+.md pre { contain: inline-size; overflow-x: auto; }
 .meta-cell { max-width: 200px; }
 .meta-cell code { overflow-wrap: anywhere; }
 .meta-cell a { color: inherit; text-decoration: none; }
