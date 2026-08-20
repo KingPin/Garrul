@@ -114,6 +114,14 @@ const apiUrl = (base: string, path: string): string =>
 		? base + path
 		: `${base + path + (path.indexOf("?") < 0 ? "?" : "&")}lang=${encodeURIComponent(locale)}`;
 
+// Mark a vote button with its state: set/unset data-mine to highlight it visually,
+// and set aria-pressed so screen readers know whether the user's vote is cast.
+const markVote = (btn: HTMLElement, on: boolean): void => {
+	if (on) btn.dataset.mine = "1";
+	else delete btn.dataset.mine;
+	btn.setAttribute("aria-pressed", String(on));
+};
+
 // Mirrors lib/tree.ts's TreeAuthor. No `is_admin`: the API stopped sending it
 // (it let anyone enumerate privileged accounts) and nothing here rendered it.
 type TreeAuthor = {
@@ -914,7 +922,7 @@ const buildVotes = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	up.type = "button";
 	up.setAttribute("aria-label", s("w.vote.up"));
 	up.appendChild(document.createTextNode("▲"));
-	if (n.my_vote === 1) up.dataset.mine = "1";
+	markVote(up, n.my_vote === 1);
 
 	const scoreEl = el("span", "gr-vote-score", String(score));
 
@@ -922,7 +930,7 @@ const buildVotes = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	down.type = "button";
 	down.setAttribute("aria-label", s("w.vote.down"));
 	down.appendChild(document.createTextNode("▼"));
-	if (n.my_vote === -1) down.dataset.mine = "1";
+	markVote(down, n.my_vote === -1);
 
 	const cast = async (value: -1 | 0 | 1): Promise<void> => {
 		up.disabled = true;
@@ -943,10 +951,8 @@ const buildVotes = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 			n.score_down = body.score_down;
 			n.my_vote = body.my_vote;
 			scoreEl.textContent = String(body.score_up - body.score_down);
-			if (body.my_vote === 1) up.dataset.mine = "1";
-			else delete up.dataset.mine;
-			if (body.my_vote === -1) down.dataset.mine = "1";
-			else delete down.dataset.mine;
+			markVote(up, body.my_vote === 1);
+			markVote(down, body.my_vote === -1);
 		} catch {
 			// Network/parse failure: leave UI untouched; user can retry.
 		} finally {
@@ -1171,14 +1177,8 @@ const buildPageEngagement = (ctx: WidgetCtx): HTMLElement => {
 	const setVote = (s: PageVoteState): void => {
 		myVote = s.my_vote;
 		if (scoreEl) scoreEl.textContent = String(s.score_up - s.score_down);
-		if (up) {
-			if (myVote === 1) up.dataset.mine = "1";
-			else delete up.dataset.mine;
-		}
-		if (down) {
-			if (myVote === -1) down.dataset.mine = "1";
-			else delete down.dataset.mine;
-		}
+		if (up) markVote(up, myVote === 1);
+		if (down) markVote(down, myVote === -1);
 	};
 
 	const castVote = async (value: -1 | 0 | 1): Promise<void> => {
