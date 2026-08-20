@@ -488,6 +488,7 @@ const buildWritePreview = (
 	// is here for the person pasting an essay, and for them it has to appear
 	// before they hit Post, not after the server rejects it.
 	const counter = el("span", "gr-count");
+	counter.setAttribute("role", "status");
 	counter.hidden = true;
 	const paintCount = (): void => {
 		const left = maxBodyChars - textarea.value.length;
@@ -567,6 +568,7 @@ const buildSkeleton = (): DocumentFragment => {
 	const frag = document.createDocumentFragment();
 	const root = el("div", "gr-root");
 	const list = el("div", "gr-list");
+	list.setAttribute("role", "status");
 	list.setAttribute("aria-busy", "true");
 	list.setAttribute("aria-label", s("w.loading_comments"));
 	for (let i = 0; i < 3; i++) {
@@ -1658,7 +1660,9 @@ const buildActions = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): HTMLEleme
 			yes.type = "button";
 			const no = el("button", undefined, s("w.cancel"));
 			no.type = "button";
-			confirmWrap.append(el("span", undefined, s("w.delete_confirm")), yes, no);
+			const prompt = el("span", undefined, s("w.delete_confirm"));
+			prompt.setAttribute("role", "status");
+			confirmWrap.append(prompt, yes, no);
 			delBtn.replaceWith(confirmWrap);
 			// Replacing the focused button drops focus to <body>, stranding a
 			// keyboard user mid-thread. Land on Cancel: for a destructive action
