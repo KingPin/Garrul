@@ -2885,10 +2885,8 @@ const loadOnce = async (
 			// locale's own overrides, not a merged copy — makeS falls back to the
 			// bundled English per key, so a partial translation renders English
 			// exactly where it is incomplete and correct everywhere else.
-			host.lang = locale;
 			if (typeof cfg.locale === "string" && cfg.locale) {
 				locale = cfg.locale;
-				host.lang = locale;
 				({ s, sAround } = makeS(
 					(cfg.strings ?? {}) as StringTable,
 					locale,
@@ -2929,6 +2927,12 @@ const loadOnce = async (
 			if (typeof cfg.community_collapse_ratio === "number")
 				communityCollapseRatio = cfg.community_collapse_ratio;
 		}
+		// Stamp the language the widget actually ended up rendering in, not the
+		// one it hoped for. Unconditional on purpose: a server that omits
+		// `locale`, or a config fetch that came back empty, still renders the
+		// bundled English — and a screen reader given no `lang` here falls back
+		// to the host page's, which is exactly the case where the two disagree.
+		host.lang = locale;
 	} catch {
 		// The config is optional; the widget still renders without Turnstile (the
 		// server will reject anonymous POSTs in that case). Only the legacy branch
