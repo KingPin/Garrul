@@ -677,6 +677,14 @@ type WidgetCtx = {
 	// the subscribe bell render from it instead of each firing their own GET.
 	seed: MountSeed;
 	reload: () => void;
+	/**
+	 * Request that once the next reload's tree lands, focus (and optionally
+	 * announce) something — see `pendingReveal`/`revealAfterReload` near
+	 * `focusPostedComment` below. `id: null` skips straight to the status-box
+	 * fallback. Exists because `ctx.reload()` runs `root.replaceChildren()`
+	 * before any code after the call gets a chance to touch the old tree.
+	 */
+	revealAfterReload: (id: string | null, announce?: string) => void;
 	/** Precomputed permalink base for this mount; see src/widget/permalink.ts. */
 	permalinkFor: (id: string) => string;
 };
@@ -1047,6 +1055,11 @@ const buildReactions = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 				// fall back to the reload this used to do rather than merging
 				// against `{}`, which would blank every reaction on the comment.
 				if (!body.reactions) {
+					// Focus only, no announcement: refocusing the article is itself
+					// the confirmation for assistive tech, and this path is a legacy
+					// fallback for a server old enough to have never sent counts, so
+					// it adds no new string to a bundle under a hard size budget.
+					ctx.revealAfterReload(n.id);
 					ctx.reload();
 					return;
 				}
@@ -1701,6 +1714,11 @@ const buildActions = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): HTMLEleme
 						{ method: "DELETE", credentials: "include" },
 					);
 					if (res.ok) {
+						// Focus only, no announcement: the row usually survives as a
+						// tombstone, and landing focus on the updated comment is the
+						// confirmation for assistive tech. If it doesn't survive, the
+						// status-box fallback in loadOnce catches it.
+						ctx.revealAfterReload(n.id);
 						ctx.reload();
 						return;
 					}
@@ -1834,8 +1852,14 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 					body: JSON.stringify({ body: ta.value }),
 				},
 			);
-			if (res.ok) ctx.reload();
-			else save.disabled = false;
+			if (res.ok) {
+				// Focus only, no announcement: focusing the article makes
+				// assistive tech read the edited body, which is itself the
+				// confirmation, and it adds no new string to a bundle under a
+				// hard size budget.
+				ctx.revealAfterReload(n.id);
+				ctx.reload();
+			} else save.disabled = false;
 		} catch {
 			save.disabled = false;
 		}
@@ -2039,7 +2063,7 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 			});
 			const json = (await res.json()) as {
 				error?: string;
-				comment?: { status?: string };
+				comment?: { id?: string; status?: string };
 			};
 			if (!res.ok) {
 				if (tsGate?.failed) return;
@@ -2055,7 +2079,10 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 			clearDraft(dkey);
 			// Pending replies reload like approved ones: the author's own
 			// queued comment comes back from the list endpoint and renders
-			// inline with a "Pending approval" badge.
+			// inline with a "Pending approval" badge. Fall back to the parent
+			// comment's id so focus still lands somewhere sensible on the rare
+			// response that omits the new comment's id.
+			ctx.revealAfterReload(json.comment?.id ?? parent.id, s("w.posted"));
 			ctx.reload();
 		} catch (err) {
 			if (tsGate?.failed) return;
@@ -3137,6 +3164,8 @@ const loadOnce = async (
 			subscription: boot?.subscription,
 		},
 		reload,
+		revealAfterReload: (id: string | null, announce?: string) =>
+			revealAfterReload(root, id, announce),
 		permalinkFor,
 	};
 	// Article-level engagement bar sits at the very top, above the composer.
