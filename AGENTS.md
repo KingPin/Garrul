@@ -449,19 +449,30 @@ widget knows at mount time:
    where the host page and the Worker live on different origins: the
    link falls back to `location.href` with the same
    `#garrul-comment-<id>` anchor.
-3. **Neither resolves** — the document's origin *matches* the API
-   origin, which happens in the iframe variant (§6) with no `?url=`
-   passed, where the document being linked from **is** the Worker's
-   own `/embed/:slug` page: the link falls back to the Worker's
-   `GET /c/:id`, which 302s to the comment's stored post URL plus the
-   same anchor.
+3. **Neither resolves** — either the document's origin *matches* the
+   API origin, which happens in the iframe variant (§6) with no
+   `?url=` passed, where the document being linked from **is** the
+   Worker's own `/embed/:slug` page; or `location.href` is not an
+   absolute http(s) URL at all (`about:srcdoc`, `blob:`, `file:`). The
+   link falls back to the Worker's `GET /c/:id`, which 302s to the
+   comment's stored post URL plus the same anchor.
 
 Rung 3 exists for durability (a permalink shared from an iframe embed
 still resolves after the post moves) but is deliberately the last
 resort, not the default: every click of `/c/:id` is a Worker
 invocation against the 100,000 requests/day free tier, where the
-host-page anchor costs nothing. It also 404s when the post has no
-`url` on file, which is why rungs 1 and 2 are tried first.
+host-page anchor costs nothing.
+
+It is also the rung with the most ways to miss, and the failure is
+always a 404 or a link that lands nowhere rather than a wrong comment.
+`/c/:id` 404s when the post has no `url` on file, when that URL fails
+to parse or is not http(s), and for any comment whose status is
+`pending`, `spam` or `deleted` — a moderation-queue entry has no
+public permalink. And when the stored post URL *already* carries a
+fragment, the redirect appends with `&` rather than `#`, producing
+`<url>#frag&garrul-comment-<id>`, which matches no element and scrolls
+nowhere. Rungs 1 and 2 have none of these failure modes, which is why
+they are tried first.
 
 The link is a plain `<a href>` — no clipboard-copy JavaScript shim —
 so right-click-copy, middle-click, and Cmd/Ctrl-click all work the way
