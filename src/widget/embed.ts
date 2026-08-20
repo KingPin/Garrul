@@ -1762,6 +1762,7 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 	const ta = el("textarea");
 	ta.value = "";
 	ta.placeholder = s("w.loading");
+	ta.setAttribute("aria-label", s("w.edit_ph"));
 	ta.required = true;
 	const actions = el("div", "gr-reply-actions");
 	const save = el("button", undefined, s("w.save"));
@@ -1834,6 +1835,7 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	const wrap = el("form", "gr-reply-form");
 	const ta = el("textarea");
 	ta.placeholder = s("w.reply_ph", { name: parent.author.name });
+	ta.setAttribute("aria-label", s("w.reply_ph", { name: parent.author.name }));
 	ta.required = true;
 	const dkey = attachDraft(ta, draftKey(ctx.slug, parent.id));
 
@@ -1842,6 +1844,7 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 		nameInput = el("input");
 		nameInput.type = "text";
 		nameInput.placeholder = s("w.name_ph");
+		nameInput.setAttribute("aria-label", s("w.name_ph"));
 		nameInput.required = true;
 		wrap.appendChild(nameInput);
 	}
@@ -2094,6 +2097,10 @@ const buildComment = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	// existing hash-scroll at the bottom of this file.
 	const permalink = el("a", "gr-permalink");
 	permalink.href = ctx.permalinkFor(n.id);
+	permalink.setAttribute(
+		"aria-label",
+		s("w.permalink", { name: n.author.name, time: absoluteTime(n.created_at, locale) }),
+	);
 	permalink.appendChild(buildTime(n.created_at));
 	meta.appendChild(permalink);
 	if (n.edited_at) meta.appendChild(el("span", "gr-edited", s("w.edited")));
@@ -2339,6 +2346,7 @@ const buildForm = (
 		name.name = "name";
 		name.type = "text";
 		name.placeholder = s("w.name_ph");
+		name.setAttribute("aria-label", s("w.name_ph"));
 		name.required = true;
 		form.appendChild(name);
 	}
@@ -2347,6 +2355,7 @@ const buildForm = (
 	body.className = "gr-body-input";
 	body.name = "body";
 	body.placeholder = s("w.body_ph");
+	body.setAttribute("aria-label", s("w.body_ph"));
 	body.required = true;
 	form.appendChild(buildWritePreview(body, apiBase));
 
@@ -2394,6 +2403,7 @@ const buildForm = (
 			emailInput.name = "email";
 			emailInput.type = "email";
 			emailInput.placeholder = s("w.email_ph");
+			emailInput.setAttribute("aria-label", s("w.email_label"));
 			emailInput.autocomplete = "email";
 			emailInput.hidden = true;
 			notifyCb.addEventListener("change", () => {
