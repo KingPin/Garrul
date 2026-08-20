@@ -127,6 +127,10 @@ export const EN = {
 	"w.replies": { one: "{n} reply", other: "{n} replies" },
 	"w.more_replies": { one: "Show {n} more reply", other: "Show {n} more replies" },
 	"w.loading_comments": "Loading comments",
+	// Names the comments region for assistive tech. Never rendered visually —
+	// see `.gr-sr` — so it exists to give screen readers and rotor
+	// navigation a landmark, not to put a title on the operator's page.
+	"w.region": "Comments",
 	"w.empty.open": "Be the first to comment.",
 	"w.empty.closed": "No comments yet.",
 	"w.closed.post": "Comments are closed on this post.",

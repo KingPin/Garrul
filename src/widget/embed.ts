@@ -570,7 +570,7 @@ const buildSkeleton = (): DocumentFragment => {
 	list.setAttribute("aria-busy", "true");
 	list.setAttribute("aria-label", s("w.loading_comments"));
 	for (let i = 0; i < 3; i++) {
-		const row = el("div", "gr-comment");
+		const row = el("article", "gr-comment");
 		const avatarWrap = el("div", "gr-avatar");
 		avatarWrap.appendChild(el("div", "gr-skel gr-skel-avatar"));
 		const lines = el("div");
@@ -2068,15 +2068,23 @@ const shouldCollapseLowScore = (n: TreeNode, ctx: WidgetCtx): boolean => {
 };
 
 const buildComment = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
-	const row = el("div", "gr-comment");
+	// <article> rather than <div>: it gives assistive tech a real comment
+	// boundary in what is otherwise an undifferentiated run of divs, and it is
+	// the element the HTML spec names for exactly this ("a forum post, a
+	// magazine article, a user-submitted comment").
+	const row = el("article", "gr-comment");
 	row.dataset.id = n.id;
 	if (n.flatten_from) row.dataset.flat = "1";
+	const nameId = `gr-name-${n.id}`;
+	row.setAttribute("aria-labelledby", nameId);
 	row.appendChild(buildAvatar(n.author));
 
 	const main = el("div", "gr-main");
 
 	const meta = el("div", "gr-meta");
-	meta.appendChild(el("span", "gr-name", n.author.name));
+	const nameEl = el("span", "gr-name", n.author.name);
+	nameEl.id = nameId;
+	meta.appendChild(nameEl);
 	if (n.author.provider !== "anon") {
 		meta.appendChild(el("span", "gr-verified", s("w.verified")));
 	}
@@ -2084,7 +2092,7 @@ const buildComment = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	// anchor, so right-click-copy, middle-click and Cmd-click all work natively
 	// and we spend no bytes on a clipboard shim. Clicking it is handled by the
 	// existing hash-scroll at the bottom of this file.
-	const permalink = el("a", "gr-permalink") as HTMLAnchorElement;
+	const permalink = el("a", "gr-permalink");
 	permalink.href = ctx.permalinkFor(n.id);
 	permalink.appendChild(buildTime(n.created_at));
 	meta.appendChild(permalink);
@@ -3110,6 +3118,14 @@ const loadOnce = async (
 		attr.append(beforeLink, link, afterLink);
 		wrap.appendChild(attr);
 	}
+
+	// Wire up the region heading for assistive tech: a visually-hidden <h2> that
+	// gives screen readers a landmark and a name for the entire comments section.
+	const heading = el("h2", "gr-sr", s("w.region"));
+	heading.id = "gr-region-heading";
+	wrap.setAttribute("role", "region");
+	wrap.setAttribute("aria-labelledby", heading.id);
+	wrap.prepend(heading);
 
 	root.append(style, wrap);
 
