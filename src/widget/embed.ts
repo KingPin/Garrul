@@ -3347,19 +3347,46 @@ const loadOnce = async (
 	pendingReveal.delete(root);
 	if (pending) {
 		const revealed = pending.id != null && focusPostedComment(root, pending.id);
-		// The status box in the tree just appended above — not whatever
-		// `.gr-error` a caller captured before this reload, which belongs to
-		// the node `root.replaceChildren()` just destroyed.
-		const statusEl = form.querySelector(".gr-error") as HTMLElement | null;
-		if (pending.announce && statusEl) {
-			showStatus(statusEl, pending.announce, "notice");
-		}
+		// Query from `root`, not `form`: buildForm always builds the composer,
+		// but it is only appended into `wrap` when accepting comments (see
+		// below), so a reload that closes the thread in the same round-trip as
+		// the reader's action leaves `form` holding a `.gr-error` that was
+		// never mounted. Querying the live tree instead gives that case a real
+		// `null` — a write into a detached box, or a `.focus()` that silently
+		// does nothing, is the exact bug this mechanism exists to close.
+		const statusEl = root.querySelector(".gr-error") as HTMLElement | null;
 		if (!revealed && statusEl) {
 			// Comment not in the rendered tree (paged thread, hard-deleted row,
 			// or no id at all) — fall back to the status box so a keyboard user
-			// still lands somewhere meaningful instead of <body>.
+			// still lands somewhere meaningful instead of <body>. Focus itself
+			// doesn't wait on the live-region timing below (moving focus isn't
+			// what triggers an aria-live announcement, filling in text is), so
+			// there's nothing to gain by delaying it — and a delay here would
+			// be a visible stall between the reader's action and the focus jump.
 			statusEl.tabIndex = -1;
 			statusEl.focus();
+		}
+		if (pending.announce) {
+			const announce = pending.announce;
+			// Deferred to a later task — see the statusBox docstring above: "a
+			// live region has to already be in that tree when its text changes
+			// for the change to be announced ... a region that appears and
+			// fills in at the same moment is precisely the case screen readers
+			// miss." `root.append(style, wrap)` above is what put *this* box in
+			// the document — root.replaceChildren() killed the previous one —
+			// so writing its text in this same synchronous task is that exact
+			// case, just triggered by the region being brand new rather than
+			// merely empty. A macrotask (not queueMicrotask, which can still
+			// run before the browser has registered the new region) gives it
+			// a full turn to do so before the text that must be announced lands.
+			setTimeout(() => {
+				// Re-query rather than close over `statusEl`: another reload
+				// can land in the time this task waited to run, and writing
+				// into whatever `statusEl` pointed at would be writing into a
+				// node root.replaceChildren() may have already destroyed.
+				const box = root.querySelector(".gr-error") as HTMLElement | null;
+				if (box) showStatus(box, announce, "notice");
+			}, 0);
 		}
 	} else {
 		revealHashTarget(root);
