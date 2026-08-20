@@ -56,8 +56,8 @@ describe("commentHref", () => {
 	});
 
 	it("replaces an existing fragment rather than appending to it", () => {
-		// Deliberate divergence from src/routes/permalink.ts:56, which emits
-		// `#existing&garrul-comment-<id>` — that resolves to nothing.
+		// The server's /c/:id redirect follows the same rule — see the matching
+		// case in tests/permalink-route.test.ts.
 		expect(
 			commentHref(ID, {
 				dataUrl: "https://blog.example.com/post/#section-2",
@@ -119,14 +119,13 @@ describe("commentIdFromHash", () => {
 	});
 
 	it("returns null for #existing&garrul-comment-<id> rather than the id", () => {
-		// src/routes/permalink.ts:54 emits exactly this shape when a post's
-		// stored URL already carries a fragment: the two fragments get joined
-		// with `&` rather than one replacing the other. The combined string
-		// doesn't start with our prefix (it starts with the *existing*
-		// fragment), so this is a plain no-match, not a special case — and it
-		// resolves to no element in a browser either way (see the
-		// "replaces an existing fragment" case above), so a null here costs
-		// nothing real.
+		// Nothing we emit produces this shape — both `commentHref` and the
+		// server's /c/:id redirect replace an existing fragment rather than
+		// joining to it. It is pinned because the alternative implementation
+		// (searching for the prefix anywhere in the hash) would return `<id>`
+		// here, and would equally match an unrelated page's
+		// `#foo-garrul-comment-bar`. Anchoring the match at the start of the
+		// hash is the behaviour under test.
 		expect(commentIdFromHash(`#existing&${commentAnchorId(ID)}`)).toBeNull();
 	});
 });

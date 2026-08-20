@@ -27,16 +27,14 @@ export const commentAnchorId = (id: string): string => `garrul-comment-${id}`;
  * Built from `commentAnchorId("")` rather than a re-typed `"garrul-comment-"`
  * literal, so the prefix has exactly one source of truth.
  *
- * `#existing&garrul-comment-<id>` — the shape src/routes/permalink.ts:54
- * emits when a post's stored URL already carries a fragment — returns null
- * here rather than `<id>`. The combined fragment doesn't start with our
- * prefix (it starts with the *existing* fragment), so there is no substring
- * search to fall back to without risking a false positive on some unrelated
- * page's `#foo-garrul-comment-bar`-shaped anchor. It is already a known dead
- * end in a browser either way (see tests/widget-permalink.test.ts:57-60), so
- * returning null just means the widget stays silent instead of also failing
- * to find an element — the same "no match, no error" contract as any other
- * hash that isn't ours.
+ * The match is anchored at the start of the hash, not a substring search: a
+ * shape like `#existing&garrul-comment-<id>` returns null rather than `<id>`,
+ * because loosening to a substring search would also match an unrelated
+ * page's `#foo-garrul-comment-bar`-shaped anchor. Nothing we emit produces
+ * that shape — both this module's `withAnchor` and the server's `/c/:id`
+ * redirect *replace* any existing fragment — so anchoring at the start costs
+ * no real link, and an unrecognised hash gets the same "no match, no error"
+ * contract as any other hash that isn't ours.
  */
 export const commentIdFromHash = (hash: string): string | null => {
 	const prefix = `#${commentAnchorId("")}`;

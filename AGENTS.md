@@ -468,11 +468,11 @@ always a 404 or a link that lands nowhere rather than a wrong comment.
 `/c/:id` 404s when the post has no `url` on file, when that URL fails
 to parse or is not http(s), and for any comment whose status is
 `pending`, `spam` or `deleted` — a moderation-queue entry has no
-public permalink. And when the stored post URL *already* carries a
-fragment, the redirect appends with `&` rather than `#`, producing
-`<url>#frag&garrul-comment-<id>`, which matches no element and scrolls
-nowhere. Rungs 1 and 2 have none of these failure modes, which is why
-they are tried first.
+public permalink. A stored post URL that *already* carries a fragment
+is not one of those ways: the redirect replaces that fragment rather
+than joining to it with `&`, matching how rungs 1 and 2 build their
+anchors. Rungs 1 and 2 have none of the remaining failure modes, which
+is why they are tried first.
 
 The link is a plain `<a href>` — no clipboard-copy JavaScript shim —
 so right-click-copy, middle-click, and Cmd/Ctrl-click all work the way

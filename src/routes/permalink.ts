@@ -17,6 +17,11 @@
 import { Hono } from "hono";
 import type { Bindings } from "../index";
 import { getComment, getPost } from "../db/queries";
+// The anchor id has one source of truth, in the widget that stamps it onto each
+// thread node. Server-imports-widget is the established direction here (see
+// routes/api.reactions.ts pulling from ../widget/reactions) — the widget cannot
+// import server code, because tsconfig.widget.json includes only src/widget/**.
+import { commentAnchorId } from "../widget/permalink";
 
 const permalink = new Hono<{ Bindings: Bindings }>();
 
@@ -51,9 +56,16 @@ permalink.get("/:id", async (c) => {
 		return c.text("post URL invalid", 404);
 	}
 
-	const target = `${post.url}${post.url.includes("#") ? "&" : "#"}garrul-comment-${id}`;
+	// Build the fragment on the parsed URL rather than by string concatenation.
+	// A stored `post.url` that already carries a fragment used to be joined with
+	// `&` — `…/post/#section-2&garrul-comment-<id>` — which is a single fragment
+	// named `section-2&garrul-comment-<id>`, matching no element and defeating
+	// the whole redirect. Assigning `.hash` replaces the existing fragment
+	// instead, the same rule the widget's own resolver follows
+	// (`withAnchor` in src/widget/permalink.ts).
+	parsed.hash = commentAnchorId(id);
 	c.header("cache-control", "public, max-age=300");
-	return c.redirect(target, 302);
+	return c.redirect(parsed.toString(), 302);
 });
 
 export { permalink };
