@@ -2885,6 +2885,7 @@ const loadOnce = async (
 			// locale's own overrides, not a merged copy — makeS falls back to the
 			// bundled English per key, so a partial translation renders English
 			// exactly where it is incomplete and correct everywhere else.
+			host.lang = locale;
 			if (typeof cfg.locale === "string" && cfg.locale) {
 				locale = cfg.locale;
 				host.lang = locale;
