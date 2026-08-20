@@ -75,7 +75,7 @@
 		--gr-border: var(--garrul-border, #2e353d);
 		--gr-muted: var(--garrul-muted, #9aa3b0);
 		--gr-accent: var(--garrul-accent, #3b82f6);
-		--gr-accent-fg: var(--garrul-accent-fg, #ffffff);
+		--gr-accent-fg: var(--garrul-accent-fg, #0b1220);
 		--gr-link: var(--garrul-link, #6aa9ff);
 		--gr-error: var(--garrul-error, #f08a8a);
 		--gr-notice: var(--garrul-notice, #6cb6e8);
@@ -96,7 +96,7 @@
 	--gr-border: var(--garrul-border, #2e353d);
 	--gr-muted: var(--garrul-muted, #9aa3b0);
 	--gr-accent: var(--garrul-accent, #3b82f6);
-	--gr-accent-fg: var(--garrul-accent-fg, #ffffff);
+	--gr-accent-fg: var(--garrul-accent-fg, #0b1220);
 	--gr-link: var(--garrul-link, #6aa9ff);
 	--gr-error: var(--garrul-error, #f08a8a);
 	--gr-notice: var(--garrul-notice, #6cb6e8);
