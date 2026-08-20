@@ -2752,7 +2752,15 @@ const fetchMe = async (apiBase: string): Promise<Me> => {
 // silently land in a different order than the page the reader is looking at.
 const loadState = new WeakMap<
 	ShadowRoot,
-	{ running: boolean; queued: boolean; sort: SortKey | null }
+	{
+		running: boolean;
+		queued: boolean;
+		sort: SortKey | null;
+		// The anchor id (see commentAnchorId) of the last hash target actually
+		// revealed for this root — see revealHashTarget below. `null` until a
+		// hash reveal has succeeded at least once.
+		revealedHash: string | null;
+	}
 >();
 
 const load = async (
@@ -2763,7 +2771,7 @@ const load = async (
 ): Promise<void> => {
 	let st = loadState.get(root);
 	if (!st) {
-		st = { running: false, queued: false, sort: null };
+		st = { running: false, queued: false, sort: null, revealedHash: null };
 		loadState.set(root, st);
 		// Wire the permalink reveal to same-document fragment navigations here
 		// rather than in init(): a naive addEventListener at the reveal's own
@@ -2796,6 +2804,43 @@ const load = async (
 const setSort = (root: ShadowRoot, sort: SortKey): void => {
 	const st = loadState.get(root);
 	if (st) st.sort = sort;
+};
+
+// A per-root "focus and announce after the next render" request. `submit()`,
+// a reply, an edit, a moderation delete and the reaction legacy-API fallback
+// all trigger a reload, and `loadOnce` destroys the old tree
+// (`root.replaceChildren()`) before any code written after `ctx.reload()`
+// gets a chance to touch it — so what should happen once the *new* tree
+// lands has to be stashed here instead, and consumed by loadOnce itself
+// (see the arbitration at its tail, below `root.append(style, wrap)`).
+//
+// A WeakMap keyed on the request's own root, not queued as a list: only the
+// most recent request matters, and this also has to survive the
+// queued-reload race in `load()` above — if a second load() call arrives
+// while one is running, `st.queued` fires a follow-up `load()` after the
+// first finishes, and it is that follow-up's `loadOnce` (the one that
+// actually renders last) which must be the one to consume the request, not
+// whichever render happened to run first. A WeakMap already keyed by root
+// does this for free: whichever loadOnce runs last reads-and-deletes
+// whatever is there, with no separate flag needed to track who "owns" it.
+type PendingReveal = { id: string | null; announce?: string };
+const pendingReveal = new WeakMap<ShadowRoot, PendingReveal>();
+
+/**
+ * Setter for `pendingReveal`. Called directly by `submit()` (it has `root`
+ * in scope but no `ctx`); wrapped as `ctx.revealAfterReload` for the other
+ * four reload sites, which have `ctx` but would otherwise need `root`
+ * threaded through just for this.
+ */
+const revealAfterReload = (
+	root: ShadowRoot,
+	id: string | null,
+	announce?: string,
+): void => {
+	// Built conditionally rather than `{ id, announce }`: exactOptionalPropertyTypes
+	// treats an explicit `announce: undefined` as different from the key being
+	// absent, and PendingReveal's `announce?` means the latter.
+	pendingReveal.set(root, announce !== undefined ? { id, announce } : { id });
 };
 
 /**
@@ -2832,12 +2877,26 @@ const focusPostedComment = (root: ShadowRoot, id: string): boolean => {
  * Silent no-op when the hash isn't one of ours, or when it is but the
  * comment isn't in the rendered tree — a hash for another page, or one that
  * hasn't loaded yet, must never surface as an error.
+ *
+ * Reveals a given hash at most once per root. Scrolling alone was harmless
+ * on every reload, because the re-render was already resetting scroll
+ * position; moving focus is not — a reader who followed a permalink, read on,
+ * and then changed sort order or posted a reply must not be yanked back onto
+ * a comment they already left. `loadState.revealedHash` tracks the last hash
+ * that actually found its target; the browser itself only fires `hashchange`
+ * for a hash that actually changed, so gating on "already revealed this one"
+ * here matches what a reader can actually re-trigger. Returns whether it
+ * revealed anything, so loadOnce's arbitration can fall through when it
+ * didn't.
  */
-const revealHashTarget = (root: ShadowRoot): void => {
+const revealHashTarget = (root: ShadowRoot): boolean => {
 	const id = commentIdFromHash(window.location.hash);
-	if (!id) return;
-	const target = root.getElementById(commentAnchorId(id));
-	if (!target) return;
+	if (!id) return false;
+	const anchorId = commentAnchorId(id);
+	const st = loadState.get(root);
+	if (st?.revealedHash === anchorId) return false;
+	const target = root.getElementById(anchorId);
+	if (!target) return false;
 	// The CSS half of the reduced-motion promise lives in styles.css; scroll
 	// behavior is set here, so it has to be honored here too. `matchMedia` is
 	// guarded because the widget also runs under the iframe route and in test
@@ -2852,6 +2911,11 @@ const revealHashTarget = (root: ShadowRoot): void => {
 	// Scrolling alone only serves a sighted mouse user; move the caret too so
 	// keyboard and screen-reader users land on the comment (WCAG 2.4.3).
 	focusPostedComment(root, id);
+	// Record only on success: a hash pointing at a comment that hasn't
+	// rendered yet (paged thread, or a reload still in flight) must not count
+	// as revealed, so a later Load More or reload can still catch it.
+	if (st) st.revealedHash = anchorId;
+	return true;
 };
 
 // Closed-state notice copy, picked from the server's closed_reason enum so the
@@ -3233,10 +3297,44 @@ const loadOnce = async (
 
 	root.append(style, wrap);
 
-	// Reveal a permalink target (#garrul-comment-<id>) now that the tree is in
-	// the DOM. hashchange (see load(), above) covers the same-document
-	// navigation case; this call covers mount and every later reload.
-	revealHashTarget(root);
+	// Arbitrate what takes focus now that the fresh tree is in the DOM. At
+	// most one thing wins:
+	//   1. a pending reveal request (the reader just posted, replied, edited,
+	//      deleted, or reacted) — it's something they just did, so it beats
+	//      restoring a hash target they may have long since read past;
+	//   2. otherwise an unrevealed hash target (see revealHashTarget's own
+	//      once-per-hash guard) — covers mount, and any reload while a
+	//      permalink's hash is still set and hasn't been shown yet;
+	//   3. otherwise nothing; focus is left alone.
+	// Read-then-delete rather than a plain read: this is also what makes the
+	// mechanism correct under the queued-reload race in load() above. If a
+	// second load() arrives while one is running, that reload is queued and
+	// re-runs after this loadOnce returns — so whichever loadOnce call
+	// happens to run *last* is the one whose render the reader actually
+	// sees, and deleting the entry here means that last render is always the
+	// one that consumes it, never a stale one an earlier, superseded render
+	// already read.
+	const pending = pendingReveal.get(root);
+	pendingReveal.delete(root);
+	if (pending) {
+		const revealed = pending.id != null && focusPostedComment(root, pending.id);
+		// The status box in the tree just appended above — not whatever
+		// `.gr-error` a caller captured before this reload, which belongs to
+		// the node `root.replaceChildren()` just destroyed.
+		const statusEl = form.querySelector(".gr-error") as HTMLElement | null;
+		if (pending.announce && statusEl) {
+			showStatus(statusEl, pending.announce, "notice");
+		}
+		if (!revealed && statusEl) {
+			// Comment not in the rendered tree (paged thread, hard-deleted row,
+			// or no id at all) — fall back to the status box so a keyboard user
+			// still lands somewhere meaningful instead of <body>.
+			statusEl.tabIndex = -1;
+			statusEl.focus();
+		}
+	} else {
+		revealHashTarget(root);
+	}
 
 	// Turnstile mounts on the visitor's first composer focus, not here. api.js
 	// plus the challenge platform it pulls in is larger than this entire widget,
@@ -3467,30 +3565,16 @@ const submit = async (
 			}
 		}
 
+		// Request the focus-and-announce for once the new tree lands, *before*
+		// awaiting the reload: `load()` can return immediately and queue this
+		// reload behind one already in flight (see load(), above), so by the
+		// time `await` resolves here the tree it resolved against may already
+		// be stale. Stashing the request now, keyed on `root`, means whichever
+		// loadOnce call actually renders last — this one, or the queued
+		// follow-up — is the one that consumes it; see the arbitration at the
+		// tail of loadOnce.
+		revealAfterReload(root, json.comment?.id ?? null, s("w.posted"));
 		await load(root, slug, apiBase, host);
-
-		// Move focus to the newly posted comment so keyboard users don't land
-		// silently in an emptied composer. If the comment isn't in the rendered
-		// tree (paged thread, comment on last page, reload fetched page 1), fall
-		// back to the status region. Both paths announce success via the live
-		// region, serving different users: focus for keyboard navigation, the
-		// announcement for screen readers.
-		const newId = json.comment?.id;
-		if (newId && focusPostedComment(root, newId)) {
-			// Comment found and focused. Announce success to the live region.
-			if (errEl) showStatus(errEl, s("w.posted"), "notice");
-		} else {
-			// Comment not in tree (backlog #45) or no ID in response. Focus the
-			// status region to ensure keyboard focus lands somewhere meaningful,
-			// and announce success there.
-			if (errEl) {
-				showStatus(errEl, s("w.posted"), "notice");
-				// Make the status box focusable (it's a plain <div> with no tabindex).
-				// -1 keeps it out of tab order but allows programmatic focus.
-				errEl.tabIndex = -1;
-				errEl.focus();
-			}
-		}
 	} catch (err) {
 		// Same race, and the one that actually bit: a Turnstile error landing
 		// mid-submit had its message replaced by String(err) here, and the
