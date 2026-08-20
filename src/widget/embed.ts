@@ -46,6 +46,7 @@ import {
 	REACTION_KINDS,
 	mergeReactionTotals,
 } from "./reactions";
+import { commentAnchorId, commentHref } from "./permalink";
 import { absoluteTime, isoTime, relativeTime } from "./time";
 // The mount request and the wire shapes it carries. Kept out of this file so the
 // fallback rule can be tested without a DOM — see boot.ts's header.
@@ -660,6 +661,8 @@ type WidgetCtx = {
 	// the subscribe bell render from it instead of each firing their own GET.
 	seed: MountSeed;
 	reload: () => void;
+	/** Precomputed permalink base for this mount; see src/widget/permalink.ts. */
+	permalinkFor: (id: string) => string;
 };
 
 /**
@@ -2077,7 +2080,14 @@ const buildComment = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	if (n.author.provider !== "anon") {
 		meta.appendChild(el("span", "gr-verified", s("w.verified")));
 	}
-	meta.appendChild(buildTime(n.created_at));
+	// The timestamp is the permalink, the way Reddit/HN/Disqus do it — a plain
+	// anchor, so right-click-copy, middle-click and Cmd-click all work natively
+	// and we spend no bytes on a clipboard shim. Clicking it is handled by the
+	// existing hash-scroll at the bottom of this file.
+	const permalink = el("a", "gr-permalink") as HTMLAnchorElement;
+	permalink.href = ctx.permalinkFor(n.id);
+	permalink.appendChild(buildTime(n.created_at));
+	meta.appendChild(permalink);
 	if (n.edited_at) meta.appendChild(el("span", "gr-edited", s("w.edited")));
 	// Author-only signal: the list endpoint returns the viewer's own queued
 	// comments, so this badge is only ever seen by the author themselves.
@@ -2206,7 +2216,7 @@ const buildThread = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	const wrap = el("div", "gr-thread");
 	wrap.dataset.id = n.id;
 	// Anchor id for the /c/:id permalink redirect to scroll into view.
-	wrap.id = `garrul-comment-${n.id}`;
+	wrap.id = commentAnchorId(n.id);
 	wrap.appendChild(buildComment(n, ctx));
 	if (n.replies.length > 0) {
 		const replies = el("div", "gr-replies");
@@ -2917,6 +2927,12 @@ const loadOnce = async (
 	const reload = () => {
 		void load(root, slug, apiBase, host);
 	};
+	const permalinkFor = (id: string): string =>
+		commentHref(id, {
+			dataUrl: host.dataset.url,
+			locationHref: window.location.href,
+			apiBase,
+		});
 	const ctx: WidgetCtx = {
 		apiBase,
 		slug,
@@ -2945,6 +2961,7 @@ const loadOnce = async (
 			subscription: boot?.subscription,
 		},
 		reload,
+		permalinkFor,
 	};
 	// Article-level engagement bar sits at the very top, above the composer.
 	if (pageReactionsEnabled || pageVotesEnabled) {

@@ -476,6 +476,14 @@ button:active:not([disabled]) { opacity: 0.75; }
 }
 .gr-time { color: var(--gr-muted); font-size: 0.85em; }
 .gr-edited { color: var(--gr-muted); font-size: 0.85em; font-style: italic; }
+/* The permalink wraps the timestamp, so it must read as metadata, not as a
+   second link competing with the author name. Colour and weight are inherited;
+   only hover reveals that it is clickable. */
+.gr-permalink {
+	color: inherit;
+	text-decoration: none;
+}
+.gr-permalink:hover { text-decoration: underline; }
 .gr-pending {
 	color: var(--gr-notice);
 	border: 1px solid var(--gr-notice);
