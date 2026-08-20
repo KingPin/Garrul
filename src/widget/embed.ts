@@ -1096,9 +1096,12 @@ const buildPageEngagement = (ctx: WidgetCtx): HTMLElement => {
 			// row there is space for the label here, and it is the only thing that
 			// says what the emoji is *for* before the reader commits to a click.
 			const face = el("span", "gr-reaction-face");
-			const emoji_span = el("span", "gr-reaction-emoji", emoji);
-			emoji_span.setAttribute("aria-hidden", "true");
-			face.appendChild(emoji_span);
+			// Same reason as the per-comment row: the glyph's own name reads as
+			// the wrong sentiment on a couple of them, and the visible label
+			// beside it already says what the button is for.
+			const emojiSpan = el("span", "gr-reaction-emoji", emoji);
+			emojiSpan.setAttribute("aria-hidden", "true");
+			face.appendChild(emojiSpan);
 			const count = el("span", "gr-reaction-count", "0");
 			face.appendChild(count);
 			btn.append(face, el("span", "gr-reaction-label", s(labelKey)));
@@ -2109,9 +2112,16 @@ const buildComment = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	// existing hash-scroll at the bottom of this file.
 	const permalink = el("a", "gr-permalink");
 	permalink.href = ctx.permalinkFor(n.id);
+	// The visible label is relative ("6 minutes ago"), which collides across
+	// comments on an active thread and says nothing about where the link goes —
+	// a links-list reads as a column of bare durations. The name carries the
+	// commenter and the absolute time instead; the visible label is untouched.
 	permalink.setAttribute(
 		"aria-label",
-		s("w.permalink", { name: n.author.name, time: absoluteTime(n.created_at, locale) }),
+		s("w.permalink", {
+			name: n.author.name,
+			time: absoluteTime(n.created_at, locale),
+		}),
 	);
 	permalink.appendChild(buildTime(n.created_at));
 	meta.appendChild(permalink);
