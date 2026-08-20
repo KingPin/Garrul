@@ -95,6 +95,9 @@ let maxBodyChars = 10_000;
 /** How close to the ceiling the counter appears. Silent above this. */
 const COUNT_WARN_AT = 500;
 
+/** Counter for generating unique hint container IDs. */
+let hintIdCounter = 0;
+
 /**
  * Build an API URL carrying the resolved locale.
  *
@@ -482,7 +485,9 @@ const buildWritePreview = (
 	textarea.addEventListener("input", () => autoSize(textarea));
 	// One row under the box: what you can write on the left, how to send it on
 	// the right. The whole row hides together in Preview mode.
+	const hintId = `gr-hint-${++hintIdCounter}`;
 	const hint = el("div", "gr-md-hint");
+	hint.id = hintId;
 	// Silent until the author is close to the ceiling. A permanent "9,847 left"
 	// on a limit almost nobody reaches is a nag, not information — the counter
 	// is here for the person pasting an essay, and for them it has to appear
@@ -505,6 +510,7 @@ const buildWritePreview = (
 		counter,
 		el("span", "gr-kbd-hint", s("w.kbd_hint")),
 	);
+	textarea.setAttribute("aria-describedby", hintId);
 	const pane = el("div", "gr-preview");
 	pane.hidden = true;
 
