@@ -78,6 +78,7 @@ export const EN = {
 	"w.loading": "Loading…",
 	"w.save": "Save",
 	"w.cancel": "Cancel",
+	"w.posted": "Comment posted",
 
 	// ── Anti-spam ───────────────────────────────────────────────────────────
 	"w.ts.title": "Anti-spam check",

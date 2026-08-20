@@ -2755,6 +2755,29 @@ const setSort = (root: ShadowRoot, sort: SortKey): void => {
 	if (st) st.sort = sort;
 };
 
+/**
+ * Move focus to a freshly posted comment so the post is announced and the
+ * keyboard caret lands somewhere meaningful, instead of silently returning to
+ * an emptied composer.
+ *
+ * Returns false when the comment is not in the rendered tree — under `sort=old`
+ * on a paged thread it belongs on the last page and `load()` re-fetches the
+ * first. That case is backlog #45 and is deliberately not solved here; the
+ * caller falls back to the live region.
+ *
+ * The `tabindex="-1"` is left in place after focus moves away: re-focusing the
+ * same comment later (e.g. via a permalink click) should work the same way, and
+ * it costs nothing.
+ */
+const focusPostedComment = (root: ShadowRoot, id: string): boolean => {
+	const node = root.getElementById(commentAnchorId(id));
+	const article = node?.querySelector<HTMLElement>(".gr-comment");
+	if (!article) return false;
+	article.tabIndex = -1;
+	article.focus();
+	return true;
+};
+
 // Closed-state notice copy, picked from the server's closed_reason enum so the
 // reader sees *why* the thread is frozen rather than a generic line.
 const closedNotice = (reason: ListResponse["closed_reason"]): string => {
@@ -3332,7 +3355,7 @@ const submit = async (
 		});
 		const json = (await res.json()) as {
 			error?: string;
-			comment?: { status?: string };
+			comment?: { id?: string; status?: string };
 		};
 		if (!res.ok) {
 			// A Turnstile error can arrive while this request is in flight.
@@ -3379,6 +3402,26 @@ const submit = async (
 		}
 
 		await load(root, slug, apiBase, host);
+
+		// Move focus to the newly posted comment so keyboard users don't land
+		// silently in an emptied composer. If the comment isn't in the rendered
+		// tree (paged thread, comment on last page, reload fetched page 1), fall
+		// back to the status region. Both paths announce success via the live
+		// region, serving different users: focus for keyboard navigation, the
+		// announcement for screen readers.
+		const newId = json.comment?.id;
+		if (newId && focusPostedComment(root, newId)) {
+			// Comment found and focused. Announce success to the live region.
+			if (errEl) showStatus(errEl, s("w.posted"), "notice");
+		} else {
+			// Comment not in tree (backlog #45) or no ID in response. Focus the
+			// status region to ensure keyboard focus lands somewhere meaningful,
+			// and announce success there.
+			if (errEl) {
+				showStatus(errEl, s("w.posted"), "notice");
+				errEl.focus();
+			}
+		}
 	} catch (err) {
 		// Same race, and the one that actually bit: a Turnstile error landing
 		// mid-submit had its message replaced by String(err) here, and the
