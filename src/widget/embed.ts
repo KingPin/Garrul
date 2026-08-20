@@ -1223,11 +1223,17 @@ const buildPageEngagement = (ctx: WidgetCtx): HTMLElement => {
 		up.type = "button";
 		up.setAttribute("aria-label", s("w.page.up"));
 		up.appendChild(document.createTextNode("▲"));
+		// aria-pressed only ever gets set from setVote, which needs a resolved
+		// `votes` payload — set it here too so a bootstrap that's missing votes
+		// (or hasn't resolved yet) doesn't leave the button with no toggle
+		// semantics at all.
+		markVote(up, false);
 		scoreEl = el("span", "gr-vote-score", "0");
 		down = el("button", "gr-vote");
 		down.type = "button";
 		down.setAttribute("aria-label", s("w.page.down"));
 		down.appendChild(document.createTextNode("▼"));
+		markVote(down, false);
 		if (!ctx.downvotesEnabled) down.hidden = true;
 		up.addEventListener("click", () => void castVote(myVote === 1 ? 0 : 1));
 		down.addEventListener("click", () => void castVote(myVote === -1 ? 0 : -1));
