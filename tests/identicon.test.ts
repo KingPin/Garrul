@@ -38,4 +38,13 @@ describe("identiconSvg", () => {
 		expect(countAtX(0)).toBe(countAtX(4 * cell));
 		expect(countAtX(cell)).toBe(countAtX(3 * cell));
 	});
+
+	it("is marked as decorative for screen readers", () => {
+		const svg = identiconSvg("seed");
+		// The SVG must be marked as decorative with aria-hidden="true" (not role="img"
+		// or aria-label), since the commenter's name is already in the byline beside it.
+		expect(svg).toContain('aria-hidden="true"');
+		expect(svg).not.toMatch(/role="img"/);
+		expect(svg).not.toMatch(/aria-label/);
+	});
 });

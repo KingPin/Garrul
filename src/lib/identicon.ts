@@ -47,5 +47,5 @@ export const identiconSvg = (seed: string, size = 48): string => {
 		}
 	}
 
-	return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" role="img" aria-label="identicon"><rect width="${size}" height="${size}" fill="${bg}"/>${rects.join("")}</svg>`;
+	return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" aria-hidden="true"><rect width="${size}" height="${size}" fill="${bg}"/>${rects.join("")}</svg>`;
 };
