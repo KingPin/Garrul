@@ -95,8 +95,11 @@ let maxBodyChars = 10_000;
 /** How close to the ceiling the counter appears. Silent above this. */
 const COUNT_WARN_AT = 500;
 
-/** Counter for generating unique hint container IDs. */
-let hintIdCounter = 0;
+/** Counter backing `nextId` — one sequence for every generated element id. */
+let idCounter = 0;
+
+/** A unique id with the given prefix, for aria-describedby/aria-labelledby targets. */
+const nextId = (prefix: string): string => `${prefix}-${++idCounter}`;
 
 /**
  * Build an API URL carrying the resolved locale.
@@ -493,7 +496,7 @@ const buildWritePreview = (
 	textarea.addEventListener("input", () => autoSize(textarea));
 	// One row under the box: what you can write on the left, how to send it on
 	// the right. The whole row hides together in Preview mode.
-	const hintId = `gr-hint-${++hintIdCounter}`;
+	const hintId = nextId("gr-hint");
 	const hint = el("div", "gr-md-hint");
 	hint.id = hintId;
 	// Silent until the author is close to the ceiling. A permanent "9,847 left"
@@ -501,7 +504,6 @@ const buildWritePreview = (
 	// is here for the person pasting an essay, and for them it has to appear
 	// before they hit Post, not after the server rejects it.
 	const counter = el("span", "gr-count");
-	counter.setAttribute("role", "status");
 	counter.hidden = true;
 	const paintCount = (): void => {
 		const left = maxBodyChars - textarea.value.length;
@@ -582,7 +584,6 @@ const buildSkeleton = (): DocumentFragment => {
 	const frag = document.createDocumentFragment();
 	const root = el("div", "gr-root");
 	const list = el("div", "gr-list");
-	list.setAttribute("role", "status");
 	list.setAttribute("aria-busy", "true");
 	list.setAttribute("aria-label", s("w.loading_comments"));
 	for (let i = 0; i < 3; i++) {
@@ -1685,7 +1686,14 @@ const buildActions = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): HTMLEleme
 			const no = el("button", undefined, s("w.cancel"));
 			no.type = "button";
 			const prompt = el("span", undefined, s("w.delete_confirm"));
-			prompt.setAttribute("role", "status");
+			// Not a live region: the prompt is inserted already populated, which
+			// is the case a live region never announces (see the statusBox
+			// docstring above). Focus is about to move to Cancel regardless, so
+			// aria-describedby on both buttons announces it deterministically
+			// instead.
+			prompt.id = nextId("gr-confirm");
+			yes.setAttribute("aria-describedby", prompt.id);
+			no.setAttribute("aria-describedby", prompt.id);
 			confirmWrap.append(prompt, yes, no);
 			delBtn.replaceWith(confirmWrap);
 			// Replacing the focused button drops focus to <body>, stranding a
