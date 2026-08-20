@@ -436,6 +436,40 @@ and a sort selector above the list. Neither needs any host-page wiring:
   chronological. The selection is per-mount UI state — it isn't
   persisted and can't be preset from the host element.
 
+### Per-comment permalinks (since v2.17.0)
+
+Each comment's timestamp is now a link to that one comment, with no
+host-page wiring required. What it resolves to depends on what the
+widget knows at mount time:
+
+1. **`data-url` is set** (recommended — see §4): the link is
+   `<data-url>#garrul-comment-<id>`.
+2. **No `data-url`, and the document's own origin differs from the
+   Worker's API origin** — the normal case for a script-tag embed,
+   where the host page and the Worker live on different origins: the
+   link falls back to `location.href` with the same
+   `#garrul-comment-<id>` anchor.
+3. **Neither resolves** — the document's origin *matches* the API
+   origin, which happens in the iframe variant (§6) with no `?url=`
+   passed, where the document being linked from **is** the Worker's
+   own `/embed/:slug` page: the link falls back to the Worker's
+   `GET /c/:id`, which 302s to the comment's stored post URL plus the
+   same anchor.
+
+Rung 3 exists for durability (a permalink shared from an iframe embed
+still resolves after the post moves) but is deliberately the last
+resort, not the default: every click of `/c/:id` is a Worker
+invocation against the 100,000 requests/day free tier, where the
+host-page anchor costs nothing. It also 404s when the post has no
+`url` on file, which is why rungs 1 and 2 are tried first.
+
+The link is a plain `<a href>` — no clipboard-copy JavaScript shim —
+so right-click-copy, middle-click, and Cmd/Ctrl-click all work the way
+a reader expects. `#garrul-comment-<id>` is the `id` the widget already
+stamps on every thread node's wrapper element, and the same anchor the
+per-post RSS feed (`/feed/:slug`) links to, so a permalink shared from
+either surface lands on the same spot once the widget mounts.
+
 ### Page-level reactions and votes (since v1.10.0)
 
 Separate from comment-level engagement, the widget can render an
