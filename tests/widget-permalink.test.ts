@@ -7,7 +7,7 @@
  * the last rung, for the iframe embed standing on the Worker's own origin.
  */
 import { describe, it, expect } from "vitest";
-import { commentHref } from "../src/widget/permalink";
+import { commentAnchorId, commentHref, commentIdFromHash } from "../src/widget/permalink";
 
 const API = "https://comments.example.com";
 const ID = "01JQZ8X4M2";
@@ -98,5 +98,35 @@ describe("commentHref", () => {
 				apiBase: `${API}/`,
 			}),
 		).toBe(`${API}/c/${ID}`);
+	});
+});
+
+describe("commentIdFromHash", () => {
+	it("recovers the id from a valid #garrul-comment-<id> hash", () => {
+		expect(commentIdFromHash(`#${commentAnchorId(ID)}`)).toBe(ID);
+	});
+
+	it.each(["", "#"])("returns null for %j", (hash) => {
+		expect(commentIdFromHash(hash)).toBeNull();
+	});
+
+	it("returns null for a hash with the wrong prefix", () => {
+		expect(commentIdFromHash("#some-other-anchor")).toBeNull();
+	});
+
+	it("returns null when the prefix has nothing after it", () => {
+		expect(commentIdFromHash(`#${commentAnchorId("")}`)).toBeNull();
+	});
+
+	it("returns null for #existing&garrul-comment-<id> rather than the id", () => {
+		// src/routes/permalink.ts:54 emits exactly this shape when a post's
+		// stored URL already carries a fragment: the two fragments get joined
+		// with `&` rather than one replacing the other. The combined string
+		// doesn't start with our prefix (it starts with the *existing*
+		// fragment), so this is a plain no-match, not a special case — and it
+		// resolves to no element in a browser either way (see the
+		// "replaces an existing fragment" case above), so a null here costs
+		// nothing real.
+		expect(commentIdFromHash(`#existing&${commentAnchorId(ID)}`)).toBeNull();
 	});
 });

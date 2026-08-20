@@ -46,7 +46,7 @@ import {
 	REACTION_KINDS,
 	mergeReactionTotals,
 } from "./reactions";
-import { commentAnchorId, commentHref } from "./permalink";
+import { commentAnchorId, commentHref, commentIdFromHash } from "./permalink";
 import { absoluteTime, isoTime, relativeTime } from "./time";
 // The mount request and the wire shapes it carries. Kept out of this file so the
 // fallback rule can be tested without a DOM — see boot.ts's header.
@@ -2765,6 +2765,17 @@ const load = async (
 	if (!st) {
 		st = { running: false, queued: false, sort: null };
 		loadState.set(root, st);
+		// Wire the permalink reveal to same-document fragment navigations here
+		// rather than in init(): a naive addEventListener at the reveal's own
+		// call site (inside loadOnce, below) would leak one listener per reload
+		// and fire the reveal N times, because loadOnce runs on every reload —
+		// not just at mount. This `if (!st)` branch, by contrast, only runs
+		// once per root's lifetime (the first load() call creates the state
+		// entry; every later call, from a reply, a sort change, a reconnect,
+		// finds it already there), so piggybacking here gets "exactly one
+		// listener per mount" for free, with no second WeakSet just to
+		// remember whether one was already bound.
+		window.addEventListener("hashchange", () => revealHashTarget(root));
 	}
 	if (st.running) {
 		st.queued = true;
@@ -2808,6 +2819,39 @@ const focusPostedComment = (root: ShadowRoot, id: string): boolean => {
 	article.tabIndex = -1;
 	article.focus();
 	return true;
+};
+
+/**
+ * Reveal a permalink target (#garrul-comment-<id>): scroll it into view and
+ * then move focus to it. Browsers don't auto-scroll to — or focus — anchors
+ * inside a shadow root, so both have to happen by hand. Called once the tree
+ * is in the DOM (see loadOnce, below) and again on every `hashchange` (see
+ * load(), above) — a same-document fragment navigation the browser cannot
+ * reach into the shadow root to act on itself.
+ *
+ * Silent no-op when the hash isn't one of ours, or when it is but the
+ * comment isn't in the rendered tree — a hash for another page, or one that
+ * hasn't loaded yet, must never surface as an error.
+ */
+const revealHashTarget = (root: ShadowRoot): void => {
+	const id = commentIdFromHash(window.location.hash);
+	if (!id) return;
+	const target = root.getElementById(commentAnchorId(id));
+	if (!target) return;
+	// The CSS half of the reduced-motion promise lives in styles.css; scroll
+	// behavior is set here, so it has to be honored here too. `matchMedia` is
+	// guarded because the widget also runs under the iframe route and in test
+	// DOMs that don't implement it.
+	const still = window.matchMedia?.(
+		"(prefers-reduced-motion: reduce)",
+	)?.matches;
+	target.scrollIntoView({
+		block: "center",
+		behavior: still ? "auto" : "smooth",
+	});
+	// Scrolling alone only serves a sighted mouse user; move the caret too so
+	// keyboard and screen-reader users land on the comment (WCAG 2.4.3).
+	focusPostedComment(root, id);
 };
 
 // Closed-state notice copy, picked from the server's closed_reason enum so the
@@ -3189,25 +3233,10 @@ const loadOnce = async (
 
 	root.append(style, wrap);
 
-	// Scroll a permalink target (#garrul-comment-<id>) into view once the
-	// tree is in the DOM. Browsers don't auto-scroll to anchors inside a
-	// shadow root, so we have to do it manually.
-	if (window.location.hash.startsWith("#garrul-comment-")) {
-		const target = root.getElementById(window.location.hash.slice(1));
-		if (target) {
-			// The CSS half of the reduced-motion promise lives in styles.css;
-			// scroll behavior is set here, so it has to be honored here too.
-			// `matchMedia` is guarded because the widget also runs under the
-			// iframe route and in test DOMs that don't implement it.
-			const still = window.matchMedia?.(
-				"(prefers-reduced-motion: reduce)",
-			)?.matches;
-			target.scrollIntoView({
-				block: "center",
-				behavior: still ? "auto" : "smooth",
-			});
-		}
-	}
+	// Reveal a permalink target (#garrul-comment-<id>) now that the tree is in
+	// the DOM. hashchange (see load(), above) covers the same-document
+	// navigation case; this call covers mount and every later reload.
+	revealHashTarget(root);
 
 	// Turnstile mounts on the visitor's first composer focus, not here. api.js
 	// plus the challenge platform it pulls in is larger than this entire widget,

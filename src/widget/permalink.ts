@@ -20,6 +20,31 @@
 /** Anchor id stamped on each thread node by embed.ts (`buildThread`). */
 export const commentAnchorId = (id: string): string => `garrul-comment-${id}`;
 
+/**
+ * Inverse of `commentAnchorId`: pull the comment id back out of
+ * `location.hash`, or null when the hash isn't one of ours.
+ *
+ * Built from `commentAnchorId("")` rather than a re-typed `"garrul-comment-"`
+ * literal, so the prefix has exactly one source of truth.
+ *
+ * `#existing&garrul-comment-<id>` — the shape src/routes/permalink.ts:54
+ * emits when a post's stored URL already carries a fragment — returns null
+ * here rather than `<id>`. The combined fragment doesn't start with our
+ * prefix (it starts with the *existing* fragment), so there is no substring
+ * search to fall back to without risking a false positive on some unrelated
+ * page's `#foo-garrul-comment-bar`-shaped anchor. It is already a known dead
+ * end in a browser either way (see tests/widget-permalink.test.ts:57-60), so
+ * returning null just means the widget stays silent instead of also failing
+ * to find an element — the same "no match, no error" contract as any other
+ * hash that isn't ours.
+ */
+export const commentIdFromHash = (hash: string): string | null => {
+	const prefix = `#${commentAnchorId("")}`;
+	if (!hash.startsWith(prefix)) return null;
+	const id = hash.slice(prefix.length);
+	return id.length > 0 ? id : null;
+};
+
 export interface PermalinkCtx {
 	/** The host page's `data-url`, if the operator set one. */
 	dataUrl: string | undefined;
