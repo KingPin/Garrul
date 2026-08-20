@@ -1090,7 +1090,9 @@ const buildPageEngagement = (ctx: WidgetCtx): HTMLElement => {
 			// row there is space for the label here, and it is the only thing that
 			// says what the emoji is *for* before the reader commits to a click.
 			const face = el("span", "gr-reaction-face");
-			face.appendChild(el("span", "gr-reaction-emoji", emoji));
+			const emoji_span = el("span", "gr-reaction-emoji", emoji);
+			emoji_span.setAttribute("aria-hidden", "true");
+			face.appendChild(emoji_span);
 			const count = el("span", "gr-reaction-count", "0");
 			face.appendChild(count);
 			btn.append(face, el("span", "gr-reaction-label", s(labelKey)));
