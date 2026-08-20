@@ -2765,9 +2765,9 @@ const setSort = (root: ShadowRoot, sort: SortKey): void => {
  * first. That case is backlog #45 and is deliberately not solved here; the
  * caller falls back to the live region.
  *
- * The `tabindex="-1"` is left in place after focus moves away: re-focusing the
- * same comment later (e.g. via a permalink click) should work the same way, and
- * it costs nothing.
+ * The `tabindex="-1"` is left in place after focus moves away: it keeps the
+ * article out of the sequential tab order permanently, costs nothing to leave,
+ * and poses no risk to future interactions (focus or otherwise).
  */
 const focusPostedComment = (root: ShadowRoot, id: string): boolean => {
 	const node = root.getElementById(commentAnchorId(id));
@@ -3419,6 +3419,9 @@ const submit = async (
 			// and announce success there.
 			if (errEl) {
 				showStatus(errEl, s("w.posted"), "notice");
+				// Make the status box focusable (it's a plain <div> with no tabindex).
+				// -1 keeps it out of tab order but allows programmatic focus.
+				errEl.tabIndex = -1;
 				errEl.focus();
 			}
 		}
