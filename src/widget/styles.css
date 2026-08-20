@@ -70,6 +70,7 @@
 @media (prefers-color-scheme: dark) {
 	:host(:not([data-theme="light"])) {
 		--gr-fg: var(--garrul-fg, #e6e8eb);
+		--gr-bg: var(--garrul-bg, #12161a);
 		--gr-input-bg: var(--garrul-input-bg, #1b1f24);
 		--gr-border: var(--garrul-border, #2e353d);
 		--gr-muted: var(--garrul-muted, #9aa3b0);
@@ -90,6 +91,7 @@
 :host([data-theme="dark"]) {
 	color-scheme: dark;
 	--gr-fg: var(--garrul-fg, #e6e8eb);
+	--gr-bg: var(--garrul-bg, #12161a);
 	--gr-input-bg: var(--garrul-input-bg, #1b1f24);
 	--gr-border: var(--garrul-border, #2e353d);
 	--gr-muted: var(--garrul-muted, #9aa3b0);
