@@ -2425,6 +2425,7 @@ export const ADMIN_ACTIONS = [
 	"unban",
 	"user.erase",
 	"user.export",
+	"user.revoke_sessions",
 	"rerender",
 	"seed-demo",
 	// Retention sweeps. `ip_retention.sweep` has been written to the log since

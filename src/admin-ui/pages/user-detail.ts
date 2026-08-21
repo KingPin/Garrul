@@ -68,6 +68,16 @@ const userHeader = (d: AdminUserDetail, viewer: User): string => {
     <template x-if="banned">
       <button :disabled="busy" @click="busy=true; setBanned(false).then(()=>{banned=false}).finally(()=>busy=false)">Unban</button>
     </template>
+    ${
+			// Mirrors the route guard (admin-only). Non-destructive — the user just
+			// signs in again — so no typed confirm. On your own account the route
+			// keeps this browser's session alive, hence the different label.
+			viewer.role === "admin"
+				? `<button :disabled="busy" @click="busy=true; revokeSessions().finally(()=>busy=false)">${
+						viewer.id === u.id ? "Sign out other sessions" : "Sign out everywhere"
+					}</button>`
+				: ""
+		}
   </div>
 </div>
 ${roleControls}
@@ -214,6 +224,20 @@ export const renderUserDetail = (
       if (!r.ok) throw new Error(j.error || ('action failed: ' + r.status));
       this.$dispatch('toast', { text: 'Personal data erased' });
       return j;
+    }).catch(e => {
+      this.$dispatch('toast', { text: e.message, kind: 'bad' });
+      throw e;
+    });
+  },
+  revokeSessions() {
+    return fetch('/admin/api/users/${escapeHtml(u.id)}/revoke-sessions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    }).then(async r => {
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || ('action failed: ' + r.status));
+      this.$dispatch('toast', { text: j.self ? 'Signed out everywhere else — this session stays' : 'Signed out on every device' });
     }).catch(e => {
       this.$dispatch('toast', { text: e.message, kind: 'bad' });
       throw e;

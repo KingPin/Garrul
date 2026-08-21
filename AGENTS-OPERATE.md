@@ -173,6 +173,7 @@ between the two is a build error, not a silent misclassification.
 | `EDIT_WINDOW_MINUTES` | var | Minutes a commenter can edit their own post. Default 15; `0` disables editing. | `15` | `wrangler.toml` default; **Admin → Settings** overrides |
 | `PUBLIC_BASE_URL` | var | Public URL of the Worker; used in permalinks + email bodies. | `https://comments.example.com` | `wrangler.toml` — **replace the shipped placeholder before deploying** |
 | `CANONICAL_URL` | var | Optional. Override for the public URL used by the `/AGENTS.md` route when the inbound `Host` differs from the canonical address. | `https://comments.example.com` | `wrangler.toml` |
+| `SECURITY_CONTACT` | var | Optional. Vulnerability-disclosure contact published at `/.well-known/security.txt` (RFC 9116). An email address (served as `mailto:`) or an `https://` / `mailto:` URI, served verbatim. Unset (the default) the route answers 404 — the file is only served once there is a real contact behind it. Usually maintained on the Settings page rather than here — this is the default a fresh deploy starts with. | `security@example.com` | `wrangler.toml` default; **Admin → Settings** overrides |
 | `OAUTH_CALLBACK_BASE` | var | Base URL for OAuth callbacks; must match the URI registered with each provider. Usually identical to `PUBLIC_BASE_URL`. | `https://comments.example.com` | `wrangler.toml` — **replace the shipped placeholder before deploying** |
 | `BRANDING_HIDDEN` | var | Optional. Set to `1`/`true` to suppress the "Powered by Garrul" attribution under the comment list. Unset = attribution shown. | `false` | `wrangler.toml` |
 | `JWT_SECRET` | secret | HMAC-SHA-256 key for the signed OAuth state cookie (`src/lib/oauth.ts`). Required for sign-in to work at all. Rotating it invalidates any OAuth flow already in progress — users retry and it works; no other effect, since sessions are KV-backed and not signed with this. | ``openssl rand -base64 32` output` | `wrangler secret put` / `.dev.vars` |
@@ -955,6 +956,7 @@ responding):
 - `POST /admin/api/users/:id` — `{banned: boolean, reason?, from_comment?}` (one-click ban-author records the originating comment in audit meta; admin-only)
 - `POST /admin/api/users/:id/role` — `{role: user|mod|admin, reason?}` (admin-only; refuses self-change and the last-admin demotion)
 - `POST /admin/api/users/:id/erase` — `{confirm: "ERASE", redact_bodies: boolean, reason?}` (admin-only, irreversible; see below)
+- `POST /admin/api/users/:id/revoke-sessions` — no body (admin-only; kills every session the user holds via the revocation epoch — the stolen-cookie kill switch. Targeting yourself means "sign out everywhere else": the response sets a fresh cookie so the browser doing the revoking stays signed in. Audited `user.revoke_sessions`)
 - `POST /admin/api/subscriptions/:id` — `{action: unsubscribe|resend, reason?}`
 - `POST /admin/api/ops/rerender` — `{batch?: number, cursor?}` → `{processed, next_cursor}`
 - `POST /admin/api/ops/seed-demo` — disabled when `ENV=production`
@@ -1173,6 +1175,18 @@ routes = [
 Wrangler provisions the proxied subdomain on first deploy (first cert
 issuance ~30 seconds). Don't use `*.workers.dev` in production —
 third-party-cookie blocking in Safari/Brave breaks sign-in.
+
+**Vulnerability disclosure (`security.txt`).** Set a disclosure contact —
+Admin → Settings → Vulnerability disclosure, or the `SECURITY_CONTACT`
+var as the deploy-time default — and the instance serves
+`GET /.well-known/security.txt` (RFC 9116), the standard place a
+security researcher looks for where to report a problem with *your
+deployment*. Accepts an email address (published as `mailto:`) or an
+`https://`/`mailto:` URI; anything else is treated as unset, and unset
+means the route answers 404 rather than publishing a file that points
+nowhere. `Expires` is generated ~6 months out on every response, so the
+file never goes stale on its own. Like `/AGENTS.md`, the route is public
+and needs no `Origin`.
 
 ### Mount cost and free-tier headroom (since v2.15.0)
 
@@ -1405,10 +1419,13 @@ Art. 33(4) explicitly allows filing in phases.
 
 - Rotate whatever leaked (`wrangler secret put …`). If it was
   `IP_HASH_SECRET`, run the emergency purge above *before* rotating.
-- Revoke every session if an admin credential or the `SESSIONS` namespace is
-  in scope. There is no button for this: sessions are `sess:<hex>` keys in
-  KV, so you delete them with `wrangler kv key list` / `kv bulk delete`
-  against that namespace. Everyone signs in again; nothing else breaks.
+- Revoke sessions if an admin credential or the `SESSIONS` namespace is in
+  scope. Per account there is a button: "Sign out everywhere" on
+  `/admin/users/:id` (on your own account it keeps the session you're
+  clicking from). For a namespace-wide wipe there is not: sessions are
+  `sess:<hex>` keys in KV, so you delete them with `wrangler kv key list` /
+  `kv bulk delete` against that namespace. Everyone signs in again; nothing
+  else breaks.
 - Rotate per-endpoint webhook secrets from `/admin/webhooks` — they live in
   D1, so a database dump exposes them.
 - Snapshot logs and take a dated `.sql` export *before* purging anything, and

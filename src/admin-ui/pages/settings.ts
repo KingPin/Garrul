@@ -380,6 +380,19 @@ export const renderSettings = (
 		placeholder: "viagra\n*casino*\nt.me/*",
 	});
 
+	const securityContactTextarea = renderTextarea({
+		name: "security_contact",
+		model: "texts.security_contact",
+		label: "Disclosure contact",
+		help: `An email address, or an <code>https://</code> or
+		<code>mailto:</code> URI. Anything else is treated as unset. Empty (the
+		default) keeps the route a 404 — the file is only served once there is a
+		real contact behind it.`,
+		rows: 2,
+		maxlength: MAX_TEXT_SETTING_CHARS,
+		placeholder: "security@example.com",
+	});
+
 	const initial = JSON.stringify(
 		Object.fromEntries(ALL_FLAG_META.map((f) => [f.key, flags[f.key]])),
 	);
@@ -571,6 +584,16 @@ export const renderSettings = (
       window back to 0 stops future sweeps; it does not restore what a sweep
       already erased. Watch it run, and drain a backlog on demand, from
       <a href="/admin/operator">Operator</a>.</p>
+    </div>
+
+    <div class="card" x-show="tab === 'moderation'" x-cloak>
+      <h2>Vulnerability disclosure</h2>
+      <p class="muted">Where a security researcher should report a
+      vulnerability in this instance. When set, it is published at
+      <a href="/.well-known/security.txt" target="_blank" rel="noopener"><code>/.well-known/security.txt</code></a>
+      (RFC 9116), the standard place researchers look. Unset, that route
+      answers 404.</p>
+      ${securityContactTextarea}
     </div>
 
     <p class="settings-actions" x-show="tab !== 'config'">

@@ -172,6 +172,12 @@ The matching rules, the full exemption list, a curl test recipe, and what
 a build-time fetcher should read instead:
 [`AGENTS-OPERATE.md`](AGENTS-OPERATE.md#6-allowed_origins-deep-dive).
 
+If you set a vulnerability-disclosure contact (Admin → Settings, or the
+`SECURITY_CONTACT` var), your instance publishes it at
+`/.well-known/security.txt` ([RFC 9116](https://www.rfc-editor.org/rfc/rfc9116)) —
+the standard place security researchers look for where to report a
+problem. Until then the route answers 404.
+
 ## Privacy
 
 Garrul stores:

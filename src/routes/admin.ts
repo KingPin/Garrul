@@ -19,7 +19,11 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import type { Bindings } from "../index";
-import { readSession } from "../lib/session";
+import {
+	readSession,
+	revokeOtherSessions,
+	revokeUserSessions,
+} from "../lib/session";
 import {
 	ADMIN_ACTIONS,
 	adminBulkUpdateCommentStatus,
@@ -1890,6 +1894,34 @@ admin.post("/api/users/:id", async (c) => {
 	});
 	if (!result.ok) return c.json({ error: result.error }, 404);
 	return c.json({ ok: true, id: result.id, banned: result.banned });
+});
+
+/**
+ * Kill every session the target user holds — the remedy for a stolen or
+ * leaked cookie, which the 30-day sliding TTL otherwise keeps alive with no
+ * kill switch. Non-destructive: the user just signs in again. Targeting
+ * yourself means "sign out everywhere else" — the revocation epoch would
+ * take the session making this request with it, so the caller's browser is
+ * handed a fresh session that postdates the stamp.
+ */
+admin.post("/api/users/:id/revoke-sessions", async (c) => {
+	const user = await requireAdmin(c);
+	if (user instanceof Response) return user;
+	const id = c.req.param("id");
+	const target = await getUser(c.env.DB, id);
+	if (!target) return c.json({ error: "not_found" }, 404);
+	if (target.id === user.id) {
+		await revokeOtherSessions(c, user.id);
+	} else {
+		await revokeUserSessions(c.env, target.id);
+	}
+	await adminInsertAudit(c.env.DB, {
+		admin_id: user.id,
+		action: "user.revoke_sessions",
+		target_kind: "user",
+		target_id: target.id,
+	});
+	return c.json({ ok: true, self: target.id === user.id });
 });
 
 /**
