@@ -65,6 +65,18 @@ describe("contactUri", () => {
 		expect(contactUri("   ")).toBeNull();
 	});
 
+	it("rejects degenerate URIs that pass the prefix check alone", () => {
+		expect(contactUri("https://")).toBeNull();
+		expect(contactUri("mailto:")).toBeNull();
+		expect(contactUri("mailto:not-an-address")).toBeNull();
+	});
+
+	it("tolerates a query on a mailto: contact", () => {
+		expect(contactUri("mailto:sec@example.com?subject=vuln")).toBe(
+			"mailto:sec@example.com?subject=vuln",
+		);
+	});
+
 	it("rejects a value with embedded whitespace (header-injection guard)", () => {
 		expect(contactUri("https://example.com/\nContact: mailto:x@evil.com")).toBeNull();
 		expect(contactUri("mailto:a@example.com b@example.com")).toBeNull();
