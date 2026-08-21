@@ -70,11 +70,12 @@
 @media (prefers-color-scheme: dark) {
 	:host(:not([data-theme="light"])) {
 		--gr-fg: var(--garrul-fg, #e6e8eb);
+		--gr-bg: var(--garrul-bg, #12161a);
 		--gr-input-bg: var(--garrul-input-bg, #1b1f24);
 		--gr-border: var(--garrul-border, #2e353d);
 		--gr-muted: var(--garrul-muted, #9aa3b0);
 		--gr-accent: var(--garrul-accent, #3b82f6);
-		--gr-accent-fg: var(--garrul-accent-fg, #ffffff);
+		--gr-accent-fg: var(--garrul-accent-fg, #0b1220);
 		--gr-link: var(--garrul-link, #6aa9ff);
 		--gr-error: var(--garrul-error, #f08a8a);
 		--gr-notice: var(--garrul-notice, #6cb6e8);
@@ -90,11 +91,12 @@
 :host([data-theme="dark"]) {
 	color-scheme: dark;
 	--gr-fg: var(--garrul-fg, #e6e8eb);
+	--gr-bg: var(--garrul-bg, #12161a);
 	--gr-input-bg: var(--garrul-input-bg, #1b1f24);
 	--gr-border: var(--garrul-border, #2e353d);
 	--gr-muted: var(--garrul-muted, #9aa3b0);
 	--gr-accent: var(--garrul-accent, #3b82f6);
-	--gr-accent-fg: var(--garrul-accent-fg, #ffffff);
+	--gr-accent-fg: var(--garrul-accent-fg, #0b1220);
 	--gr-link: var(--garrul-link, #6aa9ff);
 	--gr-error: var(--garrul-error, #f08a8a);
 	--gr-notice: var(--garrul-notice, #6cb6e8);
@@ -337,8 +339,8 @@
 	align-self: flex-start;
 }
 .gr-toolbar-btn:hover { background: var(--gr-hover); border-color: var(--gr-accent); }
-/* One focus ring for every interactive control in the shadow tree. */
-button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-visible {
+/* One focus ring for every interactive control in the shadow tree, including links. */
+button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible {
 	outline: 2px solid var(--gr-accent);
 	outline-offset: 2px;
 }
@@ -476,6 +478,14 @@ button:active:not([disabled]) { opacity: 0.75; }
 }
 .gr-time { color: var(--gr-muted); font-size: 0.85em; }
 .gr-edited { color: var(--gr-muted); font-size: 0.85em; font-style: italic; }
+/* The permalink wraps the timestamp, so it must read as metadata, not as a
+   second link competing with the author name. Colour and weight are inherited;
+   only hover reveals that it is clickable. */
+.gr-permalink {
+	color: inherit;
+	text-decoration: none;
+}
+.gr-permalink:hover { text-decoration: underline; }
 .gr-pending {
 	color: var(--gr-notice);
 	border: 1px solid var(--gr-notice);

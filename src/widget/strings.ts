@@ -66,6 +66,7 @@ export const EN = {
 	"w.name_ph": "Your name",
 	"w.body_ph": "Add a comment…",
 	"w.email_ph": "you@example.com",
+	"w.email_label": "Email address",
 	// A subscription is UNIQUE (post_slug, email) — it follows the thread, not
 	// your own comment, so every new comment on the post is delivered. The old
 	// wording ("on new replies") promised per-reply scoping the schema does not
@@ -78,6 +79,7 @@ export const EN = {
 	"w.loading": "Loading…",
 	"w.save": "Save",
 	"w.cancel": "Cancel",
+	"w.posted": "Comment posted",
 
 	// ── Anti-spam ───────────────────────────────────────────────────────────
 	"w.ts.title": "Anti-spam check",
@@ -127,6 +129,11 @@ export const EN = {
 	"w.replies": { one: "{n} reply", other: "{n} replies" },
 	"w.more_replies": { one: "Show {n} more reply", other: "Show {n} more replies" },
 	"w.loading_comments": "Loading comments",
+	"w.permalink": "Permalink to @{name}'s comment, {time}",
+	// Names the comments region for assistive tech. Never rendered visually —
+	// see `.gr-sr` — so it exists to give screen readers and rotor
+	// navigation a landmark, not to put a title on the operator's page.
+	"w.region": "Comments",
 	"w.empty.open": "Be the first to comment.",
 	"w.empty.closed": "No comments yet.",
 	"w.closed.post": "Comments are closed on this post.",

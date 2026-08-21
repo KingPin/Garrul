@@ -46,6 +46,7 @@ import {
 	REACTION_KINDS,
 	mergeReactionTotals,
 } from "./reactions";
+import { commentAnchorId, commentHref, commentIdFromHash } from "./permalink";
 import { absoluteTime, isoTime, relativeTime } from "./time";
 // The mount request and the wire shapes it carries. Kept out of this file so the
 // fallback rule can be tested without a DOM — see boot.ts's header.
@@ -94,6 +95,12 @@ let maxBodyChars = 10_000;
 /** How close to the ceiling the counter appears. Silent above this. */
 const COUNT_WARN_AT = 500;
 
+/** Counter backing `nextId` — one sequence for every generated element id. */
+let idCounter = 0;
+
+/** A unique id with the given prefix, for aria-describedby/aria-labelledby targets. */
+const nextId = (prefix: string): string => `${prefix}-${++idCounter}`;
+
 /**
  * Build an API URL carrying the resolved locale.
  *
@@ -109,6 +116,14 @@ const apiUrl = (base: string, path: string): string =>
 	locale === "en"
 		? base + path
 		: `${base + path + (path.indexOf("?") < 0 ? "?" : "&")}lang=${encodeURIComponent(locale)}`;
+
+// Mark a vote button with its state: set/unset data-mine to highlight it visually,
+// and set aria-pressed so screen readers know whether the user's vote is cast.
+const markVote = (btn: HTMLElement, on: boolean): void => {
+	if (on) btn.dataset.mine = "1";
+	else delete btn.dataset.mine;
+	btn.setAttribute("aria-pressed", String(on));
+};
 
 // Mirrors lib/tree.ts's TreeAuthor. No `is_admin`: the API stopped sending it
 // (it let anyone enumerate privileged accounts) and nothing here rendered it.
@@ -481,7 +496,9 @@ const buildWritePreview = (
 	textarea.addEventListener("input", () => autoSize(textarea));
 	// One row under the box: what you can write on the left, how to send it on
 	// the right. The whole row hides together in Preview mode.
+	const hintId = nextId("gr-hint");
 	const hint = el("div", "gr-md-hint");
+	hint.id = hintId;
 	// Silent until the author is close to the ceiling. A permanent "9,847 left"
 	// on a limit almost nobody reaches is a nag, not information — the counter
 	// is here for the person pasting an essay, and for them it has to appear
@@ -503,6 +520,7 @@ const buildWritePreview = (
 		counter,
 		el("span", "gr-kbd-hint", s("w.kbd_hint")),
 	);
+	textarea.setAttribute("aria-describedby", hintId);
 	const pane = el("div", "gr-preview");
 	pane.hidden = true;
 
@@ -569,7 +587,7 @@ const buildSkeleton = (): DocumentFragment => {
 	list.setAttribute("aria-busy", "true");
 	list.setAttribute("aria-label", s("w.loading_comments"));
 	for (let i = 0; i < 3; i++) {
-		const row = el("div", "gr-comment");
+		const row = el("article", "gr-comment");
 		const avatarWrap = el("div", "gr-avatar");
 		avatarWrap.appendChild(el("div", "gr-skel gr-skel-avatar"));
 		const lines = el("div");
@@ -660,6 +678,16 @@ type WidgetCtx = {
 	// the subscribe bell render from it instead of each firing their own GET.
 	seed: MountSeed;
 	reload: () => void;
+	/**
+	 * Request that once the next reload's tree lands, focus (and optionally
+	 * announce) something — see `pendingReveal`/`revealAfterReload` near
+	 * `focusPostedComment` below. `id: null` skips straight to the status-box
+	 * fallback. Exists because `ctx.reload()` runs `root.replaceChildren()`
+	 * before any code after the call gets a chance to touch the old tree.
+	 */
+	revealAfterReload: (id: string | null, announce?: string) => void;
+	/** Precomputed permalink base for this mount; see src/widget/permalink.ts. */
+	permalinkFor: (id: string) => string;
 };
 
 /**
@@ -903,7 +931,7 @@ const buildVotes = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	up.type = "button";
 	up.setAttribute("aria-label", s("w.vote.up"));
 	up.appendChild(document.createTextNode("▲"));
-	if (n.my_vote === 1) up.dataset.mine = "1";
+	markVote(up, n.my_vote === 1);
 
 	const scoreEl = el("span", "gr-vote-score", String(score));
 
@@ -911,7 +939,7 @@ const buildVotes = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	down.type = "button";
 	down.setAttribute("aria-label", s("w.vote.down"));
 	down.appendChild(document.createTextNode("▼"));
-	if (n.my_vote === -1) down.dataset.mine = "1";
+	markVote(down, n.my_vote === -1);
 
 	const cast = async (value: -1 | 0 | 1): Promise<void> => {
 		up.disabled = true;
@@ -932,10 +960,8 @@ const buildVotes = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 			n.score_down = body.score_down;
 			n.my_vote = body.my_vote;
 			scoreEl.textContent = String(body.score_up - body.score_down);
-			if (body.my_vote === 1) up.dataset.mine = "1";
-			else delete up.dataset.mine;
-			if (body.my_vote === -1) down.dataset.mine = "1";
-			else delete down.dataset.mine;
+			markVote(up, body.my_vote === 1);
+			markVote(down, body.my_vote === -1);
 		} catch {
 			// Network/parse failure: leave UI untouched; user can retry.
 		} finally {
@@ -1030,6 +1056,11 @@ const buildReactions = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 				// fall back to the reload this used to do rather than merging
 				// against `{}`, which would blank every reaction on the comment.
 				if (!body.reactions) {
+					// Focus only, no announcement: refocusing the article is itself
+					// the confirmation for assistive tech, and this path is a legacy
+					// fallback for a server old enough to have never sent counts, so
+					// it adds no new string to a bundle under a hard size budget.
+					ctx.revealAfterReload(n.id);
 					ctx.reload();
 					return;
 				}
@@ -1085,7 +1116,12 @@ const buildPageEngagement = (ctx: WidgetCtx): HTMLElement => {
 			// row there is space for the label here, and it is the only thing that
 			// says what the emoji is *for* before the reader commits to a click.
 			const face = el("span", "gr-reaction-face");
-			face.appendChild(el("span", "gr-reaction-emoji", emoji));
+			// Same reason as the per-comment row: the glyph's own name reads as
+			// the wrong sentiment on a couple of them, and the visible label
+			// beside it already says what the button is for.
+			const emojiSpan = el("span", "gr-reaction-emoji", emoji);
+			emojiSpan.setAttribute("aria-hidden", "true");
+			face.appendChild(emojiSpan);
 			const count = el("span", "gr-reaction-count", "0");
 			face.appendChild(count);
 			btn.append(face, el("span", "gr-reaction-label", s(labelKey)));
@@ -1155,14 +1191,8 @@ const buildPageEngagement = (ctx: WidgetCtx): HTMLElement => {
 	const setVote = (s: PageVoteState): void => {
 		myVote = s.my_vote;
 		if (scoreEl) scoreEl.textContent = String(s.score_up - s.score_down);
-		if (up) {
-			if (myVote === 1) up.dataset.mine = "1";
-			else delete up.dataset.mine;
-		}
-		if (down) {
-			if (myVote === -1) down.dataset.mine = "1";
-			else delete down.dataset.mine;
-		}
+		if (up) markVote(up, myVote === 1);
+		if (down) markVote(down, myVote === -1);
 	};
 
 	const castVote = async (value: -1 | 0 | 1): Promise<void> => {
@@ -1193,11 +1223,17 @@ const buildPageEngagement = (ctx: WidgetCtx): HTMLElement => {
 		up.type = "button";
 		up.setAttribute("aria-label", s("w.page.up"));
 		up.appendChild(document.createTextNode("▲"));
+		// aria-pressed only ever gets set from setVote, which needs a resolved
+		// `votes` payload — set it here too so a bootstrap that's missing votes
+		// (or hasn't resolved yet) doesn't leave the button with no toggle
+		// semantics at all.
+		markVote(up, false);
 		scoreEl = el("span", "gr-vote-score", "0");
 		down = el("button", "gr-vote");
 		down.type = "button";
 		down.setAttribute("aria-label", s("w.page.down"));
 		down.appendChild(document.createTextNode("▼"));
+		markVote(down, false);
 		if (!ctx.downvotesEnabled) down.hidden = true;
 		up.addEventListener("click", () => void castVote(myVote === 1 ? 0 : 1));
 		down.addEventListener("click", () => void castVote(myVote === -1 ? 0 : -1));
@@ -1655,7 +1691,16 @@ const buildActions = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): HTMLEleme
 			yes.type = "button";
 			const no = el("button", undefined, s("w.cancel"));
 			no.type = "button";
-			confirmWrap.append(el("span", undefined, s("w.delete_confirm")), yes, no);
+			const prompt = el("span", undefined, s("w.delete_confirm"));
+			// Not a live region: the prompt is inserted already populated, which
+			// is the case a live region never announces (see the statusBox
+			// docstring above). Focus is about to move to Cancel regardless, so
+			// aria-describedby on both buttons announces it deterministically
+			// instead.
+			prompt.id = nextId("gr-confirm");
+			yes.setAttribute("aria-describedby", prompt.id);
+			no.setAttribute("aria-describedby", prompt.id);
+			confirmWrap.append(prompt, yes, no);
 			delBtn.replaceWith(confirmWrap);
 			// Replacing the focused button drops focus to <body>, stranding a
 			// keyboard user mid-thread. Land on Cancel: for a destructive action
@@ -1683,6 +1728,11 @@ const buildActions = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): HTMLEleme
 						{ method: "DELETE", credentials: "include" },
 					);
 					if (res.ok) {
+						// Focus only, no announcement: the row usually survives as a
+						// tombstone, and landing focus on the updated comment is the
+						// confirmation for assistive tech. If it doesn't survive, the
+						// status-box fallback in loadOnce catches it.
+						ctx.revealAfterReload(n.id);
 						ctx.reload();
 						return;
 					}
@@ -1759,6 +1809,7 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 	const ta = el("textarea");
 	ta.value = "";
 	ta.placeholder = s("w.loading");
+	ta.setAttribute("aria-label", s("w.edit_ph"));
 	ta.required = true;
 	const actions = el("div", "gr-reply-actions");
 	const save = el("button", undefined, s("w.save"));
@@ -1815,8 +1866,14 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 					body: JSON.stringify({ body: ta.value }),
 				},
 			);
-			if (res.ok) ctx.reload();
-			else save.disabled = false;
+			if (res.ok) {
+				// Focus only, no announcement: focusing the article makes
+				// assistive tech read the edited body, which is itself the
+				// confirmation, and it adds no new string to a bundle under a
+				// hard size budget.
+				ctx.revealAfterReload(n.id);
+				ctx.reload();
+			} else save.disabled = false;
 		} catch {
 			save.disabled = false;
 		}
@@ -1831,6 +1888,7 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	const wrap = el("form", "gr-reply-form");
 	const ta = el("textarea");
 	ta.placeholder = s("w.reply_ph", { name: parent.author.name });
+	ta.setAttribute("aria-label", s("w.reply_ph", { name: parent.author.name }));
 	ta.required = true;
 	const dkey = attachDraft(ta, draftKey(ctx.slug, parent.id));
 
@@ -1839,6 +1897,7 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 		nameInput = el("input");
 		nameInput.type = "text";
 		nameInput.placeholder = s("w.name_ph");
+		nameInput.setAttribute("aria-label", s("w.name_ph"));
 		nameInput.required = true;
 		wrap.appendChild(nameInput);
 	}
@@ -2018,7 +2077,7 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 			});
 			const json = (await res.json()) as {
 				error?: string;
-				comment?: { status?: string };
+				comment?: { id?: string; status?: string };
 			};
 			if (!res.ok) {
 				if (tsGate?.failed) return;
@@ -2034,7 +2093,10 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 			clearDraft(dkey);
 			// Pending replies reload like approved ones: the author's own
 			// queued comment comes back from the list endpoint and renders
-			// inline with a "Pending approval" badge.
+			// inline with a "Pending approval" badge. Fall back to the parent
+			// comment's id so focus still lands somewhere sensible on the rare
+			// response that omits the new comment's id.
+			ctx.revealAfterReload(json.comment?.id ?? parent.id, s("w.posted"));
 			ctx.reload();
 		} catch (err) {
 			if (tsGate?.failed) return;
@@ -2065,19 +2127,45 @@ const shouldCollapseLowScore = (n: TreeNode, ctx: WidgetCtx): boolean => {
 };
 
 const buildComment = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
-	const row = el("div", "gr-comment");
+	// <article> rather than <div>: it gives assistive tech a real comment
+	// boundary in what is otherwise an undifferentiated run of divs, and it is
+	// the element the HTML spec names for exactly this ("a forum post, a
+	// magazine article, a user-submitted comment").
+	const row = el("article", "gr-comment");
 	row.dataset.id = n.id;
 	if (n.flatten_from) row.dataset.flat = "1";
+	const nameId = `gr-name-${n.id}`;
+	row.setAttribute("aria-labelledby", nameId);
 	row.appendChild(buildAvatar(n.author));
 
 	const main = el("div", "gr-main");
 
 	const meta = el("div", "gr-meta");
-	meta.appendChild(el("span", "gr-name", n.author.name));
+	const nameEl = el("span", "gr-name", n.author.name);
+	nameEl.id = nameId;
+	meta.appendChild(nameEl);
 	if (n.author.provider !== "anon") {
 		meta.appendChild(el("span", "gr-verified", s("w.verified")));
 	}
-	meta.appendChild(buildTime(n.created_at));
+	// The timestamp is the permalink, the way Reddit/HN/Disqus do it — a plain
+	// anchor, so right-click-copy, middle-click and Cmd-click all work natively
+	// and we spend no bytes on a clipboard shim. Clicking it is handled by the
+	// existing hash-scroll at the bottom of this file.
+	const permalink = el("a", "gr-permalink");
+	permalink.href = ctx.permalinkFor(n.id);
+	// The visible label is relative ("6 minutes ago"), which collides across
+	// comments on an active thread and says nothing about where the link goes —
+	// a links-list reads as a column of bare durations. The name carries the
+	// commenter and the absolute time instead; the visible label is untouched.
+	permalink.setAttribute(
+		"aria-label",
+		s("w.permalink", {
+			name: n.author.name,
+			time: absoluteTime(n.created_at, locale),
+		}),
+	);
+	permalink.appendChild(buildTime(n.created_at));
+	meta.appendChild(permalink);
 	if (n.edited_at) meta.appendChild(el("span", "gr-edited", s("w.edited")));
 	// Author-only signal: the list endpoint returns the viewer's own queued
 	// comments, so this badge is only ever seen by the author themselves.
@@ -2206,7 +2294,7 @@ const buildThread = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	const wrap = el("div", "gr-thread");
 	wrap.dataset.id = n.id;
 	// Anchor id for the /c/:id permalink redirect to scroll into view.
-	wrap.id = `garrul-comment-${n.id}`;
+	wrap.id = commentAnchorId(n.id);
 	wrap.appendChild(buildComment(n, ctx));
 	if (n.replies.length > 0) {
 		const replies = el("div", "gr-replies");
@@ -2321,6 +2409,7 @@ const buildForm = (
 		name.name = "name";
 		name.type = "text";
 		name.placeholder = s("w.name_ph");
+		name.setAttribute("aria-label", s("w.name_ph"));
 		name.required = true;
 		form.appendChild(name);
 	}
@@ -2329,6 +2418,7 @@ const buildForm = (
 	body.className = "gr-body-input";
 	body.name = "body";
 	body.placeholder = s("w.body_ph");
+	body.setAttribute("aria-label", s("w.body_ph"));
 	body.required = true;
 	form.appendChild(buildWritePreview(body, apiBase));
 
@@ -2376,6 +2466,7 @@ const buildForm = (
 			emailInput.name = "email";
 			emailInput.type = "email";
 			emailInput.placeholder = s("w.email_ph");
+			emailInput.setAttribute("aria-label", s("w.email_label"));
 			emailInput.autocomplete = "email";
 			emailInput.hidden = true;
 			notifyCb.addEventListener("change", () => {
@@ -2702,7 +2793,15 @@ const fetchMe = async (apiBase: string): Promise<Me> => {
 // silently land in a different order than the page the reader is looking at.
 const loadState = new WeakMap<
 	ShadowRoot,
-	{ running: boolean; queued: boolean; sort: SortKey | null }
+	{
+		running: boolean;
+		queued: boolean;
+		sort: SortKey | null;
+		// The anchor id (see commentAnchorId) of the last hash target actually
+		// revealed for this root — see revealHashTarget below. `null` until a
+		// hash reveal has succeeded at least once.
+		revealedHash: string | null;
+	}
 >();
 
 const load = async (
@@ -2713,8 +2812,19 @@ const load = async (
 ): Promise<void> => {
 	let st = loadState.get(root);
 	if (!st) {
-		st = { running: false, queued: false, sort: null };
+		st = { running: false, queued: false, sort: null, revealedHash: null };
 		loadState.set(root, st);
+		// Wire the permalink reveal to same-document fragment navigations here
+		// rather than in init(): a naive addEventListener at the reveal's own
+		// call site (inside loadOnce, below) would leak one listener per reload
+		// and fire the reveal N times, because loadOnce runs on every reload —
+		// not just at mount. This `if (!st)` branch, by contrast, only runs
+		// once per root's lifetime (the first load() call creates the state
+		// entry; every later call, from a reply, a sort change, a reconnect,
+		// finds it already there), so piggybacking here gets "exactly one
+		// listener per mount" for free, with no second WeakSet just to
+		// remember whether one was already bound.
+		window.addEventListener("hashchange", () => revealHashTarget(root));
 	}
 	if (st.running) {
 		st.queued = true;
@@ -2735,6 +2845,118 @@ const load = async (
 const setSort = (root: ShadowRoot, sort: SortKey): void => {
 	const st = loadState.get(root);
 	if (st) st.sort = sort;
+};
+
+// A per-root "focus and announce after the next render" request. `submit()`,
+// a reply, an edit, a moderation delete and the reaction legacy-API fallback
+// all trigger a reload, and `loadOnce` destroys the old tree
+// (`root.replaceChildren()`) before any code written after `ctx.reload()`
+// gets a chance to touch it — so what should happen once the *new* tree
+// lands has to be stashed here instead, and consumed by loadOnce itself
+// (see the arbitration at its tail, below `root.append(style, wrap)`).
+//
+// A WeakMap keyed on the request's own root, not queued as a list: only the
+// most recent request matters, and this also has to survive the
+// queued-reload race in `load()` above — if a second load() call arrives
+// while one is running, `st.queued` fires a follow-up `load()` after the
+// first finishes, and it is that follow-up's `loadOnce` (the one that
+// actually renders last) which must be the one to consume the request, not
+// whichever render happened to run first. A WeakMap already keyed by root
+// does this for free: whichever loadOnce runs last reads-and-deletes
+// whatever is there, with no separate flag needed to track who "owns" it.
+type PendingReveal = { id: string | null; announce?: string };
+const pendingReveal = new WeakMap<ShadowRoot, PendingReveal>();
+
+/**
+ * Setter for `pendingReveal`. Called directly by `submit()` (it has `root`
+ * in scope but no `ctx`); wrapped as `ctx.revealAfterReload` for the other
+ * four reload sites, which have `ctx` but would otherwise need `root`
+ * threaded through just for this.
+ */
+const revealAfterReload = (
+	root: ShadowRoot,
+	id: string | null,
+	announce?: string,
+): void => {
+	// Built conditionally rather than `{ id, announce }`: exactOptionalPropertyTypes
+	// treats an explicit `announce: undefined` as different from the key being
+	// absent, and PendingReveal's `announce?` means the latter.
+	pendingReveal.set(root, announce !== undefined ? { id, announce } : { id });
+};
+
+/**
+ * Move focus to a freshly posted comment so the post is announced and the
+ * keyboard caret lands somewhere meaningful, instead of silently returning to
+ * an emptied composer.
+ *
+ * Returns false when the comment is not in the rendered tree — under `sort=old`
+ * on a paged thread it belongs on the last page and `load()` re-fetches the
+ * first. That case is backlog #45 and is deliberately not solved here; the
+ * caller falls back to the live region.
+ *
+ * The `tabindex="-1"` is left in place after focus moves away: it keeps the
+ * article out of the sequential tab order permanently, costs nothing to leave,
+ * and poses no risk to future interactions (focus or otherwise).
+ */
+const focusPostedComment = (root: ShadowRoot, id: string): boolean => {
+	const node = root.getElementById(commentAnchorId(id));
+	const article = node?.querySelector<HTMLElement>(".gr-comment");
+	if (!article) return false;
+	article.tabIndex = -1;
+	article.focus();
+	return true;
+};
+
+/**
+ * Reveal a permalink target (#garrul-comment-<id>): scroll it into view and
+ * then move focus to it. Browsers don't auto-scroll to — or focus — anchors
+ * inside a shadow root, so both have to happen by hand. Called once the tree
+ * is in the DOM (see loadOnce, below) and again on every `hashchange` (see
+ * load(), above) — a same-document fragment navigation the browser cannot
+ * reach into the shadow root to act on itself.
+ *
+ * Silent no-op when the hash isn't one of ours, or when it is but the
+ * comment isn't in the rendered tree — a hash for another page, or one that
+ * hasn't loaded yet, must never surface as an error.
+ *
+ * Reveals a given hash at most once per root. Scrolling alone was harmless
+ * on every reload, because the re-render was already resetting scroll
+ * position; moving focus is not — a reader who followed a permalink, read on,
+ * and then changed sort order or posted a reply must not be yanked back onto
+ * a comment they already left. `loadState.revealedHash` tracks the last hash
+ * that actually found its target; the browser itself only fires `hashchange`
+ * for a hash that actually changed, so gating on "already revealed this one"
+ * here matches what a reader can actually re-trigger. Returns whether it
+ * revealed anything, so loadOnce's arbitration can fall through when it
+ * didn't.
+ */
+const revealHashTarget = (root: ShadowRoot): boolean => {
+	const id = commentIdFromHash(window.location.hash);
+	if (!id) return false;
+	const anchorId = commentAnchorId(id);
+	const st = loadState.get(root);
+	if (st?.revealedHash === anchorId) return false;
+	const target = root.getElementById(anchorId);
+	if (!target) return false;
+	// The CSS half of the reduced-motion promise lives in styles.css; scroll
+	// behavior is set here, so it has to be honored here too. `matchMedia` is
+	// guarded because the widget also runs under the iframe route and in test
+	// DOMs that don't implement it.
+	const still = window.matchMedia?.(
+		"(prefers-reduced-motion: reduce)",
+	)?.matches;
+	target.scrollIntoView({
+		block: "center",
+		behavior: still ? "auto" : "smooth",
+	});
+	// Scrolling alone only serves a sighted mouse user; move the caret too so
+	// keyboard and screen-reader users land on the comment (WCAG 2.4.3).
+	focusPostedComment(root, id);
+	// Record only on success: a hash pointing at a comment that hasn't
+	// rendered yet (paged thread, or a reload still in flight) must not count
+	// as revealed, so a later Load More or reload can still catch it.
+	if (st) st.revealedHash = anchorId;
+	return true;
 };
 
 // Closed-state notice copy, picked from the server's closed_reason enum so the
@@ -2814,7 +3036,6 @@ const loadOnce = async (
 			// exactly where it is incomplete and correct everywhere else.
 			if (typeof cfg.locale === "string" && cfg.locale) {
 				locale = cfg.locale;
-				host.lang = locale;
 				({ s, sAround } = makeS(
 					(cfg.strings ?? {}) as StringTable,
 					locale,
@@ -2855,6 +3076,12 @@ const loadOnce = async (
 			if (typeof cfg.community_collapse_ratio === "number")
 				communityCollapseRatio = cfg.community_collapse_ratio;
 		}
+		// Stamp the language the widget actually ended up rendering in, not the
+		// one it hoped for. Unconditional on purpose: a server that omits
+		// `locale`, or a config fetch that came back empty, still renders the
+		// bundled English — and a screen reader given no `lang` here falls back
+		// to the host page's, which is exactly the case where the two disagree.
+		host.lang = locale;
 	} catch {
 		// The config is optional; the widget still renders without Turnstile (the
 		// server will reject anonymous POSTs in that case). Only the legacy branch
@@ -2917,6 +3144,12 @@ const loadOnce = async (
 	const reload = () => {
 		void load(root, slug, apiBase, host);
 	};
+	const permalinkFor = (id: string): string =>
+		commentHref(id, {
+			dataUrl: host.dataset.url,
+			locationHref: window.location.href,
+			apiBase,
+		});
 	const ctx: WidgetCtx = {
 		apiBase,
 		slug,
@@ -2945,6 +3178,9 @@ const loadOnce = async (
 			subscription: boot?.subscription,
 		},
 		reload,
+		revealAfterReload: (id: string | null, announce?: string) =>
+			revealAfterReload(root, id, announce),
+		permalinkFor,
 	};
 	// Article-level engagement bar sits at the very top, above the composer.
 	if (pageReactionsEnabled || pageVotesEnabled) {
@@ -3094,26 +3330,80 @@ const loadOnce = async (
 		wrap.appendChild(attr);
 	}
 
+	// Wire up the region heading for assistive tech: a visually-hidden <h2> that
+	// gives screen readers a landmark and a name for the entire comments section.
+	const heading = el("h2", "gr-sr", s("w.region"));
+	heading.id = "gr-region-heading";
+	wrap.setAttribute("role", "region");
+	wrap.setAttribute("aria-labelledby", heading.id);
+	wrap.prepend(heading);
+
 	root.append(style, wrap);
 
-	// Scroll a permalink target (#garrul-comment-<id>) into view once the
-	// tree is in the DOM. Browsers don't auto-scroll to anchors inside a
-	// shadow root, so we have to do it manually.
-	if (window.location.hash.startsWith("#garrul-comment-")) {
-		const target = root.getElementById(window.location.hash.slice(1));
-		if (target) {
-			// The CSS half of the reduced-motion promise lives in styles.css;
-			// scroll behavior is set here, so it has to be honored here too.
-			// `matchMedia` is guarded because the widget also runs under the
-			// iframe route and in test DOMs that don't implement it.
-			const still = window.matchMedia?.(
-				"(prefers-reduced-motion: reduce)",
-			)?.matches;
-			target.scrollIntoView({
-				block: "center",
-				behavior: still ? "auto" : "smooth",
-			});
+	// Arbitrate what takes focus now that the fresh tree is in the DOM. At
+	// most one thing wins:
+	//   1. a pending reveal request (the reader just posted, replied, edited,
+	//      deleted, or reacted) — it's something they just did, so it beats
+	//      restoring a hash target they may have long since read past;
+	//   2. otherwise an unrevealed hash target (see revealHashTarget's own
+	//      once-per-hash guard) — covers mount, and any reload while a
+	//      permalink's hash is still set and hasn't been shown yet;
+	//   3. otherwise nothing; focus is left alone.
+	// Read-then-delete rather than a plain read: this is also what makes the
+	// mechanism correct under the queued-reload race in load() above. If a
+	// second load() arrives while one is running, that reload is queued and
+	// re-runs after this loadOnce returns — so whichever loadOnce call
+	// happens to run *last* is the one whose render the reader actually
+	// sees, and deleting the entry here means that last render is always the
+	// one that consumes it, never a stale one an earlier, superseded render
+	// already read.
+	const pending = pendingReveal.get(root);
+	pendingReveal.delete(root);
+	if (pending) {
+		const revealed = pending.id != null && focusPostedComment(root, pending.id);
+		// Query from `root`, not `form`: buildForm always builds the composer,
+		// but it is only appended into `wrap` when accepting comments (see
+		// below), so a reload that closes the thread in the same round-trip as
+		// the reader's action leaves `form` holding a `.gr-error` that was
+		// never mounted. Querying the live tree instead gives that case a real
+		// `null` — a write into a detached box, or a `.focus()` that silently
+		// does nothing, is the exact bug this mechanism exists to close.
+		const statusEl = root.querySelector(".gr-error") as HTMLElement | null;
+		if (!revealed && statusEl) {
+			// Comment not in the rendered tree (paged thread, hard-deleted row,
+			// or no id at all) — fall back to the status box so a keyboard user
+			// still lands somewhere meaningful instead of <body>. Focus itself
+			// doesn't wait on the live-region timing below (moving focus isn't
+			// what triggers an aria-live announcement, filling in text is), so
+			// there's nothing to gain by delaying it — and a delay here would
+			// be a visible stall between the reader's action and the focus jump.
+			statusEl.tabIndex = -1;
+			statusEl.focus();
 		}
+		if (pending.announce) {
+			const announce = pending.announce;
+			// Deferred to a later task — see the statusBox docstring above: "a
+			// live region has to already be in that tree when its text changes
+			// for the change to be announced ... a region that appears and
+			// fills in at the same moment is precisely the case screen readers
+			// miss." `root.append(style, wrap)` above is what put *this* box in
+			// the document — root.replaceChildren() killed the previous one —
+			// so writing its text in this same synchronous task is that exact
+			// case, just triggered by the region being brand new rather than
+			// merely empty. A macrotask (not queueMicrotask, which can still
+			// run before the browser has registered the new region) gives it
+			// a full turn to do so before the text that must be announced lands.
+			setTimeout(() => {
+				// Re-query rather than close over `statusEl`: another reload
+				// can land in the time this task waited to run, and writing
+				// into whatever `statusEl` pointed at would be writing into a
+				// node root.replaceChildren() may have already destroyed.
+				const box = root.querySelector(".gr-error") as HTMLElement | null;
+				if (box) showStatus(box, announce, "notice");
+			}, 0);
+		}
+	} else {
+		revealHashTarget(root);
 	}
 
 	// Turnstile mounts on the visitor's first composer focus, not here. api.js
@@ -3299,7 +3589,7 @@ const submit = async (
 		});
 		const json = (await res.json()) as {
 			error?: string;
-			comment?: { status?: string };
+			comment?: { id?: string; status?: string };
 		};
 		if (!res.ok) {
 			// A Turnstile error can arrive while this request is in flight.
@@ -3345,6 +3635,15 @@ const submit = async (
 			}
 		}
 
+		// Request the focus-and-announce for once the new tree lands, *before*
+		// awaiting the reload: `load()` can return immediately and queue this
+		// reload behind one already in flight (see load(), above), so by the
+		// time `await` resolves here the tree it resolved against may already
+		// be stale. Stashing the request now, keyed on `root`, means whichever
+		// loadOnce call actually renders last — this one, or the queued
+		// follow-up — is the one that consumes it; see the arbitration at the
+		// tail of loadOnce.
+		revealAfterReload(root, json.comment?.id ?? null, s("w.posted"));
 		await load(root, slug, apiBase, host);
 	} catch (err) {
 		// Same race, and the one that actually bit: a Turnstile error landing

@@ -120,6 +120,18 @@ would otherwise stay light inside a dark widget. A pinned `data-theme` wins
 over the OS preference here too, so `data-theme="light"` on a dark-OS reader
 does not leave them a dark dropdown over a light thread.
 
+The dark palette paints its own background (`#12161a` by default, via
+`--garrul-bg`). To make the widget blend with your host page's dark background,
+override `--garrul-bg` to match:
+
+```css
+#garrul { --garrul-bg: var(--my-page-bg, #0a0a0a); }
+```
+
+**Known limitation:** A widget pinned to `data-theme="light"` on a dark host
+page will inherit the page's background and become hard to read. Override
+`--garrul-bg` to light (e.g. `#fff`) in this scenario.
+
 **Precedence (highest wins):**
 
 1. An explicit `--garrul-*` override you set on the host or an ancestor.
