@@ -2256,20 +2256,28 @@ const countDescendants = (n: TreeNode): number => {
  * Collapse/expand control for a node's replies. Hides/shows the replies
  * container in place (all replies are already in the DOM). `startCollapsed`
  * comes from the auto-collapse-depth setting.
+ *
+ * Returns handles rather than just the button because both the collapsed flag
+ * and the count are closure state, and neither survives contact with a reply
+ * that arrives after the toggle was built: the label would sit one short, and a
+ * container that auto-collapsed would swallow the new reply behind
+ * `display: none`. Every insert going through a full re-render is what has kept
+ * that unreachable, so the handles are what a caller needs in order not to.
  */
 const buildCollapseToggle = (
 	repliesEl: HTMLElement,
 	count: number,
 	startCollapsed: boolean,
-): HTMLButtonElement => {
+): { btn: HTMLButtonElement; reveal: () => void; countUp: () => void } => {
 	const btn = el("button", "gr-collapse") as HTMLButtonElement;
 	btn.type = "button";
 	let collapsed = startCollapsed;
+	let total = count;
 	const apply = () => {
 		repliesEl.style.display = collapsed ? "none" : "";
 		// The disclosure triangle is a glyph, not a word, so it stays outside the
 		// string — the count and its noun do not.
-		btn.textContent = `${collapsed ? "▸" : "▾"} ${s("w.replies", { n: count })}`;
+		btn.textContent = `${collapsed ? "▸" : "▾"} ${s("w.replies", { n: total })}`;
 		btn.setAttribute("aria-expanded", String(!collapsed));
 	};
 	btn.addEventListener("click", () => {
@@ -2277,7 +2285,70 @@ const buildCollapseToggle = (
 		apply();
 	});
 	apply();
-	return btn;
+	return {
+		btn,
+		reveal: () => {
+			if (!collapsed) return;
+			collapsed = false;
+			apply();
+		},
+		countUp: () => {
+			total += 1;
+			apply();
+		},
+	};
+};
+
+/**
+ * A node's mounted reply list: the container its direct replies render into,
+ * plus what an insert has to tell the toggle in front of it.
+ *
+ * Keyed on the `.gr-thread` wrap because that is the element the insert path
+ * can find from an id (`commentAnchorId`), and because the mount is created
+ * lazily — a node with no replies has no container and no toggle at all until
+ * someone replies to it.
+ */
+type ReplyMount = {
+	container: HTMLElement;
+	reveal: () => void;
+	countUp: () => void;
+};
+
+const replyMounts = new WeakMap<HTMLElement, ReplyMount>();
+
+/**
+ * The reply list for `n`, mounting the container and its toggle on first use.
+ *
+ * `startCollapsed` is computed here rather than passed so there is one rule for
+ * it. A caller that has just inserted the reader's own reply into a list that
+ * would auto-collapse calls `reveal()` afterwards; hiding a comment somebody
+ * made two seconds ago is never the right answer.
+ */
+const replyMountFor = (
+	threadEl: HTMLElement,
+	n: TreeNode,
+	ctx: WidgetCtx,
+): ReplyMount => {
+	const existing = replyMounts.get(threadEl);
+	if (existing) return existing;
+	const container = el("div", "gr-replies");
+	// Per-comment collapse toggle; auto-collapsed when this node is nested
+	// at/deeper than the configured depth (0 = never auto-collapse).
+	const startCollapsed =
+		ctx.autoCollapseDepth > 0 && n.depth >= ctx.autoCollapseDepth;
+	const toggle = buildCollapseToggle(
+		container,
+		countDescendants(n),
+		startCollapsed,
+	);
+	threadEl.append(toggle.btn, container);
+	const mount: ReplyMount = {
+		container,
+		reveal: toggle.reveal,
+		countUp: toggle.countUp,
+	};
+	replyMounts.set(threadEl, mount);
+	return mount;
 };
 
 /**
@@ -2317,18 +2388,7 @@ const buildThread = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	wrap.id = commentAnchorId(n.id);
 	wrap.appendChild(buildComment(n, ctx));
 	if (n.replies.length > 0) {
-		const replies = el("div", "gr-replies");
-		renderReplyList(replies, n.replies, ctx);
-		// Per-comment collapse toggle; auto-collapsed when this node is nested
-		// at/deeper than the configured depth (0 = never auto-collapse).
-		const startCollapsed =
-			ctx.autoCollapseDepth > 0 && n.depth >= ctx.autoCollapseDepth;
-		const toggle = buildCollapseToggle(
-			replies,
-			countDescendants(n),
-			startCollapsed,
-		);
-		wrap.append(toggle, replies);
+		renderReplyList(replyMountFor(wrap, n, ctx).container, n.replies, ctx);
 	}
 	return wrap;
 };
