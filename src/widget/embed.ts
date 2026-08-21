@@ -479,14 +479,19 @@ const buildWritePreview = (
 	const wrap = el("div", compact ? "gr-compose gr-compose-nested" : "gr-compose");
 	const tabs = el("div", "gr-tabs");
 	tabs.setAttribute("role", "tablist");
+	tabs.setAttribute("aria-label", s("w.tab.list"));
 	const writeTab = el("button", "gr-tab gr-tab-active", s("w.tab.write"));
 	writeTab.type = "button";
+	writeTab.id = nextId("gr-tab-write");
 	writeTab.setAttribute("role", "tab");
 	writeTab.setAttribute("aria-selected", "true");
 	const previewTab = el("button", "gr-tab", s("w.tab.preview"));
 	previewTab.type = "button";
+	previewTab.id = nextId("gr-tab-preview");
 	previewTab.setAttribute("role", "tab");
 	previewTab.setAttribute("aria-selected", "false");
+	// Roving tabindex: exactly one tab sits in the sequential Tab order.
+	previewTab.tabIndex = -1;
 	tabs.append(writeTab, previewTab);
 
 	const toolbar = buildToolbar(textarea);
@@ -523,15 +528,32 @@ const buildWritePreview = (
 	textarea.setAttribute("aria-describedby", hintId);
 	const pane = el("div", "gr-preview");
 	pane.hidden = true;
+	pane.id = nextId("gr-panel-preview");
+	pane.setAttribute("role", "tabpanel");
+	pane.setAttribute("aria-labelledby", previewTab.id);
+	// Rendered preview HTML usually has no focusable content, so the panel
+	// itself takes the tab stop (hidden in Write mode, so no extra stop there).
+	pane.tabIndex = 0;
+	// The Write tabpanel groups the textarea with its hint row so both tabs
+	// control a real panel; the toolbar stays in the shared header row and
+	// keeps hiding on its own.
+	const writePanel = el("div", "gr-write");
+	writePanel.id = nextId("gr-panel-write");
+	writePanel.setAttribute("role", "tabpanel");
+	writePanel.setAttribute("aria-labelledby", writeTab.id);
+	writePanel.append(textarea, hint);
+	writeTab.setAttribute("aria-controls", writePanel.id);
+	previewTab.setAttribute("aria-controls", pane.id);
 
 	const showWrite = (): void => {
 		writeTab.classList.add("gr-tab-active");
 		previewTab.classList.remove("gr-tab-active");
 		writeTab.setAttribute("aria-selected", "true");
 		previewTab.setAttribute("aria-selected", "false");
+		writeTab.tabIndex = 0;
+		previewTab.tabIndex = -1;
 		toolbar.hidden = false;
-		hint.hidden = false;
-		textarea.hidden = false;
+		writePanel.hidden = false;
 		pane.hidden = true;
 	};
 
@@ -540,9 +562,10 @@ const buildWritePreview = (
 		writeTab.classList.remove("gr-tab-active");
 		previewTab.setAttribute("aria-selected", "true");
 		writeTab.setAttribute("aria-selected", "false");
+		previewTab.tabIndex = 0;
+		writeTab.tabIndex = -1;
 		toolbar.hidden = true;
-		hint.hidden = true;
-		textarea.hidden = true;
+		writePanel.hidden = true;
 		pane.hidden = false;
 		const body = textarea.value.trim();
 		if (!body) {
@@ -570,13 +593,34 @@ const buildWritePreview = (
 	previewTab.addEventListener("click", () => {
 		void showPreview();
 	});
+	// Manual activation per the WAI-ARIA tabs pattern: arrows/Home/End move
+	// focus between the tabs, Enter/Space (a button's native click) activates.
+	// Selection deliberately does not follow focus — Preview costs a network
+	// round-trip, so arrowing across it must not fire a fetch.
+	tabs.addEventListener("keydown", (e) => {
+		const order = [writeTab, previewTab];
+		const idx = order.indexOf(e.target as HTMLButtonElement);
+		if (idx === -1) return;
+		let next: number;
+		if (e.key === "ArrowLeft" || e.key === "ArrowRight") next = 1 - idx;
+		else if (e.key === "Home") next = 0;
+		else if (e.key === "End") next = 1;
+		else return;
+		const from = order[idx];
+		const to = order[next];
+		if (!from || !to) return;
+		e.preventDefault();
+		from.tabIndex = -1;
+		to.tabIndex = 0;
+		to.focus();
+	});
 
 	// Tabs and toolbar share one header row (GitHub-style): tabs left,
 	// formatting buttons right. The toolbar hides itself in Preview mode,
 	// and the row wraps to two lines on narrow embeds.
 	const head = el("div", "gr-compose-head");
 	head.append(tabs, toolbar);
-	wrap.append(head, textarea, hint, pane);
+	wrap.append(head, writePanel, pane);
 	return wrap;
 };
 
@@ -1925,7 +1969,11 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 		ctx.turnstileSiteKey && (!ctx.me || ctx.turnstileAlways)
 			? el("div", "gr-turnstile")
 			: null;
-	if (tsSlot) wrap.appendChild(tsSlot);
+	if (tsSlot) {
+		tsSlot.setAttribute("role", "group");
+		tsSlot.setAttribute("aria-label", s("w.ts.title"));
+		wrap.appendChild(tsSlot);
+	}
 
 	const actions = el("div", "gr-reply-actions");
 	const submit = el("button", undefined, s("w.post_reply"));
@@ -2178,7 +2226,8 @@ const buildComment = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 		const label = s(
 			n.deleted_by === "moderator" ? "w.removed_by_mod" : "w.deleted",
 		);
-		const p = el("p", "gr-deleted", label);
+		const p = el("p", "gr-deleted");
+		p.appendChild(el("del", undefined, label));
 		body.appendChild(p);
 	} else {
 		if (n.flatten_from) {
@@ -2489,7 +2538,10 @@ const buildForm = (
 	// click. The focusin trigger excludes the submit button for exactly that
 	// reason — moving the slot means revisiting that exclusion.
 	if (siteKey && (!signedIn || turnstileAlways)) {
-		form.appendChild(el("div", "gr-turnstile"));
+		const tsSlot = el("div", "gr-turnstile");
+		tsSlot.setAttribute("role", "group");
+		tsSlot.setAttribute("aria-label", s("w.ts.title"));
+		form.appendChild(tsSlot);
 	}
 
 	const submit = el("button", undefined, s("w.post_comment"));
@@ -3243,6 +3295,10 @@ const loadOnce = async (
 			const sortWrap = el("div", "gr-sort");
 			const label = el("label");
 			const sel = el("select") as HTMLSelectElement;
+			// Ids are scoped to this widget's shadow root, so a constant cannot
+			// collide with anything on the host page.
+			sel.id = "gr-sort-select";
+			label.htmlFor = sel.id;
 			const opts: ReadonlyArray<readonly [SortKey, string]> = [
 				["new", s("w.sort.new")],
 				["old", s("w.sort.old")],

@@ -108,12 +108,21 @@
 	--gr-accent-hover: var(--garrul-accent-hover, #2563eb);
 	--gr-shadow: var(--garrul-shadow, 0 1px 2px rgba(0,0,0,.5));
 }
-/* The light half of the forced-theme pair. There is no --gr-* block here
-   because light is already the :host default; only the UA half needs saying.
-   `color-scheme: light dark` up top follows the OS, which is exactly wrong once
-   the host has pinned a theme — a dark-OS reader on a data-theme="light" widget
-   would get a dark <select> popup floating over a light thread. */
-:host([data-theme="light"]) { color-scheme: light; }
+/* The light half of the forced-theme pair. Almost every --gr-* token is
+   already the :host default, so only two things need saying. `color-scheme:
+   light dark` up top follows the OS, which is exactly wrong once the host has
+   pinned a theme — a dark-OS reader on a data-theme="light" widget would get a
+   dark <select> popup floating over a light thread. And --gr-bg: a *pinned*
+   light widget is the one light case that can land on a dark host page, where
+   the transparent default fails contrast wholesale, so forcing light also
+   paints a concrete background. The default/auto light palette stays
+   transparent on purpose — repainting every existing install is a product
+   decision this rule deliberately avoids. Presets never set --gr-bg, so this
+   one rule covers all of them; --garrul-bg still wins for host overrides. */
+:host([data-theme="light"]) {
+	color-scheme: light;
+	--gr-bg: var(--garrul-bg, #fff);
+}
 
 /* ---- Presets ----------------------------------------------------------
    Named palettes selected with `data-preset` on the #garrul element, next to
@@ -288,7 +297,11 @@
 	box-shadow: none;
 	padding: 0;
 }
-.gr-compose textarea[hidden] { display: none; }
+/* The Write tabpanel wraps the textarea + hint row; it repeats the composer's
+   column gap so the grouping is invisible. display:flex would beat the
+   [hidden] attribute, so the hidden state needs its own rule. */
+.gr-write { display: flex; flex-direction: column; gap: 0.4rem; }
+.gr-write[hidden] { display: none; }
 .gr-compose-head {
 	display: flex;
 	flex-wrap: wrap;
@@ -521,6 +534,9 @@ button:active:not([disabled]) { opacity: 0.75; }
 	overflow-wrap: break-word;
 }
 .gr-deleted { color: var(--gr-muted); font-style: italic; }
+/* The <del> marks the tombstone programmatically; the bracket text already
+   carries it visually, so no strikethrough on top. */
+.gr-deleted del { text-decoration: none; }
 .gr-actions { display: flex; gap: 0.75rem; margin-top: 0.35rem; font-size: 0.85em; }
 .gr-actions button {
 	font: inherit;
@@ -871,3 +887,20 @@ button:active:not([disabled]) { opacity: 0.75; }
 }
 .gr-attribution a { color: inherit; text-decoration: none; }
 .gr-attribution a:hover { text-decoration: underline; }
+/* WCAG 2.2 target size (2.5.8): every standalone pointer target needs 24 CSS
+   px in both axes. The controls below run 0.8–0.85em text, which leaves them a
+   few px short. A min-height tops them up without changing their resting look
+   — browsers center a button's content once it has a height — and the vote
+   circle gets a min-width to stay round. Kept as one block, not spread across
+   the base rules, so the whole floor is visible (and removable) in one place. */
+.gr-actions button, .gr-reaction, .gr-collapse, .gr-showmore, .gr-form .gr-notify {
+	min-height: 24px;
+}
+.gr-vote {
+	min-width: 24px;
+	min-height: 24px;
+}
+/* The attribution link is an inline box, so vertical padding grows its hit
+   target without moving the line it sits on. 6px each side clears 24px total
+   at the 0.8em footer size. */
+.gr-attribution a { padding-block: 6px; }

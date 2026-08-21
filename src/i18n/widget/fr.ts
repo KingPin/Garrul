@@ -32,6 +32,7 @@ export const fr = {
 	"w.md.ph.code": "code",
 	"w.tab.write": "Écrire",
 	"w.tab.preview": "Aperçu",
+	"w.tab.list": "Mode d'édition",
 	"w.md_hint": "La mise en forme Markdown est prise en charge",
 	"w.preview.empty": "Rien à prévisualiser pour l'instant.",
 	"w.preview.loading": "Chargement de l'aperçu…",

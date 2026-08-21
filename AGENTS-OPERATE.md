@@ -1685,6 +1685,36 @@ caches a null marker for the same 1h to avoid hammering the API. Set the
 optional `GITHUB_TOKEN` secret if you hit GitHub's 60/hr unauth rate
 limit on shared Cloudflare egress IPs.
 
+### Widget visual regression (`npm run vr`)
+
+`npm run vr` shows you what a widget change actually does to readers'
+rendering, not just that tests pass. It builds the widget twice — once
+from a baseline git ref (default `main`; `--base <ref>` to compare
+against, say, the tag you are upgrading from) and once from the current
+working tree — mounts both against a local, seeded `wrangler dev`,
+screenshots them in headless Chromium across five theme scenarios
+(`auto`, `light`, `dark`, `light-on-dark`, `turnstile`), and pixel-diffs
+each pair with ImageMagick.
+
+Prerequisites, all local: Chromium at `/usr/bin/chromium`, ImageMagick
+(the `compare` binary), and `python3`. Ports 8787 and 8080 must be free
+— the script refuses to start if either is taken and names the holder
+rather than killing it. It never touches a deployed instance, and it
+never modifies your working tree: the baseline is built in a throwaway
+git worktree that is removed afterwards.
+
+Reading the report: one row per scenario — changed-pixel count
+(ImageMagick's AE metric), the percentage of the 900×2200 shot that
+changed, and the diff image path; the baseline and current shots sit
+next to each diff in the run directory printed on the last line, kept
+for eyeballing. Intentional diffs are normal, so the script exits 0
+whenever the run completed; a nonzero exit means the harness itself
+failed (build, server, screenshot, or compare). Two quirks to keep in
+mind: headless Chromium reports `prefers-color-scheme: dark`, so the
+`auto` scenario exercises the dark branch; and the `turnstile` scenario
+force-reveals the normally hidden Turnstile slot with a dummy frame,
+since a screenshot run can never focus the composer to arm the real one.
+
 ## 13. Troubleshooting
 
 The top operator-side failures, in rough order of frequency:

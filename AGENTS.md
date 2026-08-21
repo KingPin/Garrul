@@ -573,6 +573,10 @@ and the emails; there are no new `data-*` attributes and no new env vars.
 
 The composer (and the reply/edit forms) include a **Write | Preview** tab
 strip and a formatting toolbar (bold, italic, link, code, quote, list).
+The tab strip implements the full WAI-ARIA tabs pattern: real tabpanels
+wired via `aria-controls`/`aria-labelledby`, a roving tabindex, and
+Arrow/Home/End key navigation with *manual* activation (arrowing onto
+Preview does not fetch; Enter/Space or click does).
 Preview renders server-side via `POST /api/v1/preview` `{body}` →
 `{html}`, using the *same* allowlist sanitizer as stored comments — so
 what you preview is byte-identical to what gets posted, with no
@@ -687,7 +691,7 @@ ancestor.
 | `--garrul-font`       | `system-ui, -apple-system, "Segoe UI", Roboto, sans-serif` | Font family for the whole widget       |
 | `--garrul-font-size`  | `15px`                                                   | Base font size                         |
 | `--garrul-fg`         | `#1a1a1a`                                                | Primary text color                     |
-| `--garrul-bg`         | `transparent`                                            | Widget background                      |
+| `--garrul-bg`         | `transparent` (auto light); `#12161a` dark; `#fff` pinned light | Widget background                      |
 | `--garrul-muted`      | `#6b7280`                                                | Timestamps, empty-state text           |
 | `--garrul-border`     | `#d0d3d8`                                                | Input + reply-thread borders           |
 | `--garrul-radius`     | `6px`                                                    | Border-radius on inputs and buttons    |
@@ -746,7 +750,7 @@ override every variable by hand. By default it follows the visitor's OS/browser
 | `data-theme` value | Behavior                                |
 | ------------------ | --------------------------------------- |
 | absent / `auto`    | Follow `prefers-color-scheme` (default) |
-| `light`            | Always light                            |
+| `light`            | Always light; paints a concrete `#fff` background (a pinned-light widget can land on a dark host, where transparent fails contrast) |
 | `dark`             | Always dark                             |
 
 Host `--garrul-*` overrides still win at every theme level, so the table above
