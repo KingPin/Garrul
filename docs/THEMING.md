@@ -39,7 +39,7 @@ Or in a stylesheet:
 | `--garrul-font`           | system UI stack                          | Font family for the whole widget      |
 | `--garrul-font-size`      | `15px`                                   | Base font size                        |
 | `--garrul-fg`             | `#1a1a1a`                                | Primary text color                    |
-| `--garrul-bg`             | `transparent`                            | Widget background                     |
+| `--garrul-bg`             | `transparent` (auto light); `#12161a` dark; `#fff` pinned light | Widget background                     |
 | `--garrul-muted`          | `#6b7280`                                | Timestamps, "be the first…" message, the reply collapse toggle (`▸`/`▾`) |
 | `--garrul-border`         | `#d0d3d8`                                | Input borders                         |
 | `--garrul-radius`         | `6px`                                    | Border-radius on inputs and buttons   |
@@ -128,9 +128,12 @@ override `--garrul-bg` to match:
 #garrul { --garrul-bg: var(--my-page-bg, #0a0a0a); }
 ```
 
-**Known limitation:** A widget pinned to `data-theme="light"` on a dark host
-page will inherit the page's background and become hard to read. Override
-`--garrul-bg` to light (e.g. `#fff`) in this scenario.
+A widget *pinned* to `data-theme="light"` paints a concrete light background
+(`#fff` by default) for the same reason: pinning light is the one light
+configuration that can land on a dark host page, where a transparent
+background is unreadable. Only the default/auto light palette stays
+transparent and blends with the page; `--garrul-bg` overrides all of this as
+usual.
 
 **Precedence (highest wins):**
 

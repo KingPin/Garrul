@@ -108,12 +108,21 @@
 	--gr-accent-hover: var(--garrul-accent-hover, #2563eb);
 	--gr-shadow: var(--garrul-shadow, 0 1px 2px rgba(0,0,0,.5));
 }
-/* The light half of the forced-theme pair. There is no --gr-* block here
-   because light is already the :host default; only the UA half needs saying.
-   `color-scheme: light dark` up top follows the OS, which is exactly wrong once
-   the host has pinned a theme — a dark-OS reader on a data-theme="light" widget
-   would get a dark <select> popup floating over a light thread. */
-:host([data-theme="light"]) { color-scheme: light; }
+/* The light half of the forced-theme pair. Almost every --gr-* token is
+   already the :host default, so only two things need saying. `color-scheme:
+   light dark` up top follows the OS, which is exactly wrong once the host has
+   pinned a theme — a dark-OS reader on a data-theme="light" widget would get a
+   dark <select> popup floating over a light thread. And --gr-bg: a *pinned*
+   light widget is the one light case that can land on a dark host page, where
+   the transparent default fails contrast wholesale, so forcing light also
+   paints a concrete background. The default/auto light palette stays
+   transparent on purpose — repainting every existing install is a product
+   decision this rule deliberately avoids. Presets never set --gr-bg, so this
+   one rule covers all of them; --garrul-bg still wins for host overrides. */
+:host([data-theme="light"]) {
+	color-scheme: light;
+	--gr-bg: var(--garrul-bg, #fff);
+}
 
 /* ---- Presets ----------------------------------------------------------
    Named palettes selected with `data-preset` on the #garrul element, next to
