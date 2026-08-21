@@ -30,6 +30,7 @@ export const es = {
 	"w.md.ph.code": "código",
 	"w.tab.write": "Escribir",
 	"w.tab.preview": "Vista previa",
+	"w.tab.list": "Modo de edición",
 	"w.md_hint": "Se admite el formato con Markdown",
 	"w.preview.empty": "Todavía no hay nada que previsualizar.",
 	"w.preview.loading": "Cargando la vista previa…",

@@ -573,6 +573,10 @@ and the emails; there are no new `data-*` attributes and no new env vars.
 
 The composer (and the reply/edit forms) include a **Write | Preview** tab
 strip and a formatting toolbar (bold, italic, link, code, quote, list).
+The tab strip implements the full WAI-ARIA tabs pattern: real tabpanels
+wired via `aria-controls`/`aria-labelledby`, a roving tabindex, and
+Arrow/Home/End key navigation with *manual* activation (arrowing onto
+Preview does not fetch; Enter/Space or click does).
 Preview renders server-side via `POST /api/v1/preview` `{body}` →
 `{html}`, using the *same* allowlist sanitizer as stored comments — so
 what you preview is byte-identical to what gets posted, with no

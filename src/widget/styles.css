@@ -288,7 +288,11 @@
 	box-shadow: none;
 	padding: 0;
 }
-.gr-compose textarea[hidden] { display: none; }
+/* The Write tabpanel wraps the textarea + hint row; it repeats the composer's
+   column gap so the grouping is invisible. display:flex would beat the
+   [hidden] attribute, so the hidden state needs its own rule. */
+.gr-write { display: flex; flex-direction: column; gap: 0.4rem; }
+.gr-write[hidden] { display: none; }
 .gr-compose-head {
 	display: flex;
 	flex-wrap: wrap;

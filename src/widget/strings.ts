@@ -53,6 +53,8 @@ export const EN = {
 	"w.md.ph.code": "code",
 	"w.tab.write": "Write",
 	"w.tab.preview": "Preview",
+	// Accessible name for the Write/Preview tablist itself.
+	"w.tab.list": "Compose mode",
 	"w.md_hint": "Styling with Markdown is supported",
 	// Both modifiers named, because the widget cannot tell which one this
 	// reader has: navigator.platform is deprecated and userAgentData is

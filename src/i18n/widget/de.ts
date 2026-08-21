@@ -33,6 +33,7 @@ export const de = {
 	"w.md.ph.code": "Code",
 	"w.tab.write": "Schreiben",
 	"w.tab.preview": "Vorschau",
+	"w.tab.list": "Editormodus",
 	"w.md_hint": "Formatierung mit Markdown wird unterstützt",
 	"w.preview.empty": "Noch nichts für die Vorschau.",
 	"w.preview.loading": "Vorschau wird geladen…",
