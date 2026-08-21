@@ -1925,7 +1925,11 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 		ctx.turnstileSiteKey && (!ctx.me || ctx.turnstileAlways)
 			? el("div", "gr-turnstile")
 			: null;
-	if (tsSlot) wrap.appendChild(tsSlot);
+	if (tsSlot) {
+		tsSlot.setAttribute("role", "group");
+		tsSlot.setAttribute("aria-label", s("w.ts.title"));
+		wrap.appendChild(tsSlot);
+	}
 
 	const actions = el("div", "gr-reply-actions");
 	const submit = el("button", undefined, s("w.post_reply"));
@@ -2178,7 +2182,8 @@ const buildComment = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 		const label = s(
 			n.deleted_by === "moderator" ? "w.removed_by_mod" : "w.deleted",
 		);
-		const p = el("p", "gr-deleted", label);
+		const p = el("p", "gr-deleted");
+		p.appendChild(el("del", undefined, label));
 		body.appendChild(p);
 	} else {
 		if (n.flatten_from) {
@@ -2489,7 +2494,10 @@ const buildForm = (
 	// click. The focusin trigger excludes the submit button for exactly that
 	// reason — moving the slot means revisiting that exclusion.
 	if (siteKey && (!signedIn || turnstileAlways)) {
-		form.appendChild(el("div", "gr-turnstile"));
+		const tsSlot = el("div", "gr-turnstile");
+		tsSlot.setAttribute("role", "group");
+		tsSlot.setAttribute("aria-label", s("w.ts.title"));
+		form.appendChild(tsSlot);
 	}
 
 	const submit = el("button", undefined, s("w.post_comment"));
@@ -3243,6 +3251,10 @@ const loadOnce = async (
 			const sortWrap = el("div", "gr-sort");
 			const label = el("label");
 			const sel = el("select") as HTMLSelectElement;
+			// Ids are scoped to this widget's shadow root, so a constant is safe
+			// even with several embeds on one page.
+			sel.id = "gr-sort-select";
+			label.htmlFor = sel.id;
 			const opts: ReadonlyArray<readonly [SortKey, string]> = [
 				["new", s("w.sort.new")],
 				["old", s("w.sort.old")],

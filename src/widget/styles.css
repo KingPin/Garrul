@@ -521,6 +521,9 @@ button:active:not([disabled]) { opacity: 0.75; }
 	overflow-wrap: break-word;
 }
 .gr-deleted { color: var(--gr-muted); font-style: italic; }
+/* The <del> marks the tombstone programmatically; the bracket text already
+   carries it visually, so no strikethrough on top. */
+.gr-deleted del { text-decoration: none; }
 .gr-actions { display: flex; gap: 0.75rem; margin-top: 0.35rem; font-size: 0.85em; }
 .gr-actions button {
 	font: inherit;
