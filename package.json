@@ -27,6 +27,7 @@
     "build:assets": "npm run build:embed && npm run build:agents && npm run build:version",
     "size": "npm run build:embed && tsx scripts/check-bundle-size.ts",
     "size:delta": "tsx scripts/bundle-delta.ts",
+    "vr": "tsx scripts/visual-regression.ts",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.widget.json",
     "pretypecheck": "npm run build:assets",
     "lint": "biome lint .",
