@@ -3295,8 +3295,8 @@ const loadOnce = async (
 			const sortWrap = el("div", "gr-sort");
 			const label = el("label");
 			const sel = el("select") as HTMLSelectElement;
-			// Ids are scoped to this widget's shadow root, so a constant is safe
-			// even with several embeds on one page.
+			// Ids are scoped to this widget's shadow root, so a constant cannot
+			// collide with anything on the host page.
 			sel.id = "gr-sort-select";
 			label.htmlFor = sel.id;
 			const opts: ReadonlyArray<readonly [SortKey, string]> = [
