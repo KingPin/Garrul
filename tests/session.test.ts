@@ -7,11 +7,12 @@
  * stub KV + a stub Hono-shaped context is more faithful (and faster)
  * than a worker fixture.
  */
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
 	destroySession,
 	issueSession,
 	readSession,
+	revokeOtherSessions,
 	revokeSession,
 	revokeUserSessions,
 } from "../src/lib/session";
@@ -505,3 +506,72 @@ const makeCtxWithSameKv = (
 	};
 	return { ctx, kv, setCookies };
 };
+
+describe("revokeOtherSessions (sign out everywhere else)", () => {
+	const userId = "01HUSER0000000000000000USR";
+
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
+	it("kills every other session but hands the caller a survivor, even on a frozen clock", async () => {
+		// Workers freeze Date.now() during synchronous work; pin it so the test
+		// reproduces the worst case — stamp and mint in the same millisecond.
+		const T = 1_900_000_000_000;
+		vi.spyOn(Date, "now").mockReturnValue(T);
+
+		const { ctx: otherCtx, kv, setCookies: otherCookies } = makeCtx({});
+		await issueSession(otherCtx, userId); // the "stolen" session, issued_at = T
+		const otherSid = extractCookieValue(otherCookies[0]!);
+		const { ctx: callerIssueCtx, setCookies: callerCookies } =
+			makeCtxWithSameKv(kv, {});
+		await issueSession(callerIssueCtx, userId);
+		const callerSid = extractCookieValue(callerCookies[0]!);
+
+		const { ctx: revokeCtx, setCookies: revokeCookies } = makeCtxWithSameKv(
+			kv,
+			{ cookieHeader: `__Host-garrul_sess=${callerSid}` },
+		);
+		await revokeOtherSessions(revokeCtx, userId);
+
+		// The stamp landed, and the replacement postdates it strictly.
+		expect(kv.store.get(`sessrev:${userId}`)!.value).toBe(String(T));
+		const newSid = extractCookieValue(revokeCookies[0]!);
+		const newRecord = JSON.parse(kv.store.get(`sess:${newSid}`)!.value) as {
+			issued_at: number;
+		};
+		expect(newRecord.issued_at).toBeGreaterThan(T);
+
+		// Old caller record is deleted outright, not left for the epoch to reap.
+		expect(kv.store.has(`sess:${callerSid}`)).toBe(false);
+
+		// The other session is dead; the replacement still reads.
+		const { ctx: replayCtx } = makeCtxWithSameKv(kv, {
+			cookieHeader: `__Host-garrul_sess=${otherSid}`,
+		});
+		expect(await readSession(replayCtx)).toBeNull();
+		const { ctx: survivorCtx } = makeCtxWithSameKv(kv, {
+			cookieHeader: `__Host-garrul_sess=${newSid}`,
+		});
+		expect((await readSession(survivorCtx))?.user_id).toBe(userId);
+	});
+
+	it("still revokes when the caller sends no cookie at all", async () => {
+		const { ctx: otherCtx, kv, setCookies } = makeCtx({});
+		await issueSession(otherCtx, userId);
+		const otherSid = extractCookieValue(setCookies[0]!);
+
+		const { ctx: revokeCtx, setCookies: revokeCookies } = makeCtxWithSameKv(
+			kv,
+			{},
+		);
+		await revokeOtherSessions(revokeCtx, userId);
+
+		expect(kv.store.has(`sessrev:${userId}`)).toBe(true);
+		expect(revokeCookies.length).toBeGreaterThan(0);
+		const { ctx: replayCtx } = makeCtxWithSameKv(kv, {
+			cookieHeader: `__Host-garrul_sess=${otherSid}`,
+		});
+		expect(await readSession(replayCtx)).toBeNull();
+	});
+});

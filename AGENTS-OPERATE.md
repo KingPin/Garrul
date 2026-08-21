@@ -955,6 +955,7 @@ responding):
 - `POST /admin/api/users/:id` — `{banned: boolean, reason?, from_comment?}` (one-click ban-author records the originating comment in audit meta; admin-only)
 - `POST /admin/api/users/:id/role` — `{role: user|mod|admin, reason?}` (admin-only; refuses self-change and the last-admin demotion)
 - `POST /admin/api/users/:id/erase` — `{confirm: "ERASE", redact_bodies: boolean, reason?}` (admin-only, irreversible; see below)
+- `POST /admin/api/users/:id/revoke-sessions` — no body (admin-only; kills every session the user holds via the revocation epoch — the stolen-cookie kill switch. Targeting yourself means "sign out everywhere else": the response sets a fresh cookie so the browser doing the revoking stays signed in. Audited `user.revoke_sessions`)
 - `POST /admin/api/subscriptions/:id` — `{action: unsubscribe|resend, reason?}`
 - `POST /admin/api/ops/rerender` — `{batch?: number, cursor?}` → `{processed, next_cursor}`
 - `POST /admin/api/ops/seed-demo` — disabled when `ENV=production`
@@ -1405,10 +1406,13 @@ Art. 33(4) explicitly allows filing in phases.
 
 - Rotate whatever leaked (`wrangler secret put …`). If it was
   `IP_HASH_SECRET`, run the emergency purge above *before* rotating.
-- Revoke every session if an admin credential or the `SESSIONS` namespace is
-  in scope. There is no button for this: sessions are `sess:<hex>` keys in
-  KV, so you delete them with `wrangler kv key list` / `kv bulk delete`
-  against that namespace. Everyone signs in again; nothing else breaks.
+- Revoke sessions if an admin credential or the `SESSIONS` namespace is in
+  scope. Per account there is a button: "Sign out everywhere" on
+  `/admin/users/:id` (on your own account it keeps the session you're
+  clicking from). For a namespace-wide wipe there is not: sessions are
+  `sess:<hex>` keys in KV, so you delete them with `wrangler kv key list` /
+  `kv bulk delete` against that namespace. Everyone signs in again; nothing
+  else breaks.
 - Rotate per-endpoint webhook secrets from `/admin/webhooks` — they live in
   D1, so a database dump exposes them.
 - Snapshot logs and take a dated `.sql` export *before* purging anything, and

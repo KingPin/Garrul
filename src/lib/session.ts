@@ -200,16 +200,16 @@ export const clearShortCookie = (
 	path = "/api/v1/auth",
 ): string => buildShortCookie(name, "", 0, env, path);
 
-export const issueSession = async (
+const mintSession = async (
 	c: SessionCtx,
 	userId: string,
+	issuedAt: number,
 ): Promise<string> => {
 	const sid = newSessionId();
-	const now = Date.now();
 	const record: SessionRecord = {
 		user_id: userId,
-		issued_at: now,
-		expires_at: now + SESSION_TTL_SECONDS * 1000,
+		issued_at: issuedAt,
+		expires_at: issuedAt + SESSION_TTL_SECONDS * 1000,
 	};
 	await c.env.SESSIONS.put(sessionKey(sid), JSON.stringify(record), {
 		expirationTtl: SESSION_TTL_SECONDS,
@@ -220,6 +220,11 @@ export const issueSession = async (
 	clearLegacyCookie(c);
 	return sid;
 };
+
+export const issueSession = (
+	c: SessionCtx,
+	userId: string,
+): Promise<string> => mintSession(c, userId, Date.now());
 
 /**
  * Delete the KV record for the session named by the request cookie, if any,
@@ -246,6 +251,31 @@ export const revokeUserSessions = async (
 		// No session can outlive the TTL, so neither does the stamp.
 		expirationTtl: SESSION_TTL_SECONDS,
 	});
+};
+
+/**
+ * "Sign out everywhere else": stamp the revocation epoch, then hand the
+ * calling browser a replacement session that survives it. The stamp kills
+ * every session issued at or before it — the caller's included — so the
+ * replacement's `issued_at` is forced strictly past the epoch rather than
+ * read from the clock: Workers freeze Date.now() during synchronous work, so
+ * a plain mint can land in the same millisecond as the stamp and die with
+ * the rest. Stamp first, mint second — if the mint fails the caller is
+ * merely signed out too, never left with a revoke that silently didn't land.
+ */
+export const revokeOtherSessions = async (
+	c: SessionCtx,
+	userId: string,
+): Promise<void> => {
+	const epoch = Date.now();
+	await c.env.SESSIONS.put(revocationKey(userId), String(epoch), {
+		// No session can outlive the TTL, so neither does the stamp.
+		expirationTtl: SESSION_TTL_SECONDS,
+	});
+	// Delete the caller's old record outright rather than leaving it for the
+	// epoch check to reap on its next read — same no-orphan rule as re-login.
+	await revokeSession(c);
+	await mintSession(c, userId, Math.max(Date.now(), epoch + 1));
 };
 
 export const destroySession = async (c: SessionCtx): Promise<void> => {
