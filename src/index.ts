@@ -11,6 +11,7 @@ import { votes } from "./routes/api.votes";
 import { auth } from "./routes/auth";
 import { embed } from "./routes/embed";
 import { agents } from "./routes/agents";
+import { wellKnown } from "./routes/well-known";
 import { iframe } from "./routes/embed-iframe";
 import { admin } from "./routes/admin";
 import { telegram } from "./routes/telegram";
@@ -108,6 +109,10 @@ export type Bindings = {
 	// where operators actually maintain it — this exists so a fresh deploy can
 	// ship with a list already in place.
 	SPAM_BLOCKLIST?: string;
+	// Vulnerability-disclosure contact (email or https:// URL) served at
+	// /.well-known/security.txt (RFC 9116). Env-var *default*; a `settings` row
+	// overrides at runtime (see src/lib/settings.ts). Unset → the route is 404.
+	SECURITY_CONTACT?: string;
 	// Global ceiling on outbound subscription-confirmation email, counted in D1
 	// (src/lib/email-budget.ts). Env-var *default*; a `settings` row overrides at
 	// runtime (see src/lib/settings.ts). The windows stay constants — it's the
@@ -340,6 +345,7 @@ app.route("/feed", feed);
 app.route("/c", permalink);
 app.route("/", embed);
 app.route("/", agents);
+app.route("/", wellKnown);
 app.route("/embed", iframe);
 app.route("/admin", admin);
 // Top-level (outside /api/*) so it bypasses corsAndCsrf + sessionMiddleware;

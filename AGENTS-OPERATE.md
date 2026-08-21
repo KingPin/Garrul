@@ -173,6 +173,7 @@ between the two is a build error, not a silent misclassification.
 | `EDIT_WINDOW_MINUTES` | var | Minutes a commenter can edit their own post. Default 15; `0` disables editing. | `15` | `wrangler.toml` default; **Admin → Settings** overrides |
 | `PUBLIC_BASE_URL` | var | Public URL of the Worker; used in permalinks + email bodies. | `https://comments.example.com` | `wrangler.toml` — **replace the shipped placeholder before deploying** |
 | `CANONICAL_URL` | var | Optional. Override for the public URL used by the `/AGENTS.md` route when the inbound `Host` differs from the canonical address. | `https://comments.example.com` | `wrangler.toml` |
+| `SECURITY_CONTACT` | var | Optional. Vulnerability-disclosure contact published at `/.well-known/security.txt` (RFC 9116). An email address (served as `mailto:`) or an `https://` / `mailto:` URI, served verbatim. Unset (the default) the route answers 404 — the file is only served once there is a real contact behind it. Usually maintained on the Settings page rather than here — this is the default a fresh deploy starts with. | `security@example.com` | `wrangler.toml` default; **Admin → Settings** overrides |
 | `OAUTH_CALLBACK_BASE` | var | Base URL for OAuth callbacks; must match the URI registered with each provider. Usually identical to `PUBLIC_BASE_URL`. | `https://comments.example.com` | `wrangler.toml` — **replace the shipped placeholder before deploying** |
 | `BRANDING_HIDDEN` | var | Optional. Set to `1`/`true` to suppress the "Powered by Garrul" attribution under the comment list. Unset = attribution shown. | `false` | `wrangler.toml` |
 | `JWT_SECRET` | secret | HMAC-SHA-256 key for the signed OAuth state cookie (`src/lib/oauth.ts`). Required for sign-in to work at all. Rotating it invalidates any OAuth flow already in progress — users retry and it works; no other effect, since sessions are KV-backed and not signed with this. | ``openssl rand -base64 32` output` | `wrangler secret put` / `.dev.vars` |
@@ -1174,6 +1175,18 @@ routes = [
 Wrangler provisions the proxied subdomain on first deploy (first cert
 issuance ~30 seconds). Don't use `*.workers.dev` in production —
 third-party-cookie blocking in Safari/Brave breaks sign-in.
+
+**Vulnerability disclosure (`security.txt`).** Set a disclosure contact —
+Admin → Settings → Vulnerability disclosure, or the `SECURITY_CONTACT`
+var as the deploy-time default — and the instance serves
+`GET /.well-known/security.txt` (RFC 9116), the standard place a
+security researcher looks for where to report a problem with *your
+deployment*. Accepts an email address (published as `mailto:`) or an
+`https://`/`mailto:` URI; anything else is treated as unset, and unset
+means the route answers 404 rather than publishing a file that points
+nowhere. `Expires` is generated ~6 months out on every response, so the
+file never goes stale on its own. Like `/AGENTS.md`, the route is public
+and needs no `Origin`.
 
 ### Mount cost and free-tier headroom (since v2.15.0)
 

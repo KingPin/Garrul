@@ -23,7 +23,9 @@ const agents = new Hono<{ Bindings: Bindings }>();
 
 const FALLBACK_HOST = "your-garrul-host.example";
 
-function resolveInstance(
+// Also used by /.well-known/security.txt (routes/well-known.ts) for its
+// Canonical field — one implementation of "what is my public URL".
+export function resolveInstance(
 	hostHeader: string | undefined,
 	canonical: string | undefined,
 ): { url: string; host: string } {

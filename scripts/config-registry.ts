@@ -214,6 +214,18 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
 		addedIn: "1.0.0",
 	},
 	{
+		name: "SECURITY_CONTACT",
+		kind: "var",
+		required: false,
+		group: "Core",
+		adminEditable: true,
+		hint: "vulnerability-disclosure contact; enables /.well-known/security.txt",
+		description:
+			"Optional. Vulnerability-disclosure contact published at `/.well-known/security.txt` (RFC 9116). An email address (served as `mailto:`) or an `https://` / `mailto:` URI, served verbatim. Unset (the default) the route answers 404 — the file is only served once there is a real contact behind it. Usually maintained on the Settings page rather than here — this is the default a fresh deploy starts with.",
+		example: "security@example.com",
+		addedIn: "2.19.0",
+	},
+	{
 		name: "OAUTH_CALLBACK_BASE",
 		kind: "var",
 		required: false,

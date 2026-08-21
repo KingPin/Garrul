@@ -157,6 +157,11 @@
       "addedIn": "1.0.0"
     },
     {
+      "name": "SECURITY_CONTACT",
+      "required": false,
+      "addedIn": "2.19.0"
+    },
+    {
       "name": "OAUTH_CALLBACK_BASE",
       "required": false,
       "addedIn": "1.0.0",

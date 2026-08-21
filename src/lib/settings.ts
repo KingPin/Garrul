@@ -62,7 +62,7 @@ export type StringSettingKey = "default_locale" | "default_sort";
 
 export type ResolvedStrings = Record<StringSettingKey, string>;
 
-export type TextSettingKey = "spam_blocklist";
+export type TextSettingKey = "spam_blocklist" | "security_contact";
 
 export type ResolvedTexts = Record<TextSettingKey, string>;
 
@@ -374,6 +374,11 @@ const TEXTS: Record<TextSettingKey, { env: keyof Bindings; default: string }> = 
 	// this is a moderation policy, and an upgrade must never start holding
 	// comments against a list the operator didn't write.
 	spam_blocklist: { env: "SPAM_BLOCKLIST", default: "" },
+	// Vulnerability-disclosure contact for /.well-known/security.txt (RFC 9116):
+	// an email address or an https:// URL. Empty by default — the route serves
+	// 404 until the operator opts in, because a Contact field is the one thing
+	// the RFC makes mandatory and inventing one would point researchers nowhere.
+	security_contact: { env: "SECURITY_CONTACT", default: "" },
 };
 
 export const TEXT_KEYS = Object.keys(TEXTS) as TextSettingKey[];
