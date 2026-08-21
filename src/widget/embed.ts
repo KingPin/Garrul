@@ -46,6 +46,10 @@ import {
 	REACTION_KINDS,
 	mergeReactionTotals,
 } from "./reactions";
+// The node shape this file renders, plus the arithmetic that turns a POST echo
+// into one. Kept out of here so the depth/flatten/placement rules are reachable
+// from the DOM-free test pool — see the module header.
+import type { TreeAuthor, TreeNode } from "./comment-node";
 import { commentAnchorId, commentHref, commentIdFromHash } from "./permalink";
 import { absoluteTime, isoTime, relativeTime } from "./time";
 // The mount request and the wire shapes it carries. Kept out of this file so the
@@ -123,39 +127,6 @@ const markVote = (btn: HTMLElement, on: boolean): void => {
 	if (on) btn.dataset.mine = "1";
 	else delete btn.dataset.mine;
 	btn.setAttribute("aria-pressed", String(on));
-};
-
-// Mirrors lib/tree.ts's TreeAuthor. No `is_admin`: the API stopped sending it
-// (it let anyone enumerate privileged accounts) and nothing here rendered it.
-type TreeAuthor = {
-	id: string;
-	name: string;
-	provider: string;
-	avatar_svg: string | null;
-	avatar_url: string | null;
-};
-
-type TreeNode = {
-	id: string;
-	parent_id: string | null;
-	body_html: string;
-	status: "approved" | "pending" | "spam" | "deleted";
-	edited_at: number | null;
-	deleted_at: number | null;
-	deleted_by: "author" | "moderator" | null;
-	created_at: number;
-	author: TreeAuthor;
-	depth: number;
-	flatten_from: string | null;
-	/** Optional on purpose: the list response is edge-cached, so payloads
-	 *  predating this field keep being served for up to TREE_CACHE_TTL after a
-	 *  deploy. Read it through the `n.depth < 4` fallback below, never bare. */
-	can_reply?: boolean;
-	reactions: ReactionCount[];
-	score_up: number;
-	score_down: number;
-	my_vote: -1 | 0 | 1;
-	replies: TreeNode[];
 };
 
 type VoteResponse = {
