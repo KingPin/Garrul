@@ -887,3 +887,20 @@ button:active:not([disabled]) { opacity: 0.75; }
 }
 .gr-attribution a { color: inherit; text-decoration: none; }
 .gr-attribution a:hover { text-decoration: underline; }
+/* WCAG 2.2 target size (2.5.8): every standalone pointer target needs 24 CSS
+   px in both axes. The controls below run 0.8–0.85em text, which leaves them a
+   few px short. A min-height tops them up without changing their resting look
+   — browsers center a button's content once it has a height — and the vote
+   circle gets a min-width to stay round. Kept as one block, not spread across
+   the base rules, so the whole floor is visible (and removable) in one place. */
+.gr-actions button, .gr-reaction, .gr-collapse, .gr-showmore, .gr-form .gr-notify {
+	min-height: 24px;
+}
+.gr-vote {
+	min-width: 24px;
+	min-height: 24px;
+}
+/* The attribution link is an inline box, so vertical padding grows its hit
+   target without moving the line it sits on. 6px each side clears 24px total
+   at the 0.8em footer size. */
+.gr-attribution a { padding-block: 6px; }
