@@ -17,6 +17,7 @@
  */
 import type { SavedReply, User } from "../../db/queries";
 import { escapeHtml, jsLiteral } from "../escape";
+import { REPLY_VARS_HINT } from "../components/reply-vars";
 
 const formatTs = (ts: number): string =>
 	new Date(ts).toISOString().slice(0, 16).replace("T", " ");
@@ -171,6 +172,7 @@ ${errorBanner}
         <textarea name="body_md" required rows="10"
                   maxlength="8000" style="width:100%;min-height:160px;font-family:ui-monospace,monospace">${escapeHtml(body)}</textarea>
       </label>
+      <span class="muted" style="font-size:0.75rem">${escapeHtml(REPLY_VARS_HINT)}</span>
     </p>
     <p>
       <label>Scope<br>

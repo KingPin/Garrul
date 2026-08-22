@@ -259,6 +259,12 @@ export const renderCommentDetail = (
 	     ${replyComposer({
 				commentIdExpr: commentIdLiteral(comment.id),
 				modName,
+				// This page's query doesn't join posts.title, so `{post}` resolves
+				// to the slug here and to the title in the queue. Both name the
+				// thread, and joining a title for one composer would cost a JOIN
+				// on every comment-detail load.
+				authorNameExpr: jsLiteral(comment.author_name ?? ""),
+				postTitleExpr: jsLiteral(comment.post_slug),
 				onPosted: "setTimeout(() => location.reload(), 600);",
 			})}
 	   </div>`;

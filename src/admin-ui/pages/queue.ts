@@ -121,6 +121,12 @@ const metaCell = (c: AdminComment): string => {
           @click="navigator.clipboard.writeText(${jsLiteral(c.id)}); $dispatch('toast',{text:'ID copied'})">${escapeHtml(c.id)}</span>`;
 };
 
+// Opening the reply modal carries the row's saved-reply variable context
+// ({name}, {post}) alongside the id. The values live in the card scope's
+// `rowCtx` map rather than being inlined here, because the keyboard shortcut
+// opens the same modal from a cursor position with no row element in hand.
+const openReply = (id: string): string => `openReply(${jsLiteral(id)})`;
+
 const rowAct = (
 	id: string,
 	action: "approve" | "spam" | "delete",
@@ -150,7 +156,7 @@ const actionButtons = (id: string, status: CommentStatus): string => {
 	// approved/pending comments. No point replying to deleted/spam.
 	if (status !== "deleted" && status !== "spam") {
 		parts.push(
-			`<button :disabled="busy" @click="$dispatch('open-reply', { id: ${jsLiteral(id)} })">Reply</button>`,
+			`<button :disabled="busy" @click="${openReply(id)}">Reply</button>`,
 		);
 	}
 	return parts.join("");
@@ -275,6 +281,21 @@ export const renderQueue = (
 		: `<tr><td colspan="7" class="muted">No comments match.</td></tr>`;
 
 	const allIds = rows.map((r) => r.id);
+	// Saved-reply variable context per row: the author's display name and the
+	// post's human title (slug when the crawler never gave us one). Kept as a
+	// map keyed by comment id so both the Reply button and the keyboard
+	// shortcut resolve it the same way.
+	//
+	// Built literal-by-literal through jsLiteral rather than JSON.stringify'd
+	// whole: unlike `allIds` these values are user-authored (a display name, a
+	// page <title>), and JSON.stringify leaves `<`, `>` and U+2028/U+2029 raw
+	// inside what becomes executable JS. See tests/admin-js-context-escaping.
+	const rowCtx = `{${rows
+		.map(
+			(r) =>
+				`${jsLiteral(r.id)}: { name: ${jsLiteral(r.author_name ?? "")}, post: ${jsLiteral(r.post_title || r.post_slug)} }`,
+		)
+		.join(", ")}}`;
 
 	const qs = queryString(filters);
 	const nextHref = nextCursor
@@ -288,14 +309,19 @@ export const renderQueue = (
 <div class="filter-bar"><span class="muted">filter:</span> ${tabs}</div>
 ${filterBar}
 ${lifecycleBar}
-<div x-data="{ open: false, commentId: null }"
-@open-reply.window="open = true; commentId = $event.detail.id;"
+<div x-data="{ open: false, commentId: null, authorName: '', postTitle: '' }"
+@open-reply.window="open = true; commentId = $event.detail.id; authorName = $event.detail.name || ''; postTitle = $event.detail.post || '';"
 @reply-posted="open = false"
 @keydown.escape.window="open = false">
 <div class="card" x-data="{
   selected: [],
   bulkBusy: false,
   allIds: ${escapeHtml(JSON.stringify(allIds))},
+  rowCtx: ${rowCtx},
+  openReply(id) {
+    const ctx = this.rowCtx[id] || {};
+    this.$dispatch('open-reply', { id: id, name: ctx.name || '', post: ctx.post || '' });
+  },
   toggleAll(e) {
     this.selected = e.target.checked ? this.allIds.slice() : [];
   },
@@ -358,6 +384,9 @@ ${lifecycleBar}
 ${replyComposer({
 	commentIdExpr: "commentId",
 	modName,
+	// Same wrapper scope as commentId: whichever row opened the modal.
+	authorNameExpr: "authorName",
+	postTitleExpr: "postTitle",
 	// The composer has its own Alpine scope, so assigning `open` there would
 	// create a new property on the child instead of closing the modal. Bubble an
 	// event to the wrapper's @reply-posted handler instead.

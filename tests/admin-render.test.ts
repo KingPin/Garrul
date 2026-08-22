@@ -941,3 +941,31 @@ describe("admin Alpine x-data attributes are lexically well-formed", () => {
 		expect(offenders).toEqual([]);
 	});
 });
+
+describe("saved-reply variables in the queue reply modal", () => {
+	// The composer is mounted once for the whole table, so the variable context
+	// cannot be baked into it — it has to arrive with the row that opened the
+	// modal. These two assertions are the ends of that wire.
+	it("dispatches the row's name and post with the id", () => {
+		const html = renderQueue(
+			[makeComment({ author_name: "Ada", post_title: "Rolling Oasis" })],
+			emptyQueueFilters,
+			null,
+		);
+		expect(html).toContain("openReply(&quot;01HXX000000000000000000001&quot;)");
+		expect(html).toContain("name: &quot;Ada&quot;");
+		expect(html).toContain("post: &quot;Rolling Oasis&quot;");
+		expect(html).toContain("$dispatch('open-reply', { id: id,");
+	});
+
+	it("falls back to the slug when the post has no title", () => {
+		const html = renderQueue([makeComment({ post_title: null })], emptyQueueFilters, null);
+		expect(html).toContain("post: &quot;hello-world&quot;");
+	});
+
+	it("feeds the modal's scope into the composer's substitution", () => {
+		const html = renderQueue([makeComment()], emptyQueueFilters, null);
+		expect(html).toContain("authorName = $event.detail.name || ''");
+		expect(html).toContain("name: authorName, post: postTitle");
+	});
+});
