@@ -142,6 +142,27 @@ describe("GET /embed/:slug", () => {
 		});
 	});
 
+	describe("frame-src", () => {
+		it("names the api origin, which is what hosts the Turnstile gate", async () => {
+			// Regression guard. The widget frames `${apiBase}/embed/turnstile-frame`,
+			// not challenges.cloudflare.com directly, so a frame-src naming only
+			// Turnstile blocks the gate here — and an anonymous post needs a token
+			// whether or not the operator configured Turnstile, so the whole
+			// anonymous path on this route 400s with nothing explaining why.
+			const res = await fetchPage("/embed/hello");
+			const fs = directive(res, "frame-src") ?? "";
+			expect(fs).toContain(SELF);
+			expect(fs).toContain("https://challenges.cloudflare.com");
+		});
+
+		it("does not name an unlisted ?api= override", async () => {
+			const res = await fetchPage("/embed/hello?api=https%3A%2F%2Fevil.example");
+			const fs = directive(res, "frame-src") ?? "";
+			expect(fs).not.toContain("evil.example");
+			expect(fs).toContain(SELF);
+		});
+	});
+
 	describe("?lang=", () => {
 		it("lands on both <html lang> and data-lang", async () => {
 			// Two consumers, not one: <html lang> is what assistive tech and the

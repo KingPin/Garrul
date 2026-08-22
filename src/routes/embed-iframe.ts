@@ -404,7 +404,18 @@ iframe.get("/:slug", (c) => {
 		"default-src 'none'",
 		`script-src ${apiOrigin} ${TURNSTILE_ORIGIN} 'unsafe-inline'`,
 		`connect-src ${apiOrigin} ${TURNSTILE_ORIGIN}`,
-		`frame-src ${TURNSTILE_ORIGIN}`,
+		// `apiOrigin` as well as Turnstile's own: the widget does not frame
+		// challenges.cloudflare.com directly, it frames `${apiBase}/embed/
+		// turnstile-frame` and *that* page hosts CF's script (see the route above
+		// — the indirection is what keeps the parent origin out of CF's referrer
+		// and lets the frame carry its own CSP). Listing only Turnstile here
+		// blocked the gate on this route, which anonymous posting cannot survive:
+		// the API requires a Turnstile token from an anonymous author whether or
+		// not the operator configured Turnstile, so the post came back 400 with
+		// nothing on screen explaining why. Not a new grant — `apiOrigin` is
+		// already trusted for script and connect two lines up, and is either this
+		// Worker or an ALLOWED_ORIGINS entry.
+		`frame-src ${apiOrigin} ${TURNSTILE_ORIGIN}`,
 		"style-src 'unsafe-inline'",
 		"img-src data: https:",
 		"font-src data:",
