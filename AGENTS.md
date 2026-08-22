@@ -639,6 +639,38 @@ what you preview is byte-identical to what gets posted, with no
 client-side markdown library and no XSS divergence. The endpoint is
 public but rate-limited; no auth required.
 
+### Editing your own comment (since v2.21.0)
+
+A signed-in author gets an **Edit** button on their own comment for
+`edit_window_minutes` after posting (default 15; `0` disables editing
+entirely and the button never appears). `/api/v1/config` reports the
+resolved value as `edit_window_minutes`.
+
+Inside the **last hour** of that window the button is followed by a muted
+countdown — "12m left", then "less than a minute left" under sixty seconds.
+It re-reads the clock every 15 seconds. On the default 15-minute window the
+countdown is therefore visible for the whole window; on a window configured
+in days it stays quiet until the last hour, so a long window doesn't paint a
+"6 days left" chip on every comment. The chip is not a live region — it is
+wired to the button with `aria-describedby`, so a screen reader announces the
+remaining time when the button takes focus rather than every fifteen seconds.
+
+At expiry the Edit button and its countdown are **removed from the row**
+without a reload. An editor already open is disabled in place: the field and
+Save go inert, "Your edit window has closed." appears in a polite live region,
+and Cancel stays enabled so the box can still be dismissed. This is a display
+of the server rule, not a second copy of it — `PATCH /api/v1/comments/:id`
+and `GET /api/v1/comments/:id/source` both still 403 past the window.
+
+Two caveats worth knowing:
+
+- The countdown is computed against the **reader's** clock. A badly skewed
+  clock mis-states the time left, exactly as it has always mis-gated the
+  button; nothing on the wire carries a server `now`.
+- Any other refusal from `PATCH` — a rate limit, a validation failure, a spam
+  verdict — now renders in that same box. Before v2.21.0 the editor had no
+  status surface at all and those failures silently re-enabled Save.
+
 ### Deleting your own comment (since v2.9.0)
 
 Delete asks for confirmation **in place**: the button becomes
