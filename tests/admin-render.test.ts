@@ -1068,3 +1068,74 @@ describe("queue keyboard shortcuts", () => {
 		expect(html).toContain("doneIds.forEach(i => { this.done[i] = true; });");
 	});
 });
+
+describe("global keyboard shortcuts", () => {
+	// Same invariant as the queue's, for the three keys the popover advertises
+	// on every page. This block exists because `.question-mark` shipped as a
+	// dead binding: Alpine has no alias for "?", so the modifier never matched
+	// and the popover promised a key nothing handled. A render test cannot
+	// press a key, so it asserts the next best thing — that each advertised key
+	// is compared somewhere in the handler the page actually binds.
+	const adminUser: User = {
+		id: "01HUSR000000000000000000A",
+		provider: "github",
+		provider_id: "u1",
+		name: "Admin",
+		email: null,
+		avatar_url: null,
+		is_admin: true,
+		is_banned: false,
+		role: "admin",
+		created_at: 1_700_000_000_000,
+		erased_at: null,
+	};
+	const render = (): string => layout("Queue", "<p>body</p>", adminUser, null);
+
+	it("binds one hand-rolled window handler, not Alpine key modifiers", () => {
+		const html = render();
+		expect(html).toContain('@keydown.window="onKey($event)"');
+		// The dead binding, and the two rewrites that look like fixes but are
+		// not: `.shift.slash` sees e.key === "?" and misses, and a second
+		// `@keydown.window` attribute would be dropped as a duplicate.
+		expect(html).not.toContain("question-mark");
+		expect(html).not.toContain("keydown.window.shift.slash");
+		expect(html.split('@keydown.window="').length - 1).toBe(1);
+	});
+
+	it("compares every key the popover advertises", () => {
+		const html = render();
+		for (const [key, eventKey] of [
+			["/", "/"],
+			["?", "?"],
+			["Esc", "Escape"],
+		]) {
+			expect(html).toContain(`<kbd>${key}</kbd>`);
+			expect(html).toContain(`e.key === '${eventKey}'`);
+		}
+	});
+
+	it("ignores modifiers and keys typed into a field, but never Escape", () => {
+		const html = render();
+		expect(html).toContain("if (e.ctrlKey || e.metaKey || e.altKey) return;");
+		expect(html).toContain(
+			"t.closest('input, textarea, select, [contenteditable]')",
+		);
+		// Escape is matched and returned before the guard, so a stuck popover
+		// closes from inside a textarea too.
+		const handler = html.slice(html.indexOf("onKey(e) {"));
+		expect(handler.indexOf("e.key === 'Escape'")).toBeLessThan(
+			handler.indexOf("this.typing(e)"),
+		);
+	});
+
+	it("only swallows the keystroke when it has somewhere to send it", () => {
+		const html = render();
+		// Unconditional .prevent was the other half of the old bug: with no
+		// search box on the page, "/" was eaten and nothing took focus.
+		expect(html).toContain("if (el) { e.preventDefault(); el.focus(); }");
+		// A hidden field counts as nowhere. Comment and user detail pages carry
+		// a text input inside the saved-reply editor's x-show, so matching on
+		// querySelector alone swallowed "/" on the pages where notes are typed.
+		expect(html).toContain("n.offsetParent !== null");
+	});
+});

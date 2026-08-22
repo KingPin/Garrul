@@ -1216,6 +1216,15 @@ strip above the table and in the `?` help popover — one table in
 `src/admin-ui/pages/queue.ts` feeds all three, so the popover cannot
 promise a key the page stopped handling.
 
+Three shortcuts are global to every admin page: `/` focuses the page's
+search box, `?` toggles the help popover, `Esc` closes it. They are
+matched on `KeyboardEvent.key` by hand in `src/admin-ui/layout.ts`
+rather than through Alpine's key modifiers — Alpine has no alias for
+`?`, so `.question-mark` never matched and the popover spent several
+releases advertising a key that did nothing. `/` and `?` are inert
+while you are typing and under any modifier; `Esc` is matched before
+that guard, so a popover left open still closes from inside a textarea.
+
 **Disqus import.** Two entry points, both idempotent (deduplicated by
 Disqus comment ID, tracked in `0009_import_tracking.sql`; re-running
 the same export inserts zero rows):

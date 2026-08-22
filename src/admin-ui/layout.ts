@@ -198,6 +198,23 @@ export const layout = (
 	// prefers-color-scheme block flips to dark, so the first paint already
 	// respects the OS preference. Alpine then reconciles the stored choice on
 	// x-init. localStorage key matches the renderUpdateBanner convention.
+	//
+	// The global shortcuts match on e.key by hand rather than through Alpine's
+	// key modifiers. Alpine kebab-cases e.key and looks the result up in a small
+	// alias table, and that table has no entry for "?" — `.question-mark` never
+	// matched, so the popover advertised a key that did nothing. `.shift.slash`
+	// is not the fix either: with Shift held e.key is "?", not "/".
+	//
+	// Hand-matching also buys the guard the modifier form cannot express: a
+	// window listener with .prevent swallows "/" and "?" typed into a note, a
+	// saved reply or a search box. Escape is deliberately outside that guard, so
+	// the popover still closes from anywhere.
+	//
+	// "/" only swallows the keystroke once it has a *visible* field to focus.
+	// The offsetParent test is not belt-and-braces: the comment and user detail
+	// pages carry a text input inside the saved-reply editor's x-show, so
+	// querySelector alone matches a field the reader cannot see and eats the key
+	// on the pages where notes are written.
 	return `
 <!doctype html>
 <html lang="en"
@@ -205,12 +222,18 @@ export const layout = (
         theme: localStorage.getItem('garrul.theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'),
         helpOpen: false,
         navOpen: false,
-        setTheme(t) { this.theme = t; localStorage.setItem('garrul.theme', t); document.documentElement.setAttribute('data-theme', t); }
+        setTheme(t) { this.theme = t; localStorage.setItem('garrul.theme', t); document.documentElement.setAttribute('data-theme', t); },
+        typing(e) { const t = e.target; return !!(t && t.closest && t.closest('input, textarea, select, [contenteditable]')); },
+        onKey(e) {
+          if (e.key === 'Escape') { this.helpOpen = false; return; }
+          if (e.ctrlKey || e.metaKey || e.altKey) return;
+          if (this.typing(e)) return;
+          if (e.key === '?') { e.preventDefault(); this.helpOpen = !this.helpOpen; return; }
+          if (e.key === '/') { const el = Array.from(document.querySelectorAll('input[type=text],input[type=search]')).find(n => n.offsetParent !== null); if (el) { e.preventDefault(); el.focus(); } }
+        }
       }"
       x-init="document.documentElement.setAttribute('data-theme', theme)"
-      @keydown.window.slash.prevent="(() => { const el = document.querySelector('input[type=text],input[type=search]'); if (el) el.focus(); })()"
-      @keydown.window.question-mark.prevent="helpOpen = !helpOpen"
-      @keydown.window.escape="helpOpen = false">
+      @keydown.window="onKey($event)">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
