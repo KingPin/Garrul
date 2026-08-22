@@ -27,7 +27,7 @@ import { renderOperator } from "../src/admin-ui/pages/operator";
 import type { RetentionStats } from "../src/db/ip-retention";
 import type { AuditRetentionStats } from "../src/db/audit-retention";
 import { renderSettings } from "../src/admin-ui/pages/settings";
-import { MAX_XML_BYTES } from "../src/lib/disqus-import";
+import { MAX_XML_BYTES } from "../src/lib/import/core";
 import { renderDashboard } from "../src/admin-ui/pages/dashboard";
 import { layout, renderUpdateBanner } from "../src/admin-ui/layout";
 import {

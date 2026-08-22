@@ -17,13 +17,9 @@
  * directly.
  */
 import { describe, it, expect } from "vitest";
-import {
-	disqusHtmlToMarkdown,
-	parseDisqusXml,
-	runDisqusImport,
-	safePostUrl,
-	slugFromLink,
-} from "../src/lib/disqus-import";
+import { safePostUrl, slugFromLink } from "../src/lib/import/core";
+import { parseDisqusXml, runDisqusImport } from "../src/lib/import/disqus";
+import { htmlToMarkdown } from "../src/lib/import/html-to-markdown";
 import { MAX_POST_TITLE } from "../src/lib/post-title";
 import { MAX_REPLY_DEPTH } from "../src/lib/tree";
 import { asD1 } from "./helpers/d1";
@@ -189,35 +185,35 @@ describe("parseDisqusXml", () => {
 	});
 });
 
-// ----------------------- disqusHtmlToMarkdown ------------------------------
+// ----------------------- htmlToMarkdown ------------------------------
 
-describe("disqusHtmlToMarkdown", () => {
+describe("htmlToMarkdown", () => {
 	it("strips raw <script> tags", () => {
-		const out = disqusHtmlToMarkdown(`<p>hi <script>alert(1)</script></p>`);
+		const out = htmlToMarkdown(`<p>hi <script>alert(1)</script></p>`);
 		expect(out).not.toContain("<script>");
 		expect(out).not.toContain("</script>");
 	});
 
 	it("strips <img onerror=...> attempts", () => {
-		const out = disqusHtmlToMarkdown(`<p><img src=x onerror="alert(1)"></p>`);
+		const out = htmlToMarkdown(`<p><img src=x onerror="alert(1)"></p>`);
 		expect(out).not.toContain("onerror");
 		expect(out).not.toContain("<img");
 	});
 
 	it("preserves plain text", () => {
-		const out = disqusHtmlToMarkdown(`<p>Hello there, friend.</p>`);
+		const out = htmlToMarkdown(`<p>Hello there, friend.</p>`);
 		expect(out).toBe("Hello there, friend.");
 	});
 
 	it("rewrites anchor tags to markdown links", () => {
-		const out = disqusHtmlToMarkdown(
+		const out = htmlToMarkdown(
 			`<p>see <a href="https://example.com">my blog</a></p>`,
 		);
 		expect(out).toContain("[my blog](https://example.com)");
 	});
 
 	it("drops javascript: anchor URLs", () => {
-		const out = disqusHtmlToMarkdown(
+		const out = htmlToMarkdown(
 			`<p><a href="javascript:alert(1)">click</a></p>`,
 		);
 		expect(out).not.toContain("javascript:");
@@ -226,7 +222,7 @@ describe("disqusHtmlToMarkdown", () => {
 	});
 
 	it("decodes entities in the surviving text", () => {
-		const out = disqusHtmlToMarkdown(`<p>5 &lt; 10 &amp; counting</p>`);
+		const out = htmlToMarkdown(`<p>5 &lt; 10 &amp; counting</p>`);
 		expect(out).toContain("5 < 10 & counting");
 	});
 });

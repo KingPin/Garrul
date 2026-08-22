@@ -29,7 +29,7 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 
-import { runDisqusImport } from "../src/lib/disqus-import";
+import { runDisqusImport } from "../src/lib/import/disqus";
 
 // The binding, not `database_name` — see the docblock in src/db/migrate.ts.
 const DB_BINDING = "DB";

@@ -167,7 +167,8 @@ import {
 	renderMarkdown,
 	validateBody,
 } from "../lib/markdown";
-import { MAX_XML_BYTES, runDisqusImport } from "../lib/disqus-import";
+import { MAX_XML_BYTES } from "../lib/import/core";
+import { runDisqusImport } from "../lib/import/disqus";
 import { rerenderBatch, rerenderStats } from "../db/rerender";
 import {
 	MIN_RETENTION_DAYS,

@@ -3,7 +3,7 @@ import type { RetentionStats } from "../../db/ip-retention";
 import { MIN_RETENTION_DAYS } from "../../db/ip-retention";
 import type { AuditRetentionStats } from "../../db/audit-retention";
 import { MIN_AUDIT_RETENTION_DAYS } from "../../db/audit-retention";
-import { MAX_XML_BYTES } from "../../lib/disqus-import";
+import { MAX_XML_BYTES } from "../../lib/import/core";
 
 export type OperatorData = {
 	rerender: RerenderStats;
