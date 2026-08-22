@@ -15,7 +15,10 @@ import {
 	type SourceAuthor,
 	type SourceExport,
 	type SourceStatus,
+	ImportTooLargeError,
+	MAX_IMPORT_BYTES,
 	authorSeed,
+	decodeImportInput,
 	runImport,
 } from "../src/lib/import/core";
 import { asD1 } from "./helpers/d1";
@@ -329,5 +332,73 @@ describe("source moderation state", () => {
 		// No source says when or by whom; the read path prunes on status alone.
 		expect(insert!.sql).not.toContain("deleted_at");
 		expect(insert!.sql).not.toContain("deleted_by");
+	});
+});
+
+describe("decodeImportInput", () => {
+	const gzip = async (s: string): Promise<Uint8Array> => {
+		const src = new ReadableStream<Uint8Array>({
+			start(c) {
+				c.enqueue(new TextEncoder().encode(s));
+				c.close();
+			},
+		});
+		const buf = await new Response(
+			src.pipeThrough(new CompressionStream("gzip")),
+		).arrayBuffer();
+		return new Uint8Array(buf);
+	};
+
+	it("passes plain bytes through as UTF-8", async () => {
+		const xml = "<disqus><thread dsq:id=\"t1\"/></disqus>";
+		expect(await decodeImportInput(new TextEncoder().encode(xml))).toBe(xml);
+	});
+
+	it("round-trips a gzipped export", async () => {
+		const xml = "<disqus><post dsq:id=\"p1\"><message>hi</message></post></disqus>";
+		expect(await decodeImportInput(await gzip(xml))).toBe(xml);
+	});
+
+	it("does not split a multibyte character across inflate chunks", async () => {
+		// The streaming TextDecoder has to hold a partial sequence over. Long
+		// enough that the decompressor emits more than one chunk.
+		const xml = `<disqus>${"café — ☕".repeat(20_000)}</disqus>`;
+		expect(await decodeImportInput(await gzip(xml))).toBe(xml);
+	});
+
+	it("accepts an ArrayBuffer as well as a Uint8Array", async () => {
+		const xml = "<disqus/>";
+		const u8 = await gzip(xml);
+		const ab = u8.buffer.slice(
+			u8.byteOffset,
+			u8.byteOffset + u8.byteLength,
+		) as ArrayBuffer;
+		expect(await decodeImportInput(ab)).toBe(xml);
+	});
+
+	it("sniffs the gzip magic rather than trusting a name or header", async () => {
+		// A gzip member always starts 1f 8b (RFC 1952). Text that does not is
+		// decoded as-is even if the caller thought it was compressed.
+		const notGz = new Uint8Array([0x3c, 0x3f, 0x78, 0x6d, 0x6c]);
+		expect(await decodeImportInput(notGz)).toBe("<?xml");
+	});
+
+	it("reports a corrupt gzip member without echoing its content", async () => {
+		const u8 = await gzip("<disqus>secret@example.com</disqus>");
+		u8[u8.length - 5] = (u8.at(-5) ?? 0) ^ 0xff; // wreck the trailing CRC32
+		await expect(decodeImportInput(u8)).rejects.toThrow(
+			/could not gunzip import/,
+		);
+		// An export carries names, emails and IPs. None of it belongs in an
+		// error string that reaches a log or an HTTP body.
+		await expect(decodeImportInput(u8)).rejects.not.toThrow(/example\.com/);
+	});
+
+	it("aborts a decompression bomb instead of inflating it", async () => {
+		// Compresses to a few KB, expands past the cap. Without the streaming
+		// check this allocates the whole thing before any limit is consulted.
+		const bomb = await gzip("A".repeat(MAX_IMPORT_BYTES + 1024));
+		expect(bomb.byteLength).toBeLessThan(1024 * 1024);
+		await expect(decodeImportInput(bomb)).rejects.toThrow(ImportTooLargeError);
 	});
 });

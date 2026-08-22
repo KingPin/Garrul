@@ -3,7 +3,7 @@ import type { RetentionStats } from "../../db/ip-retention";
 import { MIN_RETENTION_DAYS } from "../../db/ip-retention";
 import type { AuditRetentionStats } from "../../db/audit-retention";
 import { MIN_AUDIT_RETENTION_DAYS } from "../../db/audit-retention";
-import { MAX_XML_BYTES } from "../../lib/import/core";
+import { MAX_IMPORT_BYTES } from "../../lib/import/core";
 
 export type OperatorData = {
 	rerender: RerenderStats;
@@ -13,8 +13,8 @@ export type OperatorData = {
 };
 
 // Human-readable form of the shared import cap for the UI hint + client
-// error message. Whole MB by construction (MAX_XML_BYTES is N * 1024²).
-const MAX_XML_MB = Math.floor(MAX_XML_BYTES / (1024 * 1024));
+// error message. Whole MB by construction (MAX_IMPORT_BYTES is N * 1024²).
+const MAX_IMPORT_MB = Math.floor(MAX_IMPORT_BYTES / (1024 * 1024));
 
 // Always-shown tail of the retention card. The ghost count is the honest part:
 // retention covers two of the three places an ip_hash lands, and an operator
@@ -288,13 +288,16 @@ ${seedCard}
   includeSpam: false,
   async run(file) {
     if (!file) return;
-    if (file.size > ${MAX_XML_BYTES}) {
-      this.error = 'file too large (max ${MAX_XML_MB} MB)';
+    if (file.size > ${MAX_IMPORT_BYTES}) {
+      this.error = 'file too large (max ${MAX_IMPORT_MB} MB)';
       return;
     }
     this.busy = true; this.error = null; this.result = null;
     try {
-      const text = await file.text();
+      // arrayBuffer, not text(): a gzipped export is not valid UTF-8, and
+      // .text() would replace every byte it can't decode before the server
+      // ever saw it. The Worker sniffs the gzip magic off the raw bytes.
+      const body = await file.arrayBuffer();
       const r = await fetch('/admin/api/ops/import-disqus', {
         method: 'POST',
         headers: {
@@ -303,7 +306,7 @@ ${seedCard}
           'x-include-deleted': this.includeDeleted ? '1' : '0',
           'x-include-spam': this.includeSpam ? '1' : '0',
         },
-        body: text,
+        body,
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || 'import failed');
@@ -316,10 +319,11 @@ ${seedCard}
   }
 }">
   <h3>Import Disqus export</h3>
-  <p class="muted">Uploads a Disqus comment-export XML file and ingests it
-    into D1. Idempotent: re-running the same file is a no-op
-    (deduplicated by Disqus comment ID). Imported HTML is stripped and
-    re-rendered through the standard markdown allowlist.</p>
+  <p class="muted">Uploads a Disqus comment-export XML file — gzipped
+    (<code>.xml.gz</code>) or not — and ingests it into D1. Idempotent:
+    re-running the same file is a no-op (deduplicated by Disqus comment
+    ID). Imported HTML is stripped and re-rendered through the standard
+    markdown allowlist.</p>
   <p>
     <label style="display:inline-flex;gap:0.3rem;align-items:center;margin-right:0.8rem">
       <input type="checkbox" x-model="dryRun"> Dry run (parse + plan only)
@@ -331,14 +335,16 @@ ${seedCard}
       <input type="checkbox" x-model="includeSpam"> Include spam
     </label>
   </p>
-  <input type="file" accept=".xml,application/xml,text/xml"
+  <input type="file" accept=".xml,.gz,application/xml,text/xml,application/gzip"
          :disabled="busy"
          @change="run($event.target.files[0])">
   <p class="muted" x-show="busy">Importing… don't navigate away.</p>
   <pre x-show="result" x-text="result &amp;&amp; JSON.stringify(result, null, 2)"
        style="background:var(--bg);padding:0.6rem;border-radius:4px;font-size:0.85rem"></pre>
   <p style="color:var(--bad)" x-show="error" x-text="error"></p>
-  <p class="muted">Max upload: ${MAX_XML_MB} MB. For larger exports use the CLI: <code>npm run import-disqus -- ./export.xml --dry-run</code>.</p>
+  <p class="muted">Max upload: ${MAX_IMPORT_MB} MB, and a gzipped file must
+    also stay under ${MAX_IMPORT_MB} MB once expanded. For larger exports use
+    the CLI: <code>npm run import-disqus -- ./export.xml --dry-run</code>.</p>
 </div>
 `;
 };

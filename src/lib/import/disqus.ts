@@ -22,7 +22,7 @@ import {
 	type ImportAdapter,
 	type ImportOptions,
 	type ImportPlan,
-	MAX_XML_BYTES,
+	MAX_IMPORT_BYTES,
 	type SourceExport,
 	runImport,
 } from "./core";
@@ -98,8 +98,8 @@ const findAll = (xml: string, tag: string): { open: string; inner: string }[] =>
 };
 
 export const parseDisqusXml = (xml: string): DisqusExport => {
-	if (xml.length > MAX_XML_BYTES) {
-		throw new Error(`disqus xml too large: ${xml.length} > ${MAX_XML_BYTES}`);
+	if (xml.length > MAX_IMPORT_BYTES) {
+		throw new Error(`disqus xml too large: ${xml.length} > ${MAX_IMPORT_BYTES}`);
 	}
 
 	const threads: DisqusThread[] = [];

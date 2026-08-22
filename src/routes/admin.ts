@@ -167,7 +167,11 @@ import {
 	renderMarkdown,
 	validateBody,
 } from "../lib/markdown";
-import { MAX_XML_BYTES } from "../lib/import/core";
+import {
+	ImportTooLargeError,
+	MAX_IMPORT_BYTES,
+	decodeImportInput,
+} from "../lib/import/core";
 import { runDisqusImport } from "../lib/import/disqus";
 import { rerenderBatch, rerenderStats } from "../db/rerender";
 import {
@@ -2470,18 +2474,20 @@ admin.post("/api/ops/audit-retention", async (c) => {
 // ---------------------------- Disqus import --------------------------------
 //
 // Admin-only. Accepts a Disqus comment-export XML in the request body
-// (raw text/xml or application/xml). Idempotent — re-uploading the same
-// file inserts zero new rows. Capped at MAX_XML_BYTES (shared with the
-// parser and the operator page, so the three limits can't drift) to keep
-// a hostile / huge payload from running away inside the Worker; larger
-// imports should go through the CLI (`npm run import-disqus`).
+// (raw text/xml or application/xml), gzipped or not. Idempotent —
+// re-uploading the same file inserts zero new rows. Capped at
+// MAX_IMPORT_BYTES (shared with the parser and the operator page, so the
+// three limits can't drift) on both the compressed and the decompressed
+// side, to keep a hostile / huge payload from running away inside the
+// Worker; larger imports should go through the CLI
+// (`npm run import-disqus`).
 
 admin.post("/api/ops/import-disqus", async (c) => {
 	const user = await requireAdmin(c);
 	if (user instanceof Response) return user;
 
 	const contentLength = Number(c.req.header("content-length") ?? "0");
-	if (contentLength > MAX_XML_BYTES) {
+	if (contentLength > MAX_IMPORT_BYTES) {
 		return c.json({ error: "too_large" }, 413);
 	}
 	// Byte-accurate recheck for bodies that dodge the header check (e.g.
@@ -2490,10 +2496,22 @@ admin.post("/api/ops/import-disqus", async (c) => {
 	// content — so measure the raw bytes before decoding.
 	const buf = await c.req.arrayBuffer();
 	if (buf.byteLength === 0) return c.json({ error: "empty_body" }, 400);
-	if (buf.byteLength > MAX_XML_BYTES) {
+	if (buf.byteLength > MAX_IMPORT_BYTES) {
 		return c.json({ error: "too_large" }, 413);
 	}
-	const xml = new TextDecoder().decode(buf);
+	// Gunzips a gzipped upload, capped on the decompressed side — the two
+	// checks above bound the *compressed* bytes, which is gigabytes of XML
+	// for a hostile file. Runs before the format sniff below so a .xml.gz
+	// is sniffed on its contents rather than rejected as not-XML.
+	let xml: string;
+	try {
+		xml = await decodeImportInput(buf);
+	} catch (err) {
+		if (err instanceof ImportTooLargeError) {
+			return c.json({ error: "too_large" }, 413);
+		}
+		return c.json({ error: "not_disqus_xml" }, 400);
+	}
 	// Lightweight format sanity check before we hit the parser. Reject
 	// non-XML uploads up front so an operator who picks the wrong file
 	// gets a clear error rather than a parser stack trace.

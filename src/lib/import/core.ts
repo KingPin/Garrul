@@ -24,7 +24,8 @@
  *   every native row has an id.
  *
  * Security:
- *   * Input size is capped to abort runaway / malformed exports quickly.
+ *   * Input size is capped to abort runaway / malformed exports quickly, on
+ *     the *decompressed* side too — see `decodeImportInput`.
  *   * `posts.url` goes through `safePostUrl` — it is what `permalink.ts`
  *     redirects to, so a non-http(s) value there is an open-redirect gadget.
  *   * `posts.title` goes through `sanitizePostTitle` — it reaches mail subject
@@ -40,7 +41,89 @@ import { ulid } from "../ulid";
 // Single source of truth for the import size cap (issue #15). The admin
 // upload route rejects content-length above this before reading the body,
 // and the operator page's client-side check + UI hint derive from it too.
-export const MAX_XML_BYTES = 50 * 1024 * 1024;
+export const MAX_IMPORT_BYTES = 50 * 1024 * 1024;
+
+/** Thrown when an inflate would exceed MAX_IMPORT_BYTES. */
+export class ImportTooLargeError extends Error {}
+
+/**
+ * An export file's bytes as text, transparently gunzipping a gzipped one.
+ *
+ * Sources hand out gzipped exports as a matter of course — Remark42's
+ * `backup` writes `.gz`, and a Disqus export of any size is worth
+ * compressing — so requiring the operator to inflate it first is friction
+ * for no gain.
+ *
+ * ## Why the cap is enforced *here* and not left to the parser
+ *
+ * The upload route caps the request body, which is the **compressed** size.
+ * 50 MB of gzip is gigabytes of XML for any input an attacker controls, and
+ * a purpose-built bomb does far better than that — so before this function
+ * existed, adding gunzip anywhere downstream would have turned an
+ * already-enforced 50 MB limit into an unbounded allocation reachable from
+ * an authenticated admin upload. `parseDisqusXml` also checks the cap, but
+ * it can only do so once the whole string exists, which is exactly the
+ * allocation we are trying not to make.
+ *
+ * So the inflate is read incrementally and abandoned the moment the
+ * decompressed total crosses the same ceiling an uncompressed upload would
+ * have hit. Peak memory is bounded by the cap either way, and a bomb costs
+ * one chunk more than the limit rather than however much it wanted.
+ *
+ * `DecompressionStream` is a Workers global and a Node ≥18 global, so this
+ * is the same code in the Worker and in scripts/.
+ */
+export const decodeImportInput = async (
+	bytes: ArrayBuffer | Uint8Array,
+): Promise<string> => {
+	const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+	// RFC 1952 §2.3.1: every gzip member starts 1f 8b. Sniffing the bytes
+	// rather than trusting a filename or Content-Encoding means an operator
+	// who renamed the file still gets the right treatment, and a plain XML
+	// file that happens to arrive as .gz is not mangled.
+	if (u8[0] !== 0x1f || u8[1] !== 0x8b) {
+		return new TextDecoder().decode(u8);
+	}
+
+	const source = new ReadableStream<Uint8Array>({
+		start(c) {
+			c.enqueue(u8);
+			c.close();
+		},
+	});
+	const reader = source
+		.pipeThrough(new DecompressionStream("gzip"))
+		.getReader();
+	// Decode as we go: a multibyte character split across two chunks has to
+	// be held over, which is what { stream: true } does.
+	const decoder = new TextDecoder();
+	const parts: string[] = [];
+	let total = 0;
+	try {
+		for (;;) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			total += value.byteLength;
+			if (total > MAX_IMPORT_BYTES) {
+				await reader.cancel();
+				throw new ImportTooLargeError(
+					`gzipped import expands past the ${MAX_IMPORT_BYTES}-byte limit`,
+				);
+			}
+			parts.push(decoder.decode(value, { stream: true }));
+		}
+	} catch (err) {
+		if (err instanceof ImportTooLargeError) throw err;
+		// A truncated or corrupt member. The message is the decompressor's,
+		// which says nothing about the content — deliberate, since an export
+		// carries names, emails and IPs that must not reach a log or an error
+		// body.
+		throw new Error(`could not gunzip import: ${(err as Error).message}`);
+	}
+	parts.push(decoder.decode());
+	return parts.join("");
+};
+
 
 export type SourceAuthor = {
 	name: string;
