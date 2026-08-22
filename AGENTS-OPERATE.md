@@ -337,6 +337,12 @@ default, server-side clamped), edited from **Settings → Moderation**.
   was unset, and an explicit `0` means "no editing" instead of silently meaning
   5. Installs that set the var explicitly are unaffected — the ceiling is a week
   precisely so a pre-existing longer window isn't silently shortened.
+  **Since v2.21.0 the reader can see it**: inside the last hour the Edit button
+  carries a countdown ("12m left"), the affordance disappears at expiry without
+  a reload, and an editor left open disables itself and says so. Only the last
+  hour is shown, so raising this to days doesn't put a chip on every comment —
+  nor a background timer on the reader's device until that hour arrives.
+  Nothing about the server-side gate changed — this is display only.
 - `SPAM_LINK_THRESHOLD` — clamped to `-1`–`50`. `-1` (the default, and where an
   unset or junk value lands) disables the check; `0` flags any comment carrying
   a link. The sentinel exists because this signal has always had three states —

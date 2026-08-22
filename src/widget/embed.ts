@@ -58,6 +58,13 @@ import {
 	topLevelPlacement,
 } from "./comment-node";
 import { commentAnchorId, commentHref, commentIdFromHash } from "./permalink";
+import {
+	type EditWindowState,
+	TICK_MS,
+	countdownStartsIn,
+	editWindowLabel,
+	editWindowState,
+} from "./edit-window";
 import { absoluteTime, isoTime, relativeTime } from "./time";
 // The mount request and the wire shapes it carries. Kept out of this file so the
 // fallback rule can be tested without a DOM — see boot.ts's header.
@@ -1664,6 +1671,124 @@ const buildSubscribeBell = (
 	return wrap;
 };
 
+/**
+ * The shared countdown ticker.
+ *
+ * One interval for the whole widget, not one per comment. A thread can carry
+ * dozens of the reader's own comments, and `time.ts` already declined to tick
+ * timestamps on exactly this cost argument — the difference here is that a
+ * closing deadline is actionable where an age is not, so it earns a timer, but
+ * only one.
+ *
+ * A registered tick returns `false` when it is done, which is also how teardown
+ * works: the tree is rebuilt wholesale on every reload, so a tick whose element
+ * is no longer `isConnected` simply says so and is dropped. That means no
+ * caller anywhere has to remember to unregister, and the interval stops itself
+ * once the last countdown has gone.
+ *
+ * A tick registered with a delay (see `registerCountdown`) is the one case where
+ * that answer isn't prompt: nothing asks it until the boundary, so an abandoned
+ * editor's DOM stays reachable through the closure until then rather than for
+ * the fifteen seconds it used to. That is the trade for not running a timer
+ * across a window measured in days, and it holds one element per abandoned
+ * surface, not a growing set.
+ */
+const countdownTicks = new Set<() => boolean>();
+let countdownTimer: ReturnType<typeof setInterval> | undefined;
+
+const tickCountdowns = (): void => {
+	// Deleting from a Set mid-iteration is well-defined: a removed entry that
+	// has not been visited yet is simply not visited.
+	for (const tick of countdownTicks) if (!tick()) countdownTicks.delete(tick);
+	if (countdownTicks.size === 0 && countdownTimer !== undefined) {
+		clearInterval(countdownTimer);
+		countdownTimer = undefined;
+	}
+};
+
+const joinCountdown = (tick: () => boolean): void => {
+	countdownTicks.add(tick);
+	countdownTimer ??= setInterval(tickCountdowns, TICK_MS);
+};
+
+/**
+ * `setTimeout` keeps its delay in a signed 32-bit int, and a larger one wraps
+ * round to fire *immediately* — which would defeat the whole point of waiting.
+ * A week, the longest window the setting accepts, is comfortably inside this, so
+ * the clamp only catches a nonsense `edit_window_minutes`, and all it costs is
+ * an idle ticker for the remainder of the wait.
+ */
+const MAX_TIMEOUT_MS = 2_147_483_647;
+
+/**
+ * Put `tick` on the shared ticker, `delayMs` from now (immediately by default).
+ *
+ * Deferring is what keeps a long window cheap: see `countdownStartsIn`. The one
+ * read at the boundary does double duty — a `false` there means the element went
+ * away while we waited, so there is nothing left to join the ticker for.
+ */
+const registerCountdown = (tick: () => boolean, delayMs = 0): void => {
+	if (delayMs <= 0) {
+		joinCountdown(tick);
+		return;
+	}
+	setTimeout(() => {
+		if (tick()) joinCountdown(tick);
+	}, Math.min(delayMs, MAX_TIMEOUT_MS));
+};
+
+/**
+ * The Edit button plus the chip saying how long is left to use it.
+ *
+ * Returns `null` when the window has already closed — including when editing is
+ * switched off entirely, which `editWindowState` folds into the same phase.
+ */
+const buildEditControl = (
+	n: TreeNode,
+	ctx: WidgetCtx,
+	main: HTMLElement,
+): HTMLElement | null => {
+	const state = editWindowState(n.created_at, ctx.editWindowMs, Date.now());
+	if (state.phase === "expired") return null;
+
+	const wrap = el("span", "gr-edit-window");
+	const btn = el("button", undefined, s("w.edit"));
+	btn.type = "button";
+	btn.addEventListener("click", () => {
+		openEditor(n, ctx, main);
+	});
+
+	// Deliberately not a live region. This text changes every 15 seconds, and a
+	// polite announcement on each change would make the thread unusable with a
+	// screen reader. `aria-describedby` instead reads the remaining time when
+	// the button takes focus — the moment it is decision-relevant, and never
+	// otherwise. Same reasoning, and the same pattern, as the delete-confirm
+	// prompt below.
+	const chip = el("span", "gr-edit-left");
+	chip.id = nextId("gr-edit-left");
+	btn.setAttribute("aria-describedby", chip.id);
+	const paint = (at: EditWindowState): void => {
+		chip.textContent = editWindowLabel(at, locale, s) ?? "";
+	};
+	paint(state);
+
+	registerCountdown(() => {
+		if (!wrap.isConnected) return false;
+		const now = editWindowState(n.created_at, ctx.editWindowMs, Date.now());
+		if (now.phase === "expired") {
+			// Take the whole affordance away rather than leave a button that
+			// opens an editor the server will refuse to save.
+			wrap.remove();
+			return false;
+		}
+		paint(now);
+		return true;
+	}, countdownStartsIn(n.created_at, ctx.editWindowMs, Date.now()));
+
+	wrap.append(btn, chip);
+	return wrap;
+};
+
 const buildActions = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): HTMLElement => {
 	const row = el("div", "gr-actions");
 
@@ -1689,14 +1814,9 @@ const buildActions = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): HTMLEleme
 
 	const isOwn =
 		ctx.me != null && n.author.id === ctx.me.id && n.status !== "deleted";
-	const withinWindow = Date.now() - n.created_at < ctx.editWindowMs;
-	if (isOwn && withinWindow) {
-		const editBtn = el("button", undefined, s("w.edit"));
-		editBtn.type = "button";
-		editBtn.addEventListener("click", () => {
-			openEditor(n, ctx, main);
-		});
-		row.appendChild(editBtn);
+	if (isOwn) {
+		const editControl = buildEditControl(n, ctx, main);
+		if (editControl) row.appendChild(editControl);
 	}
 	if (isOwn) {
 		const delBtn = el("button", undefined, s("w.delete"));
@@ -1846,6 +1966,43 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 	bindComposerKeys(wrap, dismiss);
 	actions.append(save, cancel);
 
+	// Unlike the chip in the actions row, this one IS a live region: the window
+	// closing under someone who is mid-sentence is an event, and it happens
+	// nowhere near whatever they are looking at.
+	const errBox = statusBox("gr-error is-inline");
+
+	/**
+	 * Has the window closed? Asked of the clock every time, never cached. The
+	 * shared ticker only re-reads it every 15 seconds, so a flag the tick sets
+	 * is stale for up to that long — and both of the moments that consult this
+	 * (a prefill landing, a submit) can fall inside the gap.
+	 */
+	const isExpired = (): boolean =>
+		editWindowState(n.created_at, ctx.editWindowMs, Date.now()).phase ===
+		"expired";
+
+	/**
+	 * The window ran out while this editor was open. Retire the surfaces that
+	 * would fail and say why — before this, Save stayed live, the PATCH came
+	 * back 403, and the button quietly re-enabled itself with nothing on screen
+	 * to explain it. Cancel stays enabled: dismissing is still valid, and it is
+	 * the only way out.
+	 *
+	 * Idempotent: the tick, a landing prefill and a submit can each be the first
+	 * to notice, and re-showing the same string is a no-op.
+	 */
+	const expire = (): void => {
+		ta.disabled = true;
+		save.disabled = true;
+		// An editor opened after expiry never gets its prefill, so the field is
+		// empty and the placeholder is the only thing in it — "Loading…", for a
+		// load that is not coming. Clear it and let the notice below be what the
+		// box says. (A window that closed on an editor already open has the body
+		// in the field, so the placeholder was never visible there.)
+		ta.placeholder = "";
+		showStatus(errBox, s("w.edit_expired"));
+	};
+
 	// Prefill with the original markdown source. The tree payload only carries
 	// body_html, so we fetch body_md on demand from the author-only source
 	// endpoint (same author + edit-window gate as the PATCH). Disable both the
@@ -1866,6 +2023,15 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 		.finally(() => {
 			// The author may have hit Cancel before the fetch resolved.
 			if (!ta.isConnected) return;
+			// Or the window may have closed while it was in flight — the click that
+			// opened this editor could itself have landed after expiry, since the
+			// Edit button only leaves the row on a tick. Handing back a field and a
+			// Save the server has already stopped accepting is the one thing this
+			// whole surface exists to prevent, so say so instead.
+			if (isExpired()) {
+				expire();
+				return;
+			}
 			ta.disabled = false;
 			save.disabled = false;
 			ta.placeholder = s("w.edit_ph");
@@ -1874,10 +2040,27 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 			autoSize(ta);
 			ta.focus();
 		});
-	wrap.append(buildWritePreview(ta, ctx.apiBase, true), actions);
+	wrap.append(buildWritePreview(ta, ctx.apiBase, true), actions, errBox);
+
+	registerCountdown(() => {
+		if (!wrap.isConnected) return false;
+		if (!isExpired()) return true;
+		expire();
+		return false;
+	}, countdownStartsIn(n.created_at, ctx.editWindowMs, Date.now()));
+
 	wrap.addEventListener("submit", async (e) => {
 		e.preventDefault();
+		// The tick only re-reads the clock every 15 seconds, so a submit can land
+		// in the gap between the window closing and the tick noticing. Ask the
+		// clock directly and take the editor down here rather than send a PATCH
+		// we know the server will refuse.
+		if (isExpired()) {
+			expire();
+			return;
+		}
 		save.disabled = true;
+		clearStatus(errBox);
 		try {
 			const res = await fetch(
 				apiUrl(ctx.apiBase, `/api/v1/comments/${encodeURIComponent(n.id)}`),
@@ -1895,8 +2078,16 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 				// hard size budget.
 				ctx.revealAfterReload(n.id);
 				ctx.reload();
-			} else save.disabled = false;
-		} catch {
+				return;
+			}
+			// Every other refusal — a 429, a body that failed validation, a spam
+			// verdict — used to re-enable Save and say nothing, which reads as the
+			// button not working. The server's message is already localized.
+			const json = (await res.json().catch(() => ({}))) as { error?: string };
+			showStatus(errBox, json.error ?? `HTTP ${res.status}`);
+			save.disabled = false;
+		} catch (err) {
+			showStatus(errBox, String(err));
 			save.disabled = false;
 		}
 	});
