@@ -3,11 +3,13 @@ import type {
 	AdminCommentDetail,
 	AuditRowWithAdmin,
 	CommentStatus,
+	ModeratorNoteWithAuthor,
 	Report,
 	SpamVerdictRow,
 } from "../../db/queries";
 import { identiconSvg } from "../../lib/identicon";
 import { sanitizeForEmail as resanitizeBodyHtml } from "../../lib/markdown";
+import { moderatorNotes } from "../components/moderator-notes";
 import {
 	commentIdLiteral,
 	replyComposer,
@@ -219,6 +221,10 @@ export const renderCommentDetail = (
 	isAdmin = false,
 	/** Signed-in moderator's display name, shown as the reply composer's identity. */
 	modName = "",
+	/** Internal notes on this comment, newest first. */
+	notes: ModeratorNoteWithAuthor[] = [],
+	/** Signed-in moderator's id — decides which notes offer a Delete. */
+	viewerId = "",
 ): string => {
 	const { comment, parent, replies, ip_siblings, user_recent, verdicts, reports, audit } = d;
 	const parentSection = parent
@@ -259,6 +265,12 @@ export const renderCommentDetail = (
 	     ${replyComposer({
 				commentIdExpr: commentIdLiteral(comment.id),
 				modName,
+				// Title first, slug when the crawler never gave us one — the same
+				// fallback the queue's modal uses, so `{post}` reads the same
+				// whichever composer the moderator reached for. The title rides
+				// along on the JOIN this page's query already makes for `host`.
+				authorNameExpr: jsLiteral(comment.author_name ?? ""),
+				postTitleExpr: jsLiteral(comment.post_title || comment.post_slug),
 				onPosted: "setTimeout(() => location.reload(), 600);",
 			})}
 	   </div>`;
@@ -287,6 +299,14 @@ export const renderCommentDetail = (
   <div class="actions" style="margin-top:0.5rem">${actionsFor(comment.status)}</div>
   ${banAuthorAction(comment, isAdmin)}
 </div>
+
+${moderatorNotes({
+	target_kind: "comment",
+	target_id: comment.id,
+	notes,
+	viewerId,
+	viewerIsAdmin: isAdmin,
+})}
 
 <div class="card">
   <h3>Raw markdown</h3>

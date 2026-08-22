@@ -108,6 +108,8 @@ for reply chains to stay readable. Concretely
 - `subscriptions` for their address, and queued `notifications` riding on them,
   deleted outright.
 - `telegram_links` deleted — those carry an external chat id.
+- `moderator_notes` targeting **them** deleted. Notes they *wrote* about other
+  people are kept: those record moderator work, the way their audit rows do.
 - Their sessions are revoked, so nothing keeps acting as them.
 - The cached first page of every thread they appear on is busted at the edge, so
   the old name stops being served immediately.

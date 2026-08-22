@@ -1461,6 +1461,8 @@ export type UserErasureCounts = {
 	subscriptions_deleted: number;
 	reports_scrubbed: number;
 	telegram_links_deleted: number;
+	/** Moderator notes *about* the subject. Notes they authored are kept. */
+	moderator_notes_deleted: number;
 };
 
 /**
@@ -1551,6 +1553,19 @@ export const eraseUserData = async (
 	const atTelegram = queue(
 		db.prepare(`DELETE FROM telegram_links WHERE user_id = ?`).bind(id),
 	);
+	// Free text a moderator wrote *about* this person is their personal data,
+	// and unlike a comment body there is no expression interest on the other
+	// side of the scale — nobody reads these but the mod team. Notes they
+	// authored about someone else stay, for the same reason their audit rows
+	// do: those record moderator work, not their identity.
+	const atNotes = queue(
+		db
+			.prepare(
+				`DELETE FROM moderator_notes
+				  WHERE target_kind = 'user' AND target_id = ?`,
+			)
+			.bind(id),
+	);
 	// Blank both renderings, and force the comment to `deleted` so the tree
 	// serves its placeholder instead of an empty bubble. deleted_at is COALESCEd:
 	// an already-deleted comment keeps the timestamp of the original deletion.
@@ -1599,6 +1614,7 @@ export const eraseUserData = async (
 		subscriptions_deleted: changes(atSubs),
 		reports_scrubbed: changes(atReports),
 		telegram_links_deleted: changes(atTelegram),
+		moderator_notes_deleted: changes(atNotes),
 	};
 };
 
@@ -1650,9 +1666,19 @@ export type UserDataExport = {
 		reason: string | null;
 		created_at: number;
 	}[];
+	/**
+	 * Internal moderator notes written about them, with the author omitted for
+	 * the same reason `moderation_actions` omits the admin. Notes are not
+	 * published anywhere, but they are free text about an identified person, so
+	 * they are squarely the subject's data under Art. 15.
+	 */
+	moderator_notes: { body: string; created_at: number }[];
 };
 
-export const EXPORT_VERSION = 1;
+// 2: added `moderator_notes` (v2.22.0). Additive — a v1 consumer reads a v2
+// envelope unchanged — but the version is here so a consumer can tell the
+// shapes apart, and a new key it has never seen is a shape it has never seen.
+export const EXPORT_VERSION = 2;
 
 export const exportUserData = async (
 	db: D1Database,
@@ -1732,6 +1758,16 @@ export const exportUserData = async (
 		// admin_id is deliberately absent from the projection — see the note above.
 		moderation_actions: await rows(
 			`SELECT action, reason, created_at FROM audit_log
+			  WHERE target_kind = 'user' AND target_id = ?
+			  ORDER BY created_at`,
+			userId,
+		),
+		// author_id omitted for the same reason as admin_id above. Notes on the
+		// subject's *comments* are not included: they annotate a piece of
+		// content, and pulling them in would export moderator commentary on
+		// every thread the subject ever appeared in.
+		moderator_notes: await rows(
+			`SELECT body, created_at FROM moderator_notes
 			  WHERE target_kind = 'user' AND target_id = ?
 			  ORDER BY created_at`,
 			userId,
@@ -2460,6 +2496,12 @@ export const ADMIN_ACTIONS = [
 	// prefilled from a saved reply — `meta.saved_reply_id` records which.
 	"comment.reply",
 	"import.disqus",
+	// Moderator notes. The audit row records that a note was written or
+	// removed and on what — never the body. A note is internal by design, and
+	// copying it into a log that has its own retention sweep and its own
+	// export path would quietly give it a second, longer life.
+	"note.create",
+	"note.delete",
 	"settings.update",
 	"post.close",
 	"post.open",
@@ -2949,7 +2991,8 @@ export const adminGetCommentDetail = async (
 			        u.provider   AS author_provider,
 			        u.is_admin   AS author_is_admin,
 			        u.is_banned  AS author_is_banned,
-			        ${hostExpr("p.url")} AS host
+			        ${hostExpr("p.url")} AS host,
+			        p.title      AS post_title
 			   FROM comments c
 			   LEFT JOIN users u ON u.id = c.user_id
 			   LEFT JOIN posts p ON p.slug = c.post_slug
@@ -3837,6 +3880,142 @@ export const deleteSavedReply = async (
 		.bind(id, owner_id)
 		.run();
 	return (result.meta?.changes ?? 0) > 0;
+};
+
+// -- moderator notes --------------------------------------------------------
+//
+// Internal annotations on a comment or a user, visible to every mod and
+// admin and to nobody else. See 0023_moderator_notes.sql for why they are
+// separate from audit_log.reason and why the body is plain text.
+//
+// Reads always join the author's current display name; a note whose author
+// row somehow went missing still lists, with the raw id standing in — the
+// same fallback the audit view uses. Losing the note because we can't name
+// its author would be the wrong trade.
+
+export type ModeratorNoteTarget = "comment" | "user";
+
+export type ModeratorNote = {
+	id: string;
+	target_kind: ModeratorNoteTarget;
+	target_id: string;
+	author_id: string;
+	body: string;
+	created_at: number;
+};
+
+export type ModeratorNoteWithAuthor = ModeratorNote & {
+	author_name: string | null;
+};
+
+export const isModeratorNoteTarget = (
+	v: unknown,
+): v is ModeratorNoteTarget => v === "comment" || v === "user";
+
+export const listModeratorNotes = async (
+	db: D1Database,
+	target_kind: ModeratorNoteTarget,
+	target_id: string,
+): Promise<ModeratorNoteWithAuthor[]> => {
+	const rows = await db
+		.prepare(
+			`SELECT n.id, n.target_kind, n.target_id, n.author_id, n.body,
+			        n.created_at, u.name AS author_name
+			   FROM moderator_notes n
+			   LEFT JOIN users u ON u.id = n.author_id
+			  WHERE n.target_kind = ? AND n.target_id = ?
+			  ORDER BY n.created_at DESC`,
+		)
+		.bind(target_kind, target_id)
+		.all<ModeratorNoteWithAuthor>();
+	return rows.results ?? [];
+};
+
+export const getModeratorNote = async (
+	db: D1Database,
+	id: string,
+): Promise<ModeratorNote | null> => {
+	return await db
+		.prepare(
+			`SELECT id, target_kind, target_id, author_id, body, created_at
+			   FROM moderator_notes WHERE id = ?`,
+		)
+		.bind(id)
+		.first<ModeratorNote>();
+};
+
+export const insertModeratorNote = async (
+	db: D1Database,
+	input: {
+		target_kind: ModeratorNoteTarget;
+		target_id: string;
+		author_id: string;
+		body: string;
+	},
+): Promise<ModeratorNote> => {
+	const id = ulid();
+	const now = Date.now();
+	await db
+		.prepare(
+			`INSERT INTO moderator_notes
+			   (id, target_kind, target_id, author_id, body, created_at)
+			 VALUES (?, ?, ?, ?, ?, ?)`,
+		)
+		.bind(
+			id,
+			input.target_kind,
+			input.target_id,
+			input.author_id,
+			input.body,
+			now,
+		)
+		.run();
+	return { id, ...input, created_at: now };
+};
+
+/**
+ * Delete one note. Authorization is the caller's: the route allows the
+ * note's author or any admin, which it can only decide after reading the
+ * row, so this takes the id alone rather than an owner predicate the way
+ * `deleteSavedReply` does.
+ */
+export const deleteModeratorNote = async (
+	db: D1Database,
+	id: string,
+): Promise<boolean> => {
+	const result = await db
+		.prepare(`DELETE FROM moderator_notes WHERE id = ?`)
+		.bind(id)
+		.run();
+	return (result.meta?.changes ?? 0) > 0;
+};
+
+/**
+ * Note counts for a page of queue rows, in one query per kind.
+ *
+ * The queue badge answers "is there context on this row" — a comment's own
+ * notes and any notes on its author both count, so the caller asks twice and
+ * merges. Returns only non-zero entries.
+ */
+export const countModeratorNotesByTarget = async (
+	db: D1Database,
+	target_kind: ModeratorNoteTarget,
+	target_ids: string[],
+): Promise<Record<string, number>> => {
+	if (target_ids.length === 0) return {};
+	const placeholders = target_ids.map(() => "?").join(",");
+	const rows = await db
+		.prepare(
+			`SELECT target_id, COUNT(*) AS n
+			   FROM moderator_notes
+			  WHERE target_kind = ? AND target_id IN (${placeholders})
+			  GROUP BY target_id`,
+		)
+		.bind(target_kind, ...target_ids)
+		.all<{ target_id: string; n: number }>();
+	const out: Record<string, number> = {};
+	for (const r of rows.results ?? []) out[r.target_id] = r.n;
+	return out;
 };
 
 // --- Telegram links (operator bot identity) -----------------------------

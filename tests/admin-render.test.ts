@@ -10,7 +10,14 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { renderQueue, type QueueFilters } from "../src/admin-ui/pages/queue";
+import {
+	QUEUE_SHORTCUTS,
+	renderQueue,
+	rowActionToasts,
+	type QueueFilters,
+} from "../src/admin-ui/pages/queue";
+import { renderCommentDetail } from "../src/admin-ui/pages/comment-detail";
+import { escapeHtml } from "../src/admin-ui/escape";
 import { renderAudit, type AuditFilters } from "../src/admin-ui/pages/audit";
 import {
 	renderSubscriptions,
@@ -22,7 +29,7 @@ import type { AuditRetentionStats } from "../src/db/audit-retention";
 import { renderSettings } from "../src/admin-ui/pages/settings";
 import { MAX_XML_BYTES } from "../src/lib/disqus-import";
 import { renderDashboard } from "../src/admin-ui/pages/dashboard";
-import { renderUpdateBanner } from "../src/admin-ui/layout";
+import { layout, renderUpdateBanner } from "../src/admin-ui/layout";
 import {
 	FLAG_KEYS,
 	NUMBER_KEYS,
@@ -41,6 +48,7 @@ import type {
 	AdminStats,
 	AuditRowWithAdmin,
 	Subscription,
+	User,
 } from "../src/db/queries";
 import type { Bindings } from "../src/index";
 
@@ -939,5 +947,275 @@ describe("admin Alpine x-data attributes are lexically well-formed", () => {
 			}
 		}
 		expect(offenders).toEqual([]);
+	});
+});
+
+describe("saved-reply variables in the queue reply modal", () => {
+	// The composer is mounted once for the whole table, so the variable context
+	// cannot be baked into it — it has to arrive with the row that opened the
+	// modal. These two assertions are the ends of that wire.
+	it("dispatches the row's name and post with the id", () => {
+		const html = renderQueue(
+			[makeComment({ author_name: "Ada", post_title: "Rolling Oasis" })],
+			emptyQueueFilters,
+			null,
+		);
+		expect(html).toContain("openReply(&quot;01HXX000000000000000000001&quot;)");
+		expect(html).toContain("name: &quot;Ada&quot;");
+		expect(html).toContain("post: &quot;Rolling Oasis&quot;");
+		expect(html).toContain("$dispatch('open-reply', { id: id,");
+	});
+
+	it("falls back to the slug when the post has no title", () => {
+		const html = renderQueue([makeComment({ post_title: null })], emptyQueueFilters, null);
+		expect(html).toContain("post: &quot;hello-world&quot;");
+	});
+
+	it("feeds the modal's scope into the composer's substitution", () => {
+		const html = renderQueue([makeComment()], emptyQueueFilters, null);
+		expect(html).toContain("authorName = $event.detail.name || ''");
+		expect(html).toContain("name: authorName, post: postTitle");
+	});
+});
+
+describe("queue keyboard shortcuts", () => {
+	// The one thing this feature can get quietly wrong is *promising* a key it
+	// no longer handles, so the assertions run the other way round: every entry
+	// in QUEUE_SHORTCUTS has to be reachable from the handler and visible to
+	// the reader, rather than three hand-written lists agreeing by luck.
+	const keysOf = (entry: readonly [string, string]): string[] =>
+		entry[0].split("/").map((k) => k.trim());
+	// The strip and the popover spell keys the way a keyboard does; the handler
+	// compares KeyboardEvent.key. Only one key in the list differs, so the gap
+	// is a lookup rather than a second column in QUEUE_SHORTCUTS.
+	const EVENT_KEY: Record<string, string> = { Esc: "Escape" };
+	const eventKey = (k: string): string => EVENT_KEY[k] ?? k;
+	const adminUser: User = {
+		id: "01HUSR000000000000000000A",
+		provider: "github",
+		provider_id: "u1",
+		name: "Admin",
+		email: null,
+		avatar_url: null,
+		is_admin: true,
+		is_banned: false,
+		role: "admin",
+		created_at: 1_700_000_000_000,
+		erased_at: null,
+	};
+
+	it("handles every key it advertises", () => {
+		const html = renderQueue([makeComment()], emptyQueueFilters, null);
+		for (const entry of QUEUE_SHORTCUTS) {
+			for (const key of keysOf(entry)) {
+				expect(html).toContain(`e.key === '${eventKey(key)}'`);
+			}
+		}
+	});
+
+	it("lists every advertised key in the hint strip", () => {
+		const html = renderQueue([makeComment()], emptyQueueFilters, null);
+		expect(html).toContain('class="muted shortcut-strip"');
+		for (const entry of QUEUE_SHORTCUTS) {
+			for (const key of keysOf(entry)) {
+				expect(html).toContain(`<kbd>${key}</kbd>`);
+			}
+			expect(html).toContain(entry[1].toLowerCase());
+		}
+	});
+
+	it("lists the same keys in the layout help popover", () => {
+		const html = layout("Queue", "<p>body</p>", adminUser, null, {
+			shortcuts: QUEUE_SHORTCUTS,
+		});
+		expect(html).toContain("<h4>This page</h4>");
+		for (const entry of QUEUE_SHORTCUTS) {
+			for (const key of keysOf(entry)) {
+				expect(html).toContain(`<kbd>${key}</kbd>`);
+			}
+			expect(html).toContain(`<dd>${entry[1]}</dd>`);
+		}
+	});
+
+	it("omits the page section when a page declares no shortcuts", () => {
+		const html = layout("Users", "<p>body</p>", adminUser, null);
+		expect(html).not.toContain("This page");
+	});
+
+	it("binds the handler and marks the row under the cursor", () => {
+		const html = renderQueue([makeComment()], emptyQueueFilters, null);
+		expect(html).toContain('@keydown.window="onKey($event)"');
+		expect(html).toContain(
+			":class=\"allIds[cursor] === &quot;01HXX000000000000000000001&quot; ? 'row-cursor' : ''\"",
+		);
+	});
+
+	it("keeps typing, modifiers and the open modal out of the handler", () => {
+		const html = renderQueue([makeComment()], emptyQueueFilters, null);
+		expect(html).toContain("if (e.metaKey || e.ctrlKey || e.altKey) return;");
+		expect(html).toContain("if (this.open) return;");
+		expect(html).toContain(
+			"t.closest('input, textarea, select, [contenteditable]')",
+		);
+	});
+
+	it("confirms before delete but not before approve or spam", () => {
+		const html = renderQueue([makeComment()], emptyQueueFilters, null);
+		expect(html).toContain(
+			"if (action === 'delete' && !confirm('Delete this comment?')) return;",
+		);
+	});
+
+	it("teaches the cursor to skip every row something else hid", () => {
+		const html = renderQueue([makeComment()], emptyQueueFilters, null);
+		// One funnel for both hide paths: the bulk bar and a row's own buttons
+		// each announce ids with `bulk-done`, and the card marks every one
+		// spent. A row button that only flipped its own `gone` flag left a
+		// hidden row the cursor still landed on — and then acted on twice.
+		expect(html).toContain(
+			'@bulk-done.window="$event.detail.ids.forEach(i => { done[i] = true; })"',
+		);
+		expect(html).toContain("$dispatch('bulk-done',{ids:[");
+		expect(html).not.toContain("gone=true;}");
+	});
+
+	// The row's buttons and the keyboard read one table, so what's worth
+	// pinning is that they still agree. Drift here is silent and it writes:
+	// `a` on an approved comment re-audits it and fires a second approval
+	// webhook, `s` on a deleted one quietly turns it into spam.
+	const BUTTON_ACTION: Record<string, string> = {
+		Approve: "approve",
+		Restore: "approve",
+		Spam: "spam",
+		Delete: "delete",
+	};
+	const actionsCell = (html: string): string =>
+		html.match(/<td class="actions">([\s\S]*?)<\/td>/)?.[1] ?? "";
+
+	for (const status of ["pending", "approved", "spam", "deleted"] as const) {
+		it(`offers the same actions by key as by button (${status})`, () => {
+			const html = renderQueue(
+				[makeComment({ status })],
+				{ ...emptyQueueFilters, status },
+				null,
+			);
+			const cell = actionsCell(html);
+			const byButton = new Set(
+				Object.entries(BUTTON_ACTION)
+					.filter(([label]) => cell.includes(`>${label}<`))
+					.map(([, action]) => action),
+			);
+			const byKey = Object.keys(rowActionToasts()[status] ?? {});
+			expect(byKey.sort()).toEqual([...byButton].sort());
+		});
+	}
+
+	it("hands the browser that table and makes the handler consult it", () => {
+		const html = renderQueue([makeComment()], emptyQueueFilters, null);
+		expect(html).toContain(escapeHtml(JSON.stringify(rowActionToasts())));
+		expect(html).toContain(
+			"const label = (this.rowActions[ctx.status] || {})[action];",
+		);
+	});
+});
+
+describe("comment detail reply composer", () => {
+	const detail = (over: Partial<AdminComment> = {}) => ({
+		comment: makeComment(over),
+		parent: null,
+		replies: [],
+		ip_siblings: [],
+		user_recent: [],
+		verdicts: [],
+		reports: [],
+		audit: [],
+	});
+
+	// `{post}` has to name the thread the same way in both composers. It read
+	// the slug here while the queue's modal read the title, which made the
+	// documented title-first rule true on one page and false on the other.
+	// Asserted on the substitution's own `post:` argument, because the slug
+	// and the title both also appear in the page's header and links.
+	it("resolves {post} to the post title", () => {
+		const html = renderCommentDetail(detail({ post_title: "My Great Post" }));
+		expect(html).toContain("post: &quot;My Great Post&quot;");
+	});
+
+	it("falls back to the slug when the crawler never got a title", () => {
+		const html = renderCommentDetail(
+			detail({ post_title: null, post_slug: "hello-world" }),
+		);
+		expect(html).toContain("post: &quot;hello-world&quot;");
+	});
+});
+
+describe("global keyboard shortcuts", () => {
+	// Same invariant as the queue's, for the three keys the popover advertises
+	// on every page. This block exists because `.question-mark` shipped as a
+	// dead binding: Alpine has no alias for "?", so the modifier never matched
+	// and the popover promised a key nothing handled. A render test cannot
+	// press a key, so it asserts the next best thing — that each advertised key
+	// is compared somewhere in the handler the page actually binds.
+	const adminUser: User = {
+		id: "01HUSR000000000000000000A",
+		provider: "github",
+		provider_id: "u1",
+		name: "Admin",
+		email: null,
+		avatar_url: null,
+		is_admin: true,
+		is_banned: false,
+		role: "admin",
+		created_at: 1_700_000_000_000,
+		erased_at: null,
+	};
+	const render = (): string => layout("Queue", "<p>body</p>", adminUser, null);
+
+	it("binds one hand-rolled window handler, not Alpine key modifiers", () => {
+		const html = render();
+		expect(html).toContain('@keydown.window="onKey($event)"');
+		// The dead binding, and the two rewrites that look like fixes but are
+		// not: `.shift.slash` sees e.key === "?" and misses, and a second
+		// `@keydown.window` attribute would be dropped as a duplicate.
+		expect(html).not.toContain("question-mark");
+		expect(html).not.toContain("keydown.window.shift.slash");
+		expect(html.split('@keydown.window="').length - 1).toBe(1);
+	});
+
+	it("compares every key the popover advertises", () => {
+		const html = render();
+		for (const [key, eventKey] of [
+			["/", "/"],
+			["?", "?"],
+			["Esc", "Escape"],
+		]) {
+			expect(html).toContain(`<kbd>${key}</kbd>`);
+			expect(html).toContain(`e.key === '${eventKey}'`);
+		}
+	});
+
+	it("ignores modifiers and keys typed into a field, but never Escape", () => {
+		const html = render();
+		expect(html).toContain("if (e.ctrlKey || e.metaKey || e.altKey) return;");
+		expect(html).toContain(
+			"t.closest('input, textarea, select, [contenteditable]')",
+		);
+		// Escape is matched and returned before the guard, so a stuck popover
+		// closes from inside a textarea too.
+		const handler = html.slice(html.indexOf("onKey(e) {"));
+		expect(handler.indexOf("e.key === 'Escape'")).toBeLessThan(
+			handler.indexOf("this.typing(e)"),
+		);
+	});
+
+	it("only swallows the keystroke when it has somewhere to send it", () => {
+		const html = render();
+		// Unconditional .prevent was the other half of the old bug: with no
+		// search box on the page, "/" was eaten and nothing took focus.
+		expect(html).toContain("if (el) { e.preventDefault(); el.focus(); }");
+		// A hidden field counts as nowhere. Comment and user detail pages carry
+		// a text input inside the saved-reply editor's x-show, so matching on
+		// querySelector alone swallowed "/" on the pages where notes are typed.
+		expect(html).toContain("n.offsetParent !== null");
 	});
 });

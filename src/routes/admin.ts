@@ -46,6 +46,7 @@ import {
 	adminTopCommenters,
 	adminTopPosts,
 	countAdmins,
+	countModeratorNotesByTarget,
 	countOpenReportsByComment,
 	createWebhookEndpoint,
 	deleteSettings,
@@ -58,14 +59,19 @@ import {
 	getPost,
 	getUser,
 	getUsersByIds,
+	getModeratorNote,
 	getSavedReply,
 	getWebhookEndpoint,
 	insertComment,
+	insertModeratorNote,
 	insertSavedReply,
+	isModeratorNoteTarget,
 	isSavedReplyScope,
 	isUserRole,
 	isWebhookAdapter,
+	deleteModeratorNote,
 	listActiveSubscriptionsForPost,
+	listModeratorNotes,
 	listSavedRepliesForUser,
 	listWebhookEndpoints,
 	markSubscriptionUnsubscribed,
@@ -80,6 +86,7 @@ import {
 	type AdminAction,
 	type AuditTargetKind,
 	type CommentStatus,
+	type ModeratorNoteTarget,
 	type SavedReplyScope,
 	type User,
 	type UserRole,
@@ -101,13 +108,17 @@ import {
 	versionCheckMiddleware,
 	type UpdateInfo,
 } from "../lib/version-check";
-import { accessDeniedHtml, layout } from "../admin-ui/layout";
+import { accessDeniedHtml, layout, type LayoutOpts } from "../admin-ui/layout";
 import { ADMIN_CSP } from "../admin-ui/styles";
 import { renderAbout } from "../admin-ui/pages/about";
 import { renderDashboard } from "../admin-ui/pages/dashboard";
 import { renderAudit, type AuditFilters } from "../admin-ui/pages/audit";
 import { renderCommentDetail } from "../admin-ui/pages/comment-detail";
-import { renderQueue, type QueueFilters } from "../admin-ui/pages/queue";
+import {
+	QUEUE_SHORTCUTS,
+	renderQueue,
+	type QueueFilters,
+} from "../admin-ui/pages/queue";
 import {
 	renderSavedRepliesList,
 	renderSavedReplyForm,
@@ -189,14 +200,20 @@ const wantsHtml = (c: Ctx): boolean => {
 // nav opts (currently just whether the optional usage dashboard is wired
 // up). Centralized so adding a future env-gated link doesn't require
 // touching ~17 callsites.
+//
+// `opts` is for the per-page extras a route knows and this wrapper can't
+// derive — currently only the page's own keyboard shortcuts. The derived
+// opts are spread last so a caller can't accidentally override them.
 const renderPage = (
 	c: Ctx,
 	title: string,
 	body: string,
 	user: User,
 	updateInfo: UpdateInfo | null,
+	opts: Omit<LayoutOpts, "usage_link" | "activePath"> = {},
 ): string =>
 	layout(title, body, user, updateInfo, {
+		...opts,
 		usage_link: isUsageConfigured(c.env),
 		activePath: c.req.path,
 	});
@@ -403,6 +420,20 @@ admin.get("/queue", async (c) => {
 		trimmed.map((r) => r.id),
 	);
 
+	// Note badges. Two counts per row — the comment and the account that wrote
+	// it — deduped to one lookup each, since a queue page is routinely one
+	// account posting fifty times.
+	const [commentNoteCounts, userNoteCounts] = await Promise.all([
+		countModeratorNotesByTarget(
+			c.env.DB,
+			"comment",
+			trimmed.map((r) => r.id),
+		),
+		countModeratorNotesByTarget(c.env.DB, "user", [
+			...new Set(trimmed.map((r) => r.user_id)),
+		]),
+	]);
+
 	const hosts = await adminListHosts(c.env.DB);
 
 	const updateInfo = await peekCachedLatestVersion(c.env);
@@ -437,9 +468,11 @@ admin.get("/queue", async (c) => {
 				postState,
 				reportCounts,
 				user.name,
+				{ comment: commentNoteCounts, user: userNoteCounts },
 			),
 			user,
 			updateInfo,
+			{ shortcuts: QUEUE_SHORTCUTS },
 		),
 	);
 });
@@ -452,12 +485,21 @@ admin.get("/comments/:id", async (c) => {
 	if (!detail) {
 		return c.html(accessDeniedHtml(404, "That comment does not exist."), 404);
 	}
-	const updateInfo = await peekCachedLatestVersion(c.env);
+	const [updateInfo, notes] = await Promise.all([
+		peekCachedLatestVersion(c.env),
+		listModeratorNotes(c.env.DB, "comment", id),
+	]);
 	return c.html(
 		renderPage(
 			c,
 			`Comment ${id.slice(0, 8)}`,
-			renderCommentDetail(detail, user.role === "admin", user.name),
+			renderCommentDetail(
+				detail,
+				user.role === "admin",
+				user.name,
+				notes,
+				user.id,
+			),
 			user,
 			updateInfo,
 		),
@@ -525,9 +567,18 @@ admin.get("/users/:id", async (c) => {
 	if (!detail) {
 		return c.html(accessDeniedHtml(404, "That user does not exist."), 404);
 	}
-	const updateInfo = await peekCachedLatestVersion(c.env);
+	const [updateInfo, notes] = await Promise.all([
+		peekCachedLatestVersion(c.env),
+		listModeratorNotes(c.env.DB, "user", id),
+	]);
 	return c.html(
-		renderPage(c, detail.user.name, renderUserDetail(detail, user), user, updateInfo),
+		renderPage(
+			c,
+			detail.user.name,
+			renderUserDetail(detail, user, notes),
+			user,
+			updateInfo,
+		),
 	);
 });
 
@@ -1533,6 +1584,110 @@ admin.delete("/api/saved-replies/:id", async (c) => {
 		target_kind: "saved_reply",
 		target_id: id,
 		meta: { title: existing.title, scope: existing.scope },
+	});
+	return c.json({ ok: true, id });
+});
+
+// --------------------------- Moderator notes -------------------------------
+//
+// POST   /admin/api/notes      { target_kind, target_id, body }
+// DELETE /admin/api/notes/:id
+//
+// Internal annotations on a comment or a user. Mod-gated both ways: a note is
+// team context, so every mod reads and writes them, and there is no
+// owner-private tier the way saved replies have one.
+//
+// Deletion is author-or-admin, which is deliberately *looser* than the
+// owner-only rule on saved replies. A saved reply is a mod's own tool; a note
+// is a claim about someone that sits in front of the whole team, so an admin
+// has to be able to strike one. Both cases audit.
+//
+// One target lookup per write, so a typo'd id can't leave a note nothing will
+// ever show. The audit row is filed against the *target*, not the note, so
+// "someone wrote a note about this" lands in the history the comment and user
+// pages already render — with `meta.note_id` and never the body.
+
+export const NOTE_BODY_MAX = 4000;
+
+type NoteBody = { target_kind?: unknown; target_id?: unknown; body?: unknown };
+
+type NoteFields = {
+	target_kind: ModeratorNoteTarget;
+	target_id: string;
+	body: string;
+};
+
+export const parseNoteBody = (
+	body: NoteBody,
+): { ok: true; fields: NoteFields } | { ok: false; error: string } => {
+	if (!isModeratorNoteTarget(body.target_kind)) {
+		return { ok: false, error: "target_kind_invalid" };
+	}
+	const target_id =
+		typeof body.target_id === "string" ? body.target_id.trim() : "";
+	if (target_id.length === 0) {
+		return { ok: false, error: "target_required" };
+	}
+	if (typeof body.body !== "string" || body.body.trim().length === 0) {
+		return { ok: false, error: "body_required" };
+	}
+	if (body.body.length > NOTE_BODY_MAX) {
+		return { ok: false, error: "body_too_long" };
+	}
+	return {
+		ok: true,
+		fields: { target_kind: body.target_kind, target_id, body: body.body.trim() },
+	};
+};
+
+admin.post("/api/notes", async (c) => {
+	const user = await requireMod(c);
+	if (user instanceof Response) return user;
+	const raw = await c.req.json<NoteBody>().catch(() => null);
+	if (!raw) return c.json({ error: "invalid_body" }, 400);
+	const parsed = parseNoteBody(raw);
+	if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+	const { target_kind, target_id, body } = parsed.fields;
+	const target =
+		target_kind === "comment"
+			? await getComment(c.env.DB, target_id)
+			: await getUser(c.env.DB, target_id);
+	if (!target) return c.json({ error: "target_not_found" }, 404);
+	const note = await insertModeratorNote(c.env.DB, {
+		target_kind,
+		target_id,
+		author_id: user.id,
+		body,
+	});
+	await adminInsertAudit(c.env.DB, {
+		admin_id: user.id,
+		action: "note.create",
+		target_kind,
+		target_id,
+		meta: { note_id: note.id },
+	});
+	return c.json({ ok: true, id: note.id });
+});
+
+admin.delete("/api/notes/:id", async (c) => {
+	const user = await requireMod(c);
+	if (user instanceof Response) return user;
+	const id = c.req.param("id");
+	const existing = await getModeratorNote(c.env.DB, id);
+	if (!existing) return c.json({ error: "not_found" }, 404);
+	if (existing.author_id !== user.id && user.role !== "admin") {
+		return c.json({ error: "not_author" }, 403);
+	}
+	const deleted = await deleteModeratorNote(c.env.DB, id);
+	if (!deleted) return c.json({ error: "not_found" }, 404);
+	await adminInsertAudit(c.env.DB, {
+		admin_id: user.id,
+		action: "note.delete",
+		target_kind: existing.target_kind,
+		target_id: existing.target_id,
+		// `own` distinguishes a mod tidying their own note from an admin
+		// striking someone else's — the reason this route is not owner-only.
+		meta: { note_id: id, own: existing.author_id === user.id },
 	});
 	return c.json({ ok: true, id });
 });

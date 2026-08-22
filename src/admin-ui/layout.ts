@@ -107,7 +107,22 @@ export type LayoutOpts = {
 	usage_link?: boolean;
 	/** Request path of the current page, used to highlight the active nav link. */
 	activePath?: string;
+	/**
+	 * Page-local keyboard shortcuts, `[keys, description]`, listed in the help
+	 * popover under the three global ones. The page that binds them owns the
+	 * list (see `QUEUE_SHORTCUTS`), so the popover can't describe a key the
+	 * page stopped handling.
+	 */
+	shortcuts?: ReadonlyArray<readonly [string, string]>;
 };
+
+// `j / k` renders as two <kbd>s, `Esc` as one: split on the separator the
+// caller wrote rather than making every entry an array.
+export const kbdKeys = (keys: string): string =>
+	keys
+		.split("/")
+		.map((k) => `<kbd>${escapeHtml(k.trim())}</kbd>`)
+		.join(" ");
 
 export const layout = (
 	title: string,
@@ -169,12 +184,37 @@ export const layout = (
 	const navHtml = navSections
 		.map((s) => renderNavSection(s, opts.activePath))
 		.join("\n");
+	const pageShortcuts = opts.shortcuts?.length
+		? `<h4>This page</h4>
+  <dl>
+    ${opts.shortcuts
+			.map(([keys, desc]) => `<dt>${kbdKeys(keys)}</dt><dd>${escapeHtml(desc)}</dd>`)
+			.join("\n    ")}
+  </dl>`
+		: "";
 	// The theme lives on <html> as data-theme. We can't use the usual inline
 	// <head> script to set it before first paint (admin CSP forbids inline
 	// <script>), so the CSS handles the no-JS case: :root is light and a
 	// prefers-color-scheme block flips to dark, so the first paint already
 	// respects the OS preference. Alpine then reconciles the stored choice on
 	// x-init. localStorage key matches the renderUpdateBanner convention.
+	//
+	// The global shortcuts match on e.key by hand rather than through Alpine's
+	// key modifiers. Alpine kebab-cases e.key and looks the result up in a small
+	// alias table, and that table has no entry for "?" — `.question-mark` never
+	// matched, so the popover advertised a key that did nothing. `.shift.slash`
+	// is not the fix either: with Shift held e.key is "?", not "/".
+	//
+	// Hand-matching also buys the guard the modifier form cannot express: a
+	// window listener with .prevent swallows "/" and "?" typed into a note, a
+	// saved reply or a search box. Escape is deliberately outside that guard, so
+	// the popover still closes from anywhere.
+	//
+	// "/" only swallows the keystroke once it has a *visible* field to focus.
+	// The offsetParent test is not belt-and-braces: the comment and user detail
+	// pages carry a text input inside the saved-reply editor's x-show, so
+	// querySelector alone matches a field the reader cannot see and eats the key
+	// on the pages where notes are written.
 	return `
 <!doctype html>
 <html lang="en"
@@ -182,12 +222,18 @@ export const layout = (
         theme: localStorage.getItem('garrul.theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'),
         helpOpen: false,
         navOpen: false,
-        setTheme(t) { this.theme = t; localStorage.setItem('garrul.theme', t); document.documentElement.setAttribute('data-theme', t); }
+        setTheme(t) { this.theme = t; localStorage.setItem('garrul.theme', t); document.documentElement.setAttribute('data-theme', t); },
+        typing(e) { const t = e.target; return !!(t && t.closest && t.closest('input, textarea, select, [contenteditable]')); },
+        onKey(e) {
+          if (e.key === 'Escape') { this.helpOpen = false; return; }
+          if (e.ctrlKey || e.metaKey || e.altKey) return;
+          if (this.typing(e)) return;
+          if (e.key === '?') { e.preventDefault(); this.helpOpen = !this.helpOpen; return; }
+          if (e.key === '/') { const el = Array.from(document.querySelectorAll('input[type=text],input[type=search]')).find(n => n.offsetParent !== null); if (el) { e.preventDefault(); el.focus(); } }
+        }
       }"
       x-init="document.documentElement.setAttribute('data-theme', theme)"
-      @keydown.window.slash.prevent="(() => { const el = document.querySelector('input[type=text],input[type=search]'); if (el) el.focus(); })()"
-      @keydown.window.question-mark.prevent="helpOpen = !helpOpen"
-      @keydown.window.escape="helpOpen = false">
+      @keydown.window="onKey($event)">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -240,6 +286,7 @@ ${body}
     <dt><kbd>?</kbd></dt><dd>Toggle this help</dd>
     <dt><kbd>Esc</kbd></dt><dd>Close help</dd>
   </dl>
+  ${pageShortcuts}
 </div>
 <script src="https://cdn.jsdelivr.net/npm/alpinejs@${ALPINE_VERSION}/dist/cdn.min.js"
         integrity="${ALPINE_SRI}"

@@ -885,6 +885,8 @@ tracked by the `_migrations` table. Current set:
 - `0019_audit_log_pii.sql` — trims PII out of the audit log
 - `0020_subscriptions_locale.sql` — `subscriptions.locale`, so each digest renders in the subscriber's own language
 - `0021_moderator_notifications.sql` — `moderator_notifications`, the queue behind moderator email (seeds its own `moderator:*` budget rows)
+- `0022_reaction_kind_fire.sql` — renames the `like` reaction to `fire`
+- `0023_moderator_notes.sql` — `moderator_notes`, internal moderator context on one comment or one account. Never rendered to readers, and the note *body* never reaches `audit_log`
 
 Run with `npm run migrate` (local Miniflare) or
 `npm run migrate -- --remote` (production D1). Idempotent. Never edit a
@@ -920,8 +922,9 @@ Implementation: `src/lib/ip-hash.ts`.
 
 - `user` — default; can comment, react, vote.
 - `mod` — can use the moderation queue (approve / spam / delete /
-  restore, bulk actions, replies, saved replies). Cannot ban users,
-  edit settings, run operator scripts, or grant/revoke roles.
+  restore, bulk actions, replies, saved replies, moderator notes).
+  Cannot ban users, edit settings, run operator scripts, or
+  grant/revoke roles.
 - `admin` — full access; grants/revokes `mod` and `admin` from the
   user detail page. OAuth signups matching `ADMIN_EMAILS` are
   auto-admin.
@@ -937,10 +940,10 @@ Pages (top nav):
 | Path | Purpose |
 | --- | --- |
 | `/admin` | Dashboard: counts, 30-day comments-per-day sparkline, oldest pending, spam-rate, top posts/commenters. |
-| `/admin/queue` | Moderation queue. Status tabs (incl. a **Reported** tab — comments with open reader reports, with a count badge) + filter bar (body search, post slug, date range, scoped-by-user). Per-row + bulk actions (Approve/Spam/Delete/Restore). When filtered to a single post slug, a **Close / Open comments for this post** toggle appears. Rows also offer one-click **Ban author**. Each row shows author identity (avatar + provider + admin/banned pills) and the latest audit footer. |
-| `/admin/comments/:id` | Single-comment view: parent + replies, raw markdown, spam-verdicts per source, full audit history for that comment, author block with their last 5 comments. |
+| `/admin/queue` | Moderation queue. Status tabs (incl. a **Reported** tab — comments with open reader reports, with a count badge) + filter bar (body search, post slug, date range, scoped-by-user). Per-row + bulk actions (Approve/Spam/Delete/Restore). When filtered to a single post slug, a **Close / Open comments for this post** toggle appears. Rows also offer one-click **Ban author**. Each row shows author identity (avatar + provider + admin/banned pills), a `✎ n` badge when the comment or the account carries moderator notes, and the latest audit footer. Fully keyboard-drivable — see **Keyboard shortcuts** below. |
+| `/admin/comments/:id` | Single-comment view: parent + replies, raw markdown, spam-verdicts per source, full audit history for that comment, author block with their last 5 comments, and the **Moderator notes** card. |
 | `/admin/users` | User search + ban toggle. |
-| `/admin/users/:id` | User detail: all their comments paginated, reactions received, audit history affecting them, Ban/Unban, role controls, and two folded-away admin-only panels — **Export personal data** and **Erase personal data** (both below). |
+| `/admin/users/:id` | User detail: all their comments paginated, reactions received, audit history affecting them, the **Moderator notes** card, Ban/Unban, role controls, and two folded-away admin-only panels — **Export personal data** and **Erase personal data** (both below). |
 | `/admin/audit` | Audit log with filter form (admin, action, target kind/id, date range). |
 | `/admin/subscriptions` | Email subscription list. Filter by email/post/confirmed/unsubscribed. Actions: manual unsubscribe, resend confirmation. |
 | `/admin/operator` | Batch operations: rerender stale comments (POSTs `/admin/api/ops/rerender` in 50-row chunks until done), seed-demo (idempotent; gated to `ENV != "production"`), the Disqus import upload (see below), and two retention cards — IP-hash and audit-log — each showing how many rows are past the configured window and offering a manual drain. |
@@ -958,6 +961,8 @@ responding):
 - `POST /admin/api/comments/bulk` — `{ids: string[], action}` (cap 100)
 - `POST /admin/api/comments/:id/reports/resolve` — clears open reader reports on a comment (audited `report.resolve`)
 - `POST /admin/api/comments/:id/reply` — `{body_md, saved_reply_id?, notify?}` posts a moderator reply nested under `:id` (audited `comment.reply`; `notify` must be a real boolean when present, defaults to true, and fans out to the post's confirmed subscribers; `saved_reply_id` is audit provenance only and must be a preset this mod can see)
+- `POST /admin/api/notes` — `{target_kind: comment|user, target_id, body}` writes an internal moderator note (mod or admin; audited `note.create` against the **target**, with only the note id in `meta`). Body caps at 4 000 characters; a target that does not exist is `404 target_not_found`.
+- `DELETE /admin/api/notes/:id` — removes one note (audited `note.delete`, again against the target, with `meta.own` recording whether the caller wrote it). Author **or** admin, deliberately looser than saved replies' owner-only rule; another mod gets `403 not_author`.
 - `POST /admin/api/posts/close` — `{slug, closed: boolean}` (per-post close/open; audited `post.close` / `post.open`; busts the cached first page)
 - `POST /admin/api/users/:id` — `{banned: boolean, reason?, from_comment?}` (one-click ban-author records the originating comment in audit meta; admin-only)
 - `POST /admin/api/users/:id/role` — `{role: user|mod|admin, reason?}` (admin-only; refuses self-change and the last-admin demotion)
@@ -987,11 +992,11 @@ directly. This is the answer to a GDPR Art. 15 / Art. 20 or CCPA
 right-to-know request: one file (`garrul-export-<id>.json`) holding the
 account row, every comment they wrote, reports they filed, subscriptions
 for their address, Telegram link, votes, reactions, page engagement, spam
-classifications on their comments, and moderation actions taken against
-them. Admin-only; a plain link rather than a fetch, so the payload never
-sits in a JS variable.
+classifications on their comments, moderation actions taken against
+them, and moderator notes written about them. Admin-only; a plain link
+rather than a fetch, so the payload never sits in a JS variable.
 
-Two shaping decisions worth knowing before you send one:
+Three shaping decisions worth knowing before you send one:
 
 - `ip_hash` and `user_agent` **are** included — they are the subject's own
   data, and withholding them would make the export a false statement about
@@ -1002,6 +1007,12 @@ Two shaping decisions worth knowing before you send one:
   disclosing it. Only action, reason and timestamp are exported — and
   `reason` is free text a moderator typed, so skim it before releasing the
   file.
+- `moderator_notes` follows the same rule as the audit log: bodies of notes
+  written **about the subject** are included, author ids are not. Notes on
+  the subject's individual *comments* are excluded — they are moderation
+  reasoning about a piece of content rather than a record about the person.
+  Note bodies are free text too, so skim them alongside `reason`. The export
+  is `export_version: 2` since notes joined it.
 
 Running an export writes a `user.export` audit row recording **row counts
 only**, so you have a record that it happened without minting a second
@@ -1028,6 +1039,14 @@ the row would orphan every reply written under it. What it clears:
 - Their email subscriptions (plus any queued digest rows) and their
   linked Telegram account.
 - Their live sessions, revoked.
+- Every moderator note written **about the account**. Two kinds
+  deliberately survive: notes they *wrote* about someone else, which are
+  records about a third party and stay attributed to the now-redacted
+  `[deleted]` row; and notes on their individual *comments*, which are
+  retained on the same footing as the moderation actions in `audit_log`
+  — the comment they annotate survives too, anonymized. If a comment
+  note holds something that has to go, delete it from the comment's
+  detail page before running the erase.
 
 Comment **bodies are kept by default**: the author becomes anonymous and
 the thread others replied to stays readable. Tick *"also blank their
@@ -1129,6 +1148,94 @@ still too long to save; the button says so rather than failing. When a
 preset prefilled the body its id is recorded in the audit row's
 `saved_reply_id`, and it is cleared if the text is edited away from the
 preset — provenance is never claimed for text the mod actually wrote.
+
+A preset body may contain three placeholders, filled in at the moment
+it prefills the composer — never stored expanded:
+
+| Variable | Becomes |
+| --- | --- |
+| `{name}` | the display name of the commenter being replied to |
+| `{post}` | the title of the post the thread is on, falling back to its slug |
+| `{mod}` | the signed-in moderator's own display name |
+
+Interpolation happens on *insert*, so the resolved text lands in the
+textarea where it is editable and previewable, and what posts is exactly
+what the mod approved. Post-time substitution would also rewrite a
+`{name}` the mod typed by hand.
+
+A placeholder with no value — `{name}` on an anonymous comment — is left
+**literal**, as is anything not in the table above. A visible `{name}` in
+the textarea is a prompt to fix it; an empty string is a sentence the mod
+posts without noticing.
+
+**Moderator notes.** Internal context on one comment or one account,
+written from the **Moderator notes** card on `/admin/comments/:id` and
+`/admin/users/:id`. This is for the case moderation has no verb for —
+the comment is borderline, the account is one to watch, and there is no
+action to take yet.
+
+- **Every mod and admin sees every note; no reader ever does.** Notes
+  are not markdown and are never rendered into a comment tree, a feed,
+  a webhook or an email.
+- **Deletion is author-or-admin**, deliberately looser than the
+  owner-only rule saved replies use: a note is a claim about someone
+  standing in front of the whole team, so an admin has to be able to
+  strike one. The audit row's `meta.own` says which of the two happened.
+- **The audit trail records that a note exists, not what it says.** A
+  `note.create` row is filed against the comment or user the note is
+  about — so it shows up in the audit history those detail pages already
+  render — and carries only the note id. `audit_log` has its own
+  retention sweep and its own export path; a body reaching it would
+  outlive the note and travel further than it.
+- **The queue shows counts, not text.** A `✎ n` badge appears on a queue
+  row when the comment carries notes, and next to the author name when
+  the *account* does. The account badge is usually the more useful of
+  the two: "this handle has history" is exactly what one borderline
+  comment cannot tell you. A `mod` sees the account badge but cannot
+  open the notes behind it, because `/admin/users/:id` is admin-only —
+  the same reason the queue's author link is already a dead end for
+  mods. Comment notes are readable by anyone who can act on the comment.
+- **Erasure and export.** Erasing a user deletes every note written
+  *about* them, and keeps notes they authored (with the author row
+  itself surviving, redacted, as `[deleted]`). A personal-data export
+  includes note bodies written about that user, without the author ids —
+  they are personal data about the subject, and a moderator's identity
+  is not the subject's to receive. Notes on the subject's *comments* are
+  deliberately excluded from the export.
+
+**Keyboard shortcuts.** `/admin/queue` is drivable without the mouse.
+`j` / `k` move a row cursor (an outline, not a background tint — every
+even row is already `surface-2`, so a tint marked half the table and
+left the other half looking untouched), `a` approves, `s` marks spam,
+`d` deletes, `r` opens the reply modal, `Esc` clears the cursor. `a` and
+`s` fire immediately; `d` asks first, because it is the one that is
+awkward to undo.
+
+A key only offers what the row's own buttons offer: in the `all` and
+`reported` views the cursor lands on comments that are already approved,
+spam or deleted, and `a` on an approved one would re-audit it and fire a
+second approval webhook, `s` on a deleted one would quietly turn it into
+spam. Both are refused with a toast instead. One `ROW_ACTIONS` table
+decides for the buttons and the keys together.
+
+Acted-on rows are skipped as the cursor advances, whether they were
+hidden by a bulk action or by a row's own button — both announce the ids
+they retired on the same event, so the cursor cannot land on a row that
+has left the table. The keys are inert while you are typing in an
+input, while a modal is open, and whenever a modifier is held, so
+browser and OS shortcuts keep working. The same list appears in the hint
+strip above the table and in the `?` help popover — one table in
+`src/admin-ui/pages/queue.ts` feeds all three, so the popover cannot
+promise a key the page stopped handling.
+
+Three shortcuts are global to every admin page: `/` focuses the page's
+search box, `?` toggles the help popover, `Esc` closes it. They are
+matched on `KeyboardEvent.key` by hand in `src/admin-ui/layout.ts`
+rather than through Alpine's key modifiers — Alpine has no alias for
+`?`, so `.question-mark` never matched and the popover spent several
+releases advertising a key that did nothing. `/` and `?` are inert
+while you are typing and under any modifier; `Esc` is matched before
+that guard, so a popover left open still closes from inside a textarea.
 
 **Disqus import.** Two entry points, both idempotent (deduplicated by
 Disqus comment ID, tracked in `0009_import_tracking.sql`; re-running

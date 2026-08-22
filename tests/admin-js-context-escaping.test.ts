@@ -17,13 +17,20 @@
  * reach it — the helper there was corrected for consistency, not coverage.
  */
 import { describe, it, expect } from "vitest";
-import type { SavedReply, User, WebhookEndpoint } from "../src/db/queries";
+import type {
+	AdminComment,
+	SavedReply,
+	User,
+	WebhookEndpoint,
+} from "../src/db/queries";
 import { renderUsers } from "../src/admin-ui/pages/users";
+import { renderQueue, type QueueFilters } from "../src/admin-ui/pages/queue";
 import {
 	renderWebhooksList,
 	renderWebhookForm,
 } from "../src/admin-ui/pages/webhooks";
 import { renderSavedReplyForm } from "../src/admin-ui/pages/saved-replies";
+import { moderatorNotes } from "../src/admin-ui/components/moderator-notes";
 import {
 	commentIdLiteral,
 	replyComposer,
@@ -121,6 +128,28 @@ describe("JS-string interpolation in admin Alpine attributes", () => {
 		expectNoBreakout(html);
 		expect(html).toContain("del(&quot;");
 	});
+
+	it("moderatorNotes passes the target and note ids as JS literals", () => {
+		const html = moderatorNotes({
+			target_kind: "user",
+			target_id: HOSTILE,
+			notes: [
+				{
+					id: HOSTILE,
+					target_kind: "user",
+					target_id: HOSTILE,
+					author_id: "01HAUTHOR",
+					author_name: "Mallory",
+					body: "just a note",
+					created_at: 1_700_000_000_000,
+				},
+			],
+			viewerId: "01HAUTHOR",
+			viewerIsAdmin: true,
+		});
+		expectNoBreakout(html);
+		expect(html).toContain("remove(&quot;");
+	});
 });
 
 describe("the escaped literal survives the browser's decode", () => {
@@ -195,5 +224,60 @@ describe("accessDeniedHtml", () => {
 		const html = accessDeniedHtml(403, '<img src=x onerror=alert(1)>');
 		expect(html).not.toContain("<img src=x");
 		expect(html).toContain("&lt;img src=x");
+	});
+});
+
+describe("renderQueue row context", () => {
+	// `rowCtx` is the first map in the admin UI whose *values* are user-authored
+	// — a display name and a page <title>, not a ULID. JSON.stringify would have
+	// been the obvious way to emit it and would have left `<` and the U+2028
+	// pair raw inside executable JS, so the map is built literal-by-literal
+	// through jsLiteral instead. This is the test that notices if it goes back.
+	const mkQueueComment = (): AdminComment => ({
+		id: "01HXX000000000000000000001",
+		post_slug: "hello-world",
+		parent_id: null,
+		user_id: "01HXY000000000000000000001",
+		body_md: "hello",
+		body_html: "<p>hello</p>",
+		renderer_version: 1,
+		status: "pending",
+		edited_at: null,
+		deleted_at: null,
+		ip_hash: null,
+		user_agent: null,
+		created_at: 1_700_000_000_000,
+		deleted_by: null,
+		depth: 1,
+		score_up: 0,
+		score_down: 0,
+		author_name: HOSTILE,
+		author_email: null,
+		author_avatar_url: null,
+		author_provider: "github",
+		author_is_admin: false,
+		author_is_banned: false,
+		host: "blog.example.com",
+		post_url: null,
+		post_title: HOSTILE,
+	});
+
+	const filters: QueueFilters = {
+		status: "pending",
+		q: "",
+		post_slug: "",
+		user_id: "",
+		from: "",
+		to: "",
+		host: "",
+		reported: false,
+	};
+
+	it("emits a hostile author name and post title as JS literals", () => {
+		const html = renderQueue([mkQueueComment()], filters, null);
+		expectNoBreakout(html);
+		expect(html).toContain("rowCtx:");
+		expect(html).toContain("name: &quot;01H&#39;+alert(1)+&#39;\\u003cscript\\u003e&quot;");
+		expect(html).toContain("post: &quot;01H&#39;+alert(1)+&#39;\\u003cscript\\u003e&quot;");
 	});
 });

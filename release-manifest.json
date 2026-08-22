@@ -393,7 +393,8 @@
     "0019_audit_log_pii.sql",
     "0020_subscriptions_locale.sql",
     "0021_moderator_notifications.sql",
-    "0022_reaction_kind_fire.sql"
+    "0022_reaction_kind_fire.sql",
+    "0023_moderator_notes.sql"
   ],
   "breakingChanges": [
     {

@@ -14,6 +14,7 @@
  */
 import { escapeHtml, jsLiteral } from "../escape";
 import { MAX_BODY_CHARS } from "../../lib/markdown";
+import { REPLY_VARS_HINT, REPLY_VARS_JS } from "./reply-vars";
 
 // Mirrors SAVED_REPLY_BODY_MAX in routes/admin.ts. Not imported: admin-ui is
 // downstream of that module (it imports these renderers), so reaching back for
@@ -38,11 +39,22 @@ export type ReplyComposerOptions = {
 	onPosted?: string;
 	/** Offer the saved-reply picker as a prefill source. */
 	offerSavedReplies?: boolean;
+	/**
+	 * JS expression yielding the comment author's display name, for `{name}`.
+	 * Same contract as `commentIdExpr`: a literal on a detail page, a state
+	 * property in the queue modal where one composer serves every row. Empty
+	 * string when unknown — the placeholder then stays literal.
+	 */
+	authorNameExpr?: string;
+	/** JS expression yielding the post title (or slug), for `{post}`. */
+	postTitleExpr?: string;
 };
 
 export const replyComposer = (o: ReplyComposerOptions): string => {
 	const onPosted = o.onPosted ?? "";
 	const offer = o.offerSavedReplies !== false;
+	const authorNameExpr = o.authorNameExpr ?? "''";
+	const postTitleExpr = o.postTitleExpr ?? "''";
 	return `<div class="reply-composer" x-data="{
   body: '',
   notify: true,
@@ -78,9 +90,17 @@ export const replyComposer = (o: ReplyComposerOptions): string => {
       this.$dispatch('toast', { text: e.message || 'Load failed', kind: 'bad' });
     }
   },
+  applyVars: ${REPLY_VARS_JS},
   pick(r) {
-    this.body = r.body_md;
-    this.pickedBody = r.body_md;
+    // Variables resolve here, on insert, so the mod edits and previews the
+    // real text. \`savedReplyId\` still stands afterwards: the reply *was*
+    // prefilled from that preset, and the audit row says prefilled-from, not
+    // posted-verbatim. Typing over it drops the claim, as before.
+    const filled = this.applyVars(r.body_md, {
+      name: ${authorNameExpr}, post: ${postTitleExpr}, mod: ${jsLiteral(o.modName)},
+    });
+    this.body = filled;
+    this.pickedBody = filled;
     this.savedReplyId = r.id;
     this.pickerOpen = false;
     this.previewing = false;
@@ -170,6 +190,7 @@ ${
     <p class="muted" x-show="loadedReplies && !replies.length">
       No saved replies yet. Write the reply below — you can save it for reuse afterwards.
     </p>
+    <p class="muted" style="font-size:0.75rem">${escapeHtml(REPLY_VARS_HINT)}</p>
   </div>
 `
 		: ""

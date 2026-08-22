@@ -169,6 +169,23 @@ beforeEach(() => {
 		)
 		.run(ADMIN_ID, SUBJECT_ID, NOW - 20 * DAY);
 
+	// Two moderator notes: one about the subject, one about a comment of
+	// theirs. Only the first is the subject's data — see the assertions below.
+	sqlite
+		.prepare(
+			`INSERT INTO moderator_notes (id, target_kind, target_id, author_id,
+			                              body, created_at)
+			 VALUES ('n-1', 'user', ?, ?, 'watch this one', ?),
+			        ('n-2', 'comment', 'c-1', ?, 'borderline, left up', ?)`,
+		)
+		.run(
+			SUBJECT_ID,
+			MOD_ID,
+			NOW - 10 * DAY,
+			MOD_ID,
+			NOW - 9 * DAY,
+		);
+
 	env = {
 		DB: makeD1(sqlite),
 		TREE_CACHE: makeKv(),
@@ -217,7 +234,7 @@ describe("GET /admin/api/users/:id/export", () => {
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as UserDataExport;
 		expect(body).toMatchObject({
-			export_version: 1,
+			export_version: 2,
 			user: { id: SUBJECT_ID, email: "subject@example.com" },
 		});
 		expect(body.comments).toHaveLength(1);
@@ -226,6 +243,27 @@ describe("GET /admin/api/users/:id/export", () => {
 		expect(body.votes).toHaveLength(1);
 		expect(body.spam_verdicts).toHaveLength(1);
 		expect(body.moderation_actions).toHaveLength(1);
+		expect(body.moderator_notes).toHaveLength(1);
+	});
+
+	// Notes are internal, which is a reason to handle them carefully in the
+	// response — not a reason to pretend the instance doesn't hold them.
+	it("includes notes about the subject, without their author", async () => {
+		const body = await exportBody();
+
+		expect(body.moderator_notes).toEqual([
+			{ body: "watch this one", created_at: NOW - 10 * DAY },
+		]);
+		expect(JSON.stringify(body)).not.toContain(MOD_ID);
+	});
+
+	// A note on a comment annotates the content, not the person. Exporting
+	// those would hand the subject moderator commentary on every thread they
+	// ever appeared in, most of it about other people's replies.
+	it("leaves notes on the subject's comments out", async () => {
+		const body = await exportBody();
+
+		expect(JSON.stringify(body)).not.toContain("borderline, left up");
 	});
 
 	// Their own hash and user agent: withholding them would make the export a
