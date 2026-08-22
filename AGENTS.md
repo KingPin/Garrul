@@ -180,8 +180,10 @@ When the endpoint answers a 404 — what a Worker without the route
 returns — the widget silently falls back to exactly the pre-v2.15.0
 call sequence. So does a 200 whose body carries no comment tree, and a
 request that never lands. The 404 is remembered per API base, so a
-reader on such a Worker probes once and every later reload — posting,
-editing, deleting, changing sort — goes straight to the legacy calls.
+reader on such a Worker probes once and every later reload — editing,
+deleting, changing sort — goes straight to the legacy calls. Posting is
+not in that list any more: since v2.20.0 a successful post reloads
+nothing on either path.
 
 Any **other** non-2xx does not fall back: it surfaces as an error, the
 same one a failed `/api/v1/comments` would render. The fallback is only
@@ -568,6 +570,45 @@ other threads, with per-row buttons and an unsubscribe-from-all.
 
 **Embedders need no wiring for any of this.** It is all inside the widget
 and the emails; there are no new `data-*` attributes and no new env vars.
+
+### Posting a comment (since v2.20.0)
+
+A successful post renders straight from the `201` the server already
+returns, and fetches nothing back.
+
+`POST /api/v1/comments` echoes the new comment in full, so the widget
+builds the node from that echo and inserts it into the page it is
+already showing. Before v2.20.0 it discarded the echo and re-fetched the
+first page of the thread instead, which had two costs an embedder can
+see:
+
+- **A second request per comment.** Posting now costs one.
+- **On a thread longer than one page, your own comment could land
+  nowhere.** A reload fetches page *one*, and under the oldest-first
+  sort a new top-level comment belongs on the *last* page — so it
+  simply was not in the response that replaced the page.
+
+The reader's own comment carries a subtle accent (`.gr-thread`
+`[data-posted]`, styleable like everything else in §5) for as long as it
+is on screen. That is deliberate rather than decorative: under
+oldest-first and top-first its **position is provisional**. It is
+inserted where the reader is looking — last under `old`, first under
+`new` and `top`, nested under its parent for a reply — and the next real
+load puts it where the sort actually places it. Marking it keeps that
+from reading as a claim about thread order.
+
+Nothing about this is optimistic. The comment is only drawn after the
+server accepts it, and it is drawn with the status the server assigned —
+a post held by moderation renders with its "Pending approval" badge, not
+as approved-then-corrected. Whether a comment is held is a server
+verdict (muted words, Akismet, Workers AI, first-comment hold), so it is
+not something the widget could have guessed.
+
+Because the page is no longer replaced, **scroll position and every open
+form survive a post**. If the echo is missing a field the renderer needs
+— a widget bundle newer than the Worker it talks to — the widget falls
+back to the pre-v2.20.0 reload, the same way the mount falls back on a
+404 (§3).
 
 ### Markdown preview (since v1.10.0)
 

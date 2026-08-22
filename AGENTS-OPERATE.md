@@ -1229,6 +1229,11 @@ Two consequences worth planning around:
   until the comments section scrolls into view still takes a bouncer
   to zero, so it is still worth doing on a high-traffic blog — but the
   saving is 2 requests per bounce, not 4 to 6.
+- **Posting a comment costs one request, not two** (since v2.20.0).
+  The widget renders the new comment from the `201` echo instead of
+  re-fetching the thread's first page. That also fixed the case where a
+  reader's own comment was missing after posting on a thread past
+  `comments_per_page` under the oldest-first sort.
 
 Nothing was removed. Every endpoint the old mount called still exists
 and still behaves identically, and a widget bundle newer than the
