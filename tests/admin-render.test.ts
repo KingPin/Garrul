@@ -13,8 +13,11 @@ import { join } from "node:path";
 import {
 	QUEUE_SHORTCUTS,
 	renderQueue,
+	rowActionToasts,
 	type QueueFilters,
 } from "../src/admin-ui/pages/queue";
+import { renderCommentDetail } from "../src/admin-ui/pages/comment-detail";
+import { escapeHtml } from "../src/admin-ui/escape";
 import { renderAudit, type AuditFilters } from "../src/admin-ui/pages/audit";
 import {
 	renderSubscriptions,
@@ -1063,9 +1066,86 @@ describe("queue keyboard shortcuts", () => {
 		);
 	});
 
-	it("teaches the cursor to skip rows the bulk bar hid", () => {
+	it("teaches the cursor to skip every row something else hid", () => {
 		const html = renderQueue([makeComment()], emptyQueueFilters, null);
-		expect(html).toContain("doneIds.forEach(i => { this.done[i] = true; });");
+		// One funnel for both hide paths: the bulk bar and a row's own buttons
+		// each announce ids with `bulk-done`, and the card marks every one
+		// spent. A row button that only flipped its own `gone` flag left a
+		// hidden row the cursor still landed on — and then acted on twice.
+		expect(html).toContain(
+			'@bulk-done.window="$event.detail.ids.forEach(i => { done[i] = true; })"',
+		);
+		expect(html).toContain("$dispatch('bulk-done',{ids:[");
+		expect(html).not.toContain("gone=true;}");
+	});
+
+	// The row's buttons and the keyboard read one table, so what's worth
+	// pinning is that they still agree. Drift here is silent and it writes:
+	// `a` on an approved comment re-audits it and fires a second approval
+	// webhook, `s` on a deleted one quietly turns it into spam.
+	const BUTTON_ACTION: Record<string, string> = {
+		Approve: "approve",
+		Restore: "approve",
+		Spam: "spam",
+		Delete: "delete",
+	};
+	const actionsCell = (html: string): string =>
+		html.match(/<td class="actions">([\s\S]*?)<\/td>/)?.[1] ?? "";
+
+	for (const status of ["pending", "approved", "spam", "deleted"] as const) {
+		it(`offers the same actions by key as by button (${status})`, () => {
+			const html = renderQueue(
+				[makeComment({ status })],
+				{ ...emptyQueueFilters, status },
+				null,
+			);
+			const cell = actionsCell(html);
+			const byButton = new Set(
+				Object.entries(BUTTON_ACTION)
+					.filter(([label]) => cell.includes(`>${label}<`))
+					.map(([, action]) => action),
+			);
+			const byKey = Object.keys(rowActionToasts()[status] ?? {});
+			expect(byKey.sort()).toEqual([...byButton].sort());
+		});
+	}
+
+	it("hands the browser that table and makes the handler consult it", () => {
+		const html = renderQueue([makeComment()], emptyQueueFilters, null);
+		expect(html).toContain(escapeHtml(JSON.stringify(rowActionToasts())));
+		expect(html).toContain(
+			"const label = (this.rowActions[ctx.status] || {})[action];",
+		);
+	});
+});
+
+describe("comment detail reply composer", () => {
+	const detail = (over: Partial<AdminComment> = {}) => ({
+		comment: makeComment(over),
+		parent: null,
+		replies: [],
+		ip_siblings: [],
+		user_recent: [],
+		verdicts: [],
+		reports: [],
+		audit: [],
+	});
+
+	// `{post}` has to name the thread the same way in both composers. It read
+	// the slug here while the queue's modal read the title, which made the
+	// documented title-first rule true on one page and false on the other.
+	// Asserted on the substitution's own `post:` argument, because the slug
+	// and the title both also appear in the page's header and links.
+	it("resolves {post} to the post title", () => {
+		const html = renderCommentDetail(detail({ post_title: "My Great Post" }));
+		expect(html).toContain("post: &quot;My Great Post&quot;");
+	});
+
+	it("falls back to the slug when the crawler never got a title", () => {
+		const html = renderCommentDetail(
+			detail({ post_title: null, post_slug: "hello-world" }),
+		);
+		expect(html).toContain("post: &quot;hello-world&quot;");
 	});
 });
 

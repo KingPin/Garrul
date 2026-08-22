@@ -1204,12 +1204,24 @@ action to take yet.
   deliberately excluded from the export.
 
 **Keyboard shortcuts.** `/admin/queue` is drivable without the mouse.
-`j` / `k` move a row cursor (outlined, not tinted — rows already use
-background to carry status), `a` approves, `s` marks spam, `d` deletes,
-`r` opens the reply modal, `Esc` clears the cursor. `a` and `s` fire
-immediately; `d` asks first, because it is the one that is awkward to
-undo. Acted-on rows are skipped as the cursor advances, including rows
-hidden by a bulk action. The keys are inert while you are typing in an
+`j` / `k` move a row cursor (an outline, not a background tint — every
+even row is already `surface-2`, so a tint marked half the table and
+left the other half looking untouched), `a` approves, `s` marks spam,
+`d` deletes, `r` opens the reply modal, `Esc` clears the cursor. `a` and
+`s` fire immediately; `d` asks first, because it is the one that is
+awkward to undo.
+
+A key only offers what the row's own buttons offer: in the `all` and
+`reported` views the cursor lands on comments that are already approved,
+spam or deleted, and `a` on an approved one would re-audit it and fire a
+second approval webhook, `s` on a deleted one would quietly turn it into
+spam. Both are refused with a toast instead. One `ROW_ACTIONS` table
+decides for the buttons and the keys together.
+
+Acted-on rows are skipped as the cursor advances, whether they were
+hidden by a bulk action or by a row's own button — both announce the ids
+they retired on the same event, so the cursor cannot land on a row that
+has left the table. The keys are inert while you are typing in an
 input, while a modal is open, and whenever a modifier is held, so
 browser and OS shortcuts keep working. The same list appears in the hint
 strip above the table and in the `?` help popover — one table in

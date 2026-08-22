@@ -182,26 +182,61 @@ const rowAct = (
 	action: "approve" | "spam" | "delete",
 	successText: string,
 ): string =>
-	`busy=true; act(${jsLiteral(id)},${jsLiteral(action)}).then(()=>{$dispatch('toast',{text:${jsLiteral(successText)}}); gone=true;}).catch(e=>$dispatch('toast',{text:e.message||'Action failed',kind:'bad'})).finally(()=>busy=false)`;
+	// Hiding the row is `bulk-done`'s job, not a local `gone=true`: the card
+	// listens for the same event to mark the id spent, and the keyboard cursor
+	// reads that map to decide what to skip. A mouse click that only set the
+	// row-local flag left a hidden row the cursor would still land on — and
+	// then act on a second time.
+	`busy=true; act(${jsLiteral(id)},${jsLiteral(action)}).then(()=>{$dispatch('toast',{text:${jsLiteral(successText)}}); $dispatch('bulk-done',{ids:[${jsLiteral(id)}]});}).catch(e=>$dispatch('toast',{text:e.message||'Action failed',kind:'bad'})).finally(()=>busy=false)`;
+
+/**
+ * The lifecycle transitions a row offers, per current status, with the toast
+ * each one earns.
+ *
+ * One table because the row's buttons and the keyboard shortcuts are two
+ * consumers of the same rule, and drift between them is silent: `a` on an
+ * already-approved comment re-audits it and fires a second approval webhook,
+ * `s` on a deleted one quietly turns it into spam. The buttons render from
+ * this; the browser handler gets the same table serialized into its scope.
+ */
+const ROW_ACTIONS: Record<
+	CommentStatus,
+	ReadonlyArray<{
+		action: "approve" | "spam" | "delete";
+		label: string;
+		toast: string;
+	}>
+> = {
+	pending: [
+		{ action: "approve", label: "Approve", toast: "Approved" },
+		{ action: "spam", label: "Spam", toast: "Marked as spam" },
+		{ action: "delete", label: "Delete", toast: "Deleted" },
+	],
+	approved: [
+		{ action: "spam", label: "Spam", toast: "Marked as spam" },
+		{ action: "delete", label: "Delete", toast: "Deleted" },
+	],
+	spam: [
+		{ action: "approve", label: "Restore", toast: "Restored" },
+		{ action: "delete", label: "Delete", toast: "Deleted" },
+	],
+	deleted: [{ action: "approve", label: "Restore", toast: "Restored" }],
+};
+
+/** `{ [status]: { [action]: toast } }` — the browser copy of ROW_ACTIONS. */
+export const rowActionToasts = (): Record<string, Record<string, string>> =>
+	Object.fromEntries(
+		Object.entries(ROW_ACTIONS).map(([status, acts]) => [
+			status,
+			Object.fromEntries(acts.map((a) => [a.action, a.toast])),
+		]),
+	);
 
 const actionButtons = (id: string, status: CommentStatus): string => {
-	const parts: string[] = [];
-	if (status !== "approved") {
-		const label = status === "deleted" || status === "spam" ? "Restore" : "Approve";
-		parts.push(
-			`<button :disabled="busy" @click="${rowAct(id, "approve", label === "Restore" ? "Restored" : "Approved")}">${label}</button>`,
-		);
-	}
-	if (status !== "spam" && status !== "deleted") {
-		parts.push(
-			`<button :disabled="busy" class="bad" @click="${rowAct(id, "spam", "Marked as spam")}">Spam</button>`,
-		);
-	}
-	if (status !== "deleted") {
-		parts.push(
-			`<button :disabled="busy" class="bad" @click="${rowAct(id, "delete", "Deleted")}">Delete</button>`,
-		);
-	}
+	const parts: string[] = ROW_ACTIONS[status].map(
+		({ action, label, toast }) =>
+			`<button :disabled="busy"${action === "approve" ? "" : ' class="bad"'} @click="${rowAct(id, action, toast)}">${label}</button>`,
+	);
 	// Reply opens the free-text composer — mods only see it on
 	// approved/pending comments. No point replying to deleted/spam.
 	if (status !== "deleted" && status !== "spam") {
@@ -371,6 +406,7 @@ ${shortcutStrip()}
   bulkBusy: false,
   allIds: ${escapeHtml(JSON.stringify(allIds))},
   rowCtx: ${rowCtx},
+  rowActions: ${escapeHtml(JSON.stringify(rowActionToasts()))},
   cursor: -1,
   done: {},
   openReply(id) {
@@ -399,9 +435,18 @@ ${shortcutStrip()}
     const fwd = this.nextLive(this.cursor + 1, 1);
     this.cursor = fwd >= 0 ? fwd : this.nextLive(this.cursor - 1, -1);
   },
-  keyAct(action, label) {
+  keyAct(action) {
     const id = this.allIds[this.cursor];
     if (!id || this.done[id]) return;
+    // The row's own buttons suppress transitions that don't apply to its
+    // status; a shortcut that didn't would be the only way to re-approve an
+    // approved comment or spam a deleted one. Same table, same answer.
+    const ctx = this.rowCtx[id] || {};
+    const label = (this.rowActions[ctx.status] || {})[action];
+    if (!label) {
+      this.$dispatch('toast', { text: 'Cannot ' + action + ' a comment that is already ' + ctx.status, kind: 'bad' });
+      return;
+    }
     if (action === 'delete' && !confirm('Delete this comment?')) return;
     // Marked done up front so a fast repeat can't fire twice on one row;
     // rolled back if the request fails, which also puts the cursor's path
@@ -439,9 +484,9 @@ ${shortcutStrip()}
     if (e.key === 'j') { e.preventDefault(); this.move(1); return; }
     if (e.key === 'k') { e.preventDefault(); this.move(-1); return; }
     if (this.cursor < 0) return;
-    if (e.key === 'a') { e.preventDefault(); this.keyAct('approve', 'Approved'); }
-    else if (e.key === 's') { e.preventDefault(); this.keyAct('spam', 'Marked as spam'); }
-    else if (e.key === 'd') { e.preventDefault(); this.keyAct('delete', 'Deleted'); }
+    if (e.key === 'a') { e.preventDefault(); this.keyAct('approve'); }
+    else if (e.key === 's') { e.preventDefault(); this.keyAct('spam'); }
+    else if (e.key === 'd') { e.preventDefault(); this.keyAct('delete'); }
     else if (e.key === 'r') { e.preventDefault(); this.keyReply(); }
   },
   toggleAll(e) {
@@ -471,9 +516,6 @@ ${shortcutStrip()}
       return r.json();
     }).then(j => {
       const doneIds = (j && Array.isArray(j.touched)) ? j.touched : ids;
-      // Keep the keyboard cursor's view of the table honest: a row the bulk
-      // bar just hid is one the cursor must skip over, not land on.
-      doneIds.forEach(i => { this.done[i] = true; });
       this.$dispatch('toast', { text: action + ' ' + doneIds.length + ' comment(s)' });
       this.$dispatch('bulk-done', { ids: doneIds });
       this.selected = [];
@@ -481,7 +523,8 @@ ${shortcutStrip()}
       this.$dispatch('toast', { text: e.message || 'Bulk failed', kind: 'bad' });
     }).finally(() => { this.bulkBusy = false; });
   }
-}" @keydown.window="onKey($event)">
+}" @keydown.window="onKey($event)"
+   @bulk-done.window="$event.detail.ids.forEach(i => { done[i] = true; })">
   <table>
     <thead><tr>
       <th class="bulk-cell"><input type="checkbox" @change="toggleAll($event)" :checked="selected.length > 0 && selected.length === allIds.length"></th>
