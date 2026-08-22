@@ -181,9 +181,13 @@ returns — the widget silently falls back to exactly the pre-v2.15.0
 call sequence. So does a 200 whose body carries no comment tree, and a
 request that never lands. The 404 is remembered per API base, so a
 reader on such a Worker probes once and every later reload — editing,
-deleting, changing sort — goes straight to the legacy calls. Posting is
-not in that list any more: since v2.20.0 a successful post reloads
-nothing on either path.
+deleting, changing sort — goes straight to the legacy calls. Posting has
+left that list in the normal case: since v2.20.0 a successful post
+renders from its own `201` and reloads nothing on either path. It still
+falls back to a reload when that echo cannot be rendered where it
+belongs — an old or malformed payload, or a parent no longer on screen
+(§4, *Posting a comment*) — so budget one request per comment and a
+second only on those paths.
 
 Any **other** non-2xx does not fall back: it surfaces as an error, the
 same one a failed `/api/v1/comments` would render. The fallback is only
@@ -593,9 +597,11 @@ The reader's own comment carries a subtle accent (`.gr-thread`
 is on screen. That is deliberate rather than decorative: under
 oldest-first and top-first its **position is provisional**. It is
 inserted where the reader is looking — last under `old`, first under
-`new` and `top`, nested under its parent for a reply — and the next real
-load puts it where the sort actually places it. Marking it keeps that
-from reading as a claim about thread order.
+`new` and `top`, nested under its parent for a reply — and the next
+response that has an opinion puts it where the sort actually places it:
+a reload, or a Load More page that turns out to contain it, moves the
+node into the server's order rather than leaving the guess standing.
+Marking it keeps that from reading as a claim about thread order.
 
 Nothing about this is optimistic. The comment is only drawn after the
 server accepts it, and it is drawn with the status the server assigned —
@@ -605,10 +611,19 @@ verdict (muted words, Akismet, Workers AI, first-comment hold), so it is
 not something the widget could have guessed.
 
 Because the page is no longer replaced, **scroll position and every open
-form survive a post**. If the echo is missing a field the renderer needs
-— a widget bundle newer than the Worker it talks to — the widget falls
-back to the pre-v2.20.0 reload, the same way the mount falls back on a
-404 (§3).
+form survive a post**. The widget falls back to the pre-v2.20.0 reload —
+the same way the mount falls back on a 404 (§3), and costing the same
+second request it always did — whenever it cannot place the comment
+honestly:
+
+- the echo is missing a field the renderer needs (a widget bundle newer
+  than the Worker it talks to);
+- the comment was a reply and its parent is not on the rendered page;
+- the reply flattens onto a tier whose remaining replies are still
+  behind a "Show N more replies" button, so where it belongs in that
+  tier is not known yet.
+
+So posting costs one request in the ordinary case and two in those.
 
 ### Markdown preview (since v1.10.0)
 
