@@ -8,6 +8,7 @@ import { sanitizeForEmail as resanitizeBodyHtml } from "../../lib/markdown";
 import { renderHostFilter } from "../components/host-filter";
 import { replyComposer } from "../components/reply-composer";
 import { escapeHtml, jsLiteral } from "../escape";
+import { kbdKeys } from "../layout";
 
 const relTime = (ts: number, now: number = Date.now()): string => {
 	const diff = Math.max(0, now - ts);
@@ -31,6 +32,31 @@ const reportBadge = (n: number): string =>
 	n > 0
 		? ` <span class="pill spam" title="${n} open report${n === 1 ? "" : "s"}">⚑ ${n}</span>`
 		: "";
+
+/**
+ * The queue's keyboard shortcuts, in the order they're listed to the user.
+ *
+ * One list, three consumers: the hint strip above the table, the help
+ * popover (the route hands this to `layout` as `opts.shortcuts`), and the
+ * `onKey` switch below. Splitting them is how a popover ends up promising a
+ * key the page no longer handles.
+ */
+export const QUEUE_SHORTCUTS: ReadonlyArray<readonly [string, string]> = [
+	["j / k", "Move the row cursor"],
+	["a", "Approve the row under the cursor"],
+	["s", "Mark it as spam"],
+	["d", "Delete it (asks first)"],
+	["r", "Reply to it"],
+	["Esc", "Clear the cursor"],
+];
+
+// Same keys the help popover lists, spelled out where the moderating
+// happens — a shortcut nobody knows about is a shortcut nobody uses.
+const shortcutStrip = (): string =>
+	`<p class="muted shortcut-strip">${QUEUE_SHORTCUTS.map(
+		([keys, desc]) =>
+			`<span>${kbdKeys(keys)} ${escapeHtml(desc.toLowerCase())}</span>`,
+	).join(" · ")}</p>`;
 
 export type QueueFilters = {
 	status: CommentStatus | "all";
@@ -264,6 +290,7 @@ export const renderQueue = (
 					(c) => `
 <tr x-data="{ busy: false, gone: false }"
     x-show="!gone" x-transition.opacity
+    :class="allIds[cursor] === ${jsLiteral(c.id)} ? 'row-cursor' : ''"
     @bulk-done.window="if ($event.detail.ids.includes(${jsLiteral(c.id)})) gone = true">
   <td class="bulk-cell"><input type="checkbox" :value="${jsLiteral(c.id)}" x-model="selected" :disabled="busy"></td>
   <td><span class="pill ${c.status}">${c.status}</span>${reportBadge(reportCounts[c.id] ?? 0)}</td>
@@ -293,7 +320,7 @@ export const renderQueue = (
 	const rowCtx = `{${rows
 		.map(
 			(r) =>
-				`${jsLiteral(r.id)}: { name: ${jsLiteral(r.author_name ?? "")}, post: ${jsLiteral(r.post_title || r.post_slug)} }`,
+				`${jsLiteral(r.id)}: { name: ${jsLiteral(r.author_name ?? "")}, post: ${jsLiteral(r.post_title || r.post_slug)}, status: ${jsLiteral(r.status)} }`,
 		)
 		.join(", ")}}`;
 
@@ -309,6 +336,7 @@ export const renderQueue = (
 <div class="filter-bar"><span class="muted">filter:</span> ${tabs}</div>
 ${filterBar}
 ${lifecycleBar}
+${shortcutStrip()}
 <div x-data="{ open: false, commentId: null, authorName: '', postTitle: '' }"
 @open-reply.window="open = true; commentId = $event.detail.id; authorName = $event.detail.name || ''; postTitle = $event.detail.post || '';"
 @reply-posted="open = false"
@@ -318,9 +346,78 @@ ${lifecycleBar}
   bulkBusy: false,
   allIds: ${escapeHtml(JSON.stringify(allIds))},
   rowCtx: ${rowCtx},
+  cursor: -1,
+  done: {},
   openReply(id) {
     const ctx = this.rowCtx[id] || {};
     this.$dispatch('open-reply', { id: id, name: ctx.name || '', post: ctx.post || '' });
+  },
+  // --- keyboard driving ------------------------------------------------
+  // The cursor is an index into allIds, not a DOM pointer: rows leave the
+  // table by going x-show=false, so 'the next row' means the next index
+  // this page hasn't already acted on, not the next visible <tr>.
+  nextLive(from, dir) {
+    for (let i = from; i >= 0 && i < this.allIds.length; i += dir) {
+      if (!this.done[this.allIds[i]]) return i;
+    }
+    return -1;
+  },
+  move(dir) {
+    const start = this.cursor < 0 ? (dir > 0 ? 0 : this.allIds.length - 1) : this.cursor + dir;
+    const next = this.nextLive(start, dir);
+    if (next < 0) return;
+    this.cursor = next;
+    const row = this.$el.querySelectorAll('tbody tr')[next];
+    if (row && row.scrollIntoView) row.scrollIntoView({ block: 'nearest' });
+  },
+  advance() {
+    const fwd = this.nextLive(this.cursor + 1, 1);
+    this.cursor = fwd >= 0 ? fwd : this.nextLive(this.cursor - 1, -1);
+  },
+  keyAct(action, label) {
+    const id = this.allIds[this.cursor];
+    if (!id || this.done[id]) return;
+    if (action === 'delete' && !confirm('Delete this comment?')) return;
+    // Marked done up front so a fast repeat can't fire twice on one row;
+    // rolled back if the request fails, which also puts the cursor's path
+    // back the way it was.
+    this.done[id] = true;
+    this.act(id, action).then(() => {
+      this.$dispatch('toast', { text: label });
+      this.$dispatch('bulk-done', { ids: [id] });
+      this.advance();
+    }).catch(e => {
+      this.done[id] = false;
+      this.$dispatch('toast', { text: e.message || 'Action failed', kind: 'bad' });
+    });
+  },
+  keyReply() {
+    const id = this.allIds[this.cursor];
+    if (!id) return;
+    const ctx = this.rowCtx[id] || {};
+    if (ctx.status === 'deleted' || ctx.status === 'spam') {
+      this.$dispatch('toast', { text: 'Nothing to reply to on a ' + ctx.status + ' comment', kind: 'bad' });
+      return;
+    }
+    this.openReply(id);
+  },
+  onKey(e) {
+    // A shortcut that fires while someone is typing a search term is worse
+    // than no shortcut at all, so the filter inputs, the reply composer and
+    // any open modal all keep the keyboard to themselves. Modifier combos
+    // belong to the browser.
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (this.open) return;
+    const t = e.target;
+    if (t && t.closest && t.closest('input, textarea, select, [contenteditable]')) return;
+    if (e.key === 'Escape') { this.cursor = -1; return; }
+    if (e.key === 'j') { e.preventDefault(); this.move(1); return; }
+    if (e.key === 'k') { e.preventDefault(); this.move(-1); return; }
+    if (this.cursor < 0) return;
+    if (e.key === 'a') { e.preventDefault(); this.keyAct('approve', 'Approved'); }
+    else if (e.key === 's') { e.preventDefault(); this.keyAct('spam', 'Marked as spam'); }
+    else if (e.key === 'd') { e.preventDefault(); this.keyAct('delete', 'Deleted'); }
+    else if (e.key === 'r') { e.preventDefault(); this.keyReply(); }
   },
   toggleAll(e) {
     this.selected = e.target.checked ? this.allIds.slice() : [];
@@ -349,6 +446,9 @@ ${lifecycleBar}
       return r.json();
     }).then(j => {
       const doneIds = (j && Array.isArray(j.touched)) ? j.touched : ids;
+      // Keep the keyboard cursor's view of the table honest: a row the bulk
+      // bar just hid is one the cursor must skip over, not land on.
+      doneIds.forEach(i => { this.done[i] = true; });
       this.$dispatch('toast', { text: action + ' ' + doneIds.length + ' comment(s)' });
       this.$dispatch('bulk-done', { ids: doneIds });
       this.selected = [];
@@ -356,7 +456,7 @@ ${lifecycleBar}
       this.$dispatch('toast', { text: e.message || 'Bulk failed', kind: 'bad' });
     }).finally(() => { this.bulkBusy = false; });
   }
-}">
+}" @keydown.window="onKey($event)">
   <table>
     <thead><tr>
       <th class="bulk-cell"><input type="checkbox" @change="toggleAll($event)" :checked="selected.length > 0 && selected.length === allIds.length"></th>

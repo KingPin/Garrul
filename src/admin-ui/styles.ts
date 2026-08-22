@@ -237,6 +237,15 @@ button:disabled, .btn:disabled { opacity: 0.5; cursor: not-allowed; }
             border-top: 1px solid var(--border); margin: 1rem -1rem -1rem;
             border-radius: 0 0 var(--radius) var(--radius); box-shadow: var(--shadow-lg); }
 .bulk-bar span:first-child { font-weight: 600; margin-right: auto; }
+/* The keyboard cursor. An outline rather than a background tint: rows already
+   use background to carry status, and the cursor has to stay legible on top of
+   whichever one it lands on. scroll-margin keeps it clear of the sticky
+   bulk bar when j/k scrolls it into view. */
+.row-cursor > td { background: var(--surface-2); }
+.row-cursor > td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+.row-cursor { scroll-margin: 4rem 0; }
+.shortcut-strip { display: flex; flex-wrap: wrap; gap: 0.25rem 0.75rem;
+                  font-size: 0.8rem; margin: 0 0 0.75rem; }
 [x-cloak] { display: none !important; }
 .reply-modal { position: fixed; inset: 0; background: rgba(0,0,0,0.55);
                display: flex; align-items: flex-start; justify-content: center;

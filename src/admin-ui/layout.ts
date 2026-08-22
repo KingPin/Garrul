@@ -107,7 +107,22 @@ export type LayoutOpts = {
 	usage_link?: boolean;
 	/** Request path of the current page, used to highlight the active nav link. */
 	activePath?: string;
+	/**
+	 * Page-local keyboard shortcuts, `[keys, description]`, listed in the help
+	 * popover under the three global ones. The page that binds them owns the
+	 * list (see `QUEUE_SHORTCUTS`), so the popover can't describe a key the
+	 * page stopped handling.
+	 */
+	shortcuts?: ReadonlyArray<readonly [string, string]>;
 };
+
+// `j / k` renders as two <kbd>s, `Esc` as one: split on the separator the
+// caller wrote rather than making every entry an array.
+export const kbdKeys = (keys: string): string =>
+	keys
+		.split("/")
+		.map((k) => `<kbd>${escapeHtml(k.trim())}</kbd>`)
+		.join(" ");
 
 export const layout = (
 	title: string,
@@ -169,6 +184,14 @@ export const layout = (
 	const navHtml = navSections
 		.map((s) => renderNavSection(s, opts.activePath))
 		.join("\n");
+	const pageShortcuts = opts.shortcuts?.length
+		? `<h4>This page</h4>
+  <dl>
+    ${opts.shortcuts
+			.map(([keys, desc]) => `<dt>${kbdKeys(keys)}</dt><dd>${escapeHtml(desc)}</dd>`)
+			.join("\n    ")}
+  </dl>`
+		: "";
 	// The theme lives on <html> as data-theme. We can't use the usual inline
 	// <head> script to set it before first paint (admin CSP forbids inline
 	// <script>), so the CSS handles the no-JS case: :root is light and a
@@ -240,6 +263,7 @@ ${body}
     <dt><kbd>?</kbd></dt><dd>Toggle this help</dd>
     <dt><kbd>Esc</kbd></dt><dd>Close help</dd>
   </dl>
+  ${pageShortcuts}
 </div>
 <script src="https://cdn.jsdelivr.net/npm/alpinejs@${ALPINE_VERSION}/dist/cdn.min.js"
         integrity="${ALPINE_SRI}"

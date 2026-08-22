@@ -101,13 +101,17 @@ import {
 	versionCheckMiddleware,
 	type UpdateInfo,
 } from "../lib/version-check";
-import { accessDeniedHtml, layout } from "../admin-ui/layout";
+import { accessDeniedHtml, layout, type LayoutOpts } from "../admin-ui/layout";
 import { ADMIN_CSP } from "../admin-ui/styles";
 import { renderAbout } from "../admin-ui/pages/about";
 import { renderDashboard } from "../admin-ui/pages/dashboard";
 import { renderAudit, type AuditFilters } from "../admin-ui/pages/audit";
 import { renderCommentDetail } from "../admin-ui/pages/comment-detail";
-import { renderQueue, type QueueFilters } from "../admin-ui/pages/queue";
+import {
+	QUEUE_SHORTCUTS,
+	renderQueue,
+	type QueueFilters,
+} from "../admin-ui/pages/queue";
 import {
 	renderSavedRepliesList,
 	renderSavedReplyForm,
@@ -189,14 +193,20 @@ const wantsHtml = (c: Ctx): boolean => {
 // nav opts (currently just whether the optional usage dashboard is wired
 // up). Centralized so adding a future env-gated link doesn't require
 // touching ~17 callsites.
+//
+// `opts` is for the per-page extras a route knows and this wrapper can't
+// derive — currently only the page's own keyboard shortcuts. The derived
+// opts are spread last so a caller can't accidentally override them.
 const renderPage = (
 	c: Ctx,
 	title: string,
 	body: string,
 	user: User,
 	updateInfo: UpdateInfo | null,
+	opts: Omit<LayoutOpts, "usage_link" | "activePath"> = {},
 ): string =>
 	layout(title, body, user, updateInfo, {
+		...opts,
 		usage_link: isUsageConfigured(c.env),
 		activePath: c.req.path,
 	});
@@ -440,6 +450,7 @@ admin.get("/queue", async (c) => {
 			),
 			user,
 			updateInfo,
+			{ shortcuts: QUEUE_SHORTCUTS },
 		),
 	);
 });

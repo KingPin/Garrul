@@ -10,7 +10,11 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { renderQueue, type QueueFilters } from "../src/admin-ui/pages/queue";
+import {
+	QUEUE_SHORTCUTS,
+	renderQueue,
+	type QueueFilters,
+} from "../src/admin-ui/pages/queue";
 import { renderAudit, type AuditFilters } from "../src/admin-ui/pages/audit";
 import {
 	renderSubscriptions,
@@ -22,7 +26,7 @@ import type { AuditRetentionStats } from "../src/db/audit-retention";
 import { renderSettings } from "../src/admin-ui/pages/settings";
 import { MAX_XML_BYTES } from "../src/lib/disqus-import";
 import { renderDashboard } from "../src/admin-ui/pages/dashboard";
-import { renderUpdateBanner } from "../src/admin-ui/layout";
+import { layout, renderUpdateBanner } from "../src/admin-ui/layout";
 import {
 	FLAG_KEYS,
 	NUMBER_KEYS,
@@ -41,6 +45,7 @@ import type {
 	AdminStats,
 	AuditRowWithAdmin,
 	Subscription,
+	User,
 } from "../src/db/queries";
 import type { Bindings } from "../src/index";
 
@@ -967,5 +972,99 @@ describe("saved-reply variables in the queue reply modal", () => {
 		const html = renderQueue([makeComment()], emptyQueueFilters, null);
 		expect(html).toContain("authorName = $event.detail.name || ''");
 		expect(html).toContain("name: authorName, post: postTitle");
+	});
+});
+
+describe("queue keyboard shortcuts", () => {
+	// The one thing this feature can get quietly wrong is *promising* a key it
+	// no longer handles, so the assertions run the other way round: every entry
+	// in QUEUE_SHORTCUTS has to be reachable from the handler and visible to
+	// the reader, rather than three hand-written lists agreeing by luck.
+	const keysOf = (entry: readonly [string, string]): string[] =>
+		entry[0].split("/").map((k) => k.trim());
+	// The strip and the popover spell keys the way a keyboard does; the handler
+	// compares KeyboardEvent.key. Only one key in the list differs, so the gap
+	// is a lookup rather than a second column in QUEUE_SHORTCUTS.
+	const EVENT_KEY: Record<string, string> = { Esc: "Escape" };
+	const eventKey = (k: string): string => EVENT_KEY[k] ?? k;
+	const adminUser: User = {
+		id: "01HUSR000000000000000000A",
+		provider: "github",
+		provider_id: "u1",
+		name: "Admin",
+		email: null,
+		avatar_url: null,
+		is_admin: true,
+		is_banned: false,
+		role: "admin",
+		created_at: 1_700_000_000_000,
+		erased_at: null,
+	};
+
+	it("handles every key it advertises", () => {
+		const html = renderQueue([makeComment()], emptyQueueFilters, null);
+		for (const entry of QUEUE_SHORTCUTS) {
+			for (const key of keysOf(entry)) {
+				expect(html).toContain(`e.key === '${eventKey(key)}'`);
+			}
+		}
+	});
+
+	it("lists every advertised key in the hint strip", () => {
+		const html = renderQueue([makeComment()], emptyQueueFilters, null);
+		expect(html).toContain('class="muted shortcut-strip"');
+		for (const entry of QUEUE_SHORTCUTS) {
+			for (const key of keysOf(entry)) {
+				expect(html).toContain(`<kbd>${key}</kbd>`);
+			}
+			expect(html).toContain(entry[1].toLowerCase());
+		}
+	});
+
+	it("lists the same keys in the layout help popover", () => {
+		const html = layout("Queue", "<p>body</p>", adminUser, null, {
+			shortcuts: QUEUE_SHORTCUTS,
+		});
+		expect(html).toContain("<h4>This page</h4>");
+		for (const entry of QUEUE_SHORTCUTS) {
+			for (const key of keysOf(entry)) {
+				expect(html).toContain(`<kbd>${key}</kbd>`);
+			}
+			expect(html).toContain(`<dd>${entry[1]}</dd>`);
+		}
+	});
+
+	it("omits the page section when a page declares no shortcuts", () => {
+		const html = layout("Users", "<p>body</p>", adminUser, null);
+		expect(html).not.toContain("This page");
+	});
+
+	it("binds the handler and marks the row under the cursor", () => {
+		const html = renderQueue([makeComment()], emptyQueueFilters, null);
+		expect(html).toContain('@keydown.window="onKey($event)"');
+		expect(html).toContain(
+			":class=\"allIds[cursor] === &quot;01HXX000000000000000000001&quot; ? 'row-cursor' : ''\"",
+		);
+	});
+
+	it("keeps typing, modifiers and the open modal out of the handler", () => {
+		const html = renderQueue([makeComment()], emptyQueueFilters, null);
+		expect(html).toContain("if (e.metaKey || e.ctrlKey || e.altKey) return;");
+		expect(html).toContain("if (this.open) return;");
+		expect(html).toContain(
+			"t.closest('input, textarea, select, [contenteditable]')",
+		);
+	});
+
+	it("confirms before delete but not before approve or spam", () => {
+		const html = renderQueue([makeComment()], emptyQueueFilters, null);
+		expect(html).toContain(
+			"if (action === 'delete' && !confirm('Delete this comment?')) return;",
+		);
+	});
+
+	it("teaches the cursor to skip rows the bulk bar hid", () => {
+		const html = renderQueue([makeComment()], emptyQueueFilters, null);
+		expect(html).toContain("doneIds.forEach(i => { this.done[i] = true; });");
 	});
 });
