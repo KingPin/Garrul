@@ -1932,8 +1932,36 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 	bindComposerKeys(wrap, dismiss);
 	actions.append(save, cancel);
 
-	/** Set once the edit window closes under this editor. See `expire` below. */
-	let expired = false;
+	// Unlike the chip in the actions row, this one IS a live region: the window
+	// closing under someone who is mid-sentence is an event, and it happens
+	// nowhere near whatever they are looking at.
+	const errBox = statusBox("gr-error is-inline");
+
+	/**
+	 * Has the window closed? Asked of the clock every time, never cached. The
+	 * shared ticker only re-reads it every 15 seconds, so a flag the tick sets
+	 * is stale for up to that long — and both of the moments that consult this
+	 * (a prefill landing, a submit) can fall inside the gap.
+	 */
+	const isExpired = (): boolean =>
+		editWindowState(n.created_at, ctx.editWindowMs, Date.now()).phase ===
+		"expired";
+
+	/**
+	 * The window ran out while this editor was open. Retire the surfaces that
+	 * would fail and say why — before this, Save stayed live, the PATCH came
+	 * back 403, and the button quietly re-enabled itself with nothing on screen
+	 * to explain it. Cancel stays enabled: dismissing is still valid, and it is
+	 * the only way out.
+	 *
+	 * Idempotent: the tick, a landing prefill and a submit can each be the first
+	 * to notice, and re-showing the same string is a no-op.
+	 */
+	const expire = (): void => {
+		ta.disabled = true;
+		save.disabled = true;
+		showStatus(errBox, s("w.edit_expired"));
+	};
 
 	// Prefill with the original markdown source. The tree payload only carries
 	// body_html, so we fetch body_md on demand from the author-only source
@@ -1953,10 +1981,17 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 		})
 		.catch(() => {})
 		.finally(() => {
-			// The author may have hit Cancel before the fetch resolved — or the
-			// window may have closed while it was in flight, in which case handing
-			// the field and Save back would undo `expire`.
-			if (!ta.isConnected || expired) return;
+			// The author may have hit Cancel before the fetch resolved.
+			if (!ta.isConnected) return;
+			// Or the window may have closed while it was in flight — the click that
+			// opened this editor could itself have landed after expiry, since the
+			// Edit button only leaves the row on a tick. Handing back a field and a
+			// Save the server has already stopped accepting is the one thing this
+			// whole surface exists to prevent, so say so instead.
+			if (isExpired()) {
+				expire();
+				return;
+			}
 			ta.disabled = false;
 			save.disabled = false;
 			ta.placeholder = s("w.edit_ph");
@@ -1965,38 +2000,25 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 			autoSize(ta);
 			ta.focus();
 		});
-	// Unlike the chip in the actions row, this one IS a live region: the window
-	// closing under someone who is mid-sentence is an event, and it happens
-	// nowhere near whatever they are looking at.
-	const errBox = statusBox("gr-error is-inline");
 	wrap.append(buildWritePreview(ta, ctx.apiBase, true), actions, errBox);
 
-	/**
-	 * The window ran out while this editor was open. Retire the surfaces that
-	 * would fail and say why — before this, Save stayed live, the PATCH came
-	 * back 403, and the button quietly re-enabled itself with nothing on screen
-	 * to explain it. Cancel stays enabled: dismissing is still valid, and it is
-	 * the only way out.
-	 */
-	const expire = (): void => {
-		expired = true;
-		ta.disabled = true;
-		save.disabled = true;
-		showStatus(errBox, s("w.edit_expired"));
-	};
 	registerCountdown(() => {
 		if (!wrap.isConnected) return false;
-		const state = editWindowState(n.created_at, ctx.editWindowMs, Date.now());
-		if (state.phase !== "expired") return true;
+		if (!isExpired()) return true;
 		expire();
 		return false;
 	});
 
 	wrap.addEventListener("submit", async (e) => {
 		e.preventDefault();
-		// The tick runs every 15 seconds, so a submit can still land in the gap
-		// between the window closing and the tick noticing.
-		if (expired) return;
+		// The tick only re-reads the clock every 15 seconds, so a submit can land
+		// in the gap between the window closing and the tick noticing. Ask the
+		// clock directly and take the editor down here rather than send a PATCH
+		// we know the server will refuse.
+		if (isExpired()) {
+			expire();
+			return;
+		}
 		save.disabled = true;
 		clearStatus(errBox);
 		try {
