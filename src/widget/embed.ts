@@ -1685,6 +1685,13 @@ const buildSubscribeBell = (
  * is no longer `isConnected` simply says so and is dropped. That means no
  * caller anywhere has to remember to unregister, and the interval stops itself
  * once the last countdown has gone.
+ *
+ * A tick registered with a delay (see `registerCountdown`) is the one case where
+ * that answer isn't prompt: nothing asks it until the boundary, so an abandoned
+ * editor's DOM stays reachable through the closure until then rather than for
+ * the fifteen seconds it used to. That is the trade for not running a timer
+ * across a window measured in days, and it holds one element per abandoned
+ * surface, not a growing set.
  */
 const countdownTicks = new Set<() => boolean>();
 let countdownTimer: ReturnType<typeof setInterval> | undefined;
