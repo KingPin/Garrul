@@ -237,13 +237,16 @@ button:disabled, .btn:disabled { opacity: 0.5; cursor: not-allowed; }
             border-top: 1px solid var(--border); margin: 1rem -1rem -1rem;
             border-radius: 0 0 var(--radius) var(--radius); box-shadow: var(--shadow-lg); }
 .bulk-bar span:first-child { font-weight: 600; margin-right: auto; }
-/* The keyboard cursor. An outline rather than a background tint: rows already
-   use background to carry status, and the cursor has to stay legible on top of
-   whichever one it lands on. scroll-margin keeps it clear of the sticky
-   bulk bar when j/k scrolls it into view. */
-.row-cursor > td { background: var(--surface-2); }
-.row-cursor > td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
-.row-cursor { scroll-margin: 4rem 0; }
+/* The keyboard cursor. An outline and no background tint, because the tint has
+   nowhere to land: tbody tr:nth-child(even) is already surface-2, so tinting
+   the cursor row surface-2 marked odd rows and left even ones looking exactly
+   as they did.
+   Drawn on the <tr>, which border-collapse: collapse makes paintable, and not
+   on the cells: .actions is display:flex, so that td is out of table layout
+   and sizes to its buttons — per-cell edges came up short there and the
+   rectangle didn't close. scroll-margin keeps the row clear of the sticky bulk
+   bar when j/k scrolls it into view. */
+.row-cursor { border: 2px solid var(--accent); scroll-margin: 4rem 0; }
 .shortcut-strip { display: flex; flex-wrap: wrap; gap: 0.25rem 0.75rem;
                   font-size: 0.8rem; margin: 0 0 0.75rem; }
 /* Moderator notes. Bodies are plain text, so pre-wrap is what makes a note
