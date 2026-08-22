@@ -34,6 +34,30 @@ const reportBadge = (n: number): string =>
 		: "";
 
 /**
+ * Moderator-note count badge. Empty string when zero.
+ *
+ * The count, not the notes: the queue is a list of decisions to make, and the
+ * badge's whole job is to say "someone already looked at this — read the
+ * detail page before you act". Inlining bodies here would put another mod's
+ * private reasoning on the screen a moderator skims fastest.
+ */
+const noteBadge = (n: number, about: string): string =>
+	n > 0
+		? ` <span class="pill note-badge" title="${n} moderator note${n === 1 ? "" : "s"} on ${about}">✎ ${n}</span>`
+		: "";
+
+/**
+ * Note counts for the visible rows, keyed by the thing the note is about.
+ * Two lookups because a row carries two targets: the comment in front of you
+ * and the account that wrote it, and "this account has history" is the more
+ * useful of the two to see before approving.
+ */
+export type QueueNoteCounts = {
+	comment: Record<string, number>;
+	user: Record<string, number>;
+};
+
+/**
  * The queue's keyboard shortcuts, in the order they're listed to the user.
  *
  * One list, three consumers: the hint strip above the table, the help
@@ -84,7 +108,7 @@ const queryString = (f: QueueFilters): string => {
 	return s ? `?${s}` : "";
 };
 
-const authorCell = (c: AdminComment): string => {
+const authorCell = (c: AdminComment, noteCount: number): string => {
 	const name = c.author_name ?? "(deleted user)";
 	const provider = c.author_provider ?? "anon";
 	const avatar = c.author_avatar_url
@@ -97,7 +121,7 @@ const authorCell = (c: AdminComment): string => {
 <a class="author-cell" href="/admin/users/${escapeHtml(c.user_id)}">
   ${avatar}
   <span class="author-meta">
-    <span class="author-name">${escapeHtml(name)} ${badges.join(" ")}</span>
+    <span class="author-name">${escapeHtml(name)} ${badges.join(" ")}${noteBadge(noteCount, "this account")}</span>
     <span class="author-sub muted">${escapeHtml(provider)}</span>
   </span>
 </a>`;
@@ -204,6 +228,7 @@ export const renderQueue = (
 	reportCounts: Record<string, number> = {},
 	/** Signed-in moderator's display name, shown as the reply composer's identity. */
 	modName = "",
+	noteCounts: QueueNoteCounts = { comment: {}, user: {} },
 ): string => {
 	const statusTabs = ["all", "approved", "pending", "spam", "deleted"]
 		.map((s) => {
@@ -293,8 +318,8 @@ export const renderQueue = (
     :class="allIds[cursor] === ${jsLiteral(c.id)} ? 'row-cursor' : ''"
     @bulk-done.window="if ($event.detail.ids.includes(${jsLiteral(c.id)})) gone = true">
   <td class="bulk-cell"><input type="checkbox" :value="${jsLiteral(c.id)}" x-model="selected" :disabled="busy"></td>
-  <td><span class="pill ${c.status}">${c.status}</span>${reportBadge(reportCounts[c.id] ?? 0)}</td>
-  <td>${authorCell(c)}</td>
+  <td><span class="pill ${c.status}">${c.status}</span>${reportBadge(reportCounts[c.id] ?? 0)}${noteBadge(noteCounts.comment[c.id] ?? 0, "this comment")}</td>
+  <td>${authorCell(c, noteCounts.user[c.user_id] ?? 0)}</td>
   <td class="score-cell" title="up / down">${scoreCell(c)}</td>
   <td class="meta-cell">${metaCell(c)}</td>
   <td class="row-body">

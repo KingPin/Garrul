@@ -539,6 +539,41 @@ describe("the detail pages load their notes", () => {
 	});
 });
 
+// --------------------------- queue badges ----------------------------------
+
+describe("queue note badges", () => {
+	it("badges the comment and the author separately", async () => {
+		seedNote("n-c", MOD_ID, "on the comment");
+		sqlite
+			.prepare(
+				`INSERT INTO moderator_notes (id, target_kind, target_id, author_id,
+				                              body, created_at)
+				 VALUES ('n-u1', 'user', ?, ?, 'a', ?),
+				        ('n-u2', 'user', ?, ?, 'b', ?)`,
+			)
+			.run(PLAIN_ID, MOD_ID, NOW, PLAIN_ID, MOD_ID, NOW);
+		const res = await page("/admin/queue?status=all", MOD_SID);
+		expect(res.status).toBe(200);
+		const html = await res.text();
+		expect(html).toContain("1 moderator note on this comment");
+		expect(html).toContain("2 moderator notes on this account");
+	});
+
+	it("shows the count, never the note text", async () => {
+		seedNote("n-c", MOD_ID, "another mod's private reasoning");
+		const html = await (await page("/admin/queue?status=all", MOD_SID)).text();
+		expect(html).toContain("moderator note on this comment");
+		expect(html).not.toContain("private reasoning");
+	});
+
+	it("renders no badge when there are no notes", async () => {
+		const html = await (await page("/admin/queue?status=all", MOD_SID)).text();
+		// `.note-badge` itself is in the inlined stylesheet on every page; the
+		// badge's own title text is what only exists when one rendered.
+		expect(html).not.toContain("moderator note");
+	});
+});
+
 // ------------------------------- render ------------------------------------
 
 const mkNote = (over: Record<string, unknown> = {}) => ({

@@ -46,6 +46,7 @@ import {
 	adminTopCommenters,
 	adminTopPosts,
 	countAdmins,
+	countModeratorNotesByTarget,
 	countOpenReportsByComment,
 	createWebhookEndpoint,
 	deleteSettings,
@@ -419,6 +420,20 @@ admin.get("/queue", async (c) => {
 		trimmed.map((r) => r.id),
 	);
 
+	// Note badges. Two counts per row — the comment and the account that wrote
+	// it — deduped to one lookup each, since a queue page is routinely one
+	// account posting fifty times.
+	const [commentNoteCounts, userNoteCounts] = await Promise.all([
+		countModeratorNotesByTarget(
+			c.env.DB,
+			"comment",
+			trimmed.map((r) => r.id),
+		),
+		countModeratorNotesByTarget(c.env.DB, "user", [
+			...new Set(trimmed.map((r) => r.user_id)),
+		]),
+	]);
+
 	const hosts = await adminListHosts(c.env.DB);
 
 	const updateInfo = await peekCachedLatestVersion(c.env);
@@ -453,6 +468,7 @@ admin.get("/queue", async (c) => {
 				postState,
 				reportCounts,
 				user.name,
+				{ comment: commentNoteCounts, user: userNoteCounts },
 			),
 			user,
 			updateInfo,

@@ -256,6 +256,10 @@ button:disabled, .btn:disabled { opacity: 0.5; cursor: not-allowed; }
              gap: 0.4rem; flex-wrap: wrap; }
 .note-body { white-space: pre-wrap; overflow-wrap: anywhere; }
 .note-del { font-size: 0.75rem; padding: 0.05rem 0.35rem; }
+/* Queue note badge. Neutral on purpose — it says "read before you act",
+   not "this is bad", which is what the report and spam pills already say. */
+.note-badge { background: var(--surface-2); color: var(--text);
+              border: 1px solid var(--border-strong); }
 [x-cloak] { display: none !important; }
 .reply-modal { position: fixed; inset: 0; background: rgba(0,0,0,0.55);
                display: flex; align-items: flex-start; justify-content: center;
