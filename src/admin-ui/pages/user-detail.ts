@@ -2,11 +2,13 @@ import type {
 	AdminComment,
 	AdminUserDetail,
 	AuditRowWithAdmin,
+	ModeratorNoteWithAuthor,
 	User,
 	UserRole,
 } from "../../db/queries";
 import { identiconSvg } from "../../lib/identicon";
 import { sanitizeForEmail as resanitizeBodyHtml } from "../../lib/markdown";
+import { moderatorNotes } from "../components/moderator-notes";
 import { escapeHtml, jsLiteral } from "../escape";
 
 const formatTs = (ts: number): string =>
@@ -187,6 +189,8 @@ const auditTable = (rows: AuditRowWithAdmin[]): string => {
 export const renderUserDetail = (
 	d: AdminUserDetail,
 	viewer: User,
+	/** Internal notes about this user, newest first. */
+	notes: ModeratorNoteWithAuthor[] = [],
 ): string => {
 	const u = d.user;
 	const commentsHtml = d.comments.length
@@ -264,6 +268,14 @@ export const renderUserDetail = (
     <div><span class="muted">Reactions received:</span> ${d.reactions_received}</div>
   </div>
 </div>
+
+${moderatorNotes({
+	target_kind: "user",
+	target_id: u.id,
+	notes,
+	viewerId: viewer.id,
+	viewerIsAdmin: viewer.role === "admin",
+})}
 
 <div class="card">
   <h3>Comments by ${escapeHtml(u.name)}</h3>

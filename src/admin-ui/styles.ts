@@ -246,6 +246,16 @@ button:disabled, .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .row-cursor { scroll-margin: 4rem 0; }
 .shortcut-strip { display: flex; flex-wrap: wrap; gap: 0.25rem 0.75rem;
                   font-size: 0.8rem; margin: 0 0 0.75rem; }
+/* Moderator notes. Bodies are plain text, so pre-wrap is what makes a note
+   someone typed with line breaks read back the way they typed it — nothing
+   else in this admin renders unparsed operator input. */
+.note-list { list-style: none; margin: 0; padding: 0;
+             display: flex; flex-direction: column; gap: 0.5rem; }
+.note { border-left: 3px solid var(--border); padding: 0.25rem 0 0.25rem 0.6rem; }
+.note-meta { font-size: 0.8rem; display: flex; align-items: center;
+             gap: 0.4rem; flex-wrap: wrap; }
+.note-body { white-space: pre-wrap; overflow-wrap: anywhere; }
+.note-del { font-size: 0.75rem; padding: 0.05rem 0.35rem; }
 [x-cloak] { display: none !important; }
 .reply-modal { position: fixed; inset: 0; background: rgba(0,0,0,0.55);
                display: flex; align-items: flex-start; justify-content: center;

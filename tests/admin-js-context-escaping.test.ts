@@ -30,6 +30,7 @@ import {
 	renderWebhookForm,
 } from "../src/admin-ui/pages/webhooks";
 import { renderSavedReplyForm } from "../src/admin-ui/pages/saved-replies";
+import { moderatorNotes } from "../src/admin-ui/components/moderator-notes";
 import {
 	commentIdLiteral,
 	replyComposer,
@@ -126,6 +127,28 @@ describe("JS-string interpolation in admin Alpine attributes", () => {
 		const html = renderSavedReplyForm({ existing: mkReply(), error: null });
 		expectNoBreakout(html);
 		expect(html).toContain("del(&quot;");
+	});
+
+	it("moderatorNotes passes the target and note ids as JS literals", () => {
+		const html = moderatorNotes({
+			target_kind: "user",
+			target_id: HOSTILE,
+			notes: [
+				{
+					id: HOSTILE,
+					target_kind: "user",
+					target_id: HOSTILE,
+					author_id: "01HAUTHOR",
+					author_name: "Mallory",
+					body: "just a note",
+					created_at: 1_700_000_000_000,
+				},
+			],
+			viewerId: "01HAUTHOR",
+			viewerIsAdmin: true,
+		});
+		expectNoBreakout(html);
+		expect(html).toContain("remove(&quot;");
 	});
 });
 

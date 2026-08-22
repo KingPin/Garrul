@@ -3,11 +3,13 @@ import type {
 	AdminCommentDetail,
 	AuditRowWithAdmin,
 	CommentStatus,
+	ModeratorNoteWithAuthor,
 	Report,
 	SpamVerdictRow,
 } from "../../db/queries";
 import { identiconSvg } from "../../lib/identicon";
 import { sanitizeForEmail as resanitizeBodyHtml } from "../../lib/markdown";
+import { moderatorNotes } from "../components/moderator-notes";
 import {
 	commentIdLiteral,
 	replyComposer,
@@ -219,6 +221,10 @@ export const renderCommentDetail = (
 	isAdmin = false,
 	/** Signed-in moderator's display name, shown as the reply composer's identity. */
 	modName = "",
+	/** Internal notes on this comment, newest first. */
+	notes: ModeratorNoteWithAuthor[] = [],
+	/** Signed-in moderator's id — decides which notes offer a Delete. */
+	viewerId = "",
 ): string => {
 	const { comment, parent, replies, ip_siblings, user_recent, verdicts, reports, audit } = d;
 	const parentSection = parent
@@ -293,6 +299,14 @@ export const renderCommentDetail = (
   <div class="actions" style="margin-top:0.5rem">${actionsFor(comment.status)}</div>
   ${banAuthorAction(comment, isAdmin)}
 </div>
+
+${moderatorNotes({
+	target_kind: "comment",
+	target_id: comment.id,
+	notes,
+	viewerId,
+	viewerIsAdmin: isAdmin,
+})}
 
 <div class="card">
   <h3>Raw markdown</h3>
