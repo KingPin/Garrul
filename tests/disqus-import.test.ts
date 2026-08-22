@@ -152,6 +152,17 @@ describe("parseDisqusXml", () => {
 		expect(out.threads[0]!.created_at).toBe(Date.parse("2023-04-01T10:00:00Z"));
 	});
 
+	it("reads <isClosed>, defaulting to open when the tag is absent", () => {
+		// Older exports omit the tag entirely, and open is the right reading of
+		// silence — it matches the posts.closed schema default.
+		expect(parseDisqusXml(SAMPLE_XML).threads[0]!.is_closed).toBe(false);
+		const closed = parseDisqusXml(
+			`<disqus><thread dsq:id="t1"><link>https://example.com/a</link>
+			  <isClosed>true</isClosed></thread></disqus>`,
+		);
+		expect(closed.threads[0]!.is_closed).toBe(true);
+	});
+
 	it("extracts posts with author, thread + parent dsq_id", () => {
 		const out = parseDisqusXml(SAMPLE_XML);
 		expect(out.posts).toHaveLength(2);
@@ -304,6 +315,27 @@ describe("runDisqusImport", () => {
 		const { db, captured } = makeFreshDb();
 		await runDisqusImport(db, SAMPLE_XML, "secret", {});
 		expect(postInsert(captured)[2]).toBe("https://example.com/blog/hello");
+	});
+
+	it("imports a closed Disqus thread as a closed page", async () => {
+		// posts.closed is otherwise operator-set. A forum the author froze years
+		// ago should not reopen to new comments just because it changed hosts.
+		const { db, captured } = makeFreshDb();
+		await runDisqusImport(
+			db,
+			`<disqus><thread dsq:id="t100"><link>https://example.com/a</link>
+			   <title>A</title><isClosed>true</isClosed></thread></disqus>`,
+			"secret",
+			{},
+		);
+		// slug, title, url, created_at, closed
+		expect(postInsert(captured)[4]).toBe(1);
+	});
+
+	it("leaves a page open when the thread has no <isClosed>", async () => {
+		const { db, captured } = makeFreshDb();
+		await runDisqusImport(db, SAMPLE_XML, "secret", {});
+		expect(postInsert(captured)[4]).toBe(0);
 	});
 
 	it("nulls a non-http thread link instead of storing it", async () => {

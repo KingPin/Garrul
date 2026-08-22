@@ -33,6 +33,7 @@ export type DisqusThread = {
 	link: string | null;
 	title: string | null;
 	created_at: number;
+	is_closed: boolean;
 };
 
 export type DisqusAuthor = {
@@ -111,6 +112,9 @@ export const parseDisqusXml = (xml: string): DisqusExport => {
 			link: innerText(inner, "link"),
 			title: innerText(inner, "title"),
 			created_at: parseIso(innerText(inner, "createdAt")),
+			// Absent on old exports, and absent means open — the same default
+			// `posts.closed` carries.
+			is_closed: innerText(inner, "isClosed") === "true",
 		});
 	}
 
@@ -165,6 +169,11 @@ export const DISQUS_ADAPTER: ImportAdapter = {
 				link: t.link,
 				title: t.title,
 				created_at: t.created_at,
+				// A thread the forum closed imports as a closed page. Disqus
+				// exports no per-comment edit timestamp and no author ban state,
+				// so `edited_at` and `is_banned` stay unset here — the core's
+				// defaults are the honest answer, not a lossy one.
+				closed: t.is_closed,
 			})),
 			comments: parsed.posts.map((p) => ({
 				source_id: p.dsq_id,

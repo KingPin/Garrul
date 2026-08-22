@@ -150,6 +150,16 @@ export type SourceAuthor = {
 	 * everyone rather than deduping against the first.
 	 */
 	source_id?: string | null;
+	/**
+	 * The author was blocked at the source. Becomes `users.is_banned` on a
+	 * newly-created ghost, and only on a newly-created one — see the users
+	 * insert in `runImport` for why an import never re-bans an existing row.
+	 *
+	 * Absent means "this source does not say", not "not banned": Disqus'
+	 * export carries no ban state at all, so its ghosts are all unbanned
+	 * regardless of what the forum did.
+	 */
+	is_banned?: boolean;
 };
 
 export type SourceThread = {
@@ -158,6 +168,16 @@ export type SourceThread = {
 	link: string | null;
 	title: string | null;
 	created_at: number;
+	/**
+	 * The page was closed to new comments at the source. Becomes
+	 * `posts.closed`, so a thread an operator froze years ago does not
+	 * reopen on the way in.
+	 *
+	 * Only applied to pages this run creates. `posts.closed` is otherwise
+	 * operator-controlled (`setPostClosed`), and an import is not an operator
+	 * decision — a re-import must not undo a freeze made on this side.
+	 */
+	closed?: boolean;
 };
 
 /**
@@ -183,6 +203,17 @@ export type SourceComment = {
 	parent_source_id: string | null;
 	created_at: number;
 	status: SourceStatus;
+	/**
+	 * When the comment was last edited at the source, if it ever was.
+	 *
+	 * Becomes `comments.edited_at`, which is what the feed reports as
+	 * `<updated>` and what the widget hangs its "edited" marker off. The core
+	 * drops any value that is not strictly after `created_at`: sources vary on
+	 * whether an unedited comment gets a zero, a null or a copy of its own
+	 * creation time, and the last of those would mark every imported comment
+	 * as edited.
+	 */
+	edited_at?: number | null;
 	/** Markdown. The adapter has already converted; the core never does. */
 	body_md: string;
 	author: SourceAuthor;
@@ -305,6 +336,22 @@ const isSkipped = (
 	return null;
 };
 
+/**
+ * The `comments.edited_at` value for a source comment, or null.
+ *
+ * Only a timestamp strictly after `created_at` survives. Sources disagree on
+ * what an unedited comment carries — null, 0, or a copy of its own creation
+ * time — and the shared consequence of taking any of those at face value is an
+ * "edited" marker on every imported comment, plus a feed where `<updated>`
+ * equals `<published>` for the whole archive. A value *before* creation is
+ * incoherent rather than merely unhelpful, and gets the same treatment.
+ */
+const editedAt = (c: SourceComment): number | null => {
+	const at = c.edited_at;
+	if (at == null || !Number.isFinite(at) || at <= c.created_at) return null;
+	return at;
+};
+
 const authorKey = async (
 	source: string,
 	author: SourceAuthor,
@@ -366,10 +413,10 @@ export const runImport = async (
 		}
 		await db
 			.prepare(
-				`INSERT INTO posts (slug, title, url, created_at)
-				 VALUES (?, ?, ?, ?)`,
+				`INSERT INTO posts (slug, title, url, created_at, closed)
+				 VALUES (?, ?, ?, ?, ?)`,
 			)
-			// Both columns go through the same guards the Worker's write path
+			// Title and url go through the same guards the Worker's write path
 			// applies: the title through M1's sanitizer (it reaches mail subject
 			// lines, where a CR is header injection) and the link through the
 			// scheme check. Neither ran on this path before.
@@ -378,16 +425,33 @@ export const runImport = async (
 				sanitizePostTitle(t.title) ?? slug,
 				safePostUrl(t.link),
 				t.created_at,
+				t.closed ? 1 : 0,
 			)
 			.run();
 		plan.new_pages += 1;
 	}
 
 	const userIdByAuthorKey = new Map<string, string>();
-	const usersToInsert: { id: string; provider_id: string; name: string }[] = [];
+	type PendingUser = {
+		id: string;
+		provider_id: string;
+		name: string;
+		is_banned: boolean;
+	};
+	const usersToInsert = new Map<string, PendingUser>();
 	for (const c of parsed.comments) {
 		if (isSkipped(c.status, opts)) continue;
 		const key = await authorKey(adapter.source, c.author, secret);
+		const pending = usersToInsert.get(key);
+		if (pending) {
+			// Ban state is a property of the author, but every source attaches it
+			// to the comment, so one person's comments can disagree — an export
+			// taken mid-moderation, or a source that only stamps it on rows
+			// written after the block. OR the flags rather than letting whichever
+			// comment happened to come first decide.
+			if (c.author.is_banned) pending.is_banned = true;
+			continue;
+		}
 		if (userIdByAuthorKey.has(key)) continue;
 
 		const existing = await db
@@ -402,24 +466,41 @@ export const runImport = async (
 		}
 		const id = ulid();
 		userIdByAuthorKey.set(key, id);
-		usersToInsert.push({ id, provider_id: key, name: c.author.name });
+		usersToInsert.set(key, {
+			id,
+			provider_id: key,
+			name: c.author.name,
+			is_banned: c.author.is_banned === true,
+		});
 	}
 
-	if (!opts.dry_run && usersToInsert.length > 0) {
+	if (!opts.dry_run && usersToInsert.size > 0) {
 		const now = Date.now();
-		for (const u of usersToInsert) {
+		for (const u of usersToInsert.values()) {
 			await db
 				.prepare(
 					`INSERT INTO users (id, provider, provider_id, name, email,
 					                    avatar_url, is_admin, is_banned, created_at,
 					                    import_source)
-					 VALUES (?, 'anon', ?, ?, NULL, NULL, 0, 0, ?, ?)`,
+					 VALUES (?, 'anon', ?, ?, NULL, NULL, 0, ?, ?, ?)`,
 				)
-				.bind(u.id, u.provider_id, u.name, now, adapter.source)
+				// is_banned is written on INSERT only. The branch above returns early
+				// for a user who already exists, and deliberately: that row may be a
+				// ghost an operator has since banned or unbanned on this side, and a
+				// re-import silently overwriting their decision with the source's
+				// stale one is a moderation regression, not a fidelity improvement.
+				.bind(
+					u.id,
+					u.provider_id,
+					u.name,
+					u.is_banned ? 1 : 0,
+					now,
+					adapter.source,
+				)
 				.run();
 		}
 	}
-	plan.new_users = usersToInsert.length;
+	plan.new_users = usersToInsert.size;
 
 	const nativeIdBySourceId = new Map<string, string>();
 	for (const c of parsed.comments) {
@@ -460,8 +541,8 @@ export const runImport = async (
 			`INSERT INTO comments (
 				   id, post_slug, parent_id, user_id, body_md, body_html,
 				   renderer_version, status, ip_hash, user_agent, created_at,
-				   import_source, import_id, depth)
-				 VALUES (?, ?, NULL, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, 1)`,
+				   edited_at, import_source, import_id, depth)
+				 VALUES (?, ?, NULL, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, 1)`,
 			)
 			// status was a hard-coded 'approved' until adapters could report
 			// moderation state. deleted_at and deleted_by stay at their NULL
@@ -478,6 +559,7 @@ export const runImport = async (
 				CURRENT_RENDERER_VERSION,
 				c.status,
 				c.created_at,
+				editedAt(c),
 				adapter.source,
 				c.source_id,
 			)

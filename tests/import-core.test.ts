@@ -86,7 +86,8 @@ const oneComment = (author: SourceAuthor): SourceExport => exportOf([author]);
 /** The provider_id the core derived, read off the users INSERT. */
 const providerIdFrom = (captured: Captured[]): string => {
 	const insert = captured.find((c) => c.sql.startsWith("INSERT INTO users"));
-	// Bind order: id, provider_id, name, created_at, import_source ('anon' is a literal).
+	// Bind order: id, provider_id, name, is_banned, created_at, import_source
+	// ('anon' is a literal).
 	return insert!.binds[1] as string;
 };
 
@@ -271,7 +272,8 @@ describe("source moderation state", () => {
 			c.sql.startsWith("INSERT INTO comments"),
 		);
 		// Bind order: id, post_slug, user_id, body_md, body_html,
-		// renderer_version, status, created_at, import_source, import_id.
+		// renderer_version, status, created_at, edited_at, import_source,
+		// import_id.
 		return { plan, status: insert?.binds[6] as string | undefined };
 	};
 
@@ -332,6 +334,134 @@ describe("source moderation state", () => {
 		// No source says when or by whom; the read path prunes on status alone.
 		expect(insert!.sql).not.toContain("deleted_at");
 		expect(insert!.sql).not.toContain("deleted_by");
+	});
+});
+
+describe("source fidelity mappings", () => {
+	const AUTHOR: SourceAuthor = { name: "A", email: null, is_anonymous: true };
+
+	const importOf = async (exported: SourceExport) => {
+		const { db, captured } = makeFreshDb();
+		await runImport(db, stubAdapter("remark42", exported), "", "test-secret");
+		const find = (table: string) =>
+			captured.find((c) => c.sql.startsWith(`INSERT INTO ${table}`));
+		return {
+			captured,
+			// posts:    slug, title, url, created_at, closed
+			// users:    id, provider_id, name, is_banned, created_at, import_source
+			// comments: id, post_slug, user_id, body_md, body_html,
+			//           renderer_version, status, created_at, edited_at,
+			//           import_source, import_id
+			closed: find("posts")?.binds[4],
+			banned: find("users")?.binds[3],
+			editedAt: find("comments")?.binds[8],
+		};
+	};
+
+	it("carries a closed source thread onto posts.closed", async () => {
+		const e = exportOf([AUTHOR]);
+		e.threads[0] = { ...e.threads[0]!, closed: true };
+		expect((await importOf(e)).closed).toBe(1);
+	});
+
+	it("leaves posts.closed at 0 when the source does not say", async () => {
+		// Absent is "no information", and the schema default for an open page is
+		// the same value, so a source with no notion of closing is a no-op.
+		expect((await importOf(exportOf([AUTHOR]))).closed).toBe(0);
+	});
+
+	it("carries a blocked author onto users.is_banned", async () => {
+		expect(
+			(await importOf(exportOf([{ ...AUTHOR, is_banned: true }]))).banned,
+		).toBe(1);
+	});
+
+	it("leaves users.is_banned at 0 when the source does not say", async () => {
+		expect((await importOf(exportOf([AUTHOR]))).banned).toBe(0);
+	});
+
+	it("bans the ghost if any one of the author's comments reports it", async () => {
+		// Same person, disagreeing rows — an export taken mid-moderation, or a
+		// source that only stamps the flag on rows written after the block. The
+		// ban has to survive regardless of which comment the core sees first.
+		const e = exportOf([AUTHOR]);
+		e.comments.push({
+			...e.comments[0]!,
+			source_id: "c2",
+			author: { ...AUTHOR, is_banned: true },
+		});
+		const { captured, banned } = await importOf(e);
+		expect(banned).toBe(1);
+		// And it is still one ghost, not two.
+		expect(
+			captured.filter((c) => c.sql.startsWith("INSERT INTO users")),
+		).toHaveLength(1);
+	});
+
+	it("never writes ban state onto a user that already exists", async () => {
+		// The ghost may have been banned or unbanned on this side since the last
+		// import. Overwriting an operator's decision with the source's stale one
+		// is a moderation regression, so the import only ever writes on INSERT.
+		const captured: { sql: string; binds: unknown[] }[] = [];
+		const db = asD1({
+			prepare: (sql: string) => ({
+				_binds: [] as unknown[],
+				bind(...args: unknown[]) {
+					this._binds = args;
+					return this;
+				},
+				async first() {
+					captured.push({ sql, binds: this._binds });
+					// The author already has a ghost; nothing else exists.
+					return sql.includes("FROM users") ? { id: "u-existing" } : null;
+				},
+				async all() {
+					captured.push({ sql, binds: this._binds });
+					return { results: [] };
+				},
+				async run() {
+					captured.push({ sql, binds: this._binds });
+					return { meta: { changes: 1 } };
+				},
+			}),
+		});
+		await runImport(
+			db,
+			stubAdapter("remark42", exportOf([{ ...AUTHOR, is_banned: true }])),
+			"",
+			"test-secret",
+		);
+		expect(captured.filter((c) => /^INSERT INTO users/.test(c.sql))).toEqual(
+			[],
+		);
+		expect(captured.filter((c) => /^UPDATE users/.test(c.sql))).toEqual([]);
+	});
+
+	// No argument = the adapter left the field off entirely, which under
+	// exactOptionalPropertyTypes is a different thing from setting it undefined.
+	const withEdit = (...edited_at: [number | null] | []): SourceExport => {
+		const e = exportOf([AUTHOR]);
+		const c = e.comments[0]!;
+		e.comments[0] = edited_at.length ? { ...c, edited_at: edited_at[0] } : c;
+		return e;
+	};
+
+	it("carries a real edit timestamp onto comments.edited_at", async () => {
+		expect((await importOf(withEdit(AT + 60_000))).editedAt).toBe(AT + 60_000);
+	});
+
+	it("stores no edit timestamp when the source reports none", async () => {
+		expect((await importOf(withEdit())).editedAt).toBe(null);
+		expect((await importOf(withEdit(null))).editedAt).toBe(null);
+	});
+
+	it("drops an edit timestamp that is not after creation", async () => {
+		// A source that copies created_at into its edit field for every row, or
+		// zeroes it, would otherwise mark the whole archive as edited and flatten
+		// the feed's <updated> onto <published>.
+		expect((await importOf(withEdit(AT))).editedAt).toBe(null);
+		expect((await importOf(withEdit(AT - 1))).editedAt).toBe(null);
+		expect((await importOf(withEdit(0))).editedAt).toBe(null);
 	});
 });
 
