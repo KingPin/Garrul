@@ -14,6 +14,7 @@ import {
 	type ImportAdapter,
 	type SourceAuthor,
 	type SourceExport,
+	type SourceStatus,
 	authorSeed,
 	runImport,
 } from "../src/lib/import/core";
@@ -71,8 +72,7 @@ const exportOf = (
 		thread_source_id: "t1",
 		parent_source_id: null,
 		created_at: AT,
-		is_deleted: false,
-		is_spam: false,
+		status: "approved" as const,
 		body_md: "hi",
 		author,
 	})),
@@ -242,5 +242,92 @@ describe("ghost identity derivation", () => {
 		await runImport(db, stubAdapter("remark42", exported), "", "test-secret");
 		const post = captured.find((c) => c.sql.startsWith("INSERT INTO posts"));
 		expect(post!.binds[0]).toBe("remark42-t1");
+	});
+});
+
+describe("source moderation state", () => {
+	const withStatus = (status: SourceStatus): SourceExport => {
+		const e = exportOf([{ name: "A", email: null, is_anonymous: true }]);
+		e.comments[0] = { ...e.comments[0]!, status };
+		return e;
+	};
+
+	const importWith = async (
+		status: SourceStatus,
+		opts: Parameters<typeof runImport>[4] = {},
+	) => {
+		const { db, captured } = makeFreshDb();
+		const plan = await runImport(
+			db,
+			stubAdapter("remark42", withStatus(status)),
+			"",
+			"test-secret",
+			opts,
+		);
+		const insert = captured.find((c) =>
+			c.sql.startsWith("INSERT INTO comments"),
+		);
+		// Bind order: id, post_slug, user_id, body_md, body_html,
+		// renderer_version, status, created_at, import_source, import_id.
+		return { plan, status: insert?.binds[6] as string | undefined };
+	};
+
+	it("carries the source's status onto comments.status", async () => {
+		expect((await importWith("approved")).status).toBe("approved");
+		expect((await importWith("pending")).status).toBe("pending");
+	});
+
+	it("imports a pending comment without needing a flag", async () => {
+		// Not gated: a comment awaiting moderation is unfinished work, not junk.
+		// Dropping it silently loses a call the operator never got to make.
+		const { plan, status } = await importWith("pending");
+		expect(plan.new_comments).toBe(1);
+		expect(plan.skipped_deleted).toBe(0);
+		expect(plan.skipped_spam).toBe(0);
+		expect(status).toBe("pending");
+	});
+
+	it("skips spam and deleted by default", async () => {
+		const spam = await importWith("spam");
+		expect(spam.plan.new_comments).toBe(0);
+		expect(spam.plan.skipped_spam).toBe(1);
+		const gone = await importWith("deleted");
+		expect(gone.plan.new_comments).toBe(0);
+		expect(gone.plan.skipped_deleted).toBe(1);
+	});
+
+	it("lands spam in the spam status when include_spam is set", async () => {
+		const { plan, status } = await importWith("spam", { include_spam: true });
+		expect(plan.new_comments).toBe(1);
+		expect(plan.skipped_spam).toBe(0);
+		// Not 'approved'. The whole point of importing spam is to review it, so
+		// it has to arrive somewhere a moderator looks — not published.
+		expect(status).toBe("spam");
+	});
+
+	it("imports a tombstone as deleted when include_deleted is set", async () => {
+		const { plan, status } = await importWith("deleted", {
+			include_deleted: true,
+		});
+		expect(plan.new_comments).toBe(1);
+		expect(plan.skipped_deleted).toBe(0);
+		expect(status).toBe("deleted");
+	});
+
+	it("does not invent a deleted_at for an imported tombstone", async () => {
+		const { db, captured } = makeFreshDb();
+		await runImport(
+			db,
+			stubAdapter("remark42", withStatus("deleted")),
+			"",
+			"test-secret",
+			{ include_deleted: true },
+		);
+		const insert = captured.find((c) =>
+			c.sql.startsWith("INSERT INTO comments"),
+		);
+		// No source says when or by whom; the read path prunes on status alone.
+		expect(insert!.sql).not.toContain("deleted_at");
+		expect(insert!.sql).not.toContain("deleted_by");
 	});
 });

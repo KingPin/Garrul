@@ -77,14 +77,29 @@ export type SourceThread = {
 	created_at: number;
 };
 
+/**
+ * A comment's moderation state at the source, in Garrul's own vocabulary.
+ *
+ * Identical to the `comments.status` values, and deliberately so: an adapter
+ * that has to invent a mapping should do it once, in the adapter, rather than
+ * hand the core a source-shaped flag for the core to guess at. Every source in
+ * #104 has at least approved/deleted; most also distinguish a moderation queue
+ * from a spam verdict, and the ones that do not simply never emit those.
+ *
+ * `include_deleted` / `include_spam` gate the last two. `pending` is not
+ * gated — a comment awaiting moderation is not junk, it is work the operator
+ * has not done yet, and dropping it silently loses a decision they never got
+ * to make. It lands in the queue on this side too.
+ */
+export type SourceStatus = "approved" | "pending" | "spam" | "deleted";
+
 export type SourceComment = {
 	/** The source's own id for this comment; becomes `import_id`. */
 	source_id: string;
 	thread_source_id: string;
 	parent_source_id: string | null;
 	created_at: number;
-	is_deleted: boolean;
-	is_spam: boolean;
+	status: SourceStatus;
 	/** Markdown. The adapter has already converted; the core never does. */
 	body_md: string;
 	author: SourceAuthor;
@@ -187,6 +202,26 @@ export const authorSeed = (source: string, author: SourceAuthor): string =>
 		? `${source}:id:${author.source_id}`
 		: `${author.name}|${author.email ?? ""}`;
 
+/**
+ * Whether a comment in this state is left behind, and which counter it lands
+ * in. `null` means import it.
+ *
+ * One predicate for both passes, deliberately. The ghost-collection pass and
+ * the insert pass each have to make this call, and they have to agree: a
+ * comment the first pass keeps and the second drops leaves an orphan ghost
+ * user with no comments, while the reverse throws on a missing user id. They
+ * were two copies of the same pair of conditions before, which is a
+ * silent-drift shape.
+ */
+const isSkipped = (
+	status: SourceStatus,
+	opts: ImportOptions,
+): "deleted" | "spam" | null => {
+	if (status === "deleted" && !opts.include_deleted) return "deleted";
+	if (status === "spam" && !opts.include_spam) return "spam";
+	return null;
+};
+
 const authorKey = async (
 	source: string,
 	author: SourceAuthor,
@@ -268,8 +303,7 @@ export const runImport = async (
 	const userIdByAuthorKey = new Map<string, string>();
 	const usersToInsert: { id: string; provider_id: string; name: string }[] = [];
 	for (const c of parsed.comments) {
-		if (!opts.include_deleted && c.is_deleted) continue;
-		if (!opts.include_spam && c.is_spam) continue;
+		if (isSkipped(c.status, opts)) continue;
 		const key = await authorKey(adapter.source, c.author, secret);
 		if (userIdByAuthorKey.has(key)) continue;
 
@@ -306,12 +340,10 @@ export const runImport = async (
 
 	const nativeIdBySourceId = new Map<string, string>();
 	for (const c of parsed.comments) {
-		if (!opts.include_deleted && c.is_deleted) {
-			plan.skipped_deleted += 1;
-			continue;
-		}
-		if (!opts.include_spam && c.is_spam) {
-			plan.skipped_spam += 1;
+		const skip = isSkipped(c.status, opts);
+		if (skip) {
+			if (skip === "deleted") plan.skipped_deleted += 1;
+			else plan.skipped_spam += 1;
 			continue;
 		}
 		const slug = slugByThreadSourceId.get(c.thread_source_id);
@@ -346,8 +378,14 @@ export const runImport = async (
 				   id, post_slug, parent_id, user_id, body_md, body_html,
 				   renderer_version, status, ip_hash, user_agent, created_at,
 				   import_source, import_id, depth)
-				 VALUES (?, ?, NULL, ?, ?, ?, ?, 'approved', NULL, NULL, ?, ?, ?, 1)`,
+				 VALUES (?, ?, NULL, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, 1)`,
 			)
+			// status was a hard-coded 'approved' until adapters could report
+			// moderation state. deleted_at and deleted_by stay at their NULL
+			// defaults even for an imported tombstone: the read path prunes on
+			// `status`, not on either of them, and no source's export says *when*
+			// or *by whom* the comment was removed — writing created_at there
+			// would be inventing a fact to fill a column nothing reads.
 			.bind(
 				id,
 				slug,
@@ -355,6 +393,7 @@ export const runImport = async (
 				c.body_md,
 				html,
 				CURRENT_RENDERER_VERSION,
+				c.status,
 				c.created_at,
 				adapter.source,
 				c.source_id,

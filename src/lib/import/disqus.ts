@@ -171,8 +171,13 @@ export const DISQUS_ADAPTER: ImportAdapter = {
 				thread_source_id: p.thread_dsq_id,
 				parent_source_id: p.parent_dsq_id,
 				created_at: p.created_at,
-				is_deleted: p.is_deleted,
-				is_spam: p.is_spam,
+				// Deleted wins over spam: a comment Disqus flagged and then
+				// removed is gone either way, and the two flags are independent
+				// booleans there, so something has to break the tie. Disqus never
+				// yields 'pending' — the export's <isApproved> is not read, so a
+				// comment sitting in a Disqus moderation queue still imports as
+				// approved, exactly as it did before the status field existed.
+				status: p.is_deleted ? "deleted" : p.is_spam ? "spam" : "approved",
 				body_md: htmlToMarkdown(p.message_html),
 				author: p.author,
 			})),
