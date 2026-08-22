@@ -70,6 +70,9 @@ export const es = {
 	"w.lowscore.show": "Comentario oculto (puntuación baja) — mostrar",
 	"w.reply": "Responder",
 	"w.edit": "Editar",
+	// El verbo concuerda con el número de minutos, de ahí las dos formas.
+	"w.edit_left": { one: "queda {time}", other: "quedan {time}" },
+	"w.edit_last_minute": "queda menos de un minuto",
 	"w.delete": "Eliminar",
 	"w.delete_confirm": "¿Eliminar este comentario?",
 	"w.report": "Denunciar",

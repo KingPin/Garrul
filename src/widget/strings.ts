@@ -104,6 +104,15 @@ export const EN = {
 	"w.lowscore.show": "Comment hidden (low score) — show",
 	"w.reply": "Reply",
 	"w.edit": "Edit",
+	// How long is left to edit. `{time}` is a number *and its unit* formatted by
+	// `Intl.NumberFormat` in the reader's locale ("4m", "4 Min."), so translating
+	// this key means translating the surrounding words only — never the unit.
+	// `n` carries the same figure for languages that inflect on it.
+	"w.edit_left": "{time} left",
+	// The final sixty seconds. Deliberately not a seconds counter: the chip ticks
+	// on a shared 15s interval, and a per-second clock next to your own words is
+	// a nagging surface for the one minute it would be accurate.
+	"w.edit_last_minute": "less than a minute left",
 	"w.delete": "Delete",
 	"w.delete_confirm": "Delete this comment?",
 	"w.report": "Report",
