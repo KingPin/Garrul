@@ -265,12 +265,12 @@ export const renderCommentDetail = (
 	     ${replyComposer({
 				commentIdExpr: commentIdLiteral(comment.id),
 				modName,
-				// This page's query doesn't join posts.title, so `{post}` resolves
-				// to the slug here and to the title in the queue. Both name the
-				// thread, and joining a title for one composer would cost a JOIN
-				// on every comment-detail load.
+				// Title first, slug when the crawler never gave us one — the same
+				// fallback the queue's modal uses, so `{post}` reads the same
+				// whichever composer the moderator reached for. The title rides
+				// along on the JOIN this page's query already makes for `host`.
 				authorNameExpr: jsLiteral(comment.author_name ?? ""),
-				postTitleExpr: jsLiteral(comment.post_slug),
+				postTitleExpr: jsLiteral(comment.post_title || comment.post_slug),
 				onPosted: "setTimeout(() => location.reload(), 600);",
 			})}
 	   </div>`;

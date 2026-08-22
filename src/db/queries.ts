@@ -2991,7 +2991,8 @@ export const adminGetCommentDetail = async (
 			        u.provider   AS author_provider,
 			        u.is_admin   AS author_is_admin,
 			        u.is_banned  AS author_is_banned,
-			        ${hostExpr("p.url")} AS host
+			        ${hostExpr("p.url")} AS host,
+			        p.title      AS post_title
 			   FROM comments c
 			   LEFT JOIN users u ON u.id = c.user_id
 			   LEFT JOIN posts p ON p.slug = c.post_slug
