@@ -2388,7 +2388,22 @@ const renderReplyList = (
 		more.type = "button";
 		more.textContent = s("w.more_replies", { n: hidden.length });
 		more.addEventListener("click", () => {
+			// Same arbitration as `appendThreads`, on the reply side: this batch was
+			// captured when the list rendered, and `insertPostedNode` can have put
+			// one of these replies on screen live in the meantime — a load that
+			// raced a post puts the reply in `hidden` and the 201 then draws it
+			// after the button. Revealing the batch would then draw it twice. No
+			// repositioning needed, unlike top level: replies are ordered
+			// `created_at ASC`, this batch goes before the button and the live node
+			// is the newest, so last is already where it belongs.
+			const onScreen = new Set<string>();
+			for (const child of container.querySelectorAll<HTMLElement>(
+				":scope > .gr-thread",
+			)) {
+				if (child.dataset.id) onScreen.add(child.dataset.id);
+			}
 			for (const r of hidden) {
+				if (onScreen.has(r.id)) continue;
 				container.insertBefore(buildThread(r, ctx), more);
 			}
 			more.remove();
@@ -2860,29 +2875,51 @@ const fetchPage = async (
 };
 
 /**
- * Render top-level threads into the list, skipping any already on screen.
+ * Render top-level threads into the list, never drawing an id twice.
  *
- * The skip is load-more's guard against `insertPostedNode`. A comment rendered
- * from its own POST echo is on screen without the server having been asked
- * where it belongs, so a later page can legitimately contain it — under `old`
- * when the post landed on what was already the last page, and under `top` at
- * whatever rank a comment with no votes takes. Rendering it twice is the one
- * visible way that can go wrong, and comparing ids is the whole fix.
+ * The id check is load-more's arbitration with `insertPostedNode`. A comment
+ * rendered from its own POST echo is on screen without the server having been
+ * asked where it belongs, so a later page can legitimately contain it — under
+ * `old` when the post landed on what was already the last page, and under `top`
+ * at whatever rank a comment with no votes takes.
+ *
+ * Which is why a provisional node (`[data-posted]`) is *replaced* rather than
+ * skipped. Skipping keeps a guess that this very response disproves: under
+ * `old` the following page would render after a comment newer than all of it,
+ * and under `top` a score-0 post would sit above the ranks the server just
+ * sent. Rebuilding it here, in the order the page arrived in, is the server
+ * answering the question the echo path had to guess at — and it picks up the
+ * votes, reactions and replies the provisional node was drawn without. The
+ * accent carries over: the comment is still the reader's own.
+ *
+ * The cost is that a form left open under one's own just-posted comment does
+ * not survive that particular Load More. Every other node on screen is
+ * untouched, which is more than the pre-v2.20.0 post-then-reload kept.
+ *
+ * An id already on screen that is *not* provisional is left alone: it is a
+ * genuine overlap between pages, and the copy on screen is as authoritative as
+ * the one in this response.
  */
 const appendThreads = (
 	list: HTMLElement,
 	threads: TreeNode[],
 	ctx: WidgetCtx,
 ): void => {
-	const seen = new Set<string>();
+	const onScreen = new Map<string, HTMLElement>();
 	for (const child of list.querySelectorAll<HTMLElement>(":scope > .gr-thread")) {
 		const id = child.dataset.id;
-		if (id) seen.add(id);
+		if (id && !onScreen.has(id)) onScreen.set(id, child);
 	}
 	for (const t of threads) {
-		if (seen.has(t.id)) continue;
-		seen.add(t.id);
-		list.appendChild(buildThread(t, ctx));
+		const existing = onScreen.get(t.id);
+		if (existing && existing.dataset.posted !== "1") continue;
+		const built = buildThread(t, ctx);
+		if (existing) {
+			built.dataset.posted = "1";
+			existing.remove();
+		}
+		onScreen.set(t.id, built);
+		list.appendChild(built);
 	}
 };
 
@@ -3100,19 +3137,28 @@ const mountCtx = new WeakMap<ShadowRoot, WidgetCtx>();
  * `buildSubtree` emits a flattened subtree in DFS pre-order into the array its
  * nearest un-flattened ancestor sits in, so a comment's lifted descendants are
  * exactly the run of `[data-flat]` threads immediately following it. A new
- * reply to that comment joins the end of that run. `null` means the run reaches
- * the end of the list, which `insertBefore` reads as "append".
+ * reply to that comment joins the end of that run. `{ before: null }` means the
+ * run reaches the end of the list, which `insertBefore` reads as "append".
+ *
+ * `null` — no insertion point — is the case where the run runs into a "Show N
+ * more replies" button. Where it continues is then inside a batch that is not
+ * rendered yet, and that button inserts its batch immediately before itself
+ * when pressed, so anything placed here would end up above replies older than
+ * it the moment the reader expands the list. The caller falls back to a reload
+ * rather than guess, the same as for a parent that has been paged out.
  */
-const afterFlattenedRun = (thread: Element): Node | null => {
+const afterFlattenedRun = (thread: Element): { before: Node | null } | null => {
 	let last = thread;
 	for (let sib = thread.nextElementSibling; sib; sib = sib.nextElementSibling) {
 		const row = sib.querySelector(":scope > .gr-comment");
 		if (!sib.classList.contains("gr-thread") || !row?.hasAttribute("data-flat")) {
-			break;
+			return sib.classList.contains("gr-showmore")
+				? null
+				: { before: last.nextSibling };
 		}
 		last = sib;
 	}
-	return last.nextSibling;
+	return { before: last.nextSibling };
 };
 
 /**
@@ -3133,10 +3179,12 @@ const afterFlattenedRun = (thread: Element): Node | null => {
  * so the thing rendered here is the server's answer, arriving one request
  * earlier rather than being guessed and rolled back.
  *
- * Returns false when the tree cannot take the node — no rendered list, or a
- * reply whose parent has been paged out. Both mean "fall back to the old
- * post-then-reload path", exactly as `readPostedEcho` returning `null` does: a
- * comment in the wrong place is worse than a second request.
+ * Returns false when the tree cannot take the node — no rendered list, a reply
+ * whose parent has been paged out, or a flattened reply whose place on the tier
+ * is hidden behind a "Show N more replies" button (see `afterFlattenedRun`).
+ * All of them mean "fall back to the old post-then-reload path", exactly as
+ * `readPostedEcho` returning `null` does: a comment in the wrong place is worse
+ * than a second request.
  */
 const insertPostedNode = (
 	ctx: WidgetCtx,
@@ -3145,6 +3193,29 @@ const insertPostedNode = (
 ): boolean => {
 	const list = ctx.root.querySelector(".gr-list");
 	if (!list) return false;
+
+	// Announce and move focus, having established the comment is on screen. Two
+	// callers because "already there" is a success with nothing to draw.
+	const announcePosted = (): true => {
+		focusPostedComment(ctx.root, echo.id);
+		// No `setTimeout(0)` here, unlike loadOnce's arbitration. That delay exists
+		// because `root.replaceChildren()` had just built a brand-new live region,
+		// and a region has to be in the accessibility tree *before* its text
+		// changes. This path never destroys the tree, so the box has been sitting
+		// there all along and the write announces on the spot.
+		const statusEl = ctx.root.querySelector(".gr-error") as HTMLElement | null;
+		if (statusEl) showStatus(statusEl, s("w.posted"), "notice");
+		return true;
+	};
+
+	// A load that overlapped this POST can already have drawn the comment: the
+	// server commits before it answers, so any reload or Load More that fetched
+	// after the commit and landed before the 201 got back here includes it. The
+	// duplicate check in `appendThreads` cannot see that — it compares a page
+	// against the screen, and here it is the screen that is ahead. Inserting
+	// anyway would leave one comment rendered twice under a single anchor id.
+	if (ctx.root.getElementById(commentAnchorId(echo.id))) return announcePosted();
+
 	const { node, slot } = synthesizePosted(echo, parent);
 
 	// Resolve the destination before building anything, so a miss costs nothing.
@@ -3153,8 +3224,10 @@ const insertPostedNode = (
 	if (!slot) {
 		container = list;
 		// First comment on the thread: "no comments yet" is now false. The sort
-		// selector and the subscribe bell stay absent until the next real load —
-		// both render off `data.threads.length`, and neither is worth a request.
+		// selector stays absent until the next real load — it renders off
+		// `data.threads.length`, and one comment has no order to choose between.
+		// The subscribe bell is unaffected; it renders off the settings, not the
+		// thread, so it is already on screen wherever it belongs.
 		list.querySelector(".gr-empty")?.remove();
 		if (topLevelPlacement(activeSortFor(ctx.root)) === "prepend") {
 			before = list.firstChild;
@@ -3176,8 +3249,10 @@ const insertPostedNode = (
 			// own tier (see `replySlot`), not nested under it.
 			const tier = parentThread.parentElement;
 			if (!tier) return false;
+			const spot = afterFlattenedRun(parentThread);
+			if (!spot) return false;
 			container = tier;
-			before = afterFlattenedRun(parentThread);
+			before = spot.before;
 		}
 	}
 
@@ -3201,15 +3276,7 @@ const insertPostedNode = (
 		mount.reveal();
 	}
 
-	focusPostedComment(ctx.root, echo.id);
-	// No `setTimeout(0)` here, unlike loadOnce's arbitration. That delay exists
-	// because `root.replaceChildren()` had just built a brand-new live region,
-	// and a region has to be in the accessibility tree *before* its text
-	// changes. This path never destroys the tree, so the box has been sitting
-	// there all along and the write announces on the spot.
-	const statusEl = ctx.root.querySelector(".gr-error") as HTMLElement | null;
-	if (statusEl) showStatus(statusEl, s("w.posted"), "notice");
-	return true;
+	return announcePosted();
 };
 
 // Closed-state notice copy, picked from the server's closed_reason enum so the
