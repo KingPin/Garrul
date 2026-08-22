@@ -476,6 +476,18 @@ button:active:not([disabled]) { opacity: 0.75; }
    wrong side of the replies it indents on an RTL host page. */
 .gr-replies { display: flex; flex-direction: column; gap: 0.75rem; margin-top: 0.5rem; padding-inline-start: 1.25rem; border-inline-start: 2px solid var(--gr-border); }
 .gr-comment { display: flex; gap: 0.75rem; }
+/* The reader's own comment, rendered from the POST echo rather than fetched
+   back (see insertPostedNode). It stays marked until the next real load
+   replaces the tree, because under `old` and `top` its position is provisional
+   — the accent is what makes the render read as "here is what you posted"
+   instead of as a claim about where it sits in the thread. Logical properties,
+   like the nesting rail above, so it lands on the right side on an RTL host.
+   Deliberately quiet: it sits next to a "Pending approval" badge often enough
+   that two loud signals would compete. */
+.gr-thread[data-posted] > .gr-comment {
+	border-inline-start: 2px solid var(--gr-accent);
+	padding-inline-start: 0.6rem;
+}
 .gr-comment[data-flat="1"] .gr-flatten { font-size: 0.85em; color: var(--gr-muted); margin-inline-end: 0.3em; }
 .gr-avatar { flex: 0 0 auto; width: 40px; height: 40px; border-radius: 50%; overflow: hidden; background: var(--gr-surface); box-shadow: 0 0 0 1px var(--gr-border); }
 .gr-avatar svg, .gr-avatar img { width: 100%; height: 100%; display: block; }
