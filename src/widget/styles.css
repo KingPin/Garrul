@@ -561,6 +561,15 @@ button:active:not([disabled]) { opacity: 0.75; }
 .gr-actions button:hover { color: var(--gr-link); }
 /* Post-report confirmation that replaces the Report button in place. */
 .gr-reported { color: var(--gr-muted); font-size: 0.85em; }
+/* Edit, plus how long is left to use it. The two travel in a wrapper because
+   .gr-actions is a 0.75rem-gap flex row and an unwrapped chip would sit as far
+   from its button as the next action does, reading as a third action rather
+   than a note on the second. */
+.gr-edit-window { display: inline-flex; align-items: baseline; gap: 0.35rem; }
+.gr-edit-left { color: var(--gr-muted); font-size: 0.9em; }
+/* Empty above the countdown threshold — a long edit window shows no chip at
+   all, so collapse it rather than leave the wrapper's gap beside the button. */
+.gr-edit-left:empty { display: none; }
 /* Two-step delete confirmation, in place of the Delete button. Sits inside
    .gr-actions, so its buttons inherit the bare link styling from above. */
 .gr-confirm { display: inline-flex; align-items: center; gap: 0.5rem; color: var(--gr-muted); }

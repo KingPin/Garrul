@@ -58,6 +58,12 @@ import {
 	topLevelPlacement,
 } from "./comment-node";
 import { commentAnchorId, commentHref, commentIdFromHash } from "./permalink";
+import {
+	type EditWindowState,
+	TICK_MS,
+	editWindowLabel,
+	editWindowState,
+} from "./edit-window";
 import { absoluteTime, isoTime, relativeTime } from "./time";
 // The mount request and the wire shapes it carries. Kept out of this file so the
 // fallback rule can be tested without a DOM — see boot.ts's header.
@@ -1664,6 +1670,91 @@ const buildSubscribeBell = (
 	return wrap;
 };
 
+/**
+ * The shared countdown ticker.
+ *
+ * One interval for the whole widget, not one per comment. A thread can carry
+ * dozens of the reader's own comments, and `time.ts` already declined to tick
+ * timestamps on exactly this cost argument — the difference here is that a
+ * closing deadline is actionable where an age is not, so it earns a timer, but
+ * only one.
+ *
+ * A registered tick returns `false` when it is done, which is also how teardown
+ * works: the tree is rebuilt wholesale on every reload, so a tick whose element
+ * is no longer `isConnected` simply says so and is dropped. That means no
+ * caller anywhere has to remember to unregister, and the interval stops itself
+ * once the last countdown has gone.
+ */
+const countdownTicks = new Set<() => boolean>();
+let countdownTimer: ReturnType<typeof setInterval> | undefined;
+
+const tickCountdowns = (): void => {
+	// Deleting from a Set mid-iteration is well-defined: a removed entry that
+	// has not been visited yet is simply not visited.
+	for (const tick of countdownTicks) if (!tick()) countdownTicks.delete(tick);
+	if (countdownTicks.size === 0 && countdownTimer !== undefined) {
+		clearInterval(countdownTimer);
+		countdownTimer = undefined;
+	}
+};
+
+const registerCountdown = (tick: () => boolean): void => {
+	countdownTicks.add(tick);
+	countdownTimer ??= setInterval(tickCountdowns, TICK_MS);
+};
+
+/**
+ * The Edit button plus the chip saying how long is left to use it.
+ *
+ * Returns `null` when the window has already closed — including when editing is
+ * switched off entirely, which `editWindowState` folds into the same phase.
+ */
+const buildEditControl = (
+	n: TreeNode,
+	ctx: WidgetCtx,
+	main: HTMLElement,
+): HTMLElement | null => {
+	const state = editWindowState(n.created_at, ctx.editWindowMs, Date.now());
+	if (state.phase === "expired") return null;
+
+	const wrap = el("span", "gr-edit-window");
+	const btn = el("button", undefined, s("w.edit"));
+	btn.type = "button";
+	btn.addEventListener("click", () => {
+		openEditor(n, ctx, main);
+	});
+
+	// Deliberately not a live region. This text changes every 15 seconds, and a
+	// polite announcement on each change would make the thread unusable with a
+	// screen reader. `aria-describedby` instead reads the remaining time when
+	// the button takes focus — the moment it is decision-relevant, and never
+	// otherwise. Same reasoning, and the same pattern, as the delete-confirm
+	// prompt below.
+	const chip = el("span", "gr-edit-left");
+	chip.id = nextId("gr-edit-left");
+	btn.setAttribute("aria-describedby", chip.id);
+	const paint = (at: EditWindowState): void => {
+		chip.textContent = editWindowLabel(at, locale, s) ?? "";
+	};
+	paint(state);
+
+	registerCountdown(() => {
+		if (!wrap.isConnected) return false;
+		const now = editWindowState(n.created_at, ctx.editWindowMs, Date.now());
+		if (now.phase === "expired") {
+			// Take the whole affordance away rather than leave a button that
+			// opens an editor the server will refuse to save.
+			wrap.remove();
+			return false;
+		}
+		paint(now);
+		return true;
+	});
+
+	wrap.append(btn, chip);
+	return wrap;
+};
+
 const buildActions = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): HTMLElement => {
 	const row = el("div", "gr-actions");
 
@@ -1689,14 +1780,9 @@ const buildActions = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): HTMLEleme
 
 	const isOwn =
 		ctx.me != null && n.author.id === ctx.me.id && n.status !== "deleted";
-	const withinWindow = Date.now() - n.created_at < ctx.editWindowMs;
-	if (isOwn && withinWindow) {
-		const editBtn = el("button", undefined, s("w.edit"));
-		editBtn.type = "button";
-		editBtn.addEventListener("click", () => {
-			openEditor(n, ctx, main);
-		});
-		row.appendChild(editBtn);
+	if (isOwn) {
+		const editControl = buildEditControl(n, ctx, main);
+		if (editControl) row.appendChild(editControl);
 	}
 	if (isOwn) {
 		const delBtn = el("button", undefined, s("w.delete"));
