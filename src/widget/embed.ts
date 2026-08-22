@@ -46,6 +46,17 @@ import {
 	REACTION_KINDS,
 	mergeReactionTotals,
 } from "./reactions";
+// The node shape this file renders, plus the arithmetic that turns a POST echo
+// into one. Kept out of here so the depth/flatten/placement rules are reachable
+// from the DOM-free test pool — see the module header.
+import {
+	type PostedEcho,
+	type TreeAuthor,
+	type TreeNode,
+	readPostedEcho,
+	synthesizePosted,
+	topLevelPlacement,
+} from "./comment-node";
 import { commentAnchorId, commentHref, commentIdFromHash } from "./permalink";
 import { absoluteTime, isoTime, relativeTime } from "./time";
 // The mount request and the wire shapes it carries. Kept out of this file so the
@@ -123,39 +134,6 @@ const markVote = (btn: HTMLElement, on: boolean): void => {
 	if (on) btn.dataset.mine = "1";
 	else delete btn.dataset.mine;
 	btn.setAttribute("aria-pressed", String(on));
-};
-
-// Mirrors lib/tree.ts's TreeAuthor. No `is_admin`: the API stopped sending it
-// (it let anyone enumerate privileged accounts) and nothing here rendered it.
-type TreeAuthor = {
-	id: string;
-	name: string;
-	provider: string;
-	avatar_svg: string | null;
-	avatar_url: string | null;
-};
-
-type TreeNode = {
-	id: string;
-	parent_id: string | null;
-	body_html: string;
-	status: "approved" | "pending" | "spam" | "deleted";
-	edited_at: number | null;
-	deleted_at: number | null;
-	deleted_by: "author" | "moderator" | null;
-	created_at: number;
-	author: TreeAuthor;
-	depth: number;
-	flatten_from: string | null;
-	/** Optional on purpose: the list response is edge-cached, so payloads
-	 *  predating this field keep being served for up to TREE_CACHE_TTL after a
-	 *  deploy. Read it through the `n.depth < 4` fallback below, never bare. */
-	can_reply?: boolean;
-	reactions: ReactionCount[];
-	score_up: number;
-	score_down: number;
-	my_vote: -1 | 0 | 1;
-	replies: TreeNode[];
 };
 
 type VoteResponse = {
@@ -2139,11 +2117,20 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 			}
 			// Reply landed — drop the saved draft before the list re-renders.
 			clearDraft(dkey);
-			// Pending replies reload like approved ones: the author's own
-			// queued comment comes back from the list endpoint and renders
-			// inline with a "Pending approval" badge. Fall back to the parent
-			// comment's id so focus still lands somewhere sensible on the rare
-			// response that omits the new comment's id.
+			// The 201 carries the whole comment, so render it rather than paying a
+			// GET to read it back (see insertPostedNode). Pending replies take the
+			// same path as approved ones: `status` comes from the echo, so the
+			// "Pending approval" badge is drawn from the server's verdict either way.
+			const posted = readPostedEcho(json.comment);
+			if (posted && insertPostedNode(ctx, posted, parent)) {
+				// The reload used to take this form down with the rest of the tree,
+				// gate and all. Nothing does now, so it dismisses itself.
+				dismiss();
+				return;
+			}
+			// Echo unusable, or the parent is no longer on screen. Fall back to the
+			// reload, and to the parent comment's id so focus still lands somewhere
+			// sensible on a response that omits the new comment's own.
 			ctx.revealAfterReload(json.comment?.id ?? parent.id, s("w.posted"));
 			ctx.reload();
 		} catch (err) {
@@ -2285,20 +2272,28 @@ const countDescendants = (n: TreeNode): number => {
  * Collapse/expand control for a node's replies. Hides/shows the replies
  * container in place (all replies are already in the DOM). `startCollapsed`
  * comes from the auto-collapse-depth setting.
+ *
+ * Returns handles rather than just the button because both the collapsed flag
+ * and the count are closure state, and neither survives contact with a reply
+ * that arrives after the toggle was built: the label would sit one short, and a
+ * container that auto-collapsed would swallow the new reply behind
+ * `display: none`. Every insert going through a full re-render is what has kept
+ * that unreachable, so the handles are what a caller needs in order not to.
  */
 const buildCollapseToggle = (
 	repliesEl: HTMLElement,
 	count: number,
 	startCollapsed: boolean,
-): HTMLButtonElement => {
+): { btn: HTMLButtonElement; reveal: () => void; countUp: () => void } => {
 	const btn = el("button", "gr-collapse") as HTMLButtonElement;
 	btn.type = "button";
 	let collapsed = startCollapsed;
+	let total = count;
 	const apply = () => {
 		repliesEl.style.display = collapsed ? "none" : "";
 		// The disclosure triangle is a glyph, not a word, so it stays outside the
 		// string — the count and its noun do not.
-		btn.textContent = `${collapsed ? "▸" : "▾"} ${s("w.replies", { n: count })}`;
+		btn.textContent = `${collapsed ? "▸" : "▾"} ${s("w.replies", { n: total })}`;
 		btn.setAttribute("aria-expanded", String(!collapsed));
 	};
 	btn.addEventListener("click", () => {
@@ -2306,7 +2301,70 @@ const buildCollapseToggle = (
 		apply();
 	});
 	apply();
-	return btn;
+	return {
+		btn,
+		reveal: () => {
+			if (!collapsed) return;
+			collapsed = false;
+			apply();
+		},
+		countUp: () => {
+			total += 1;
+			apply();
+		},
+	};
+};
+
+/**
+ * A node's mounted reply list: the container its direct replies render into,
+ * plus what an insert has to tell the toggle in front of it.
+ *
+ * Keyed on the `.gr-thread` wrap because that is the element the insert path
+ * can find from an id (`commentAnchorId`), and because the mount is created
+ * lazily — a node with no replies has no container and no toggle at all until
+ * someone replies to it.
+ */
+type ReplyMount = {
+	container: HTMLElement;
+	reveal: () => void;
+	countUp: () => void;
+};
+
+const replyMounts = new WeakMap<HTMLElement, ReplyMount>();
+
+/**
+ * The reply list for `n`, mounting the container and its toggle on first use.
+ *
+ * `startCollapsed` is computed here rather than passed so there is one rule for
+ * it. A caller that has just inserted the reader's own reply into a list that
+ * would auto-collapse calls `reveal()` afterwards; hiding a comment somebody
+ * made two seconds ago is never the right answer.
+ */
+const replyMountFor = (
+	threadEl: HTMLElement,
+	n: TreeNode,
+	ctx: WidgetCtx,
+): ReplyMount => {
+	const existing = replyMounts.get(threadEl);
+	if (existing) return existing;
+	const container = el("div", "gr-replies");
+	// Per-comment collapse toggle; auto-collapsed when this node is nested
+	// at/deeper than the configured depth (0 = never auto-collapse).
+	const startCollapsed =
+		ctx.autoCollapseDepth > 0 && n.depth >= ctx.autoCollapseDepth;
+	const toggle = buildCollapseToggle(
+		container,
+		countDescendants(n),
+		startCollapsed,
+	);
+	threadEl.append(toggle.btn, container);
+	const mount: ReplyMount = {
+		container,
+		reveal: toggle.reveal,
+		countUp: toggle.countUp,
+	};
+	replyMounts.set(threadEl, mount);
+	return mount;
 };
 
 /**
@@ -2330,7 +2388,22 @@ const renderReplyList = (
 		more.type = "button";
 		more.textContent = s("w.more_replies", { n: hidden.length });
 		more.addEventListener("click", () => {
+			// Same arbitration as `appendThreads`, on the reply side: this batch was
+			// captured when the list rendered, and `insertPostedNode` can have put
+			// one of these replies on screen live in the meantime — a load that
+			// raced a post puts the reply in `hidden` and the 201 then draws it
+			// after the button. Revealing the batch would then draw it twice. No
+			// repositioning needed, unlike top level: replies are ordered
+			// `created_at ASC`, this batch goes before the button and the live node
+			// is the newest, so last is already where it belongs.
+			const onScreen = new Set<string>();
+			for (const child of container.querySelectorAll<HTMLElement>(
+				":scope > .gr-thread",
+			)) {
+				if (child.dataset.id) onScreen.add(child.dataset.id);
+			}
 			for (const r of hidden) {
+				if (onScreen.has(r.id)) continue;
 				container.insertBefore(buildThread(r, ctx), more);
 			}
 			more.remove();
@@ -2346,18 +2419,7 @@ const buildThread = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	wrap.id = commentAnchorId(n.id);
 	wrap.appendChild(buildComment(n, ctx));
 	if (n.replies.length > 0) {
-		const replies = el("div", "gr-replies");
-		renderReplyList(replies, n.replies, ctx);
-		// Per-comment collapse toggle; auto-collapsed when this node is nested
-		// at/deeper than the configured depth (0 = never auto-collapse).
-		const startCollapsed =
-			ctx.autoCollapseDepth > 0 && n.depth >= ctx.autoCollapseDepth;
-		const toggle = buildCollapseToggle(
-			replies,
-			countDescendants(n),
-			startCollapsed,
-		);
-		wrap.append(toggle, replies);
+		renderReplyList(replyMountFor(wrap, n, ctx).container, n.replies, ctx);
 	}
 	return wrap;
 };
@@ -2812,12 +2874,53 @@ const fetchPage = async (
 	return (await res.json()) as ListResponse;
 };
 
+/**
+ * Render top-level threads into the list, never drawing an id twice.
+ *
+ * The id check is load-more's arbitration with `insertPostedNode`. A comment
+ * rendered from its own POST echo is on screen without the server having been
+ * asked where it belongs, so a later page can legitimately contain it — under
+ * `old` when the post landed on what was already the last page, and under `top`
+ * at whatever rank a comment with no votes takes.
+ *
+ * Which is why a provisional node (`[data-posted]`) is *replaced* rather than
+ * skipped. Skipping keeps a guess that this very response disproves: under
+ * `old` the following page would render after a comment newer than all of it,
+ * and under `top` a score-0 post would sit above the ranks the server just
+ * sent. Rebuilding it here, in the order the page arrived in, is the server
+ * answering the question the echo path had to guess at — and it picks up the
+ * votes, reactions and replies the provisional node was drawn without. The
+ * accent carries over: the comment is still the reader's own.
+ *
+ * The cost is that a form left open under one's own just-posted comment does
+ * not survive that particular Load More. Every other node on screen is
+ * untouched, which is more than the pre-v2.20.0 post-then-reload kept.
+ *
+ * An id already on screen that is *not* provisional is left alone: it is a
+ * genuine overlap between pages, and the copy on screen is as authoritative as
+ * the one in this response.
+ */
 const appendThreads = (
 	list: HTMLElement,
 	threads: TreeNode[],
 	ctx: WidgetCtx,
 ): void => {
-	for (const t of threads) list.appendChild(buildThread(t, ctx));
+	const onScreen = new Map<string, HTMLElement>();
+	for (const child of list.querySelectorAll<HTMLElement>(":scope > .gr-thread")) {
+		const id = child.dataset.id;
+		if (id && !onScreen.has(id)) onScreen.set(id, child);
+	}
+	for (const t of threads) {
+		const existing = onScreen.get(t.id);
+		if (existing && existing.dataset.posted !== "1") continue;
+		const built = buildThread(t, ctx);
+		if (existing) {
+			built.dataset.posted = "1";
+			existing.remove();
+		}
+		onScreen.set(t.id, built);
+		list.appendChild(built);
+	}
 };
 
 const fetchMe = async (apiBase: string): Promise<Me> => {
@@ -3009,6 +3112,171 @@ const revealHashTarget = (root: ShadowRoot): boolean => {
 	// as revealed, so a later Load More or reload can still catch it.
 	if (st) st.revealedHash = anchorId;
 	return true;
+};
+
+/** The order the rendered page is actually in; see `loadState`'s `sort`. */
+const activeSortFor = (root: ShadowRoot): SortKey =>
+	loadState.get(root)?.sort ?? "new";
+
+/**
+ * The mount's live render context, so the top-level `submit()` can build a
+ * comment node without holding one.
+ *
+ * `submit()` is wired when the composer is constructed and has `root` but no
+ * `ctx` — `buildForm` runs before `loadOnce` has built one. Keyed on the root
+ * like `loadState` and `pendingReveal`, and overwritten by every render, so
+ * what is read out always belongs to the tree currently on screen. A miss (a
+ * submit racing the very first render) falls back to the reload path.
+ */
+const mountCtx = new WeakMap<ShadowRoot, WidgetCtx>();
+
+/**
+ * The insertion point directly after `thread` and after everything already
+ * flattened out of it.
+ *
+ * `buildSubtree` emits a flattened subtree in DFS pre-order into the array its
+ * nearest un-flattened ancestor sits in, so a comment's lifted descendants are
+ * exactly the run of `[data-flat]` threads immediately following it. A new
+ * reply to that comment joins the end of that run. `{ before: null }` means the
+ * run reaches the end of the list, which `insertBefore` reads as "append".
+ *
+ * `null` — no insertion point — is the case where the run runs into a "Show N
+ * more replies" button. Where it continues is then inside a batch that is not
+ * rendered yet, and that button inserts its batch immediately before itself
+ * when pressed, so anything placed here would end up above replies older than
+ * it the moment the reader expands the list. The caller falls back to a reload
+ * rather than guess, the same as for a parent that has been paged out.
+ */
+const afterFlattenedRun = (thread: Element): { before: Node | null } | null => {
+	let last = thread;
+	for (let sib = thread.nextElementSibling; sib; sib = sib.nextElementSibling) {
+		const row = sib.querySelector(":scope > .gr-comment");
+		if (!sib.classList.contains("gr-thread") || !row?.hasAttribute("data-flat")) {
+			return sib.classList.contains("gr-showmore")
+				? null
+				: { before: last.nextSibling };
+		}
+		last = sib;
+	}
+	return { before: last.nextSibling };
+};
+
+/**
+ * Put the comment the server just echoed straight into the rendered tree,
+ * instead of re-fetching the thread to find it.
+ *
+ * Backlog #9 and #45 are one bug seen from two sides. Posting used to
+ * `ctx.reload()`, which spent a second Worker request on the most expensive
+ * path the widget has — and re-fetched *page one*, so under `sort=old` on a
+ * thread past `comments_per_page` the reader's own comment came back on a page
+ * nobody was looking at (issue #94). Rendering the 201's own payload answers
+ * both: no request, and the node is placed relative to what is actually on
+ * screen. It also keeps scroll position and every other open form, which a
+ * `root.replaceChildren()` could not.
+ *
+ * Not optimistic, despite #9's title: whether a comment is held for moderation
+ * is a server verdict (muted words, Akismet, Workers AI, first-comment hold),
+ * so the thing rendered here is the server's answer, arriving one request
+ * earlier rather than being guessed and rolled back.
+ *
+ * Returns false when the tree cannot take the node — no rendered list, a reply
+ * whose parent has been paged out, or a flattened reply whose place on the tier
+ * is hidden behind a "Show N more replies" button (see `afterFlattenedRun`).
+ * All of them mean "fall back to the old post-then-reload path", exactly as
+ * `readPostedEcho` returning `null` does: a comment in the wrong place is worse
+ * than a second request.
+ */
+const insertPostedNode = (
+	ctx: WidgetCtx,
+	echo: PostedEcho,
+	parent: TreeNode | null,
+): boolean => {
+	const list = ctx.root.querySelector(".gr-list");
+	if (!list) return false;
+
+	// Announce and move focus, having established the comment is on screen. Two
+	// callers because "already there" is a success with nothing to draw.
+	const announcePosted = (): true => {
+		focusPostedComment(ctx.root, echo.id);
+		// No `setTimeout(0)` here, unlike loadOnce's arbitration. That delay exists
+		// because `root.replaceChildren()` had just built a brand-new live region,
+		// and a region has to be in the accessibility tree *before* its text
+		// changes. This path never destroys the tree, so the box has been sitting
+		// there all along and the write announces on the spot.
+		const statusEl = ctx.root.querySelector(".gr-error") as HTMLElement | null;
+		if (statusEl) showStatus(statusEl, s("w.posted"), "notice");
+		return true;
+	};
+
+	// A load that overlapped this POST can already have drawn the comment: the
+	// server commits before it answers, so any reload or Load More that fetched
+	// after the commit and landed before the 201 got back here includes it. The
+	// duplicate check in `appendThreads` cannot see that — it compares a page
+	// against the screen, and here it is the screen that is ahead. Inserting
+	// anyway would leave one comment rendered twice under a single anchor id.
+	if (ctx.root.getElementById(commentAnchorId(echo.id))) return announcePosted();
+
+	const { node, slot } = synthesizePosted(echo, parent);
+
+	// Resolve the destination before building anything, so a miss costs nothing.
+	let container: Element;
+	let before: Node | null = null;
+	if (!slot) {
+		container = list;
+		// First comment on the thread: "no comments yet" is now false. The sort
+		// selector stays absent until the next real load — it renders off
+		// `data.threads.length`, and one comment has no order to choose between.
+		// The subscribe bell is unaffected; it renders off the settings, not the
+		// thread, so it is already on screen wherever it belongs.
+		list.querySelector(".gr-empty")?.remove();
+		if (topLevelPlacement(activeSortFor(ctx.root)) === "prepend") {
+			before = list.firstChild;
+		}
+	} else if (!parent) {
+		return false;
+	} else {
+		const parentThread = ctx.root.getElementById(commentAnchorId(parent.id));
+		if (!parentThread) return false;
+		if (slot.into === "replies") {
+			// Plain append, even past a "Show N more replies" button. The hidden
+			// replies are the *newer* ones — renderReplyList slices from the end of
+			// an ascending list — so a comment posted seconds ago belongs after
+			// them, and the button reveals its batch by inserting before itself,
+			// which keeps the order right once it is pressed.
+			container = replyMountFor(parentThread, parent, ctx).container;
+		} else {
+			// A reply to an already-flattened comment is lifted onto that comment's
+			// own tier (see `replySlot`), not nested under it.
+			const tier = parentThread.parentElement;
+			if (!tier) return false;
+			const spot = afterFlattenedRun(parentThread);
+			if (!spot) return false;
+			container = tier;
+			before = spot.before;
+		}
+	}
+
+	const threadEl = buildThread(node, ctx);
+	// Marks it as the reader's own for this render. Under `old` and `top` its
+	// position is provisional (see `topLevelPlacement`), and "here is what you
+	// posted" is the one claim that stays true either way.
+	threadEl.dataset.posted = "1";
+	container.insertBefore(threadEl, before);
+
+	// Every list this node now sits inside shows one comment more — and none of
+	// them may be a collapsed list hiding a comment made two seconds ago.
+	for (
+		let a = threadEl.parentElement?.closest<HTMLElement>(".gr-thread") ?? null;
+		a;
+		a = a.parentElement?.closest<HTMLElement>(".gr-thread") ?? null
+	) {
+		const mount = replyMounts.get(a);
+		if (!mount) continue;
+		mount.countUp();
+		mount.reveal();
+	}
+
+	return announcePosted();
 };
 
 // Closed-state notice copy, picked from the server's closed_reason enum so the
@@ -3234,6 +3502,9 @@ const loadOnce = async (
 			revealAfterReload(root, id, announce),
 		permalinkFor,
 	};
+	// Publish it for `submit()`, which is wired to a composer built before this
+	// context existed. See `mountCtx`.
+	mountCtx.set(root, ctx);
 	// Article-level engagement bar sits at the very top, above the composer.
 	if (pageReactionsEnabled || pageVotesEnabled) {
 		wrap.appendChild(buildPageEngagement(ctx));
@@ -3663,11 +3934,6 @@ const submit = async (
 		// from a clean field.
 		clearDraft(draftKey(slug, null));
 
-		// Pending comments fall through to the same reload path as approved
-		// ones: the list endpoint returns the author's own queued comment, so
-		// `load()` re-renders it inline with a "Pending approval" badge — a
-		// visible, persistent confirmation rather than a transient notice.
-
 		// Fire-and-forget subscription — failure here doesn't roll back
 		// the comment. The widget already has both inputs handy.
 		const notifyCb = form.querySelector(".gr-notify-cb") as HTMLInputElement | null;
@@ -3691,8 +3957,38 @@ const submit = async (
 			}
 		}
 
-		// Request the focus-and-announce for once the new tree lands, *before*
-		// awaiting the reload: `load()` can return immediately and queue this
+		// The 201 carries the whole comment, so render it instead of spending a
+		// second request reading it back — and instead of re-fetching page one,
+		// where under `sort=old` the reader's own comment isn't (issue #94). See
+		// insertPostedNode. Pending comments take this path too: `status` comes
+		// from the echo, so the "Pending approval" badge is the server's verdict
+		// either way, and a persistent badge stays the confirmation rather than a
+		// transient notice.
+		const posted = readPostedEcho(json.comment);
+		const ctx = mountCtx.get(root);
+		if (posted && ctx && insertPostedNode(ctx, posted, null)) {
+			// The reload used to hand the composer back by rebuilding it. What is
+			// left to undo is what the post consumed: the text, the disabled
+			// button, and the Turnstile token — single-use once siteverify has seen
+			// it, so a composer holding a spent one can only produce a rejected post.
+			const bodyInput = form.querySelector(
+				".gr-body-input",
+			) as HTMLTextAreaElement | null;
+			if (bodyInput) {
+				bodyInput.value = "";
+				// Re-fires what buildWritePreview listens for: shrinks the box back
+				// to its resting height and clears the character counter.
+				bodyInput.dispatchEvent(new Event("input"));
+			}
+			if (submitBtn) submitBtn.disabled = false;
+			ts?.reset();
+			ts?.gate.clear();
+			return;
+		}
+
+		// Echo unusable, or no render context yet (a submit racing the very first
+		// load). Request the focus-and-announce for once the new tree lands,
+		// *before* awaiting the reload: `load()` can return immediately and queue this
 		// reload behind one already in flight (see load(), above), so by the
 		// time `await` resolves here the tree it resolved against may already
 		// be stale. Stashing the request now, keyed on `root`, means whichever
