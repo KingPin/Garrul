@@ -364,10 +364,10 @@ describe("runDisqusImport", () => {
 		const plan = await runDisqusImport(db, SAMPLE_XML, "secret", {
 			dry_run: true,
 		});
-		expect(plan.threads_total).toBe(1);
-		expect(plan.posts_total).toBe(2);
+		expect(plan.pages_total).toBe(1);
+		expect(plan.comments_total).toBe(2);
 		expect(plan.new_comments).toBe(2);
-		expect(plan.new_posts).toBe(1);
+		expect(plan.new_pages).toBe(1);
 
 		const inserts = captured.filter((c) =>
 			/^INSERT INTO (comments|users|posts)\b/.test(c.sql),
@@ -378,7 +378,7 @@ describe("runDisqusImport", () => {
 	it("inserts posts, ghost users, and comments on a fresh DB", async () => {
 		const { db, captured } = makeFreshDb();
 		const plan = await runDisqusImport(db, SAMPLE_XML, "secret", {});
-		expect(plan.new_posts).toBe(1);
+		expect(plan.new_pages).toBe(1);
 		expect(plan.new_users).toBe(2);
 		expect(plan.new_comments).toBe(2);
 
@@ -402,7 +402,7 @@ describe("runDisqusImport", () => {
 		// stay at 0 because every existence check returned a row.
 		expect(plan.new_comments).toBe(0);
 		expect(plan.new_users).toBe(0);
-		expect(plan.new_posts).toBe(0);
+		expect(plan.new_pages).toBe(0);
 
 		const inserts = captured.filter((c) =>
 			c.sql.startsWith("INSERT INTO comments"),
@@ -491,8 +491,8 @@ ${posts}
 		const { db } = makeFreshDb();
 		const plan = await runDisqusImport(db, xml, "secret", {});
 		expect(plan.new_comments).toBe(1);
-		expect(plan.posts_skipped_deleted).toBe(1);
-		expect(plan.posts_skipped_spam).toBe(1);
+		expect(plan.skipped_deleted).toBe(1);
+		expect(plan.skipped_spam).toBe(1);
 	});
 
 	it("imported comment body is sanitized through the markdown allowlist", async () => {

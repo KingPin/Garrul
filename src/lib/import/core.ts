@@ -85,12 +85,26 @@ export type ImportAdapter = {
 	parse(input: string): SourceExport;
 };
 
+/**
+ * What an import run did, or would do under `dry_run`.
+ *
+ * The counter names deliberately say "pages" and "comments" rather than
+ * "threads" and "posts". Every source in #104 uses that second pair, and
+ * the two systems mean opposite things by it: a Disqus *post* is one
+ * comment and a Disqus *thread* is the page it hangs off, while a
+ * WordPress or Remark42 post is the page. Naming the counters after the
+ * source's vocabulary put `posts_total` (comments) next to `new_posts`
+ * (pages) in the same object, which read as a bug in the code and
+ * reported as a bug in the operator UI, where the plan is rendered as
+ * raw JSON. Garrul's own nouns are unambiguous, so use them: pages are
+ * rows in `posts`, comments are rows in `comments`.
+ */
 export type ImportPlan = {
-	posts_total: number;
-	posts_skipped_deleted: number;
-	posts_skipped_spam: number;
-	threads_total: number;
-	new_posts: number;
+	pages_total: number;
+	comments_total: number;
+	skipped_deleted: number;
+	skipped_spam: number;
+	new_pages: number;
 	new_users: number;
 	new_comments: number;
 };
@@ -163,11 +177,11 @@ export const runImport = async (
 ): Promise<ImportPlan> => {
 	const parsed = adapter.parse(input);
 	const plan: ImportPlan = {
-		posts_total: parsed.comments.length,
-		posts_skipped_deleted: 0,
-		posts_skipped_spam: 0,
-		threads_total: parsed.threads.length,
-		new_posts: 0,
+		pages_total: parsed.threads.length,
+		comments_total: parsed.comments.length,
+		skipped_deleted: 0,
+		skipped_spam: 0,
+		new_pages: 0,
 		new_users: 0,
 		new_comments: 0,
 	};
@@ -189,7 +203,7 @@ export const runImport = async (
 			.first<{ slug: string }>();
 		if (existing) continue;
 		if (opts.dry_run) {
-			plan.new_posts += 1;
+			plan.new_pages += 1;
 			continue;
 		}
 		await db
@@ -208,7 +222,7 @@ export const runImport = async (
 				t.created_at,
 			)
 			.run();
-		plan.new_posts += 1;
+		plan.new_pages += 1;
 	}
 
 	const userIdByAuthorKey = new Map<string, string>();
@@ -253,11 +267,11 @@ export const runImport = async (
 	const nativeIdBySourceId = new Map<string, string>();
 	for (const c of parsed.comments) {
 		if (!opts.include_deleted && c.is_deleted) {
-			plan.posts_skipped_deleted += 1;
+			plan.skipped_deleted += 1;
 			continue;
 		}
 		if (!opts.include_spam && c.is_spam) {
-			plan.posts_skipped_spam += 1;
+			plan.skipped_spam += 1;
 			continue;
 		}
 		const slug = slugByThreadSourceId.get(c.thread_source_id);
