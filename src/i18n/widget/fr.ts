@@ -75,6 +75,7 @@ export const fr = {
 	// "restante" accorde avec le nombre de minutes, d'où les deux formes.
 	"w.edit_left": { one: "{time} restante", other: "{time} restantes" },
 	"w.edit_last_minute": "moins d'une minute restante",
+	"w.edit_expired": "Votre délai de modification est écoulé.",
 	"w.delete": "Supprimer",
 	"w.delete_confirm": "Supprimer ce commentaire ?",
 	"w.report": "Signaler",

@@ -113,6 +113,10 @@ export const EN = {
 	// on a shared 15s interval, and a per-second clock next to your own words is
 	// a nagging surface for the one minute it would be accurate.
 	"w.edit_last_minute": "less than a minute left",
+	// Shown in the editor when the window closes underneath an author who is
+	// still typing. Before this existed, Save stayed live and the PATCH it fired
+	// came back 403 with nothing on screen to say why.
+	"w.edit_expired": "Your edit window has closed.",
 	"w.delete": "Delete",
 	"w.delete_confirm": "Delete this comment?",
 	"w.report": "Report",

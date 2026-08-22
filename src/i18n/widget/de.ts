@@ -76,6 +76,7 @@ export const de = {
 	// "noch 4 Min." — `{time}` arrives already formatted by Intl, unit included.
 	"w.edit_left": "noch {time}",
 	"w.edit_last_minute": "weniger als eine Minute übrig",
+	"w.edit_expired": "Der Bearbeitungszeitraum ist abgelaufen.",
 	"w.delete": "Löschen",
 	"w.delete_confirm": "Diesen Kommentar löschen?",
 	"w.report": "Melden",

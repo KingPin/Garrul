@@ -1932,6 +1932,9 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 	bindComposerKeys(wrap, dismiss);
 	actions.append(save, cancel);
 
+	/** Set once the edit window closes under this editor. See `expire` below. */
+	let expired = false;
+
 	// Prefill with the original markdown source. The tree payload only carries
 	// body_html, so we fetch body_md on demand from the author-only source
 	// endpoint (same author + edit-window gate as the PATCH). Disable both the
@@ -1950,8 +1953,10 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 		})
 		.catch(() => {})
 		.finally(() => {
-			// The author may have hit Cancel before the fetch resolved.
-			if (!ta.isConnected) return;
+			// The author may have hit Cancel before the fetch resolved — or the
+			// window may have closed while it was in flight, in which case handing
+			// the field and Save back would undo `expire`.
+			if (!ta.isConnected || expired) return;
 			ta.disabled = false;
 			save.disabled = false;
 			ta.placeholder = s("w.edit_ph");
@@ -1960,10 +1965,40 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 			autoSize(ta);
 			ta.focus();
 		});
-	wrap.append(buildWritePreview(ta, ctx.apiBase, true), actions);
+	// Unlike the chip in the actions row, this one IS a live region: the window
+	// closing under someone who is mid-sentence is an event, and it happens
+	// nowhere near whatever they are looking at.
+	const errBox = statusBox("gr-error is-inline");
+	wrap.append(buildWritePreview(ta, ctx.apiBase, true), actions, errBox);
+
+	/**
+	 * The window ran out while this editor was open. Retire the surfaces that
+	 * would fail and say why — before this, Save stayed live, the PATCH came
+	 * back 403, and the button quietly re-enabled itself with nothing on screen
+	 * to explain it. Cancel stays enabled: dismissing is still valid, and it is
+	 * the only way out.
+	 */
+	const expire = (): void => {
+		expired = true;
+		ta.disabled = true;
+		save.disabled = true;
+		showStatus(errBox, s("w.edit_expired"));
+	};
+	registerCountdown(() => {
+		if (!wrap.isConnected) return false;
+		const state = editWindowState(n.created_at, ctx.editWindowMs, Date.now());
+		if (state.phase !== "expired") return true;
+		expire();
+		return false;
+	});
+
 	wrap.addEventListener("submit", async (e) => {
 		e.preventDefault();
+		// The tick runs every 15 seconds, so a submit can still land in the gap
+		// between the window closing and the tick noticing.
+		if (expired) return;
 		save.disabled = true;
+		clearStatus(errBox);
 		try {
 			const res = await fetch(
 				apiUrl(ctx.apiBase, `/api/v1/comments/${encodeURIComponent(n.id)}`),
@@ -1981,8 +2016,16 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 				// hard size budget.
 				ctx.revealAfterReload(n.id);
 				ctx.reload();
-			} else save.disabled = false;
-		} catch {
+				return;
+			}
+			// Every other refusal — a 429, a body that failed validation, a spam
+			// verdict — used to re-enable Save and say nothing, which reads as the
+			// button not working. The server's message is already localized.
+			const json = (await res.json().catch(() => ({}))) as { error?: string };
+			showStatus(errBox, json.error ?? `HTTP ${res.status}`);
+			save.disabled = false;
+		} catch (err) {
+			showStatus(errBox, String(err));
 			save.disabled = false;
 		}
 	});
