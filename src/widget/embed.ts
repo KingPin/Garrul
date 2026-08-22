@@ -1994,6 +1994,12 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 	const expire = (): void => {
 		ta.disabled = true;
 		save.disabled = true;
+		// An editor opened after expiry never gets its prefill, so the field is
+		// empty and the placeholder is the only thing in it — "Loading…", for a
+		// load that is not coming. Clear it and let the notice below be what the
+		// box says. (A window that closed on an editor already open has the body
+		// in the field, so the placeholder was never visible there.)
+		ta.placeholder = "";
 		showStatus(errBox, s("w.edit_expired"));
 	};
 
