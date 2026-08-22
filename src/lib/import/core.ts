@@ -46,6 +46,27 @@ export type SourceAuthor = {
 	name: string;
 	email: string | null;
 	is_anonymous: boolean;
+	/**
+	 * The source's own stable id for this author, when it has one.
+	 *
+	 * Present or absent changes what two rows have to share to become one
+	 * ghost user, so it is the adapter's call, not the core's:
+	 *
+	 *   absent  — identity is derived from name + email. Correct for Disqus,
+	 *             whose export gives an anonymous commenter no id at all, so
+	 *             name+email is the only thing there is to key on.
+	 *   present — identity is the id. Correct for Remark42, whose export
+	 *             carries a real per-user id and whose users can rename
+	 *             themselves; keying on name there would fork one person into
+	 *             two ghosts on a rename, and merge two people who picked the
+	 *             same display name.
+	 *
+	 * Adapters must not start supplying this for a source that previously
+	 * omitted it: the seed feeds an HMAC, so changing it changes every
+	 * derived `provider_id`, and a re-import would create a second ghost for
+	 * everyone rather than deduping against the first.
+	 */
+	source_id?: string | null;
 };
 
 export type SourceThread = {
@@ -148,11 +169,30 @@ export const safePostUrl = (link: string | null): string | null => {
 	}
 };
 
+/**
+ * The seed the ghost `provider_id` HMAC is taken over.
+ *
+ * Namespaced by source in the id branch so two systems that both number
+ * their users from 1 cannot collide onto one ghost in an instance that
+ * imported from both.
+ *
+ * The name+email branch is deliberately *not* namespaced. It predates the
+ * source-agnostic core and every `provider_id` already in a self-hoster's
+ * `users` table was derived from exactly these bytes; adding a prefix would
+ * orphan all of them, so a re-import would double every imported commenter
+ * instead of finding the existing row. Leave it alone.
+ */
+export const authorSeed = (source: string, author: SourceAuthor): string =>
+	author.source_id
+		? `${source}:id:${author.source_id}`
+		: `${author.name}|${author.email ?? ""}`;
+
 const authorKey = async (
+	source: string,
 	author: SourceAuthor,
 	secret: string,
 ): Promise<string> => {
-	const seed = `${author.name}|${author.email ?? ""}`;
+	const seed = authorSeed(source, author);
 	const enc = new TextEncoder();
 	const key = await crypto.subtle.importKey(
 		"raw",
@@ -230,7 +270,7 @@ export const runImport = async (
 	for (const c of parsed.comments) {
 		if (!opts.include_deleted && c.is_deleted) continue;
 		if (!opts.include_spam && c.is_spam) continue;
-		const key = await authorKey(c.author, secret);
+		const key = await authorKey(adapter.source, c.author, secret);
 		if (userIdByAuthorKey.has(key)) continue;
 
 		const existing = await db
@@ -276,7 +316,7 @@ export const runImport = async (
 		}
 		const slug = slugByThreadSourceId.get(c.thread_source_id);
 		if (!slug) continue;
-		const key = await authorKey(c.author, secret);
+		const key = await authorKey(adapter.source, c.author, secret);
 		const user_id = userIdByAuthorKey.get(key)!;
 
 		const existing = await db
