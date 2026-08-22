@@ -33,8 +33,11 @@ dashboard page); every other integration is optional.
   sanitizer always on, four tunable heuristics and an optional classifier
   on top, everything routed to the queue
   ([`docs/ANTISPAM.md`](docs/ANTISPAM.md))
-- **Import from Disqus**: upload an export in the admin UI, or run
-  `npm run import-disqus -- ./export.xml --dry-run` first
+- **Import from Disqus**: upload the export in the admin UI — the
+  `.xml.gz` Disqus hands you, no unzipping — or run
+  `npm run import-disqus -- ./export.xml.gz --dry-run` first. Idempotent,
+  so a re-run inserts nothing; closed threads stay closed and spam stays
+  out of the public tree
 - **Admin UI**: moderation queue, user management, and settings you
   change without a redeploy
 - **RSS feeds**, comment counts, permalinks

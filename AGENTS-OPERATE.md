@@ -901,8 +901,9 @@ action id count) are applied *after* `c.req.json()` has already deserialized the
 whole body, so without it a multi-megabyte payload costs a full parse against the
 Worker's 10 ms CPU budget before any of them get a say. 64 KB is far above every
 legitimate payload — the largest is a comment at the 10,000-character body limit.
-The one exemption is `POST /admin/api/ops/import-disqus`, which takes a raw
-Disqus XML export up to 50 MB and enforces its own limit. Implementation:
+The one exemption is `POST /admin/api/ops/import-disqus`, which takes a
+Disqus XML export — gzipped or not — up to 50 MB and enforces its own limit,
+on the decompressed bytes as well as the compressed ones. Implementation:
 `src/lib/body-limit.ts`.
 
 **Client IP is required, not guessed.** Every endpoint that meters or dedupes
@@ -946,7 +947,7 @@ Pages (top nav):
 | `/admin/users/:id` | User detail: all their comments paginated, reactions received, audit history affecting them, the **Moderator notes** card, Ban/Unban, role controls, and two folded-away admin-only panels — **Export personal data** and **Erase personal data** (both below). |
 | `/admin/audit` | Audit log with filter form (admin, action, target kind/id, date range). |
 | `/admin/subscriptions` | Email subscription list. Filter by email/post/confirmed/unsubscribed. Actions: manual unsubscribe, resend confirmation. |
-| `/admin/operator` | Batch operations: rerender stale comments (POSTs `/admin/api/ops/rerender` in 50-row chunks until done), seed-demo (idempotent; gated to `ENV != "production"`), the Disqus import upload (see below), and two retention cards — IP-hash and audit-log — each showing how many rows are past the configured window and offering a manual drain. |
+| `/admin/operator` | Batch operations: rerender stale comments (POSTs `/admin/api/ops/rerender` in 50-row chunks until done), seed-demo (idempotent; gated to `ENV != "production"`), the Disqus import upload (XML or .xml.gz — see below), and two retention cards — IP-hash and audit-log — each showing how many rows are past the configured window and offering a manual drain. |
 | `/admin/settings` | Editable form for feature flags, display/pagination numbers, and the moderation dials (edit window, thread auto-close, community auto-collapse, the three anti-spam heuristics), saved to the `settings` D1 table (no redeploy — see section 5). Also renders a read-only `(set)`/`(unset)` summary of deploy-time config (Turnstile, email, OAuth, spam provider), which still changes via `wrangler secret put` / `wrangler.toml`. |
 | `/admin/webhooks` | Outbound webhook endpoints: add/pause/delete, per-endpoint secret + event filter, adapter (`generic` / `slack` / `discord` / `telegram`), failure counts and retry status. |
 | `/admin/telegram` | **Admin-only.** Telegram operator bot: shows whether the bot token/webhook secret are set, links your personal Telegram account (one-time code or deep link), toggles the daily digest, and unlinks. See `docs/telegram.md`. |
@@ -1247,6 +1248,15 @@ the same export inserts zero rows):
 - Admin upload on `/admin/operator` — capped at 50 MB, with dry-run /
   include-deleted / include-spam toggles.
 
+**Gzipped exports work as-is, on both paths.** Disqus hands you a
+`.xml.gz`; hand it straight to the CLI or the upload and it is
+inflated in memory. The 50 MB cap applies to the *decompressed* size
+too — a file that inflates past it is rejected with `413
+{"error":"too_large"}` partway through rather than allocated, which is
+what keeps a hostile few-KB upload from being a memory-exhaustion
+primitive. Note that the *compressed* file is also capped at 50 MB, so
+the practical ceiling is whichever binds first.
+
 Imported HTML is stripped and re-rendered through the standard
 markdown allowlist. Thread titles and links go through the same
 guards the comment write path applies — control characters stripped
@@ -1256,6 +1266,31 @@ redirect target. Imported authors become `provider='anon'` ghost
 users whose `provider_id` is an HMAC (keyed by `IP_HASH_SECRET`) of
 the Disqus author identity, keeping their display names without
 storing emails.
+
+Two things carry across beyond the comment text itself. A thread
+Disqus had closed to new comments imports as a **closed page** — that
+is `posts.closed`, the same freeze the per-post toggle sets, so
+reopening it afterwards is a normal operator action. And a comment's
+moderation state comes across as-is rather than being flattened to
+approved: a comment Disqus marked spam imports as spam (and is skipped
+entirely without `--include-spam`), so it never appears publicly on
+the strength of the migration alone.
+
+**The dry-run plan's counters use Garrul's nouns, not Disqus'.** The
+JSON the CLI prints and the operator card renders reports
+`pages_total` / `new_pages` for rows in `posts` and `comments_total` /
+`new_comments` for rows in `comments`, plus `new_users`,
+`skipped_deleted` and `skipped_spam`. Disqus calls a comment a "post"
+and calls the page a "thread", which put `posts_total` (comments) next
+to `new_posts` (pages) in the same object; if you have a script
+parsing the old field names, that is the rename.
+
+**The importer is source-agnostic underneath.** `src/lib/import/core.ts`
+holds everything true of every source — identity derivation,
+idempotency, threading, depth capping, the size and gzip handling — and
+`src/lib/import/disqus.ts` is just the adapter that knows how to read
+Disqus XML. Adapters for other comment systems are tracked in #104;
+they inherit all of the above rather than reimplementing it.
 
 **`IP_HASH_SECRET` is required for the CLI, and must be the same
 secret the Worker uses.** It keys the ghost-identity HMAC above, so a
