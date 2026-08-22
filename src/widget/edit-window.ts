@@ -55,22 +55,52 @@ export type EditWindowState =
 	/** Not editable: the window has run out, or editing is switched off. */
 	| { phase: "expired" };
 
+/**
+ * Clamping to the window matters for a reader whose clock runs slow: they see a
+ * `created_at` in their own future, and without this the chip would promise
+ * twenty minutes of a fifteen-minute window.
+ */
+const msRemaining = (
+	createdAt: number,
+	windowMs: number,
+	now: number,
+): number => Math.min(windowMs, createdAt + windowMs - now);
+
 export const editWindowState = (
 	createdAt: number,
 	windowMs: number,
 	now: number,
 ): EditWindowState => {
 	if (windowMs <= 0) return { phase: "expired" };
-	// Clamping to the window matters for a reader whose clock runs slow: they
-	// see a `created_at` in their own future, and without this the chip would
-	// promise twenty minutes of a fifteen-minute window.
-	const remaining = Math.min(windowMs, createdAt + windowMs - now);
+	const remaining = msRemaining(createdAt, windowMs, now);
 	if (remaining <= 0) return { phase: "expired" };
 	if (remaining > COUNTDOWN_WINDOW_MS) return { phase: "open" };
 	if (remaining < MINUTE_MS) return { phase: "last" };
 	// Floor, not round. At 4m30s "4m left" makes a reader hurry and "5m left"
 	// may not; understating a deadline is the safe direction to be wrong in.
 	return { phase: "closing", minutes: Math.floor(remaining / MINUTE_MS) };
+};
+
+/**
+ * How long until this comment's countdown has anything to say — `0` once the
+ * threshold is already behind us, or when there is nothing left to count.
+ *
+ * The `open` phase is the whole point of this: a window measured in days spends
+ * nearly all of itself there, and a ticker started at mount would re-read the
+ * clock every 15 seconds for six days to conclude each time that the answer is
+ * still `open`. Wait this long first and the widget is quiet outside the last
+ * hour in fact, not just on screen.
+ */
+export const countdownStartsIn = (
+	createdAt: number,
+	windowMs: number,
+	now: number,
+): number => {
+	if (windowMs <= 0) return 0;
+	return Math.max(
+		0,
+		msRemaining(createdAt, windowMs, now) - COUNTDOWN_WINDOW_MS,
+	);
 };
 
 /**

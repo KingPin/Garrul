@@ -18,6 +18,7 @@ import { WIDGET_TABLES } from "../src/i18n/widget";
 import {
 	COUNTDOWN_WINDOW_MS,
 	type EditWindowState,
+	countdownStartsIn,
 	editWindowLabel,
 	editWindowState,
 } from "../src/widget/edit-window";
@@ -101,6 +102,60 @@ describe("editWindowState", () => {
 			phase: "closing",
 			minutes: 15,
 		});
+	});
+});
+
+describe("countdownStartsIn", () => {
+	/** ms until `left`-of-`windowMs` has the countdown anything to say. */
+	const startsIn = (left: number, windowMs = 15 * MIN): number =>
+		countdownStartsIn(NOW - (windowMs - left), windowMs, NOW);
+
+	it("waits out the whole of a long window before ticking", () => {
+		// The reason this function exists: without it the shared 15-second ticker
+		// starts at mount and re-reads the clock for six days to keep concluding
+		// that the phase is still 'open'.
+		expect(startsIn(6 * 24 * 60 * MIN, 7 * 24 * 60 * MIN)).toBe(
+			6 * 24 * 60 * MIN - COUNTDOWN_WINDOW_MS,
+		);
+	});
+
+	it("starts immediately once the threshold is reached or passed", () => {
+		expect(startsIn(COUNTDOWN_WINDOW_MS, 2 * COUNTDOWN_WINDOW_MS)).toBe(0);
+		expect(startsIn(1 * MIN)).toBe(0);
+		// Never negative: a caller that hands this to setTimeout as a delay would
+		// otherwise be relying on the browser to clamp it for them.
+		expect(startsIn(-5 * MIN)).toBe(0);
+	});
+
+	it("hands back a delay that agrees with the phase it is waiting for", () => {
+		// The two functions read the same clock, so the boundary has to be the
+		// same one: a delay of 0 must mean the phase is no longer 'open', and a
+		// positive delay must mean it still is.
+		for (const left of [
+			COUNTDOWN_WINDOW_MS - 1,
+			COUNTDOWN_WINDOW_MS,
+			COUNTDOWN_WINDOW_MS + 1,
+		]) {
+			const window = 2 * COUNTDOWN_WINDOW_MS;
+			const open = withLeft(left, window).phase === "open";
+			expect(startsIn(left, window) > 0).toBe(open);
+		}
+	});
+
+	it("does not defer when editing is switched off", () => {
+		// `expired` is the phase either way, so the tick has to run and strip the
+		// affordance rather than sit on a timeout that never comes.
+		expect(countdownStartsIn(NOW, 0, NOW)).toBe(0);
+		expect(countdownStartsIn(NOW, -1, NOW)).toBe(0);
+	});
+
+	it("clamps a slow reader's clock the same way the phase does", () => {
+		// A `created_at` in the reader's own future must not push the first tick
+		// past the end of the window it is counting.
+		expect(countdownStartsIn(NOW + 5 * MIN, 15 * MIN, NOW)).toBe(0);
+		expect(
+			countdownStartsIn(NOW + 60 * MIN, 2 * COUNTDOWN_WINDOW_MS, NOW),
+		).toBe(COUNTDOWN_WINDOW_MS);
 	});
 });
 

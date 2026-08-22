@@ -61,6 +61,7 @@ import { commentAnchorId, commentHref, commentIdFromHash } from "./permalink";
 import {
 	type EditWindowState,
 	TICK_MS,
+	countdownStartsIn,
 	editWindowLabel,
 	editWindowState,
 } from "./edit-window";
@@ -1698,9 +1699,35 @@ const tickCountdowns = (): void => {
 	}
 };
 
-const registerCountdown = (tick: () => boolean): void => {
+const joinCountdown = (tick: () => boolean): void => {
 	countdownTicks.add(tick);
 	countdownTimer ??= setInterval(tickCountdowns, TICK_MS);
+};
+
+/**
+ * `setTimeout` keeps its delay in a signed 32-bit int, and a larger one wraps
+ * round to fire *immediately* — which would defeat the whole point of waiting.
+ * A week, the longest window the setting accepts, is comfortably inside this, so
+ * the clamp only catches a nonsense `edit_window_minutes`, and all it costs is
+ * an idle ticker for the remainder of the wait.
+ */
+const MAX_TIMEOUT_MS = 2_147_483_647;
+
+/**
+ * Put `tick` on the shared ticker, `delayMs` from now (immediately by default).
+ *
+ * Deferring is what keeps a long window cheap: see `countdownStartsIn`. The one
+ * read at the boundary does double duty — a `false` there means the element went
+ * away while we waited, so there is nothing left to join the ticker for.
+ */
+const registerCountdown = (tick: () => boolean, delayMs = 0): void => {
+	if (delayMs <= 0) {
+		joinCountdown(tick);
+		return;
+	}
+	setTimeout(() => {
+		if (tick()) joinCountdown(tick);
+	}, Math.min(delayMs, MAX_TIMEOUT_MS));
 };
 
 /**
@@ -1749,7 +1776,7 @@ const buildEditControl = (
 		}
 		paint(now);
 		return true;
-	});
+	}, countdownStartsIn(n.created_at, ctx.editWindowMs, Date.now()));
 
 	wrap.append(btn, chip);
 	return wrap;
@@ -2007,7 +2034,7 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 		if (!isExpired()) return true;
 		expire();
 		return false;
-	});
+	}, countdownStartsIn(n.created_at, ctx.editWindowMs, Date.now()));
 
 	wrap.addEventListener("submit", async (e) => {
 		e.preventDefault();
