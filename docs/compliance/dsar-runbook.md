@@ -70,13 +70,15 @@ Or `GET /admin/api/users/:id/export` directly. Admin-only; the file downloads as
 
 You get one JSON object: `export_version`, `exported_at`, then `user`,
 `comments`, `reports_filed`, `subscriptions`, `telegram_links`, `votes`,
-`reactions`, `page_votes`, `page_reactions`, `spam_verdicts`, and
-`moderation_actions`.
+`reactions`, `page_votes`, `page_reactions`, `spam_verdicts`,
+`moderation_actions`, and `moderator_notes`.
 
 **Before you send it:**
 
-1. **Skim `moderation_actions[].reason`.** That's `audit_log.reason` — free text a
-   moderator typed. Nothing stops it naming a third party. Redact if it does.
+1. **Skim `moderation_actions[].reason` and `moderator_notes[].body`.** Both are
+   free text a moderator typed — the first as the stated reason for an action,
+   the second as internal context never meant for the subject to read. Nothing
+   stops either naming a third party. Redact if it does.
 2. **Know what's in `comments`.** Each row carries `ip_hash` and `user_agent`.
    Included deliberately — they are the subject's own data — but it makes the file
    as sensitive as a database extract. Treat it like one.

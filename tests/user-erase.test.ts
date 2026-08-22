@@ -205,6 +205,28 @@ beforeEach(() => {
 		)
 		.run("tg-555", "chat-555", TARGET_ID, 1_700_000_000_000);
 
+	// Three notes, one of each shape the erasure has to tell apart: about the
+	// target, about a comment of theirs, and authored *by* the target.
+	sqlite
+		.prepare(
+			`INSERT INTO moderator_notes (id, target_kind, target_id, author_id,
+			                              body, created_at)
+			 VALUES ('n-about', 'user', ?, ?, 'note about target', ?),
+			        ('n-comment', 'comment', ?, ?, 'note on their comment', ?),
+			        ('n-authored', 'user', ?, ?, 'note they wrote', ?)`,
+		)
+		.run(
+			TARGET_ID,
+			MOD_ID,
+			1_700_000_000_000,
+			TARGET_COMMENT,
+			MOD_ID,
+			1_700_000_000_000,
+			OTHER_ID,
+			TARGET_ID,
+			1_700_000_000_000,
+		);
+
 	sqlite
 		.prepare(
 			`INSERT INTO reports (id, comment_id, reporter_user_id, reporter_ip_hash,
@@ -388,6 +410,29 @@ describe("POST /admin/api/users/:id/erase — linked records", () => {
 	});
 });
 
+describe("POST /admin/api/users/:id/erase — moderator notes", () => {
+	// A note about a person is free text a moderator wrote about them, with no
+	// expression interest on the other side of the scale — nobody outside the
+	// mod team ever reads it. So erasure takes it, and takes only it.
+	const noteIds = (): string[] =>
+		(
+			sqlite
+				.prepare("SELECT id FROM moderator_notes ORDER BY id")
+				.all() as { id: string }[]
+		).map((r) => r.id);
+
+	it("deletes notes about them and keeps the rest", async () => {
+		expect(noteIds()).toEqual(["n-about", "n-authored", "n-comment"]);
+
+		const res = await erase({ confirm: "ERASE", redact_bodies: false });
+		expect(res.status).toBe(200);
+
+		// n-comment annotates a piece of content; n-authored is their own
+		// moderator work, kept for the reason their audit rows are.
+		expect(noteIds()).toEqual(["n-authored", "n-comment"]);
+	});
+});
+
 describe("POST /admin/api/users/:id/erase — audit trail", () => {
 	it("records counts and never the erased values", async () => {
 		await erase({ confirm: "ERASE", redact_bodies: true, reason: "GDPR request" });
@@ -402,6 +447,7 @@ describe("POST /admin/api/users/:id/erase — audit trail", () => {
 			subscriptions_deleted: 1,
 			reports_scrubbed: 1,
 			telegram_links_deleted: 1,
+			moderator_notes_deleted: 1,
 		});
 		// The point of the action is that this data is gone. Writing the name or
 		// address into audit_log.meta would relocate it, not remove it — and audit
