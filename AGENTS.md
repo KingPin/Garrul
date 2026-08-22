@@ -651,7 +651,8 @@ countdown — "12m left", then "less than a minute left" under sixty seconds.
 It re-reads the clock every 15 seconds. On the default 15-minute window the
 countdown is therefore visible for the whole window; on a window configured
 in days it stays quiet until the last hour, so a long window doesn't paint a
-"6 days left" chip on every comment. The chip is not a live region — it is
+"6 days left" chip on every comment — and no timer runs before then either,
+so the quiet is real rather than just visual. The chip is not a live region — it is
 wired to the button with `aria-describedby`, so a screen reader announces the
 remaining time when the button takes focus rather than every fifteen seconds.
 
@@ -667,6 +668,10 @@ Two caveats worth knowing:
 - The countdown is computed against the **reader's** clock. A badly skewed
   clock mis-states the time left, exactly as it has always mis-gated the
   button; nothing on the wire carries a server `now`.
+- The 15-second tick is how the *display* keeps up, not how expiry is decided.
+  An editor asks the clock again when its prefill lands and again on submit, so
+  a click that arrives in the gap between the window closing and the next tick
+  gets the same "Your edit window has closed." notice rather than a bare 403.
 - Any other refusal from `PATCH` — a rate limit, a validation failure, a spam
   verdict — now renders in that same box. Before v2.21.0 the editor had no
   status surface at all and those failures silently re-enabled Save.
