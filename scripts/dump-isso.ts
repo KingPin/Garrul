@@ -85,9 +85,20 @@ export type IssoDumpThread = {
 
 type Row = Record<string, SQLOutputValue>;
 
+/**
+ * `typeof`, except a SQL NULL reports as `"null"`.
+ *
+ * `typeof null` is `"object"`, and "expected comments.mode to be a number,
+ * got object" reads as though the column held a JSON object — it sends an
+ * operator looking for the wrong thing in the right column. isso's own DDL
+ * leaves several columns this dumper requires nullable, so NULL is the
+ * single most likely value to land in one of these messages.
+ */
+const typeName = (v: SQLOutputValue): string => (v === null ? "null" : typeof v);
+
 const asNumber = (v: SQLOutputValue, field: string): number => {
 	if (typeof v !== "number") {
-		throw new Error(`isso dump: expected ${field} to be a number, got ${typeof v}`);
+		throw new Error(`isso dump: expected ${field} to be a number, got ${typeName(v)}`);
 	}
 	return v;
 };
@@ -104,14 +115,14 @@ const asNumber = (v: SQLOutputValue, field: string): number => {
 const asNullableNumber = (v: SQLOutputValue, field: string): number | null => {
 	if (v === null) return null;
 	if (typeof v !== "number") {
-		throw new Error(`isso dump: expected ${field} to be a number or null, got ${typeof v}`);
+		throw new Error(`isso dump: expected ${field} to be a number or null, got ${typeName(v)}`);
 	}
 	return v;
 };
 
 const asString = (v: SQLOutputValue, field: string): string => {
 	if (typeof v !== "string") {
-		throw new Error(`isso dump: expected ${field} to be a string, got ${typeof v}`);
+		throw new Error(`isso dump: expected ${field} to be a string, got ${typeName(v)}`);
 	}
 	return v;
 };
@@ -120,7 +131,7 @@ const asString = (v: SQLOutputValue, field: string): string => {
 const asNullableString = (v: SQLOutputValue, field: string): string | null => {
 	if (v === null) return null;
 	if (typeof v !== "string") {
-		throw new Error(`isso dump: expected ${field} to be a string or null, got ${typeof v}`);
+		throw new Error(`isso dump: expected ${field} to be a string or null, got ${typeName(v)}`);
 	}
 	return v;
 };

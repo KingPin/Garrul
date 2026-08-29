@@ -118,6 +118,55 @@ describe("dumpIsso", () => {
 	});
 });
 
+/**
+ * isso's own DDL leaves `mode` and `remote_addr` nullable while the dumper
+ * requires both, so a NULL there is a real shape a real database can hold.
+ * The dumper refuses it — a faithful dump does not invent a value — but the
+ * message has to say which value it found, and `typeof null` is `"object"`,
+ * which sends an operator looking for a JSON object in a SQLite column.
+ */
+describe("dumpIsso — NULL in a required column", () => {
+	let nullDir: string;
+	let seq = 0;
+
+	const dbWith = (mutation: string): string => {
+		// One file per call: two DatabaseSync opens on the same path would
+		// re-run the fixture SQL into a database that already has it.
+		seq += 1;
+		const path = join(nullDir, `null-${seq}.db`);
+		const db = new DatabaseSync(path);
+		try {
+			db.exec(FIXTURE_SQL);
+			db.exec(mutation);
+		} finally {
+			db.close();
+		}
+		return path;
+	};
+
+	beforeAll(() => {
+		nullDir = mkdtempSync(join(tmpdir(), "isso-dump-null-test-"));
+	});
+
+	afterAll(() => {
+		rmSync(nullDir, { recursive: true, force: true });
+	});
+
+	it("says 'got null' for a NULL number column, not 'got object'", () => {
+		const path = dbWith("UPDATE comments SET mode = NULL WHERE id = 1");
+		expect(() => dumpIsso(path)).toThrow(
+			"isso dump: expected comments.mode (comment 1) to be a number, got null",
+		);
+	});
+
+	it("says 'got null' for a NULL string column, not 'got object'", () => {
+		const path = dbWith("UPDATE comments SET remote_addr = NULL WHERE id = 1");
+		expect(() => dumpIsso(path)).toThrow(
+			"isso dump: expected comments.remote_addr (comment 1) to be a string, got null",
+		);
+	});
+});
+
 describe("formatIssoCreated", () => {
 	it("formats a known epoch as UTC, floored to the second", () => {
 		expect(formatIssoCreated(1700000000.9)).toBe("2023-11-14 22:13:20");
