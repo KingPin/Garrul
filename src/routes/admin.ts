@@ -2750,15 +2750,16 @@ admin.post("/api/ops/import-isso", async (c) => {
 		}
 		return c.json({ error: "not_isso_dump" }, 400);
 	}
-	// Cheap shape check only. The intermediate is a top-level array; an empty
-	// export is still `[]`, and a non-empty one always carries a `comments`
-	// key somewhere in its first thread. The adapter does the real
-	// validation and its errors name a record position rather than a
-	// record, so letting it speak beyond this point is safe.
-	const head = doc.slice(0, 4096).trimStart();
-	const looksRight =
-		head.startsWith("[") &&
-		(head.replace(/\s/g, "") === "[]" || head.includes('"comments"'));
+	// Cheap shape check only: a top-level JSON array — `[` then, after any
+	// whitespace, either `]` (an empty export) or `{` (the first thread).
+	// That is enough to turn away every other format this UI accepts (a
+	// Comentario document is an object, Disqus is XML, Remark42 is NDJSON)
+	// without reading into the first thread, whose keys can sit in any
+	// order and, behind a long `id` or `title`, well past any fixed window.
+	// The adapter does the real validation and its errors name a record
+	// position rather than a record, so letting it speak beyond this point
+	// is safe.
+	const looksRight = /^\s*\[\s*[{\]]/.test(doc.slice(0, 4096));
 	if (!looksRight) {
 		return c.json({ error: "not_isso_dump" }, 400);
 	}

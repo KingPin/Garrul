@@ -628,8 +628,32 @@ describe("POST /admin/api/ops/import-isso", () => {
 		expect(commentCount()).toBe(3);
 	});
 
+	it("accepts a dump whose first thread pushes the comments key past the sniff window", async () => {
+		// The sniff reads the first 4 KB. A long title (or a long uri) in the
+		// first thread sits before its `comments` key, so a sniff that looked
+		// for that key would turn away a dump the adapter reads fine.
+		const doc = JSON.parse(ISSO) as Array<{ title: string | null }>;
+		doc[0]!.title = "t".repeat(8192);
+		const res = await uploadIssoJson(JSON.stringify(doc));
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { plan: { new_comments: number } };
+		expect(body.plan.new_comments).toBe(3);
+	});
+
 	it("rejects a Comentario document sent to the isso endpoint", async () => {
 		const res = await uploadIssoJson(JSON.stringify({ version: 3 }));
+		expect(res.status).toBe(400);
+		expect(await res.json()).toEqual({ error: "not_isso_dump" });
+	});
+
+	it("rejects a Remark42 export (NDJSON) sent to the isso endpoint", async () => {
+		const res = await uploadIssoJson('{"id":"1"}\n{"id":"2"}\n');
+		expect(res.status).toBe(400);
+		expect(await res.json()).toEqual({ error: "not_isso_dump" });
+	});
+
+	it("rejects a top-level array that is not an array of objects", async () => {
+		const res = await uploadIssoJson("[1, 2, 3]");
 		expect(res.status).toBe(400);
 		expect(await res.json()).toEqual({ error: "not_isso_dump" });
 	});
