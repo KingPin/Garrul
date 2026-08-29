@@ -283,9 +283,24 @@ ${seedCard}
   busy: false,
   result: null,
   error: null,
+  source: 'disqus',
   dryRun: true,
   includeDeleted: false,
   includeSpam: false,
+  // One card, two sources. The endpoints stay separate on the server —
+  // their format sniffs and error codes differ — but from here the only
+  // things that vary are the URL, the content type and the file filter,
+  // so a second copy of this component would be a second place for the
+  // size cap and the dry-run wiring to drift.
+  get endpoint() { return '/admin/api/ops/import-' + this.source },
+  get contentType() {
+    return this.source === 'disqus' ? 'application/xml' : 'application/x-ndjson'
+  },
+  get accept() {
+    return this.source === 'disqus'
+      ? '.xml,.gz,application/xml,text/xml,application/gzip'
+      : '.json,.jsonl,.gz,application/json,application/gzip'
+  },
   async run(file) {
     if (!file) return;
     if (file.size > ${MAX_IMPORT_BYTES}) {
@@ -298,10 +313,10 @@ ${seedCard}
       // .text() would replace every byte it can't decode before the server
       // ever saw it. The Worker sniffs the gzip magic off the raw bytes.
       const body = await file.arrayBuffer();
-      const r = await fetch('/admin/api/ops/import-disqus', {
+      const r = await fetch(this.endpoint, {
         method: 'POST',
         headers: {
-          'content-type': 'application/xml',
+          'content-type': this.contentType,
           'x-dry-run': this.dryRun ? '1' : '0',
           'x-include-deleted': this.includeDeleted ? '1' : '0',
           'x-include-spam': this.includeSpam ? '1' : '0',
@@ -318,12 +333,28 @@ ${seedCard}
     }
   }
 }">
-  <h3>Import Disqus export</h3>
-  <p class="muted">Uploads a Disqus comment-export XML file — gzipped
-    (<code>.xml.gz</code>) or not — and ingests it into D1. Idempotent:
-    re-running the same file is a no-op (deduplicated by Disqus comment
-    ID). Imported HTML is stripped and re-rendered through the standard
-    markdown allowlist.</p>
+  <h3>Import comments</h3>
+  <p>
+    <label style="display:inline-flex;gap:0.3rem;align-items:center">
+      Source
+      <select x-model="source" :disabled="busy">
+        <option value="disqus">Disqus</option>
+        <option value="remark42">Remark42</option>
+      </select>
+    </label>
+  </p>
+  <p class="muted" x-show="source === 'disqus'">Uploads a Disqus
+    comment-export XML file — gzipped (<code>.xml.gz</code>) or not — and
+    ingests it into D1. Idempotent: re-running the same file is a no-op
+    (deduplicated by Disqus comment ID). Imported HTML is stripped and
+    re-rendered through the standard markdown allowlist.</p>
+  <p class="muted" x-show="source === 'remark42'">Uploads a Remark42
+    backup — the <code>.gz</code> that <code>backup</code> writes nightly,
+    or the plain JSONL the export API streams. Idempotent, deduplicated by
+    Remark42 comment ID. Bodies come from the markdown the author typed
+    where Remark42 kept it, and from its rendered HTML where it did not.
+    Pages are reconstructed from comment URLs, because a Remark42 export
+    carries no page records.</p>
   <p>
     <label style="display:inline-flex;gap:0.3rem;align-items:center;margin-right:0.8rem">
       <input type="checkbox" x-model="dryRun"> Dry run (parse + plan only)
@@ -335,7 +366,7 @@ ${seedCard}
       <input type="checkbox" x-model="includeSpam"> Include spam
     </label>
   </p>
-  <input type="file" accept=".xml,.gz,application/xml,text/xml,application/gzip"
+  <input type="file" :accept="accept"
          :disabled="busy"
          @change="run($event.target.files[0])">
   <p class="muted" x-show="busy">Importing… don't navigate away.</p>
@@ -344,7 +375,9 @@ ${seedCard}
   <p style="color:var(--bad)" x-show="error" x-text="error"></p>
   <p class="muted">Max upload: ${MAX_IMPORT_MB} MB, and a gzipped file must
     also stay under ${MAX_IMPORT_MB} MB once expanded. For larger exports use
-    the CLI: <code>npm run import-disqus -- ./export.xml --dry-run</code>.</p>
+    the CLI: <code x-text="source === 'disqus'
+      ? 'npm run import-disqus -- ./export.xml --dry-run'
+      : 'npm run import-remark42 -- ./userbackup.gz --dry-run'"></code>.</p>
 </div>
 `;
 };
