@@ -55,7 +55,12 @@
  * URL(site)` and required to be `http:`/`https:`, since an invalid value
  * here would otherwise surface only as a broken permalink much later. When
  * absent, `link` is `null` and permalinks 404 with "post URL not set" until
- * the operator sets one — normal for a source with no URL concept.
+ * the operator sets one — normal for a source with no URL concept. isso's
+ * `uri` is client-declared, so a crafted value (`//evil.example/x`, or an
+ * absolute URL of its own) can resolve off the given `site`'s origin; when
+ * the resolved link's origin doesn't match `site`'s, `link` falls back to
+ * `null` rather than throwing — a poisoned thread still imports its
+ * comments, it just gets no permalink.
  *
  * ## Deliberately discarded
  *
@@ -140,6 +145,21 @@ const parseIssoCreatedString = (s: string): number | null => {
 	return Number.isFinite(ms) ? ms : null;
 };
 
+/**
+ * Coerce one of isso's integer-typed fields (`id`, `parent`) into a number.
+ * SQLite row ids are integers, but they can travel through JSON as either a
+ * number or a numeric string, so both are accepted; a fraction like `1.5` is
+ * not — isso ids are never fractional, so one appearing means the dump is
+ * malformed. Returns `null` when `v` cannot be read as an integer.
+ */
+const readIssoInt = (v: unknown): number | null => {
+	if (typeof v === "number" && Number.isInteger(v)) return v;
+	if (typeof v === "string" && v.trim() !== "" && Number.isInteger(Number(v))) {
+		return Number(v);
+	}
+	return null;
+};
+
 const readIssoComment = (
 	row: Record<string, unknown>,
 	ti: number,
@@ -147,17 +167,8 @@ const readIssoComment = (
 ): IssoComment => {
 	const index = `threads[${ti}].comments[${ci}]`;
 
-	const rawId = row.id;
-	let id: number;
-	if (typeof rawId === "number" && Number.isFinite(rawId)) {
-		id = rawId;
-	} else if (
-		typeof rawId === "string" &&
-		rawId.trim() !== "" &&
-		Number.isFinite(Number(rawId))
-	) {
-		id = Number(rawId);
-	} else {
+	const id = readIssoInt(row.id);
+	if (id === null) {
 		throw new Error(`isso dump: ${index} has no usable id`);
 	}
 
@@ -174,8 +185,16 @@ const readIssoComment = (
 		throw new Error(`isso dump: ${index} has no usable timestamp`);
 	}
 
-	const parent =
-		typeof row.parent === "number" && Number.isFinite(row.parent) ? row.parent : null;
+	let parent: number | null;
+	if (row.parent === null || row.parent === undefined) {
+		parent = null;
+	} else {
+		parent = readIssoInt(row.parent);
+		if (parent === null) {
+			throw new Error(`isso dump: ${index} has an unusable parent`);
+		}
+	}
+
 	const mode = typeof row.mode === "number" && Number.isFinite(row.mode) ? row.mode : 1;
 	const modified_epoch =
 		typeof row.modified_epoch === "number" && Number.isFinite(row.modified_epoch)
@@ -194,12 +213,14 @@ const readIssoComment = (
 /**
  * Parse the JSON intermediate `scripts/dump-isso.ts` produces.
  *
- * Only four shapes are refused outright — a non-array top level, a thread
- * with no `comments` array, a comment with no usable id, and a comment with
- * no usable timestamp — because those are the fields nothing downstream can
- * safely default. Everything else (`parent`, `mode`, `modified_epoch`,
- * `author`, `email`, `text`) degrades to a documented default instead of
- * throwing, matching the other adapters' leniency for optional fields.
+ * Eight shapes are refused outright: a non-array top level, a thread that
+ * isn't an object, a thread with no `comments` array, a thread with no
+ * usable id, a comment that isn't an object, a comment with no usable id,
+ * a comment with no usable timestamp, and a comment with an unusable
+ * `parent` — because those are the fields nothing downstream can safely
+ * default. Everything else (`mode`, `modified_epoch`, `author`, `email`,
+ * `text`) degrades to a documented default instead of throwing, matching
+ * the other adapters' leniency for optional fields.
  *
  * Errors name a `threads[i]` / `threads[i].comments[j]` index only, never a
  * value — the intermediate carries names, emails and comment bodies.
@@ -228,7 +249,10 @@ export const parseIssoDump = (input: string): IssoThread[] => {
 		if (!Array.isArray(rawThread.comments)) {
 			throw new Error(`isso dump: threads[${ti}] has no comments array`);
 		}
-		const id = typeof rawThread.id === "string" ? rawThread.id : "";
+		if (typeof rawThread.id !== "string") {
+			throw new Error(`isso import: threads[${ti}] has no usable id`);
+		}
+		const id = rawThread.id;
 		const title = typeof rawThread.title === "string" ? rawThread.title : null;
 		const comments = rawThread.comments.map((rawComment, ci) => {
 			if (!isObject(rawComment)) {
@@ -243,15 +267,15 @@ export const parseIssoDump = (input: string): IssoThread[] => {
 /**
  * A Garrul slug from an isso thread's `uri` (R2).
  *
- * `slugFromLink` (core) drops a query string via `URL.pathname` — this
- * mirrors that by splitting on `?` before stripping slashes, since a path
- * has no `URL` to parse it with. Repeated slashes collapse the same way
- * `slugFromLink` collapses a link's path. `/` has nothing left once
- * stripped, so it gets the same synthetic treatment as any other
- * link-less thread: `isso-root`.
+ * `slugFromLink` (core) drops the query string and fragment via
+ * `URL.pathname` — this mirrors that by cutting at the first `?` or `#`
+ * before stripping slashes, since a path has no `URL` to parse it with.
+ * Repeated slashes collapse the same way `slugFromLink` collapses a link's
+ * path. `/` has nothing left once stripped, so it gets the same synthetic
+ * treatment as any other link-less thread: `isso-root`.
  */
 export const issoSlug = (uri: string): string => {
-	const withoutQuery = uri.split("?")[0] ?? uri;
+	const withoutQuery = uri.split(/[?#]/)[0] ?? uri;
 	const collapsed = withoutQuery.replace(/^\/+|\/+$/g, "").replace(/\/+/g, "/");
 	return collapsed || "isso-root";
 };
@@ -287,17 +311,37 @@ export const issoStatus = (mode: number, index: string): SourceStatus => {
 const toExport = (threads: IssoThread[], site: string | null): SourceExport => {
 	const outThreads: SourceThread[] = [];
 	const comments: SourceComment[] = [];
+	// Hoisted once: re-parsing `site` per thread is wasted work, and `site`
+	// was already validated as an http(s) origin at adapter construction.
+	const siteOrigin = site ? new URL(site).origin : null;
 
 	threads.forEach((t, ti) => {
 		if (t.comments.length === 0) return;
 
-		const createdAts = t.comments.map((c) => Math.round(c.created_epoch * 1000));
+		// A loop rather than `Math.min(...createdAts)` — spreading one array
+		// element per argument risks the engine's call-argument limit on a
+		// thread with a very large comment count.
+		let createdAt = Number.POSITIVE_INFINITY;
+		for (const c of t.comments) {
+			const ms = Math.round(c.created_epoch * 1000);
+			if (ms < createdAt) createdAt = ms;
+		}
+
+		// `uri` is client-declared, so a crafted value (`//evil.example/x`,
+		// or an absolute URL) can resolve off `site`'s own origin. Keep the
+		// link only when it lands back on that origin; otherwise null it out
+		// rather than throwing — one poisoned thread must not abort an
+		// otherwise-good import.
+		const resolvedLink = site ? new URL(t.id, site) : null;
+		const link =
+			resolvedLink && resolvedLink.origin === siteOrigin ? resolvedLink.href : null;
+
 		outThreads.push({
 			source_id: t.id,
 			slug: issoSlug(t.id),
-			link: site ? new URL(t.id, site).href : null,
+			link,
 			title: t.title,
-			created_at: Math.min(...createdAts),
+			created_at: createdAt,
 		});
 
 		t.comments.forEach((c, ci) => {

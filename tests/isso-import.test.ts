@@ -1,14 +1,16 @@
 /**
  * isso importer tests cover:
  *
- *   1. `parseIssoDump` — refuses a non-array top level, a thread with no
- *      `comments` array, a comment with no usable id or timestamp, and an
- *      unrecognised `mode`; never puts a value (author, email, text) in an
- *      error, only an index; accepts a comment carrying only `created`
- *      (parsed as UTC) and computes the same milliseconds the adjacent
- *      `created_epoch` would.
- *   2. `issoSlug` — R2: drop the query string, strip/collapse slashes,
- *      `isso-root` for `/`.
+ *   1. `parseIssoDump` — refuses a non-array top level, a thread that isn't
+ *      an object, a thread with no `comments` array, a thread with no usable
+ *      id, a comment that isn't an object, a comment with no usable id or
+ *      timestamp, a comment with an unusable `parent`, and an unrecognised
+ *      `mode`; never puts a value (author, email, text) in an error, only an
+ *      index; accepts a comment carrying only `created` (parsed as UTC) and
+ *      computes the same milliseconds the adjacent `created_epoch` would;
+ *      accepts a numeric-string `id`/`parent`, refuses a fractional one.
+ *   2. `issoSlug` — R2: drop the query string and fragment, strip/collapse
+ *      slashes, `isso-root` for `/`.
  *   3. Export shape over the committed fixture (5 threads on disk, one
  *      empty and dropped, two sharing a slug).
  *   4. Moderation — isso's `mode` maps to Garrul's status vocabulary;
@@ -22,7 +24,9 @@
  *   7. Markdown passes through untouched and renders through the shared
  *      sanitizer.
  *   8. `site` — supplies the host isso itself has no concept of; an
- *      invalid origin is refused eagerly.
+ *      invalid or unparseable origin is refused eagerly, and a resolved link
+ *      that lands off `site`'s own origin (R10, a client-declared `uri` can
+ *      claim `//evil.example/x`) is nulled rather than trusted or thrown.
  *   9. Idempotency is the core's; pinned here because the source tag is
  *      this adapter's contribution to it.
  *  10. `include_spam` is a no-op — isso never emits a `spam` status.
@@ -154,6 +158,47 @@ describe("parseIssoDump", () => {
 		).toThrow(/threads\[0\]\.comments\[0\]/);
 	});
 
+	it("refuses a thread whose id is not a string", () => {
+		expect(() =>
+			parseIssoDump(dump([{ id: 42, title: null, comments: [comment()] }])),
+		).toThrow(/threads\[0\] has no usable id/);
+	});
+
+	it("refuses a fractional comment id", () => {
+		const c = comment({ id: 1.5 });
+		expect(() =>
+			parseIssoDump(dump([{ id: "/x", title: null, comments: [c] }])),
+		).toThrow(/threads\[0\]\.comments\[0\]/);
+	});
+
+	it("accepts a numeric-string comment id", () => {
+		const [thread] = parseIssoDump(
+			dump([{ id: "/x", title: null, comments: [comment({ id: "7" })] }]),
+		);
+		expect(thread!.comments[0]!.id).toBe(7);
+	});
+
+	it("imports a numeric-string comment id as import_id \"7\"", () => {
+		const out = ISSO_ADAPTER.parse(
+			dump([{ id: "/x", title: null, comments: [comment({ id: "7" })] }]),
+		);
+		expect(out.comments[0]!.source_id).toBe("7");
+	});
+
+	it("refuses an unusable parent", () => {
+		const c = comment({ parent: "not-a-number" });
+		expect(() =>
+			parseIssoDump(dump([{ id: "/x", title: null, comments: [c] }])),
+		).toThrow(/threads\[0\]\.comments\[0\]/);
+	});
+
+	it("accepts a numeric-string parent, same as id", () => {
+		const [thread] = parseIssoDump(
+			dump([{ id: "/x", title: null, comments: [comment({ id: 2, parent: "1" })] }]),
+		);
+		expect(thread!.comments[0]!.parent).toBe(1);
+	});
+
 	it("refuses a comment with no usable timestamp", () => {
 		const c = comment({ created: undefined, created_epoch: undefined });
 		expect(() =>
@@ -222,6 +267,14 @@ describe("issoSlug", () => {
 	it("collapses repeated slashes", () => {
 		expect(issoSlug("//a//b/")).toBe("a/b");
 	});
+
+	it("drops a fragment", () => {
+		expect(issoSlug("/a#b")).toBe("a");
+	});
+
+	it("maps a query-only root path to the isso-root sentinel", () => {
+		expect(issoSlug("/?x=1")).toBe("isso-root");
+	});
 });
 
 // --------------------------- issoStatus (direct) ---------------------------
@@ -266,6 +319,28 @@ describe("ISSO_ADAPTER over the fixture", () => {
 		const plan = await runIssoImport(db, FIXTURE, "secret", { dry_run: true });
 		expect(plan.pages_total).toBe(4);
 		expect(plan.merged_pages).toBe(1);
+	});
+
+	it("slug_override beats the adapter's own slug for every thread", async () => {
+		const { db, captured } = makeFreshDb();
+		const plan = await runIssoImport(db, FIXTURE, "secret", { slug_override: "forced" });
+		// `pages_total` is core's count of source threads (`parsed.threads.
+		// length`), not distinct slugs, so it stays 4 even here — what
+		// slug_override actually collapses onto one page is `new_pages` and
+		// `merged_pages`, which core's own doc comment says reads 0 under
+		// slug_override (a merge only counts as a surprise when the operator
+		// didn't ask for one).
+		expect(plan.pages_total).toBe(4);
+		expect(plan.merged_pages).toBe(0);
+		expect(plan.new_pages).toBe(1);
+
+		const commentInserts = inserts(captured, "comments");
+		// 12 comments in the fixture minus the tombstone (mode 4), which stays
+		// behind include_deleted like any other run.
+		expect(commentInserts).toHaveLength(11);
+		for (const c of commentInserts) {
+			expect(c.binds[1]).toBe("forced");
+		}
 	});
 });
 
@@ -330,6 +405,21 @@ describe("identity", () => {
 		// 5 distinct seeds when the tombstone is skipped (default): Alice/alice,
 		// Bob/bob, Alice/alice2, Carol/carol, anonymous/null.
 		expect(plan.new_users).toBe(5);
+	});
+
+	it("binds c1's and c3's comment INSERTs to the same user_id, and c4's to a different one", async () => {
+		const { db, captured } = makeFreshDb();
+		await runIssoImport(db, FIXTURE, "secret");
+		const commentInserts = inserts(captured, "comments");
+		const userInserts = inserts(captured, "users");
+		expect(userInserts.length).toBe(5);
+
+		const c1 = commentInserts.find((c) => c.binds[10] === "1")!;
+		const c3 = commentInserts.find((c) => c.binds[10] === "3")!;
+		const c4 = commentInserts.find((c) => c.binds[10] === "4")!;
+		// user_id is bind index 2 on the comments INSERT.
+		expect(c3.binds[2]).toBe(c1.binds[2]);
+		expect(c4.binds[2]).not.toBe(c1.binds[2]);
 	});
 
 	it("adds a sixth ghost for the tombstone's anonymous|alice@example.com under include_deleted", async () => {
@@ -423,6 +513,32 @@ describe("site", () => {
 		expect(() => issoAdapter({ site: "ftp://x" })).toThrow(
 			"isso import: --site must be an http(s) origin",
 		);
+	});
+
+	it("throws the same message for an unparseable site", () => {
+		expect(() => issoAdapter({ site: "not a url" })).toThrow(
+			"isso import: --site must be an http(s) origin",
+		);
+	});
+});
+
+// ------------------------- site origin pinning (R10) ------------------------
+
+describe("site origin pinning (R10)", () => {
+	it("nulls the link for an off-origin uri but still imports its comments", async () => {
+		const { db, captured } = makeFreshDb();
+		const evilDump = dump([
+			{ id: "//evil.example/x", title: null, comments: [comment({ id: 101 })] },
+		]);
+		await runIssoImport(db, evilDump, "secret", { site: "https://blog.example.com" });
+
+		const postInserts = inserts(captured, "posts");
+		const evilPost = postInserts.find((p) => p.binds[0] === "evil.example/x")!;
+		expect(evilPost).toBeDefined();
+		expect(evilPost.binds[2]).toBeNull();
+
+		const commentInserts = inserts(captured, "comments");
+		expect(commentInserts.some((c) => c.binds[10] === "101")).toBe(true);
 	});
 });
 
