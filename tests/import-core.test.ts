@@ -237,6 +237,51 @@ describe("ghost identity derivation", () => {
 		expect(user!.binds).toContain("remark42");
 	});
 
+	it("counts a thread that merged onto a slug an earlier thread claimed", async () => {
+		// Same path, different query strings. Slugs drop the query, so both
+		// threads want "hello" and the second is absorbed.
+		const exported = exportOf([{ name: "A", email: null, is_anonymous: true }]);
+		exported.threads.push({
+			source_id: "t2",
+			link: "https://example.com/hello?page=2",
+			title: "Hello, page 2",
+			created_at: AT,
+		});
+		const { db } = makeFreshDb();
+		const plan = await runImport(
+			db,
+			stubAdapter("remark42", exported),
+			"",
+			"test-secret",
+		);
+		expect(plan.pages_total).toBe(2);
+		expect(plan.new_pages).toBe(1);
+		expect(plan.merged_pages).toBe(1);
+	});
+
+	it("reports no merges under slug_override, where collapsing is the point", async () => {
+		// Every thread is forced onto one page by the operator. That is not a
+		// surprise to report; new_pages already says one page came out.
+		const exported = exportOf([{ name: "A", email: null, is_anonymous: true }]);
+		exported.threads.push({
+			source_id: "t2",
+			link: "https://example.com/unrelated",
+			title: "Unrelated",
+			created_at: AT,
+		});
+		const { db } = makeFreshDb();
+		const plan = await runImport(
+			db,
+			stubAdapter("remark42", exported),
+			"",
+			"test-secret",
+			{ slug_override: "one-page" },
+		);
+		expect(plan.pages_total).toBe(2);
+		expect(plan.new_pages).toBe(1);
+		expect(plan.merged_pages).toBe(0);
+	});
+
 	it("falls back to a source-prefixed slug when a thread has no link", async () => {
 		const exported = exportOf(
 			[{ name: "A", email: null, is_anonymous: true }],

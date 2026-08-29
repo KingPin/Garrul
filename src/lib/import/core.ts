@@ -257,6 +257,25 @@ export type ImportPlan = {
 	new_pages: number;
 	new_users: number;
 	new_comments: number;
+	/**
+	 * Source threads that landed on a slug an earlier thread already claimed.
+	 *
+	 * Slugs drop the query string, so every `?page=2` and `?utm_source=` variant
+	 * of one path reduces to the same page and the first thread in document
+	 * order wins. That is the right trade — keeping the query would fragment one
+	 * page across every URL it was ever shared with — but it is silent, and the
+	 * comments on the losing threads relocate without the operator being told.
+	 *
+	 * Nothing else in the plan reveals it. `pages_total - new_pages` conflates a
+	 * merge with a page that already existed in the database, so the two cannot
+	 * be told apart by subtraction; a real Disqus export measured three merges
+	 * against 870 threads, which is exactly the size that hides in a rounding
+	 * error.
+	 *
+	 * Zero under `slug_override`, where every thread collapsing onto one page is
+	 * what the operator asked for rather than a surprise.
+	 */
+	merged_pages: number;
 };
 
 export type ImportOptions = {
@@ -389,6 +408,7 @@ export const runImport = async (
 		new_pages: 0,
 		new_users: 0,
 		new_comments: 0,
+		merged_pages: 0,
 	};
 
 	const threadBySlugCandidate = new Map<string, SourceThread>();
@@ -398,7 +418,13 @@ export const runImport = async (
 			opts.slug_override ??
 			slugFromLink(t.link, `${adapter.slugFallbackPrefix}${t.source_id}`);
 		slugByThreadSourceId.set(t.source_id, slug);
-		if (!threadBySlugCandidate.has(slug)) threadBySlugCandidate.set(slug, t);
+		if (threadBySlugCandidate.has(slug)) {
+			// First thread wins, and the comments on this one follow its slug
+			// into the winner's page. Count it so the plan says so.
+			if (!opts.slug_override) plan.merged_pages += 1;
+			continue;
+		}
+		threadBySlugCandidate.set(slug, t);
 	}
 
 	for (const [slug, t] of threadBySlugCandidate) {

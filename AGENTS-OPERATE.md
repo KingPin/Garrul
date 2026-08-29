@@ -1285,6 +1285,20 @@ and calls the page a "thread", which put `posts_total` (comments) next
 to `new_posts` (pages) in the same object; if you have a script
 parsing the old field names, that is the rename.
 
+**`merged_pages` is the counter to read before a large import.** Slugs
+drop the query string, so `/search`, `/search?page=2` and
+`/search?utm_source=x` are one page and the first thread in the export
+wins the title and url; the comments on the others relocate onto it.
+That is deliberate — keeping the query would fragment one page across
+every URL it was ever shared with — but it used to happen silently.
+`merged_pages` counts it. You cannot get the number by subtracting
+`new_pages` from `pages_total`: that difference also includes pages
+that already existed from an earlier run. A real Disqus export of 870
+threads merged three. If the count surprises you, run with `--slug=`
+to force everything onto one page deliberately, in which case
+`merged_pages` reports zero because the collapse is what you asked
+for.
+
 **The importer is source-agnostic underneath.** `src/lib/import/core.ts`
 holds everything true of every source — identity derivation,
 idempotency, threading, depth capping, the size and gzip handling — and

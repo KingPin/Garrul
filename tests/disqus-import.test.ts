@@ -684,6 +684,8 @@ describe("runDisqusImport — shapes measured in a real export", () => {
 		const plan = await runDisqusImport(db, xml, "secret", {});
 		expect(plan.pages_total).toBe(3);
 		expect(plan.new_pages).toBe(3);
+		// Three distinct links, so nothing merged — empty pages are not merges.
+		expect(plan.merged_pages).toBe(0);
 		expect(plan.new_comments).toBe(1);
 
 		const slugs = captured
@@ -698,11 +700,11 @@ describe("runDisqusImport — shapes measured in a real export", () => {
 	//
 	// This is a trade-off, not a defect: keeping the query would fragment one
 	// page across every ?utm_source= it was ever shared with, which is the
-	// worse failure in the common case. The defect is that the merge is
-	// SILENT — comments relocate from ?page=2 onto page 1 and the ImportPlan
-	// reports the same numbers either way, so an operator has nothing to
-	// notice. Counting collisions would cost nothing; that change is not made
-	// here, and this test is what will fail loudly when it is.
+	// worse failure in the common case. The defect was that the merge was
+	// SILENT — comments relocated from ?page=2 onto page 1 and the ImportPlan
+	// reported the same numbers either way, so an operator had nothing to
+	// notice. `merged_pages` is that missing signal; the merge itself is
+	// unchanged, because the merge was never the problem.
 	it("merges query-string variants onto one page, first thread winning", async () => {
 		const xml = `<disqus>
 		  <thread dsq:id="t1">
@@ -722,9 +724,13 @@ describe("runDisqusImport — shapes measured in a real export", () => {
 		const { db, captured } = makeFreshDb();
 		const plan = await runDisqusImport(db, xml, "secret", {});
 
-		// Two threads in, one page out — and nothing in the plan says so.
+		// Two threads in, one page out — and the plan now says so. Note that
+		// pages_total - new_pages happens to equal merged_pages here only
+		// because the database was empty; on a re-run the subtraction counts
+		// existing pages too, which is why the field is not derived.
 		expect(plan.pages_total).toBe(2);
 		expect(plan.new_pages).toBe(1);
+		expect(plan.merged_pages).toBe(1);
 
 		const posts = captured.filter((c) => c.sql.startsWith("INSERT INTO posts"));
 		expect(posts).toHaveLength(1);
