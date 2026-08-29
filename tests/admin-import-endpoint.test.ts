@@ -696,7 +696,7 @@ describe("POST /admin/api/ops/import-isso", () => {
 		expect(res.status).toBe(400);
 		const body = (await res.json()) as { error: string };
 		expect(body.error.startsWith("import_failed:")).toBe(true);
-		expect(body.error).toContain("--site must be an http(s) origin");
+		expect(body.error).toContain("site must be an http(s) origin (--site / x-import-site)");
 		expect(commentCount()).toBe(0);
 	});
 

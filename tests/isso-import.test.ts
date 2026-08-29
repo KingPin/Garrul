@@ -700,13 +700,13 @@ describe("site", () => {
 
 	it("throws on a non-http(s) site", () => {
 		expect(() => issoAdapter({ site: "ftp://x" })).toThrow(
-			"isso import: --site must be an http(s) origin",
+			"isso import: site must be an http(s) origin (--site / x-import-site)",
 		);
 	});
 
 	it("throws the same message for an unparseable site", () => {
 		expect(() => issoAdapter({ site: "not a url" })).toThrow(
-			"isso import: --site must be an http(s) origin",
+			"isso import: site must be an http(s) origin (--site / x-import-site)",
 		);
 	});
 });

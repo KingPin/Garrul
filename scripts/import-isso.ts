@@ -33,6 +33,9 @@
  *                       given, each thread's link is resolved against this
  *                       origin; without it, imported posts have no
  *                       permalink until an operator sets one.
+ *   --slug=<slug>       Put every imported comment on this one page slug,
+ *                       ignoring the slug each thread's `uri` derives to.
+ *                       Same flag, same meaning, as the other importers.
  *
  * Idempotent: re-running on the same dump inserts zero new rows (every
  * comment carries `import_source='isso'` + the source's own comment id
@@ -67,7 +70,7 @@ const TAG = "import-isso";
 
 const args = parseImportArgs(
 	process.argv.slice(2),
-	`usage: npm run ${TAG} -- <isso-dump.json> [--remote] [--dry-run] [--include-deleted] [--site=<origin>]`,
+	`usage: npm run ${TAG} -- <isso-dump.json> [--remote] [--dry-run] [--include-deleted] [--site=<origin>] [--slug=<slug>]`,
 );
 
 (async () => {
@@ -83,6 +86,7 @@ const args = parseImportArgs(
 	const plan = await runIssoImport(wranglerD1(args.isRemote), doc, secret, {
 		dry_run: args.dryRun,
 		include_deleted: args.includeDeleted,
+		slug_override: args.slugOverride,
 		site: args.option("site"),
 	});
 

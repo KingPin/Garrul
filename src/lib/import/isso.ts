@@ -504,16 +504,27 @@ export type IssoAdapterOptions = {
 	site?: string | null;
 };
 
+/**
+ * Names both doors, because both reach this check and neither operator can
+ * see the other's.
+ *
+ * `POST /admin/api/ops/import-isso` surfaces this message verbatim on the
+ * operator card, where the field is called **Site origin** and the header is
+ * `x-import-site` — an operator there has no `--site` to correct, so a
+ * message that names only the CLI flag reads as a bug in the page.
+ */
+const SITE_ERROR = "isso import: site must be an http(s) origin (--site / x-import-site)";
+
 const validateSite = (site: string | null): string | null => {
 	if (!site) return null;
 	let u: URL;
 	try {
 		u = new URL(site);
 	} catch {
-		throw new Error("isso import: --site must be an http(s) origin");
+		throw new Error(SITE_ERROR);
 	}
 	if (u.protocol !== "http:" && u.protocol !== "https:") {
-		throw new Error("isso import: --site must be an http(s) origin");
+		throw new Error(SITE_ERROR);
 	}
 	return site;
 };

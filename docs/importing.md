@@ -193,6 +193,10 @@ two-machine (or two-step) job:
      that origin instead, so the thread's `url` is stored `NULL` rather
      than pointing somewhere `--site` never named. That's silent, not an
      error: the thread's comments still import, just with no permalink.
+   - `--slug=<slug>` (CLI only) — put every imported comment on one page
+     slug, ignoring the slug each thread's `uri` derives to. Same flag,
+     same meaning, as the other importers; useful when the whole export
+     belongs to a single page.
 
 Both paths are idempotent: every comment carries `import_source='isso'` and
 isso's own comment ID as `import_id`, so re-running the same dump — the CLI
