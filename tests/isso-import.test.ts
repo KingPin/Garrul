@@ -9,6 +9,12 @@
  *      index; accepts a comment carrying only `created` (parsed as UTC) and
  *      computes the same milliseconds the adjacent `created_epoch` would;
  *      accepts a numeric-string `id`/`parent`, refuses a fractional one.
+ *   1a. Hand-edited dumps — a dump is a file on disk between two commands,
+ *      so the fields that used to fall open on a value the dumper never
+ *      writes are pinned: a present-but-unreadable `mode`, an integer past
+ *      the safe range or a string only `Number()` calls numeric, an epoch
+ *      that overflows the millisecond conversion, and a `uri` that makes
+ *      `new URL` throw.
  *   2. `issoSlug` — R2: drop the query string and fragment, strip/collapse
  *      slashes, `isso-root` for `/`.
  *   3. Export shape over the committed fixture (5 threads on disk, one
@@ -246,6 +252,130 @@ describe("parseIssoDump", () => {
 		expect(() =>
 			ISSO_ADAPTER.parse(dump([{ id: "/x", title: null, comments: [comment({ mode: 3 })] }])),
 		).toThrow(/threads\[0\]\.comments\[0\].*mode 3/);
+	});
+});
+
+// ------------------- 1a. hand-edited dumps (hardening) ---------------------
+
+/**
+ * A dump is a file on an operator's disk between two commands, so it gets
+ * hand-edited, re-serialised by other tools, and truncated. These pin the
+ * fields that used to fall open on a value the dumper would never write:
+ * a non-numeric `mode` silently becoming "approved", a string that only
+ * looks numeric to `Number()`, an epoch big enough to overflow the
+ * millisecond conversion, and a `uri` that makes `new URL` throw.
+ */
+describe("parseIssoDump — hand-edited dumps", () => {
+	const parseOne = (over: Record<string, unknown>) =>
+		parseIssoDump(dump([{ id: "/x", title: null, comments: [comment(over)] }]));
+	const exportOne = (over: Record<string, unknown>) =>
+		ISSO_ADAPTER.parse(dump([{ id: "/x", title: null, comments: [comment(over)] }]));
+
+	// -- mode --
+
+	it("reads a numeric-string mode the same as the number", () => {
+		expect(exportOne({ mode: "2" }).comments[0]!.status).toBe("pending");
+		expect(
+			ISSO_ADAPTER.parse(
+				dump([{ id: "/x", title: null, comments: [comment({ mode: "4" })] }]),
+			).comments[0]!.status,
+		).toBe("deleted");
+	});
+
+	it("defaults an absent mode to approved (the generic format has none)", () => {
+		const c = comment();
+		delete (c as Record<string, unknown>).mode;
+		const out = ISSO_ADAPTER.parse(dump([{ id: "/x", title: null, comments: [c] }]));
+		expect(out.comments[0]!.status).toBe("approved");
+	});
+
+	it("defaults a null mode to approved", () => {
+		expect(exportOne({ mode: null }).comments[0]!.status).toBe("approved");
+	});
+
+	it("refuses a mode that is present but unreadable, naming the index", () => {
+		expect(() => parseOne({ mode: true })).toThrow(
+			/isso dump: threads\[0\]\.comments\[0\] has an unusable mode/,
+		);
+	});
+
+	it("still refuses a readable but unrecognised mode", () => {
+		expect(() => exportOne({ mode: 3 })).toThrow(/threads\[0\]\.comments\[0\].*mode 3/);
+	});
+
+	// -- readIssoInt --
+
+	// Written as an expression rather than the literal 9007199254740993:
+	// that literal does not survive JS number parsing (it *is* 2**53), and
+	// spelling it out only invites a reader — or a linter — to think the
+	// test means something it can't mean.
+	it("refuses an id past the safe-integer range", () => {
+		expect(() => parseOne({ id: Number.MAX_SAFE_INTEGER + 1 })).toThrow(
+			/threads\[0\]\.comments\[0\] has no usable id/,
+		);
+	});
+
+	it("refuses a numeric-string id past the safe-integer range", () => {
+		expect(() => parseOne({ id: "9007199254740993" })).toThrow(
+			/threads\[0\]\.comments\[0\] has no usable id/,
+		);
+	});
+
+	it("refuses a hex-looking id string", () => {
+		expect(() => parseOne({ id: "0x10" })).toThrow(
+			/threads\[0\]\.comments\[0\] has no usable id/,
+		);
+	});
+
+	it("refuses an exponent-notation id string", () => {
+		expect(() => parseOne({ id: "1e21" })).toThrow(
+			/threads\[0\]\.comments\[0\] has no usable id/,
+		);
+	});
+
+	it("refuses a padded numeric id string rather than silently trimming it", () => {
+		expect(() => parseOne({ id: " 12 " })).toThrow(
+			/threads\[0\]\.comments\[0\] has no usable id/,
+		);
+	});
+
+	// -- epoch range --
+
+	it("refuses a created_epoch that overflows the millisecond conversion", () => {
+		expect(() => exportOne({ created_epoch: 1e308 })).toThrow(
+			/threads\[0\]\.comments\[0\].*created_epoch/,
+		);
+	});
+
+	it("refuses a modified_epoch that overflows the millisecond conversion", () => {
+		expect(() => exportOne({ modified_epoch: 1e308 })).toThrow(
+			/threads\[0\]\.comments\[0\].*modified_epoch/,
+		);
+	});
+
+	// -- unparseable uri --
+
+	it("imports a thread whose uri makes new URL throw, with a null link", async () => {
+		const { db, captured } = makeFreshDb();
+		await runIssoImport(
+			db,
+			dump([{ id: "http://", title: null, comments: [comment({ id: 201 })] }]),
+			"secret",
+			{ site: "https://blog.example.com" },
+		);
+		const postInserts = inserts(captured, "posts");
+		expect(postInserts).toHaveLength(1);
+		expect(postInserts[0]!.binds[2]).toBeNull();
+		const commentInserts = inserts(captured, "comments");
+		expect(commentInserts.some((c) => c.binds[10] === "201")).toBe(true);
+	});
+
+	// -- error prefix --
+
+	it("prefixes every parse error with 'isso dump:', including the thread id one", () => {
+		expect(() =>
+			parseIssoDump(dump([{ id: 42, title: null, comments: [comment()] }])),
+		).toThrow(/^isso dump: threads\[0\] has no usable id/);
 	});
 });
 

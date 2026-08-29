@@ -145,17 +145,37 @@ const parseIssoCreatedString = (s: string): number | null => {
 	return Number.isFinite(ms) ? ms : null;
 };
 
+/** Only digits, with an optional leading `-`. No sign-plus, no whitespace. */
+const ISSO_INT_RE = /^-?\d+$/;
+
 /**
- * Coerce one of isso's integer-typed fields (`id`, `parent`) into a number.
- * SQLite row ids are integers, but they can travel through JSON as either a
- * number or a numeric string, so both are accepted; a fraction like `1.5` is
- * not — isso ids are never fractional, so one appearing means the dump is
- * malformed. Returns `null` when `v` cannot be read as an integer.
+ * Coerce one of isso's integer-typed fields (`id`, `parent`, `mode`) into a
+ * number. SQLite row ids are integers, but they can travel through JSON as
+ * either a number or a numeric string, so both are accepted; a fraction like
+ * `1.5` is not — isso ids are never fractional, so one appearing means the
+ * dump is malformed. Returns `null` when `v` cannot be read as an integer.
+ *
+ * Both branches are deliberately narrower than `Number.isInteger(Number(v))`,
+ * which was the earlier test and let three classes of value through that the
+ * dumper can never emit:
+ *
+ * - Past `Number.MAX_SAFE_INTEGER` an integer no longer round-trips, so two
+ *   distinct SQLite row ids can collapse onto one JS number — and `import_id`
+ *   is the idempotency key. `Number.isSafeInteger` is the check that matters,
+ *   not `Number.isInteger`.
+ * - `Number()` accepts `"0x10"` and `"1e21"` as integers. A dump written by
+ *   `scripts/dump-isso.ts` never contains either, so reading them as 16 and
+ *   10^21 is guessing at a hand-edited file rather than refusing it.
+ * - `" 12 "` is refused rather than trimmed. Trimming would be a silent
+ *   repair of a value the format does not allow, and the failure mode of
+ *   getting it wrong (a reply re-rooted onto the wrong parent) is worse than
+ *   an operator seeing an indexed error and fixing the file.
  */
 const readIssoInt = (v: unknown): number | null => {
-	if (typeof v === "number" && Number.isInteger(v)) return v;
-	if (typeof v === "string" && v.trim() !== "" && Number.isInteger(Number(v))) {
-		return Number(v);
+	if (typeof v === "number") return Number.isSafeInteger(v) ? v : null;
+	if (typeof v === "string" && ISSO_INT_RE.test(v)) {
+		const n = Number(v);
+		return Number.isSafeInteger(n) ? n : null;
 	}
 	return null;
 };
@@ -195,7 +215,21 @@ const readIssoComment = (
 		}
 	}
 
-	const mode = typeof row.mode === "number" && Number.isFinite(row.mode) ? row.mode : 1;
+	// Absent or null is the generic format's own shape — `isso import -t
+	// generic` has no `mode` column at all, so a dump that came through it
+	// carries none and every comment is visible. Present-but-unreadable is a
+	// different thing: defaulting `"4"` or `true` to 1 would publish a
+	// tombstone, so it is refused rather than guessed at.
+	let mode: number;
+	if (row.mode === null || row.mode === undefined) {
+		mode = 1;
+	} else {
+		const read = readIssoInt(row.mode);
+		if (read === null) {
+			throw new Error(`isso dump: ${index} has an unusable mode`);
+		}
+		mode = read;
+	}
 	const modified_epoch =
 		typeof row.modified_epoch === "number" && Number.isFinite(row.modified_epoch)
 			? row.modified_epoch
@@ -213,14 +247,17 @@ const readIssoComment = (
 /**
  * Parse the JSON intermediate `scripts/dump-isso.ts` produces.
  *
- * Eight shapes are refused outright: a non-array top level, a thread that
+ * Nine shapes are refused outright: a non-array top level, a thread that
  * isn't an object, a thread with no `comments` array, a thread with no
  * usable id, a comment that isn't an object, a comment with no usable id,
- * a comment with no usable timestamp, and a comment with an unusable
- * `parent` — because those are the fields nothing downstream can safely
- * default. Everything else (`mode`, `modified_epoch`, `author`, `email`,
- * `text`) degrades to a documented default instead of throwing, matching
- * the other adapters' leniency for optional fields.
+ * a comment with no usable timestamp, a comment with an unusable `parent`,
+ * and a comment whose `mode` is present but unreadable — because those are
+ * the fields nothing downstream can safely default. An *absent* or null
+ * `mode` is not in that list: the generic format has no such column, so its
+ * absence means "visible" rather than "malformed". Everything else
+ * (`modified_epoch`, `author`, `email`, `text`) degrades to a documented
+ * default instead of throwing, matching the other adapters' leniency for
+ * optional fields.
  *
  * Errors name a `threads[i]` / `threads[i].comments[j]` index only, never a
  * value — the intermediate carries names, emails and comment bodies.
@@ -250,7 +287,7 @@ export const parseIssoDump = (input: string): IssoThread[] => {
 			throw new Error(`isso dump: threads[${ti}] has no comments array`);
 		}
 		if (typeof rawThread.id !== "string") {
-			throw new Error(`isso import: threads[${ti}] has no usable id`);
+			throw new Error(`isso dump: threads[${ti}] has no usable id`);
 		}
 		const id = rawThread.id;
 		const title = typeof rawThread.title === "string" ? rawThread.title : null;
@@ -318,12 +355,30 @@ const toExport = (threads: IssoThread[], site: string | null): SourceExport => {
 	threads.forEach((t, ti) => {
 		if (t.comments.length === 0) return;
 
+		// `created_epoch` is only checked for finiteness at parse time, which
+		// `1e308` passes — and `1e308 * 1000` is `Infinity`, which would land
+		// in `comments.created_at` as a column that sorts before or after
+		// everything forever. The millisecond value is what gets stored, so
+		// the millisecond value is what gets validated.
+		const epochMs = (seconds: number, ci: number, field: string): number => {
+			const ms = Math.round(seconds * 1000);
+			if (!Number.isSafeInteger(ms)) {
+				throw new Error(
+					`isso dump: threads[${ti}].comments[${ci}] has an out-of-range ${field}`,
+				);
+			}
+			return ms;
+		};
+
+		// Computed once per comment and reused below — the thread's own
+		// `created_at` is the minimum of exactly these values.
+		const createdAts = t.comments.map((c, ci) => epochMs(c.created_epoch, ci, "created_epoch"));
+
 		// A loop rather than `Math.min(...createdAts)` — spreading one array
 		// element per argument risks the engine's call-argument limit on a
 		// thread with a very large comment count.
 		let createdAt = Number.POSITIVE_INFINITY;
-		for (const c of t.comments) {
-			const ms = Math.round(c.created_epoch * 1000);
+		for (const ms of createdAts) {
 			if (ms < createdAt) createdAt = ms;
 		}
 
@@ -331,8 +386,18 @@ const toExport = (threads: IssoThread[], site: string | null): SourceExport => {
 		// or an absolute URL) can resolve off `site`'s own origin. Keep the
 		// link only when it lands back on that origin; otherwise null it out
 		// rather than throwing — one poisoned thread must not abort an
-		// otherwise-good import.
-		const resolvedLink = site ? new URL(t.id, site) : null;
+		// otherwise-good import. A `uri` that `new URL` rejects outright
+		// (`"http://"`, `"https://["`) takes the same route for the same
+		// reason: an uncaught throw here aborts the whole import with a
+		// message that names no index at all.
+		let resolvedLink: URL | null = null;
+		if (site) {
+			try {
+				resolvedLink = new URL(t.id, site);
+			} catch {
+				resolvedLink = null;
+			}
+		}
 		const link =
 			resolvedLink && resolvedLink.origin === siteOrigin ? resolvedLink.href : null;
 
@@ -350,9 +415,10 @@ const toExport = (threads: IssoThread[], site: string | null): SourceExport => {
 				source_id: String(c.id),
 				thread_source_id: t.id,
 				parent_source_id: c.parent !== null ? String(c.parent) : null,
-				created_at: Math.round(c.created_epoch * 1000),
+				created_at: createdAts[ci] as number,
 				status,
-				edited_at: c.modified_epoch != null ? Math.round(c.modified_epoch * 1000) : null,
+				edited_at:
+					c.modified_epoch != null ? epochMs(c.modified_epoch, ci, "modified_epoch") : null,
 				body_md: c.text,
 				author: {
 					name: (c.author ?? "").trim() || "anonymous",
