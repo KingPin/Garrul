@@ -691,6 +691,15 @@ describe("POST /admin/api/ops/import-isso", () => {
 		expect(post?.url).toBe("https://blog.example.com/hello");
 	});
 
+	it("rejects an unparseable x-import-site rather than importing with no permalinks", async () => {
+		const res = await uploadIssoJson(ISSO, { "x-import-site": "not-a-url" });
+		expect(res.status).toBe(400);
+		const body = (await res.json()) as { error: string };
+		expect(body.error.startsWith("import_failed:")).toBe(true);
+		expect(body.error).toContain("--site must be an http(s) origin");
+		expect(commentCount()).toBe(0);
+	});
+
 	it("is idempotent across a plain and a gzipped upload of the same file", async () => {
 		expect((await uploadIssoJson(ISSO)).status).toBe(200);
 		const res = await uploadIssoJson(await gzip(ISSO));
