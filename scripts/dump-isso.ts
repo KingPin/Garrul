@@ -39,11 +39,12 @@
  *
  * `created`/`modified` are epoch **float seconds** in the isso schema.
  * The `created` string emitted here is formatted in UTC at whole-second
- * precision (`formatIssoCreated`), matching what isso's own generic-format
- * writer produces — and what its importer parses back with a local-time
- * `mktime`. Anything reading the *string* field therefore has to treat it
- * as UTC to agree with the adjacent `created_epoch`; when local time
- * matters, `created_epoch` is the field to trust, not the string.
+ * precision (`formatIssoCreated`), matching the shape isso's own importer
+ * reads (`isso import -t generic`) — which then parses it back with a
+ * local-time `mktime`. Anything reading the *string* field therefore has
+ * to treat it as UTC to agree with the adjacent `created_epoch`; when
+ * local time matters, `created_epoch` is the field to trust, not the
+ * string.
  *
  * TZ caveat: epoch seconds are timezone-independent by construction, but a
  * `comments.db` that was itself populated by importing *into* isso from
@@ -126,9 +127,10 @@ const asNullableString = (v: SQLOutputValue, field: string): string | null => {
 
 /**
  * `created`/`modified` as a UTC `YYYY-MM-DD HH:MM:SS` string, seconds
- * floored. This is the shape isso's own generic-format writer emits — see
- * the header caveat on this file for what a consumer needs to know about
- * it (it round-trips through isso's *local-time* parser, not UTC).
+ * floored. This is the shape isso's own importer reads (`isso import -t
+ * generic`) — see the header caveat on this file for what a consumer
+ * needs to know about it (it round-trips through isso's *local-time*
+ * parser, not UTC).
  */
 export const formatIssoCreated = (epoch: number): string => {
 	const d = new Date(Math.floor(epoch) * 1000);
