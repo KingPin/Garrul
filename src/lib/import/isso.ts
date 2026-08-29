@@ -94,6 +94,7 @@
  * created_at`/`edited_at` are epoch milliseconds, so every value here is
  * `Math.round(x * 1000)`.
  */
+import { SLUG_RE } from "../slug";
 import {
 	type ImportAdapter,
 	type ImportOptions,
@@ -332,18 +333,6 @@ const ISSO_SLUG_PREFIX = "isso-";
  */
 export const TOMBSTONE_AUTHOR_ID = "tombstone";
 
-/**
- * The slug alphabet the read API accepts.
- *
- * Mirrors `SLUG_RE` in `src/routes/api.comments.ts` — the source of truth,
- * copied again in `api.bootstrap.ts` and `api.page-engagement.ts` — which
- * `GET /api/v1/comments?slug=…` tests every incoming slug against and answers
- * 400 for on a miss. It is copied rather than imported because an adapter
- * must not depend on a route module; if that regex ever changes, this one
- * changes with it.
- */
-const ISSO_ADDRESSABLE_SLUG_RE = /^[a-zA-Z0-9_\-./]{1,200}$/;
-
 const FNV64_OFFSET_BASIS = 0xcbf29ce484222325n;
 const FNV64_PRIME = 0x100000001b3n;
 const UINT64_MASK = 0xffffffffffffffffn;
@@ -405,9 +394,7 @@ const issoSlugDigest = (candidate: string): string => {
 export const issoSlug = (uri: string): string => {
 	const collapsed = uri.replace(/^\/+|\/+$/g, "").replace(/\/+/g, "/");
 	const candidate = collapsed || "isso-root";
-	return ISSO_ADDRESSABLE_SLUG_RE.test(candidate)
-		? candidate
-		: `${ISSO_SLUG_PREFIX}${issoSlugDigest(candidate)}`;
+	return SLUG_RE.test(candidate) ? candidate : `${ISSO_SLUG_PREFIX}${issoSlugDigest(candidate)}`;
 };
 
 /**

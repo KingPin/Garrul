@@ -35,6 +35,7 @@
  */
 import { CURRENT_RENDERER_VERSION, renderMarkdown } from "../markdown";
 import { sanitizePostTitle } from "../post-title";
+import { SLUG_RE } from "../slug";
 import { MAX_REPLY_DEPTH } from "../tree";
 import { ulid } from "../ulid";
 
@@ -417,9 +418,35 @@ export const runImport = async (
 		merged_pages: 0,
 	};
 
+	// An operator-typed override is checked once, up front, so `--slug=` (an
+	// empty value) or a slug with a space fails before a single row is read
+	// rather than importing every comment onto a page the read API 400s.
+	if (opts.slug_override != null && !SLUG_RE.test(opts.slug_override)) {
+		throw new Error(
+			`import: slug override ${JSON.stringify(opts.slug_override)} is not a valid slug ` +
+				"(letters, digits, _ - . /, 1-200 characters)",
+		);
+	}
+
 	const threadBySlugCandidate = new Map<string, SourceThread>();
 	const slugByThreadSourceId = new Map<string, string>();
-	for (const t of parsed.threads) {
+	for (const [i, t] of parsed.threads.entries()) {
+		// A slug the adapter supplied itself is the adapter's promise that it
+		// is addressable (isso digests anything that isn't). Breaking that
+		// promise is a bug in the adapter, not in the export — hence an error
+		// naming the thread's position, the same way the adapters' own errors
+		// do, and not a silent fallback that would hide the bug behind a
+		// working import. A slug *derived* from `link` is deliberately not
+		// checked here: `slugFromLink` has always passed a pathname through
+		// verbatim (percent-encoding, a `javascript:` path and all), and
+		// refusing those now would abort a Disqus or Remark42 export that
+		// imported before.
+		if (t.slug !== undefined && !SLUG_RE.test(t.slug)) {
+			throw new Error(
+				`import: threads[${i}] carries a slug the read API would reject ` +
+					"(letters, digits, _ - . /, 1-200 characters)",
+			);
+		}
 		const slug =
 			opts.slug_override ??
 			t.slug ??
