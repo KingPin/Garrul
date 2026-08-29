@@ -25,7 +25,9 @@ src/
                         #   embed, rss, health)
   db/                   # migrations + typed query wrappers
   lib/                  # session, markdown, turnstile, ratelimit, oauth, ulid, identicon, ip-hash,
-                        #   webhook, webhook-sig, cors, log, settings, thread, email (Resend), disqus-import
+                        #   webhook, webhook-sig, cors, log, settings, thread, email (Resend)
+                        #   import/  — source-agnostic importer core + one file per source adapter
+                        #              core.ts, html-to-markdown.ts, disqus.ts
   i18n/                 # en.ts string table; t(key) shim
   widget/               # embed.ts (source), embed.bundled.ts (generated), load-error.ts
                         #   boot.ts — the mount fetches + fallback rule; DOM-free so it is the one
@@ -82,6 +84,19 @@ Server-side identicons for anonymous (deterministic from `user.id`, inline SVG).
 
 ### IP handling
 Never log or store raw IPs. Hash via HMAC-SHA-256 with `IP_HASH_SECRET` as the key (Workers don't ship BLAKE3 natively). `src/lib/ip-hash.ts` is the single entry point.
+
+### Importers
+`src/lib/import/core.ts` owns everything that is true of every source; a source adapter owns only how to read its own export. Disqus is the first adapter (`disqus.ts`); #104 tracks the rest. A new adapter is one file exporting an `ImportAdapter` — `source`, `slugFallbackPrefix`, `parse(input) => SourceExport` — plus a thin `run<Source>Import` wrapper over `runImport`. Nothing else should need to change.
+
+Five rules the core enforces, so no adapter has to:
+
+- **Adapters emit markdown, never HTML.** `SourceComment.body_md` is markdown; the core re-renders it through `renderMarkdown` and stores both. A source that only has HTML converts it in the adapter with the shared `htmlToMarkdown` (`import/html-to-markdown.ts`) — which is a *converter*, not a sanitizer. The allowlist in `src/lib/markdown.ts` stays the only thing standing between an untrusted export and stored HTML.
+- **Moderation state is Garrul's vocabulary, not the source's.** `SourceStatus` is exactly the `comments.status` values, so an adapter maps its own flags once, in the adapter. `include_deleted` / `include_spam` gate the last two; `pending` is never gated — a comment awaiting moderation is unfinished work, not junk.
+- **Identity is HMAC-derived and must never change for a source that shipped.** `authorSeed` keys on the source's own author id when the adapter supplies one and on name+email when it doesn't. Both feed an HMAC over `IP_HASH_SECRET`, so changing the seed for an existing adapter re-ghosts every commenter it ever imported. Choose per source, at the point the adapter is written.
+- **Idempotency comes from `(import_source, import_id)`.** Migration 0009's partial UNIQUE index does the work; every row an adapter produces must carry a stable source id. Re-running the same export inserts zero rows.
+- **Imports write on INSERT, never UPDATE.** Fidelity fields (`posts.closed`, `users.is_banned`) land only on rows the run creates. An existing row may carry a decision an operator made on this side, and an import is not an operator.
+
+Input decoding is also the core's (`decodeImportInput`): it sniffs gzip and inflates, capped at `MAX_IMPORT_BYTES` on the **decompressed** side. Any new upload path must decode *before* it sniffs for its own format, or every `.gz` looks like the wrong file type.
 
 ### Migrations
 Forward-only SQL files in `src/db/migrations/NNNN_name.sql`. The `_migrations` table tracks applied. `npm run migrate` is idempotent. Never edit a migration that has been applied to prod.

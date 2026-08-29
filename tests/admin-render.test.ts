@@ -27,7 +27,7 @@ import { renderOperator } from "../src/admin-ui/pages/operator";
 import type { RetentionStats } from "../src/db/ip-retention";
 import type { AuditRetentionStats } from "../src/db/audit-retention";
 import { renderSettings } from "../src/admin-ui/pages/settings";
-import { MAX_XML_BYTES } from "../src/lib/disqus-import";
+import { MAX_IMPORT_BYTES } from "../src/lib/import/core";
 import { renderDashboard } from "../src/admin-ui/pages/dashboard";
 import { layout, renderUpdateBanner } from "../src/admin-ui/layout";
 import {
@@ -517,16 +517,16 @@ describe("renderOperator", () => {
 		expect(work).toContain("oldest stale at v1");
 	});
 
-	it("derives the import size check and UI hint from MAX_XML_BYTES (issue #15)", () => {
+	it("derives the import size check and UI hint from MAX_IMPORT_BYTES (issue #15)", () => {
 		const html = renderOperator({
 			rerender: { current_version: 1, up_to_date: 10, stale: 0, oldest_version: null },
 			retention: retentionOff,
 			audit_retention: auditRetentionOff,
 			seed_demo_allowed: false,
 		});
-		const mb = Math.floor(MAX_XML_BYTES / (1024 * 1024));
+		const mb = Math.floor(MAX_IMPORT_BYTES / (1024 * 1024));
 		// Client-side size check uses the shared constant, not a literal.
-		expect(html).toContain(`file.size > ${MAX_XML_BYTES}`);
+		expect(html).toContain(`file.size > ${MAX_IMPORT_BYTES}`);
 		// Visible hint + error message agree with it.
 		expect(html).toContain(`Max upload: ${mb} MB`);
 		expect(html).toContain(`file too large (max ${mb} MB)`);

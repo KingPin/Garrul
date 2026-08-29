@@ -3,6 +3,7 @@
  * Import a Disqus comment-export XML file into the local or remote D1.
  *
  *   npm run import-disqus -- ./disqus-export.xml             # local D1
+ *   npm run import-disqus -- ./disqus-export.xml.gz          # gzipped, too
  *   npm run import-disqus -- ./disqus-export.xml --remote    # production D1
  *
  * Flags:
@@ -29,7 +30,8 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 
-import { runDisqusImport } from "../src/lib/disqus-import";
+import { decodeImportInput } from "../src/lib/import/core";
+import { runDisqusImport } from "../src/lib/import/disqus";
 
 // The binding, not `database_name` — see the docblock in src/db/migrate.ts.
 const DB_BINDING = "DB";
@@ -218,7 +220,10 @@ const parseRows = (output: string): Record<string, unknown>[] => {
 	if (!isRemote) {
 		console.warn(`[import-disqus] running against LOCAL D1 (Miniflare).`);
 	}
-	const xml = readFileSync(xmlPath, "utf8");
+	// Read bytes, not utf8: decodeImportInput sniffs the gzip magic, so
+	// `./export.xml.gz` works without inflating it first. Reading a gzipped
+	// file as utf8 would corrupt it before the sniff ever ran.
+	const xml = await decodeImportInput(readFileSync(xmlPath));
 	// No fallback. This keys the HMAC that derives each imported ghost's
 	// `provider_id` from its Disqus name and email, so a literal committed to a
 	// public repo is a published key: anyone could recompute the provider_id for

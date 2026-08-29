@@ -114,7 +114,7 @@ describe("jsonBodyLimit — no content-length", () => {
 describe("jsonBodyLimit — exemptions", () => {
 	it("does not cap the Disqus XML import, which has its own limit", async () => {
 		const { app, runs } = makeApp();
-		// 50 MB is that route's own ceiling (MAX_XML_BYTES); 1 MB is well over
+		// 50 MB is that route's own ceiling (MAX_IMPORT_BYTES); 1 MB is well over
 		// the JSON cap and must still reach the handler.
 		const res = await app.request("/admin/api/ops/import-disqus", {
 			method: "POST",

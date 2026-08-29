@@ -23,7 +23,7 @@ export const MAX_JSON_BYTES = 64 * 1024;
  * payload, and which enforce their own limit.
  *
  * `POST /admin/api/ops/import-disqus` takes a raw Disqus XML export up to
- * `MAX_XML_BYTES` (50 MB) and does its own content-length check plus a
+ * `MAX_IMPORT_BYTES` (50 MB) and does its own content-length check plus a
  * byte-accurate recheck after reading. Exempting it by *path* rather than by
  * content-type is deliberate: `Request.json()` parses regardless of the
  * declared content-type, so a content-type test would be an attacker-controlled
