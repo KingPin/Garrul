@@ -27,7 +27,8 @@ src/
   lib/                  # session, markdown, turnstile, ratelimit, oauth, ulid, identicon, ip-hash,
                         #   webhook, webhook-sig, cors, log, settings, thread, email (Resend)
                         #   import/  — source-agnostic importer core + one file per source adapter
-                        #              core.ts, html-to-markdown.ts, disqus.ts
+                        #              core.ts, html-to-markdown.ts, disqus.ts, remark42.ts,
+                        #              comentario.ts
   i18n/                 # en.ts string table; t(key) shim
   widget/               # embed.ts (source), embed.bundled.ts (generated), load-error.ts
                         #   boot.ts — the mount fetches + fallback rule; DOM-free so it is the one
@@ -44,7 +45,8 @@ examples/               # host-site integration snippets (astro, wordpress, hugo
                         #   plain-html, iframe, lazy-load)
 scripts/                # setup.sh, rerender.ts, seed-demo.ts, db-export.sh, build-embed.ts,
                         #   build-agents-md.ts, build-version.ts, check-bundle-size.ts,
-                        #   import-disqus.ts, upgrade.ts, upgrade/
+                        #   import-cli.ts (shared CLI plumbing), import-disqus.ts,
+                        #   import-remark42.ts, import-comentario.ts, upgrade.ts, upgrade/
 docs/                   # THEMING.md, ANTISPAM.md, troubleshooting.md, webhooks.md, telegram.md,
                         #   api-keys-design.md, privacy-policy.template.md, tos.template.md
 .github/workflows/      # ci.yml, release.yml, docs-sync.yml
@@ -86,7 +88,10 @@ Server-side identicons for anonymous (deterministic from `user.id`, inline SVG).
 Never log or store raw IPs. Hash via HMAC-SHA-256 with `IP_HASH_SECRET` as the key (Workers don't ship BLAKE3 natively). `src/lib/ip-hash.ts` is the single entry point.
 
 ### Importers
-`src/lib/import/core.ts` owns everything that is true of every source; a source adapter owns only how to read its own export. Disqus is the first adapter (`disqus.ts`); #104 tracks the rest. A new adapter is one file exporting an `ImportAdapter` — `source`, `slugFallbackPrefix`, `parse(input) => SourceExport` — plus a thin `run<Source>Import` wrapper over `runImport`. Nothing else should need to change.
+`src/lib/import/core.ts` owns everything that is true of every source; a source adapter owns only how to read its own export. Disqus was the first adapter (`disqus.ts`), followed by `remark42.ts` and
+`comentario.ts` — which reads both Comentario v3 and legacy Commento v1 off
+the document's own `version` field, under one `import_source` tag because they
+are one product lineage. #104 tracks the rest. A new adapter is one file exporting an `ImportAdapter` — `source`, `slugFallbackPrefix`, `parse(input) => SourceExport` — plus a thin `run<Source>Import` wrapper over `runImport`. Nothing else should need to change.
 
 Five rules the core enforces, so no adapter has to:
 

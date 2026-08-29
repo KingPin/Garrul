@@ -901,10 +901,10 @@ action id count) are applied *after* `c.req.json()` has already deserialized the
 whole body, so without it a multi-megabyte payload costs a full parse against the
 Worker's 10 ms CPU budget before any of them get a say. 64 KB is far above every
 legitimate payload — the largest is a comment at the 10,000-character body limit.
-The exemptions are the two import uploads, `POST /admin/api/ops/import-disqus`
-and `POST /admin/api/ops/import-remark42`, which take an export — gzipped or
-not — up to 50 MB and enforce their own limit, on the decompressed bytes as
-well as the compressed ones. Implementation:
+The exemptions are the import uploads — `POST /admin/api/ops/import-disqus`,
+`POST /admin/api/ops/import-remark42` and `POST /admin/api/ops/import-comentario`
+— which take an export — gzipped or not — up to 50 MB and enforce their own
+limit, on the decompressed bytes as well as the compressed ones. Implementation:
 `src/lib/body-limit.ts`.
 
 **Client IP is required, not guessed.** Every endpoint that meters or dedupes
@@ -948,7 +948,7 @@ Pages (top nav):
 | `/admin/users/:id` | User detail: all their comments paginated, reactions received, audit history affecting them, the **Moderator notes** card, Ban/Unban, role controls, and two folded-away admin-only panels — **Export personal data** and **Erase personal data** (both below). |
 | `/admin/audit` | Audit log with filter form (admin, action, target kind/id, date range). |
 | `/admin/subscriptions` | Email subscription list. Filter by email/post/confirmed/unsubscribed. Actions: manual unsubscribe, resend confirmation. |
-| `/admin/operator` | Batch operations: rerender stale comments (POSTs `/admin/api/ops/rerender` in 50-row chunks until done), seed-demo (idempotent; gated to `ENV != "production"`), the comment import upload (Disqus XML or a Remark42 backup, gzipped or not — see below), and two retention cards — IP-hash and audit-log — each showing how many rows are past the configured window and offering a manual drain. |
+| `/admin/operator` | Batch operations: rerender stale comments (POSTs `/admin/api/ops/rerender` in 50-row chunks until done), seed-demo (idempotent; gated to `ENV != "production"`), the comment import upload (Disqus XML, a Remark42 backup or a Comentario/Commento JSON export, gzipped or not — see below), and two retention cards — IP-hash and audit-log — each showing how many rows are past the configured window and offering a manual drain. |
 | `/admin/settings` | Editable form for feature flags, display/pagination numbers, and the moderation dials (edit window, thread auto-close, community auto-collapse, the three anti-spam heuristics), saved to the `settings` D1 table (no redeploy — see section 5). Also renders a read-only `(set)`/`(unset)` summary of deploy-time config (Turnstile, email, OAuth, spam provider), which still changes via `wrangler secret put` / `wrangler.toml`. |
 | `/admin/webhooks` | Outbound webhook endpoints: add/pause/delete, per-endpoint secret + event filter, adapter (`generic` / `slack` / `discord` / `telegram`), failure counts and retry status. |
 | `/admin/telegram` | **Admin-only.** Telegram operator bot: shows whether the bot token/webhook secret are set, links your personal Telegram account (one-time code or deep link), toggles the daily digest, and unlinks. See `docs/telegram.md`. |
@@ -1239,23 +1239,25 @@ releases advertising a key that did nothing. `/` and `?` are inert
 while you are typing and under any modifier; `Esc` is matched before
 that guard, so a popover left open still closes from inside a textarea.
 
-**Comment import.** Two sources today — Disqus and Remark42 — each
-with two entry points, all four idempotent (deduplicated by the
-source's own comment ID, tracked in `0009_import_tracking.sql`;
-re-running the same export inserts zero rows):
+**Comment import.** Three sources today — Disqus, Remark42 and
+Comentario (which also reads a legacy Commento export) — each with two
+entry points, all of them idempotent (deduplicated by the source's own
+comment ID, tracked in `0009_import_tracking.sql`; re-running the same
+export inserts zero rows):
 
 - CLI (preferred for big exports):
-  `IP_HASH_SECRET=... npm run import-disqus -- ./export.xml --dry-run`
-  or `IP_HASH_SECRET=... npm run import-remark42 -- ./userbackup.gz
-  --dry-run`, then without `--dry-run` to commit.
+  `IP_HASH_SECRET=... npm run import-disqus -- ./export.xml --dry-run`,
+  `IP_HASH_SECRET=... npm run import-remark42 -- ./userbackup.gz
+  --dry-run`, or `IP_HASH_SECRET=... npm run import-comentario --
+  ./export.json --dry-run`, then without `--dry-run` to commit.
 - Admin upload on `/admin/operator` — one card with a source select,
   capped at 50 MB, with dry-run / include-deleted / include-spam
   toggles.
 
 **Gzipped exports work as-is, on every path.** Disqus hands you a
-`.xml.gz` and Remark42's nightly `backup` writes a
-`userbackup-<site>-<ts>.gz`; hand either straight to the CLI or the
-upload and it is
+`.xml.gz`, Remark42's nightly `backup` writes a
+`userbackup-<site>-<ts>.gz`, and Comentario offers its JSON gzipped;
+hand any of them straight to the CLI or the upload and it is
 inflated in memory. The 50 MB cap applies to the *decompressed* size
 too — a file that inflates past it is rejected with `413
 {"error":"too_large"}` partway through rather than allocated, which is
@@ -1336,11 +1338,56 @@ Remark42 has no spam verdict, so the adapter never emits
 `status='spam'`. Deleted comments are skipped unless
 `--include-deleted`.
 
+**Comentario and Commento specifics.** Both products write a single
+JSON document whose own `version` field says which shape it is —
+Comentario writes `3`, Commento wrote `1` — and one adapter reads
+both, so both go to the same CLI and the same upload. They share an
+`import_source` tag too, which means a v1 file and a later v3 file
+from the same instance deduplicate against each other rather than
+importing the same comments twice. Four things are worth knowing
+before you run it:
+
+- **One domain per run.** Both products are multi-site and neither
+  namespaces its page paths by site, so an export carrying two domains
+  is refused rather than flattened — two sites' `/about` would
+  silently become one page here. Pass `--domain=<id>` (or fill the
+  Domain field on the operator card) and run it once per domain. The
+  error names the domains it found. For a v3 export that value is a
+  `domainId` UUID, because a v3 export carries no hostnames at all;
+  for v1 it is a bare host.
+- **Bodies come across as the author typed them.** Comentario stores
+  markdown, so nothing is converted and nothing is inferred from
+  rendered HTML.
+- **What is marked spam is a moderator's decision, not a
+  classifier's.** Neither product ships spam detection. A v3 comment
+  that is neither approved nor pending is one a moderator rejected,
+  and a v1 comment `flagged`; both import as `status='spam'` and are
+  skipped without `--include-spam`. A comment still awaiting
+  moderation imports as `pending` and is never skipped.
+- **Pages come from page records in v3 and are reconstructed in v1.**
+  A v3 export has real page records — Garrul imports only the ones
+  that actually carry comments, so pages the widget merely loaded on
+  do not become empty rows — and takes `isReadonly` as `posts.closed`.
+  A v1 export has no page records, so each page is grouped from its
+  comments' host and path, and gets no title because Commento never
+  exported one.
+
+One v1 quirk worth naming: a Commento export never actually selected
+its `deleted` column, so the flag is always false even for comments
+that really were deleted. The rewritten body is the only signal left,
+so the adapter treats an empty body and a literal `[deleted]` body as
+deleted too — matching what Comentario's own importer does with these
+files.
+
 **The importer is source-agnostic underneath.** `src/lib/import/core.ts`
 holds everything true of every source — identity derivation,
 idempotency, threading, depth capping, the size and gzip handling — and
-`src/lib/import/disqus.ts` and `src/lib/import/remark42.ts` are just the
-adapters that know how to read one format each. A new adapter is one
+`src/lib/import/disqus.ts`, `src/lib/import/remark42.ts` and
+`src/lib/import/comentario.ts` are just the adapters that know how to
+read one format each. The CLIs are thin for the same reason:
+`scripts/import-cli.ts` holds the flag parsing, the wrangler-backed D1
+shim and the error hygiene, and each `scripts/import-<source>.ts` is a
+docblock plus a call. A new adapter is one
 file exporting an `ImportAdapter`; the remaining sources are tracked in
  #104, and they inherit all of the above rather than reimplementing it.
 
