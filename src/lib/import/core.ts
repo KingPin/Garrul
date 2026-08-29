@@ -169,6 +169,12 @@ export type SourceThread = {
 	title: string | null;
 	created_at: number;
 	/**
+	 * A slug the source already has, for sources that store a path rather than a
+	 * URL (isso's `threads.uri`). Preferred over deriving one from `link`; still
+	 * overridden by `slug_override`.
+	 */
+	slug?: string;
+	/**
 	 * The page was closed to new comments at the source. Becomes
 	 * `posts.closed`, so a thread an operator froze years ago does not
 	 * reopen on the way in.
@@ -416,6 +422,7 @@ export const runImport = async (
 	for (const t of parsed.threads) {
 		const slug =
 			opts.slug_override ??
+			t.slug ??
 			slugFromLink(t.link, `${adapter.slugFallbackPrefix}${t.source_id}`);
 		slugByThreadSourceId.set(t.source_id, slug);
 		if (threadBySlugCandidate.has(slug)) {
