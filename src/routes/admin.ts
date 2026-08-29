@@ -173,6 +173,7 @@ import {
 	decodeImportInput,
 } from "../lib/import/core";
 import { runDisqusImport } from "../lib/import/disqus";
+import { runRemark42Import } from "../lib/import/remark42";
 import { rerenderBatch, rerenderStats } from "../db/rerender";
 import {
 	MIN_RETENTION_DAYS,
@@ -2543,6 +2544,86 @@ admin.post("/api/ops/import-disqus", async (c) => {
 		});
 		return c.json({ ok: true, dry_run: dryRun, plan });
 	} catch (err) {
+		return c.json({ error: `import_failed:${(err as Error).message}` }, 400);
+	}
+});
+
+// --------------------------- Remark42 import -------------------------------
+//
+// Admin-only, and the same shape as the Disqus route above: raw body,
+// gzipped or not, capped on both the compressed and the decompressed side,
+// idempotent on re-upload.
+//
+// It is a separate endpoint rather than a `source` parameter on the Disqus
+// one. The two differ in exactly the places an operator notices — the
+// format sniff, and the error code a wrong file produces — and
+// `not_disqus_xml` is already a published contract that must keep meaning
+// what it says. A shared route would have to return one of the two codes
+// for both sources, or invent a third that means neither.
+
+admin.post("/api/ops/import-remark42", async (c) => {
+	const user = await requireAdmin(c);
+	if (user instanceof Response) return user;
+
+	const contentLength = Number(c.req.header("content-length") ?? "0");
+	if (contentLength > MAX_IMPORT_BYTES) {
+		return c.json({ error: "too_large" }, 413);
+	}
+	const buf = await c.req.arrayBuffer();
+	if (buf.byteLength === 0) return c.json({ error: "empty_body" }, 400);
+	if (buf.byteLength > MAX_IMPORT_BYTES) {
+		return c.json({ error: "too_large" }, 413);
+	}
+	// A Remark42 backup is gzipped by default — `backup` writes
+	// userbackup-<site>-<ts>.gz and the API's mode=file returns gzip — while
+	// mode=stream returns the same bytes as plain JSONL. The magic-byte
+	// sniff covers all three with no per-transport branch.
+	let jsonl: string;
+	try {
+		jsonl = await decodeImportInput(buf);
+	} catch (err) {
+		if (err instanceof ImportTooLargeError) {
+			return c.json({ error: "too_large" }, 413);
+		}
+		return c.json({ error: "not_remark42_export" }, 400);
+	}
+	// Sanity check on the first line only. A Remark42 export opens with the
+	// `{"version":…}` metadata object, or — if that header was stripped —
+	// with a comment object carrying an id and a locator. Anything else is
+	// the wrong file, and saying so here beats a parser error.
+	const firstLine = jsonl.slice(0, 4096).split("\n", 1)[0]?.trim() ?? "";
+	const looksRight =
+		firstLine.startsWith("{") &&
+		(firstLine.includes('"version"') || firstLine.includes('"locator"'));
+	if (!looksRight) {
+		return c.json({ error: "not_remark42_export" }, 400);
+	}
+
+	const dryRun = c.req.header("x-dry-run") === "1";
+	const includeDeleted = c.req.header("x-include-deleted") === "1";
+	const includeSpam = c.req.header("x-include-spam") === "1";
+
+	const secret = c.env.IP_HASH_SECRET;
+	if (!secret) return c.json({ error: "ip_hash_secret_missing" }, 500);
+
+	try {
+		const plan = await runRemark42Import(c.env.DB, jsonl, secret, {
+			dry_run: dryRun,
+			include_deleted: includeDeleted,
+			include_spam: includeSpam,
+		});
+		await adminInsertAudit(c.env.DB, {
+			admin_id: user.id,
+			action: "import.remark42",
+			target_kind: "system",
+			target_id: null,
+			meta: { dry_run: dryRun, ...plan },
+		});
+		return c.json({ ok: true, dry_run: dryRun, plan });
+	} catch (err) {
+		// The adapter's messages carry a line number and never a line, which
+		// is what makes it safe to hand one back in a response body — a
+		// Remark42 export carries display names and hashed IPs.
 		return c.json({ error: `import_failed:${(err as Error).message}` }, 400);
 	}
 });

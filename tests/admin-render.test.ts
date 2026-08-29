@@ -1219,3 +1219,42 @@ describe("global keyboard shortcuts", () => {
 		expect(html).toContain("n.offsetParent !== null");
 	});
 });
+
+describe("renderOperator — the import card", () => {
+	const html = renderOperator({
+		rerender: {
+			current_version: 1,
+			up_to_date: 10,
+			stale: 0,
+			oldest_version: null,
+		},
+		retention: retentionOff,
+		audit_retention: auditRetentionOff,
+		seed_demo_allowed: false,
+	});
+
+	// The card is one Alpine component whose endpoint, content type and file
+	// filter are computed getters over `source`. Those live inside a template
+	// literal, so nothing else in the build would notice a typo in one, and
+	// the symptom would be an import that 404s or that posts XML to the JSONL
+	// route. Assert the pieces the getters are assembled from.
+	it("offers both sources", () => {
+		expect(html).toContain('x-model="source"');
+		expect(html).toContain('value="disqus"');
+		expect(html).toContain('value="remark42"');
+	});
+
+	it("builds the endpoint from the selected source", () => {
+		expect(html).toContain("'/admin/api/ops/import-' + this.source");
+		// Both halves of that concatenation have to stay true: the prefix
+		// above, and a source value that names a route the server has. A
+		// third <option> added without its route would pass the first
+		// assertion and 404 in the browser.
+		expect(html).not.toContain("/admin/api/ops/import-disqus'");
+	});
+
+	it("names the backup file a Remark42 operator already has", () => {
+		expect(html).toContain("import-remark42");
+		expect(html).toContain("userbackup");
+	});
+});

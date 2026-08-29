@@ -872,7 +872,7 @@ tracked by the `_migrations` table. Current set:
 - `0006_webhook_endpoints.sql` — outbound signed webhooks + retry queue
 - `0007_votes.sql` — vote storage + denormalized score counters
 - `0008_saved_replies.sql` — moderator saved replies
-- `0009_import_tracking.sql` — Disqus import idempotency
+- `0009_import_tracking.sql` — import idempotency, `(import_source, import_id)`
 - `0010_settings.sql` — DB-backed runtime settings overrides
 - `0011_page_engagement.sql` — page-level reactions + votes
 - `0012_deleted_by.sql` — records who deleted a comment
@@ -901,9 +901,10 @@ action id count) are applied *after* `c.req.json()` has already deserialized the
 whole body, so without it a multi-megabyte payload costs a full parse against the
 Worker's 10 ms CPU budget before any of them get a say. 64 KB is far above every
 legitimate payload — the largest is a comment at the 10,000-character body limit.
-The one exemption is `POST /admin/api/ops/import-disqus`, which takes a
-Disqus XML export — gzipped or not — up to 50 MB and enforces its own limit,
-on the decompressed bytes as well as the compressed ones. Implementation:
+The exemptions are the two import uploads, `POST /admin/api/ops/import-disqus`
+and `POST /admin/api/ops/import-remark42`, which take an export — gzipped or
+not — up to 50 MB and enforce their own limit, on the decompressed bytes as
+well as the compressed ones. Implementation:
 `src/lib/body-limit.ts`.
 
 **Client IP is required, not guessed.** Every endpoint that meters or dedupes
@@ -947,7 +948,7 @@ Pages (top nav):
 | `/admin/users/:id` | User detail: all their comments paginated, reactions received, audit history affecting them, the **Moderator notes** card, Ban/Unban, role controls, and two folded-away admin-only panels — **Export personal data** and **Erase personal data** (both below). |
 | `/admin/audit` | Audit log with filter form (admin, action, target kind/id, date range). |
 | `/admin/subscriptions` | Email subscription list. Filter by email/post/confirmed/unsubscribed. Actions: manual unsubscribe, resend confirmation. |
-| `/admin/operator` | Batch operations: rerender stale comments (POSTs `/admin/api/ops/rerender` in 50-row chunks until done), seed-demo (idempotent; gated to `ENV != "production"`), the Disqus import upload (XML or .xml.gz — see below), and two retention cards — IP-hash and audit-log — each showing how many rows are past the configured window and offering a manual drain. |
+| `/admin/operator` | Batch operations: rerender stale comments (POSTs `/admin/api/ops/rerender` in 50-row chunks until done), seed-demo (idempotent; gated to `ENV != "production"`), the comment import upload (Disqus XML or a Remark42 backup, gzipped or not — see below), and two retention cards — IP-hash and audit-log — each showing how many rows are past the configured window and offering a manual drain. |
 | `/admin/settings` | Editable form for feature flags, display/pagination numbers, and the moderation dials (edit window, thread auto-close, community auto-collapse, the three anti-spam heuristics), saved to the `settings` D1 table (no redeploy — see section 5). Also renders a read-only `(set)`/`(unset)` summary of deploy-time config (Turnstile, email, OAuth, spam provider), which still changes via `wrangler secret put` / `wrangler.toml`. |
 | `/admin/webhooks` | Outbound webhook endpoints: add/pause/delete, per-endpoint secret + event filter, adapter (`generic` / `slack` / `discord` / `telegram`), failure counts and retry status. |
 | `/admin/telegram` | **Admin-only.** Telegram operator bot: shows whether the bot token/webhook secret are set, links your personal Telegram account (one-time code or deep link), toggles the daily digest, and unlinks. See `docs/telegram.md`. |
@@ -1238,18 +1239,23 @@ releases advertising a key that did nothing. `/` and `?` are inert
 while you are typing and under any modifier; `Esc` is matched before
 that guard, so a popover left open still closes from inside a textarea.
 
-**Disqus import.** Two entry points, both idempotent (deduplicated by
-Disqus comment ID, tracked in `0009_import_tracking.sql`; re-running
-the same export inserts zero rows):
+**Comment import.** Two sources today — Disqus and Remark42 — each
+with two entry points, all four idempotent (deduplicated by the
+source's own comment ID, tracked in `0009_import_tracking.sql`;
+re-running the same export inserts zero rows):
 
 - CLI (preferred for big exports):
-  `IP_HASH_SECRET=... npm run import-disqus -- ./export.xml --dry-run`,
-  then without `--dry-run` to commit.
-- Admin upload on `/admin/operator` — capped at 50 MB, with dry-run /
-  include-deleted / include-spam toggles.
+  `IP_HASH_SECRET=... npm run import-disqus -- ./export.xml --dry-run`
+  or `IP_HASH_SECRET=... npm run import-remark42 -- ./userbackup.gz
+  --dry-run`, then without `--dry-run` to commit.
+- Admin upload on `/admin/operator` — one card with a source select,
+  capped at 50 MB, with dry-run / include-deleted / include-spam
+  toggles.
 
-**Gzipped exports work as-is, on both paths.** Disqus hands you a
-`.xml.gz`; hand it straight to the CLI or the upload and it is
+**Gzipped exports work as-is, on every path.** Disqus hands you a
+`.xml.gz` and Remark42's nightly `backup` writes a
+`userbackup-<site>-<ts>.gz`; hand either straight to the CLI or the
+upload and it is
 inflated in memory. The 50 MB cap applies to the *decompressed* size
 too — a file that inflates past it is rejected with `413
 {"error":"too_large"}` partway through rather than allocated, which is
@@ -1298,13 +1304,45 @@ threads merged three. If the count surprises you, run with `--slug=`
 to force everything onto one page deliberately, in which case
 `merged_pages` reports zero because the collapse is what you asked
 for.
+**Remark42 specifics.** The export is JSONL — one metadata header
+object, then one object per comment — and Garrul takes it with or
+without that header, so both `backup`'s file and the export API's
+`mode=stream` work. Three things differ from Disqus and are worth
+knowing before you run it:
+
+- **Pages are reconstructed, not imported.** A Remark42 export carries
+  no page records at all, so each page is derived from the `url` its
+  comments name, taking its title from the first comment that has one
+  and its creation time from the earliest. `read_only` in the header
+  becomes `posts.closed`.
+- **Bodies prefer the markdown the author typed.** Remark42 stores both
+  the original source (`orig`) and its rendered HTML (`text`). Garrul
+  takes `orig` where it exists and falls back to converting `text`
+  where it does not, so an import is lossless for anything the author
+  wrote in markdown.
+- **One site per export.** An export spanning two `locator.site`
+  values is refused rather than merged; Garrul is single-site, so
+  merging two would silently interleave two comment systems onto one
+  set of slugs. Export per site.
+
+A line missing its comment `id`, its `locator.url`, or its `user.id`
+fails the whole run with the line number — never the line body, which
+may carry an `ip` field. `user.id` is in that list because it is the
+identity key: without it the importer would fall back to keying on
+display name, merging two commenters who picked the same one.
+
+`--include-spam` is accepted for flag parity and does nothing here:
+Remark42 has no spam verdict, so the adapter never emits
+`status='spam'`. Deleted comments are skipped unless
+`--include-deleted`.
 
 **The importer is source-agnostic underneath.** `src/lib/import/core.ts`
 holds everything true of every source — identity derivation,
 idempotency, threading, depth capping, the size and gzip handling — and
-`src/lib/import/disqus.ts` is just the adapter that knows how to read
-Disqus XML. Adapters for other comment systems are tracked in #104;
-they inherit all of the above rather than reimplementing it.
+`src/lib/import/disqus.ts` and `src/lib/import/remark42.ts` are just the
+adapters that know how to read one format each. A new adapter is one
+file exporting an `ImportAdapter`; the remaining sources are tracked in
+ #104, and they inherit all of the above rather than reimplementing it.
 
 **`IP_HASH_SECRET` is required for the CLI, and must be the same
 secret the Worker uses.** It keys the ghost-identity HMAC above, so a
