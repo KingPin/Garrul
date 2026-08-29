@@ -1220,6 +1220,44 @@ describe("global keyboard shortcuts", () => {
 	});
 });
 
+/**
+ * Evaluate the import card's Alpine `x-data` object.
+ *
+ * The component is a JavaScript object literal living inside a template
+ * literal inside a TypeScript file, so nothing in the build ever parses it
+ * — a typo in a getter is invisible until a browser selects that source.
+ * Pulling it out and running it is the cheapest way to make the build see
+ * it. Only the state and the getters are exercised; `run()` needs a real
+ * fetch and is covered by the endpoint suite instead.
+ */
+type CardData = {
+	source: string;
+	domain: string;
+	spec: { cli: string; domainFlag: boolean; accept: string; contentType: string };
+	endpoint: string;
+	contentType: string;
+	accept: string;
+};
+
+const evalCardData = (html: string): CardData => {
+	// The operator page has several Alpine components; anchor on the one
+	// that owns the source table rather than on the first `x-data` in the
+	// document.
+	const table = html.indexOf("sources: {");
+	expect(table).toBeGreaterThan(-1);
+	const start = html.lastIndexOf('x-data="{', table);
+	expect(start).toBeGreaterThan(-1);
+	const open = html.indexOf("{", start);
+	// The attribute is delimited by the double quote that opens it, and the
+	// body contains only single-quoted strings, so the next `"` ends it.
+	const end = html.indexOf('"', open);
+	const body = html.slice(open, end);
+	// The card is authored as an attribute value, so its `&&` arrives
+	// HTML-escaped; undo that before parsing it as code.
+	const src = body.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">");
+	return new Function(`return (${src})`)() as CardData;
+};
+
 describe("renderOperator — the import card", () => {
 	const html = renderOperator({
 		rerender: {
@@ -1238,10 +1276,42 @@ describe("renderOperator — the import card", () => {
 	// literal, so nothing else in the build would notice a typo in one, and
 	// the symptom would be an import that 404s or that posts XML to the JSONL
 	// route. Assert the pieces the getters are assembled from.
-	it("offers both sources", () => {
+	it("offers every source", () => {
 		expect(html).toContain('x-model="source"');
 		expect(html).toContain('value="disqus"');
 		expect(html).toContain('value="remark42"');
+		expect(html).toContain('value="comentario"');
+	});
+
+	// The <option> list and the `sources` lookup are two lists that have to
+	// agree, and nothing at build time checks that they do. An option with no
+	// table entry makes `spec` undefined, and the card throws on every getter
+	// the moment it is selected — a failure that only shows up in a browser,
+	// on one dropdown value.
+	//
+	// So rather than asserting that the source text contains the right
+	// substrings, evaluate the component's own data object and drive its
+	// getters, once per option the <select> offers. That is the closest this
+	// suite can get to selecting each entry by hand: string assertions pass
+	// happily on a table whose getters throw.
+	it("resolves every getter for every source it offers", () => {
+		const options = [...html.matchAll(/<option value="([^"]+)"/g)].map(
+			(m) => m[1],
+		);
+		expect(options).toEqual(["disqus", "remark42", "comentario"]);
+
+		const data = evalCardData(html);
+		for (const source of options) {
+			data.source = source;
+			expect(data.spec, source).toBeDefined();
+			expect(data.endpoint).toBe(`/admin/api/ops/import-${source}`);
+			// A content type and a file filter that are merely present are
+			// not enough — an empty accept silently accepts everything.
+			expect(data.contentType).toMatch(/^[a-z]+\/[a-z0-9.+-]+$/);
+			expect(data.accept.length).toBeGreaterThan(0);
+			expect(data.spec.cli).toContain(`npm run import-${source}`);
+			expect(typeof data.spec.domainFlag).toBe("boolean");
+		}
 	});
 
 	it("builds the endpoint from the selected source", () => {
@@ -1256,5 +1326,16 @@ describe("renderOperator — the import card", () => {
 	it("names the backup file a Remark42 operator already has", () => {
 		expect(html).toContain("import-remark42");
 		expect(html).toContain("userbackup");
+	});
+
+	// Only Comentario takes one, and it is not decoration: a multi-domain
+	// export is refused outright, so without this field that operator has no
+	// way through the admin UI at all.
+	it("exposes the domain field, and only for the source that reads it", () => {
+		expect(html).toContain('x-model="domain"');
+		expect(html).toContain('x-show="spec.domainFlag"');
+		expect(html).toContain("domainFlag: true");
+		expect(html).toContain("domainFlag: false");
+		expect(html).toContain("x-import-domain");
 	});
 });

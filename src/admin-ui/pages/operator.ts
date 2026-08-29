@@ -287,20 +287,40 @@ ${seedCard}
   dryRun: true,
   includeDeleted: false,
   includeSpam: false,
-  // One card, two sources. The endpoints stay separate on the server —
+  domain: '',
+  // One card, every source. The endpoints stay separate on the server —
   // their format sniffs and error codes differ — but from here the only
-  // things that vary are the URL, the content type and the file filter,
-  // so a second copy of this component would be a second place for the
-  // size cap and the dry-run wiring to drift.
+  // things that vary are the URL, the content type, the file filter and
+  // the CLI line, so a copy of this component per source would be a copy
+  // of the size cap and the dry-run wiring per source too.
+  //
+  // A table rather than a chain of ternaries: with two sources a ternary
+  // reads fine, with three it is four of them that each have to be edited
+  // in lockstep to add a fourth.
+  sources: {
+    disqus: {
+      contentType: 'application/xml',
+      accept: '.xml,.gz,application/xml,text/xml,application/gzip',
+      cli: 'npm run import-disqus -- ./export.xml --dry-run',
+      domainFlag: false,
+    },
+    remark42: {
+      contentType: 'application/x-ndjson',
+      accept: '.json,.jsonl,.gz,application/json,application/gzip',
+      cli: 'npm run import-remark42 -- ./userbackup.gz --dry-run',
+      domainFlag: false,
+    },
+    comentario: {
+      contentType: 'application/json',
+      accept: '.json,.gz,application/json,application/gzip',
+      cli: 'npm run import-comentario -- ./export.json --dry-run',
+      domainFlag: true,
+    },
+  },
+  get spec() { return this.sources[this.source] },
   get endpoint() { return '/admin/api/ops/import-' + this.source },
-  get contentType() {
-    return this.source === 'disqus' ? 'application/xml' : 'application/x-ndjson'
-  },
-  get accept() {
-    return this.source === 'disqus'
-      ? '.xml,.gz,application/xml,text/xml,application/gzip'
-      : '.json,.jsonl,.gz,application/json,application/gzip'
-  },
+  get contentType() { return this.spec.contentType },
+  get accept() { return this.spec.accept },
   async run(file) {
     if (!file) return;
     if (file.size > ${MAX_IMPORT_BYTES}) {
@@ -320,6 +340,11 @@ ${seedCard}
           'x-dry-run': this.dryRun ? '1' : '0',
           'x-include-deleted': this.includeDeleted ? '1' : '0',
           'x-include-spam': this.includeSpam ? '1' : '0',
+          // Only Comentario reads it, and only a non-empty value means
+          // anything — sending it blank would still be an empty header.
+          ...(this.spec.domainFlag && this.domain.trim()
+            ? { 'x-import-domain': this.domain.trim() }
+            : {}),
         },
         body,
       });
@@ -340,6 +365,7 @@ ${seedCard}
       <select x-model="source" :disabled="busy">
         <option value="disqus">Disqus</option>
         <option value="remark42">Remark42</option>
+        <option value="comentario">Comentario / Commento</option>
       </select>
     </label>
   </p>
@@ -355,6 +381,27 @@ ${seedCard}
     where Remark42 kept it, and from its rendered HTML where it did not.
     Pages are reconstructed from comment URLs, because a Remark42 export
     carries no page records.</p>
+  <p class="muted" x-show="source === 'comentario'">Uploads a Comentario
+    export — the single JSON document its admin UI writes, gzipped or not
+    — or a legacy Commento one. The document's own <code>version</code>
+    field picks the reader, so both go here. Idempotent, deduplicated by
+    the source's comment ID. Comentario stores markdown, so bodies come
+    across as the author typed them. What is marked spam is a comment a
+    human moderator rejected; neither product has a spam classifier.</p>
+  <p x-show="spec.domainFlag">
+    <label style="display:inline-flex;gap:0.3rem;align-items:center">
+      Domain (optional)
+      <input type="text" x-model="domain" :disabled="busy"
+             placeholder="domainId UUID, or a host for Commento v1"
+             style="min-width:22rem">
+    </label>
+  </p>
+  <p class="muted" x-show="spec.domainFlag">Both products are multi-site
+    and neither namespaces page paths by site, so an export carrying two
+    domains is refused rather than flattened — two sites'
+    <code>/about</code> would silently become one page here. Leave this
+    blank for a single-domain export; if the import is refused, the error
+    names the domains it found, and you run it once per domain.</p>
   <p>
     <label style="display:inline-flex;gap:0.3rem;align-items:center;margin-right:0.8rem">
       <input type="checkbox" x-model="dryRun"> Dry run (parse + plan only)
@@ -375,9 +422,7 @@ ${seedCard}
   <p style="color:var(--bad)" x-show="error" x-text="error"></p>
   <p class="muted">Max upload: ${MAX_IMPORT_MB} MB, and a gzipped file must
     also stay under ${MAX_IMPORT_MB} MB once expanded. For larger exports use
-    the CLI: <code x-text="source === 'disqus'
-      ? 'npm run import-disqus -- ./export.xml --dry-run'
-      : 'npm run import-remark42 -- ./userbackup.gz --dry-run'"></code>.</p>
+    the CLI: <code x-text="spec.cli"></code>.</p>
 </div>
 `;
 };

@@ -172,6 +172,7 @@ import {
 	MAX_IMPORT_BYTES,
 	decodeImportInput,
 } from "../lib/import/core";
+import { runComentarioImport } from "../lib/import/comentario";
 import { runDisqusImport } from "../lib/import/disqus";
 import { runRemark42Import } from "../lib/import/remark42";
 import { rerenderBatch, rerenderStats } from "../db/rerender";
@@ -2624,6 +2625,88 @@ admin.post("/api/ops/import-remark42", async (c) => {
 		// The adapter's messages carry a line number and never a line, which
 		// is what makes it safe to hand one back in a response body — a
 		// Remark42 export carries display names and hashed IPs.
+		return c.json({ error: `import_failed:${(err as Error).message}` }, 400);
+	}
+});
+
+// -------------------------- Comentario import ------------------------------
+//
+// Admin-only, same shape as the two routes above, and separate from them
+// for the same reason: the format sniff and the wrong-file error code are
+// exactly what an operator notices, and folding three sources into one
+// route means returning one source's error code for another's file.
+//
+// One route covers both Comentario v3 and legacy Commento v1 — that is an
+// adapter-level distinction, resolved by the document's own `version`
+// field, not an operator-level one. An operator leaving Commento and an
+// operator leaving Comentario are leaving the same product.
+
+admin.post("/api/ops/import-comentario", async (c) => {
+	const user = await requireAdmin(c);
+	if (user instanceof Response) return user;
+
+	const contentLength = Number(c.req.header("content-length") ?? "0");
+	if (contentLength > MAX_IMPORT_BYTES) {
+		return c.json({ error: "too_large" }, 413);
+	}
+	const buf = await c.req.arrayBuffer();
+	if (buf.byteLength === 0) return c.json({ error: "empty_body" }, 400);
+	if (buf.byteLength > MAX_IMPORT_BYTES) {
+		return c.json({ error: "too_large" }, 413);
+	}
+	// Comentario's admin UI offers the export gzipped, so sniff the magic
+	// bytes before the format check below — otherwise every `.gz` is
+	// rejected as not-JSON.
+	let doc: string;
+	try {
+		doc = await decodeImportInput(buf);
+	} catch (err) {
+		if (err instanceof ImportTooLargeError) {
+			return c.json({ error: "too_large" }, 413);
+		}
+		return c.json({ error: "not_comentario_export" }, 400);
+	}
+	// Cheap shape check only. Both versions are a single JSON object whose
+	// first key is `version`; the adapter does the real validation and its
+	// errors name a record position rather than a record, so letting it
+	// speak is safe. This exists so an operator who picks a `.csv` gets a
+	// clear answer instead of a parser message.
+	const head = doc.slice(0, 4096).trimStart();
+	if (!head.startsWith("{") || !head.includes('"version"')) {
+		return c.json({ error: "not_comentario_export" }, 400);
+	}
+
+	const dryRun = c.req.header("x-dry-run") === "1";
+	const includeDeleted = c.req.header("x-include-deleted") === "1";
+	const includeSpam = c.req.header("x-include-spam") === "1";
+	// Both products are multi-site and neither namespaces its page paths by
+	// site, so a two-domain export is refused rather than flattened. This is
+	// the operator's way to say which domain they meant — a `domainId` UUID
+	// for v3, a bare host for v1.
+	const domain = c.req.header("x-import-domain")?.trim() || null;
+
+	const secret = c.env.IP_HASH_SECRET;
+	if (!secret) return c.json({ error: "ip_hash_secret_missing" }, 500);
+
+	try {
+		const plan = await runComentarioImport(c.env.DB, doc, secret, {
+			dry_run: dryRun,
+			include_deleted: includeDeleted,
+			include_spam: includeSpam,
+			domain,
+		});
+		await adminInsertAudit(c.env.DB, {
+			admin_id: user.id,
+			action: "import.comentario",
+			target_kind: "system",
+			target_id: null,
+			meta: { dry_run: dryRun, ...plan },
+		});
+		return c.json({ ok: true, dry_run: dryRun, plan });
+	} catch (err) {
+		// Safe to hand back: the adapter's messages name a record index and
+		// never a record, and a Comentario export carries display names and
+		// email addresses.
 		return c.json({ error: `import_failed:${(err as Error).message}` }, 400);
 	}
 });

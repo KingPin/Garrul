@@ -16,11 +16,12 @@
  *   - Rows actually land, so the whole chain — decode, parse, adapter,
  *     core, D1 — is wired together rather than merely type-compatible.
  *
- * Both source endpoints are exercised here rather than in a file each,
+ * Every source endpoint is exercised here rather than in a file each,
  * because the three properties above are properties of the *route shape*,
- * not of either adapter: they were established once for Disqus and a second
- * endpoint that quietly got the order wrong would look identical from the
- * outside. One harness, two sources, so the same six questions get asked.
+ * not of any one adapter: they were established once for Disqus and a
+ * later endpoint that quietly got the order wrong would look identical
+ * from the outside. One harness, every source, so the same questions get
+ * asked each time one is added.
  */
 import { Hono } from "hono";
 import { readFileSync, readdirSync } from "node:fs";
@@ -170,6 +171,7 @@ const uploadTo =
 
 const upload = uploadTo("disqus", "application/xml");
 const uploadJsonl = uploadTo("remark42", "application/x-ndjson");
+const uploadJson = uploadTo("comentario", "application/json");
 
 const commentCount = (): number =>
 	(
@@ -351,5 +353,190 @@ describe("POST /admin/api/ops/import-remark42", () => {
 		const body = (await res.json()) as { error: string };
 		expect(body.error).toContain("line 2");
 		expect(body.error).not.toContain("not json");
+	});
+});
+
+// A minimal Comentario v3 document. Identity-free: invented names on
+// example.com, and UUIDs that are structurally valid but plainly fake.
+const COMENTARIO = JSON.stringify({
+	version: 3,
+	pages: [
+		{
+			id: "p0000000-0000-4000-8000-000000000001",
+			domainId: "d0000000-0000-4000-8000-000000000001",
+			path: "/hello",
+			title: "Hello",
+			isReadonly: false,
+			createdTime: "2026-01-01T00:00:00Z",
+		},
+	],
+	comments: [
+		{
+			id: "c0000000-0000-4000-8000-000000000001",
+			pageId: "p0000000-0000-4000-8000-000000000001",
+			markdown: "first",
+			html: "<p>first</p>",
+			url: "https://example.com/hello#comentario-c0000000-0000-4000-8000-000000000001",
+			userCreated: "u0000000-0000-4000-8000-000000000001",
+			createdTime: "2026-01-01T00:00:00Z",
+			editedTime: "0001-01-01T00:00:00Z",
+			isApproved: true,
+			isPending: false,
+			isDeleted: false,
+		},
+	],
+	commenters: [
+		{
+			id: "u0000000-0000-4000-8000-000000000001",
+			name: "Ada",
+			email: "ada@example.com",
+			createdTime: "2026-01-01T00:00:00Z",
+		},
+	],
+});
+
+describe("POST /admin/api/ops/import-comentario", () => {
+	it("imports a plain JSON upload", async () => {
+		const res = await uploadJson(COMENTARIO);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as {
+			plan: { new_comments: number; new_pages: number };
+		};
+		expect(body.plan.new_comments).toBe(1);
+		expect(body.plan.new_pages).toBe(1);
+		expect(commentCount()).toBe(1);
+	});
+
+	it("imports a gzipped export identically", async () => {
+		// Comentario's admin UI offers the download gzipped, so this is the
+		// file an operator actually has. A decode placed after the format
+		// sniff would reject exactly that one.
+		const res = await uploadJson(await gzip(COMENTARIO));
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { plan: { new_comments: number } };
+		expect(body.plan.new_comments).toBe(1);
+		expect(commentCount()).toBe(1);
+	});
+
+	it("answers 413 for a decompression bomb rather than inflating it", async () => {
+		const bomb = await gzip("A".repeat(MAX_IMPORT_BYTES + 1024));
+		expect(bomb.byteLength).toBeLessThan(1024 * 1024);
+		const res = await uploadJson(bomb);
+		expect(res.status).toBe(413);
+		expect(await res.json()).toEqual({ error: "too_large" });
+		expect(commentCount()).toBe(0);
+	});
+
+	it("rejects a file that is neither gzip nor a Comentario export", async () => {
+		const res = await uploadJson("just some notes");
+		expect(res.status).toBe(400);
+		expect(await res.json()).toEqual({ error: "not_comentario_export" });
+	});
+
+	it("rejects a Disqus export sent to the Comentario endpoint", async () => {
+		// Three upload targets behind one card is three chances to pick the
+		// wrong one, and the sniff has to name the mismatch rather than hand
+		// XML to a JSON parser.
+		const res = await uploadJson(XML);
+		expect(res.status).toBe(400);
+		expect(await res.json()).toEqual({ error: "not_comentario_export" });
+	});
+
+	it("is idempotent across a plain and a gzipped upload of the same file", async () => {
+		expect((await uploadJson(COMENTARIO)).status).toBe(200);
+		const res = await uploadJson(await gzip(COMENTARIO));
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { plan: { new_comments: number } };
+		expect(body.plan.new_comments).toBe(0);
+		expect(commentCount()).toBe(1);
+	});
+
+	it("writes nothing on a dry run", async () => {
+		const res = await uploadJson(COMENTARIO, { "x-dry-run": "1" });
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as {
+			dry_run: boolean;
+			plan: { new_comments: number };
+		};
+		expect(body.dry_run).toBe(true);
+		expect(body.plan.new_comments).toBe(1);
+		expect(commentCount()).toBe(0);
+	});
+
+	it("refuses a two-domain export, and names the domains rather than a body", async () => {
+		const doc = JSON.parse(COMENTARIO);
+		doc.pages.push({
+			...doc.pages[0],
+			id: "p0000000-0000-4000-8000-000000000002",
+			domainId: "d0000000-0000-4000-8000-000000000002",
+			path: "/other",
+		});
+		const res = await uploadJson(JSON.stringify(doc));
+		expect(res.status).toBe(400);
+		const body = (await res.json()) as { error: string };
+		expect(body.error).toContain("2 distinct domains");
+		expect(body.error).not.toContain("first");
+		expect(commentCount()).toBe(0);
+	});
+
+	it("imports one domain of a two-domain export when the header names it", async () => {
+		// The escape hatch the refusal above points at. Without it an
+		// operator with a multi-domain export cannot use this card at all.
+		const doc = JSON.parse(COMENTARIO);
+		doc.pages.push({
+			...doc.pages[0],
+			id: "p0000000-0000-4000-8000-000000000002",
+			domainId: "d0000000-0000-4000-8000-000000000002",
+			path: "/other",
+		});
+		const res = await uploadJson(JSON.stringify(doc), {
+			"x-import-domain": "d0000000-0000-4000-8000-000000000001",
+		});
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { plan: { new_pages: number } };
+		expect(body.plan.new_pages).toBe(1);
+		expect(commentCount()).toBe(1);
+	});
+
+	it("reads a legacy Commento v1 document through the same endpoint", async () => {
+		// The version field picks the reader, so both products' exports go to
+		// one route. An operator leaving Commento should not have to know it
+		// is a different format underneath.
+		const v1 = JSON.stringify({
+			version: 1,
+			comments: [
+				{
+					commentHex: "aa11",
+					commenterHex: "bb22",
+					host: "example.com",
+					path: "/hello",
+					url: "",
+					markdown: "first",
+					parentHex: "root",
+					state: "approved",
+					deleted: false,
+					creationDate: "2026-01-01T00:00:00Z",
+				},
+			],
+			commenters: [
+				{ commenterHex: "bb22", name: "Ada", email: "ada@example.com" },
+			],
+		});
+		const res = await uploadJson(v1);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { plan: { new_comments: number } };
+		expect(body.plan.new_comments).toBe(1);
+		expect(commentCount()).toBe(1);
+	});
+
+	it("reports a bad record by position, never by content", async () => {
+		const secret = "a-body-that-must-not-come-back";
+		const res = await uploadJson(
+			`{"version":1,"comments":[{"markdown":"${secret}"}]}`,
+		);
+		expect(res.status).toBe(400);
+		const body = (await res.json()) as { error: string };
+		expect(body.error).toContain("comments[0]");
+		expect(body.error).not.toContain(secret);
 	});
 });
