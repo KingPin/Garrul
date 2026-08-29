@@ -1325,6 +1325,12 @@ knowing before you run it:
   merging two would silently interleave two comment systems onto one
   set of slugs. Export per site.
 
+A line missing its comment `id`, its `locator.url`, or its `user.id`
+fails the whole run with the line number — never the line body, which
+may carry an `ip` field. `user.id` is in that list because it is the
+identity key: without it the importer would fall back to keying on
+display name, merging two commenters who picked the same one.
+
 `--include-spam` is accepted for flag parity and does nothing here:
 Remark42 has no spam verdict, so the adapter never emits
 `status='spam'`. Deleted comments are skipped unless

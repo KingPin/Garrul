@@ -9,7 +9,8 @@
  *      give it an empty body.
  *   3. Identity — `user.id` keys the ghost, so two commenters sharing a
  *      display name become two users and one commenter across two
- *      names stays one.
+ *      names stays one. A line without it is rejected rather than
+ *      name-keyed.
  *   4. Page reconstruction — there are no page records, so threads come
  *      from distinct `locator.url` with the earliest comment's time.
  *   5. Error hygiene — a malformed line names its number and never its
@@ -217,6 +218,18 @@ describe("parse errors", () => {
 	it("rejects a comment with no id", () => {
 		const noId = comment({ id: "" });
 		expect(() => parseRemark42Export(jsonl(noId))).toThrow(/comment id/);
+	});
+
+	// `user.id` is the identity seed. The core keys on name+email when
+	// `source_id` is empty, so tolerating an empty id would quietly merge two
+	// commenters who share a display name — the exact failure this adapter
+	// chose `user.id` to avoid. Fail the parse instead.
+	it("rejects a comment with no user.id", () => {
+		const noUserId = comment({ user: { name: "Ada" } });
+		expect(() => parseRemark42Export(jsonl(noUserId))).toThrow(/user\.id/);
+		expect(() => parseRemark42Export(jsonl(comment({ user: {} })))).toThrow(
+			/user\.id/,
+		);
 	});
 });
 

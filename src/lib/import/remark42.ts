@@ -62,6 +62,10 @@
  * better key: it separates two people who share a name, which name-keying
  * cannot do at any price.
  *
+ * Because that key is the whole design, a comment with no `user.id` is a parse
+ * error, not a degraded row: the core keys on name+email when `source_id` is
+ * empty, which is precisely the merge this adapter exists to avoid.
+ *
  * ## Deliberately discarded
  *
  * `score`, `vote`, `votes`, `controversy`, `pin`, `user.admin`, `user.site_id`,
@@ -187,6 +191,15 @@ const readComment = (
 		throw new Error(`remark42 export: line ${lineNo} has no locator.url`);
 	}
 	const user = isObject(row.user) ? row.user : {};
+	const userId = str(user.id);
+	// `user.id` is this adapter's identity seed, and the core falls back to
+	// name-keying when `source_id` is empty. That fallback is exactly the
+	// merge this adapter refuses (see the header): two people who picked the
+	// same display name would land on one ghost. An export without it is
+	// malformed, so fail the parse rather than degrade the key silently.
+	if (!userId) {
+		throw new Error(`remark42 export: line ${lineNo} has no user.id`);
+	}
 	const edit = isObject(row.edit) ? row.edit : undefined;
 	return {
 		id,
@@ -197,7 +210,7 @@ const readComment = (
 		// path as a migrated comment rather than import as an empty body.
 		orig: typeof row.orig === "string" && row.orig !== "" ? row.orig : undefined,
 		user: {
-			id: str(user.id),
+			id: userId,
 			// Remark42 hard-delete rewrites the name to the literal "deleted";
 			// nothing here special-cases it, and the core's identity handling
 			// then collapses every hard-deleted comment onto one ghost. That is
