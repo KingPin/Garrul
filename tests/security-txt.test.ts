@@ -78,7 +78,7 @@ describe("contactUri", () => {
 	});
 
 	it("rejects a value with embedded whitespace (header-injection guard)", () => {
-		expect(contactUri("https://example.com/\nContact: mailto:x@evil.com")).toBeNull();
+		expect(contactUri("https://example.com/\nContact: mailto:x@evil.example.com")).toBeNull();
 		expect(contactUri("mailto:a@example.com b@example.com")).toBeNull();
 	});
 });
