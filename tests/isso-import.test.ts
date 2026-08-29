@@ -1,0 +1,460 @@
+/**
+ * isso importer tests cover:
+ *
+ *   1. `parseIssoDump` — refuses a non-array top level, a thread with no
+ *      `comments` array, a comment with no usable id or timestamp, and an
+ *      unrecognised `mode`; never puts a value (author, email, text) in an
+ *      error, only an index; accepts a comment carrying only `created`
+ *      (parsed as UTC) and computes the same milliseconds the adjacent
+ *      `created_epoch` would.
+ *   2. `issoSlug` — R2: drop the query string, strip/collapse slashes,
+ *      `isso-root` for `/`.
+ *   3. Export shape over the committed fixture (5 threads on disk, one
+ *      empty and dropped, two sharing a slug).
+ *   4. Moderation — isso's `mode` maps to Garrul's status vocabulary;
+ *      tombstones (`mode=4`) sit behind `include_deleted` like every other
+ *      source, and their replies re-root when the tombstone is skipped.
+ *   5. Identity — isso has no user accounts, so every author keys on
+ *      name+email (never `source_id`), and a blank/absent name becomes the
+ *      literal `"anonymous"`.
+ *   6. Timestamps — isso's epoch float seconds become
+ *      `Math.round(x * 1000)` milliseconds.
+ *   7. Markdown passes through untouched and renders through the shared
+ *      sanitizer.
+ *   8. `site` — supplies the host isso itself has no concept of; an
+ *      invalid origin is refused eagerly.
+ *   9. Idempotency is the core's; pinned here because the source tag is
+ *      this adapter's contribution to it.
+ *  10. `include_spam` is a no-op — isso never emits a `spam` status.
+ *
+ * Fixture: tests/fixtures/isso/dump.json (Task 1, #108) — 5 threads, 12
+ * comments, hand-written and identity-free (tests/fixtures/isso/
+ * PROVENANCE.md). No Miniflare; hand-rolled capturing D1 stub, same as the
+ * Disqus/Remark42/Comentario suites.
+ */
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+import {
+	ISSO_ADAPTER,
+	issoAdapter,
+	issoSlug,
+	issoStatus,
+	parseIssoDump,
+	runIssoImport,
+} from "../src/lib/import/isso";
+import { asD1 } from "./helpers/d1";
+
+type Captured = { sql: string; binds: unknown[] };
+
+// Every SELECT misses, so every insert proceeds.
+const makeFreshDb = () => {
+	const captured: Captured[] = [];
+	const chain = (sql: string) => ({
+		_binds: [] as unknown[],
+		bind(...args: unknown[]) {
+			this._binds = args;
+			return this;
+		},
+		async first() {
+			captured.push({ sql, binds: this._binds });
+			return null;
+		},
+		async all() {
+			captured.push({ sql, binds: this._binds });
+			return { results: [] };
+		},
+		async run() {
+			captured.push({ sql, binds: this._binds });
+			return { meta: { changes: 1 } };
+		},
+	});
+	return { db: asD1({ prepare: (sql: string) => chain(sql) }), captured };
+};
+
+// A stub where every existence check hits, so a re-run inserts nothing.
+const makeAlreadyImportedDb = () => {
+	const captured: Captured[] = [];
+	const chain = (sql: string) => ({
+		_binds: [] as unknown[],
+		bind(...args: unknown[]) {
+			this._binds = args;
+			return this;
+		},
+		async first() {
+			captured.push({ sql, binds: this._binds });
+			if (sql.includes("FROM comments WHERE import_source")) {
+				return { id: "01HX0000000000000000000001" };
+			}
+			if (sql.includes("FROM posts WHERE slug")) return { slug: "hello-world" };
+			if (sql.includes("FROM users WHERE provider")) {
+				return { id: "01HU0000000000000000000001" };
+			}
+			return null;
+		},
+		async all() {
+			captured.push({ sql, binds: this._binds });
+			return { results: [] };
+		},
+		async run() {
+			captured.push({ sql, binds: this._binds });
+			return { meta: { changes: 1 } };
+		},
+	});
+	return { db: asD1({ prepare: (sql: string) => chain(sql) }), captured };
+};
+
+const inserts = (captured: Captured[], table: string) =>
+	captured.filter((c) => c.sql.startsWith(`INSERT INTO ${table}`));
+const updates = (captured: Captured[], table: string) =>
+	captured.filter((c) => c.sql.startsWith(`UPDATE ${table}`));
+
+const FIXTURE_PATH = join(__dirname, "fixtures/isso/dump.json");
+const FIXTURE = readFileSync(FIXTURE_PATH, "utf8");
+
+// ------------------------------ builders ------------------------------
+
+const comment = (over: Partial<Record<string, unknown>> = {}) => ({
+	id: 1,
+	parent: null,
+	mode: 1,
+	created: "2023-11-14 22:13:20",
+	created_epoch: 1700000000.123456,
+	modified_epoch: null,
+	author: "Alice Example",
+	email: "alice@example.com",
+	website: null,
+	remote_addr: "127.0.0.0",
+	text: "hello",
+	...over,
+});
+
+const dump = (threads: Record<string, unknown>[]) => JSON.stringify(threads);
+
+// -------------------------------- 1. parse --------------------------------
+
+describe("parseIssoDump", () => {
+	it("refuses a non-array top level", () => {
+		expect(() => parseIssoDump(JSON.stringify({ id: "/x", comments: [] }))).toThrow(
+			/top level is not an array/,
+		);
+	});
+
+	it("refuses a thread with no comments array", () => {
+		expect(() => parseIssoDump(dump([{ id: "/x", title: null }]))).toThrow(
+			/threads\[0\] has no comments array/,
+		);
+	});
+
+	it("refuses a comment with no usable id", () => {
+		const c = comment();
+		delete (c as Record<string, unknown>).id;
+		expect(() =>
+			parseIssoDump(dump([{ id: "/x", title: null, comments: [c] }])),
+		).toThrow(/threads\[0\]\.comments\[0\]/);
+	});
+
+	it("refuses a comment with no usable timestamp", () => {
+		const c = comment({ created: undefined, created_epoch: undefined });
+		expect(() =>
+			parseIssoDump(dump([{ id: "/x", title: null, comments: [c] }])),
+		).toThrow(/threads\[0\]\.comments\[0\]/);
+	});
+
+	it("accepts a comment with only created (UTC) and computes the same ms as the epoch", () => {
+		const [thread] = parseIssoDump(
+			dump([
+				{
+					id: "/x",
+					title: null,
+					comments: [comment({ created_epoch: undefined, created: "2023-11-14 22:13:20" })],
+				},
+			]),
+		);
+		const c = thread!.comments[0]!;
+		expect(Math.round(c.created_epoch * 1000)).toBe(1700000000000);
+	});
+
+	it("never puts author, email or text content in a parse error", () => {
+		const secret = "topsecret-author-name";
+		let msg = "";
+		try {
+			parseIssoDump(
+				dump([
+					{
+						id: "/x",
+						title: null,
+						comments: [{ author: secret, text: secret }],
+					},
+				]),
+			);
+		} catch (e) {
+			msg = (e as Error).message;
+		}
+		expect(msg).toMatch(/threads\[0\]\.comments\[0\]/);
+		expect(msg).not.toContain(secret);
+	});
+
+	// The mode → status mapping lives in issoStatus/toExport, but a full
+	// adapter parse over an unrecognised mode still refuses by index only.
+	it("refuses an unknown mode via the full adapter parse", () => {
+		expect(() =>
+			ISSO_ADAPTER.parse(dump([{ id: "/x", title: null, comments: [comment({ mode: 3 })] }])),
+		).toThrow(/threads\[0\]\.comments\[0\].*mode 3/);
+	});
+});
+
+// ------------------------------- 2. issoSlug -------------------------------
+
+describe("issoSlug", () => {
+	it("maps a plain path", () => {
+		expect(issoSlug("/hello-world")).toBe("hello-world");
+	});
+
+	it("drops the query string", () => {
+		expect(issoSlug("/posts/deep/nested/path/?page=2")).toBe("posts/deep/nested/path");
+	});
+
+	it("maps the root path to the isso-root sentinel", () => {
+		expect(issoSlug("/")).toBe("isso-root");
+	});
+
+	it("collapses repeated slashes", () => {
+		expect(issoSlug("//a//b/")).toBe("a/b");
+	});
+});
+
+// --------------------------- issoStatus (direct) ---------------------------
+
+describe("issoStatus", () => {
+	it("maps the three known modes", () => {
+		expect(issoStatus(1, "x")).toBe("approved");
+		expect(issoStatus(2, "x")).toBe("pending");
+		expect(issoStatus(4, "x")).toBe("deleted");
+	});
+
+	it("throws on anything else, naming the index", () => {
+		expect(() => issoStatus(3, "threads[0].comments[5]")).toThrow(
+			/threads\[0\]\.comments\[5\]/,
+		);
+	});
+});
+
+// -------------------------- 3. export shape over fixture -------------------
+
+describe("ISSO_ADAPTER over the fixture", () => {
+	it("drops the empty thread and keeps the rest", () => {
+		const out = ISSO_ADAPTER.parse(FIXTURE);
+		expect(out.threads).toHaveLength(4);
+		expect(out.comments).toHaveLength(12);
+		expect(out.threads.some((t) => t.source_id === "/empty")).toBe(false);
+	});
+
+	it("gives the query-string and no-query threads the same slug", () => {
+		const out = ISSO_ADAPTER.parse(FIXTURE);
+		const withQuery = out.threads.find(
+			(t) => t.source_id === "/posts/deep/nested/path/?page=2",
+		)!;
+		const withoutQuery = out.threads.find(
+			(t) => t.source_id === "/posts/deep/nested/path/",
+		)!;
+		expect(withQuery.slug).toBe(withoutQuery.slug);
+	});
+
+	it("reports pages_total 4 and merged_pages 1 on a fresh-db dry run", async () => {
+		const { db } = makeFreshDb();
+		const plan = await runIssoImport(db, FIXTURE, "secret", { dry_run: true });
+		expect(plan.pages_total).toBe(4);
+		expect(plan.merged_pages).toBe(1);
+	});
+});
+
+// -------------------------------- 4. status ---------------------------------
+
+describe("moderation status", () => {
+	it("maps the fixture's pending and deleted comments, others approved", () => {
+		const out = ISSO_ADAPTER.parse(FIXTURE);
+		const c5 = out.comments.find((c) => c.source_id === "5")!;
+		const c6 = out.comments.find((c) => c.source_id === "6")!;
+		const c1 = out.comments.find((c) => c.source_id === "1")!;
+		expect(c5.status).toBe("pending");
+		expect(c6.status).toBe("deleted");
+		expect(c1.status).toBe("approved");
+	});
+
+	it("skips the tombstone by default", async () => {
+		const { db } = makeFreshDb();
+		const plan = await runIssoImport(db, FIXTURE, "secret");
+		expect(plan.skipped_deleted).toBe(1);
+	});
+
+	it("inserts the tombstone under include_deleted and resolves its replies onto it", async () => {
+		const { db, captured } = makeFreshDb();
+		await runIssoImport(db, FIXTURE, "secret", { include_deleted: true });
+
+		const commentInserts = inserts(captured, "comments");
+		// id, post_slug, user_id, body_md, body_html, renderer_version, status,
+		// created_at, edited_at, import_source, import_id
+		const tombstoneInsert = commentInserts.find((c) => c.binds[10] === "6");
+		expect(tombstoneInsert).toBeDefined();
+		expect(tombstoneInsert!.binds[6]).toBe("deleted");
+		expect(tombstoneInsert!.binds[3]).toBe("");
+		const tombstoneId = tombstoneInsert!.binds[0];
+
+		const commentUpdates = updates(captured, "comments");
+		const c7Insert = commentInserts.find((c) => c.binds[10] === "7")!;
+		const c7Id = c7Insert.binds[0];
+		const c7Update = commentUpdates.find((u) => u.binds[2] === c7Id)!;
+		expect(c7Update.binds[0]).toBe(tombstoneId);
+		expect(c7Update.binds[1]).toBe(2);
+	});
+
+	it("leaves the tombstone's replies as roots without include_deleted", async () => {
+		const { db, captured } = makeFreshDb();
+		await runIssoImport(db, FIXTURE, "secret");
+
+		const commentInserts = inserts(captured, "comments");
+		const c7Insert = commentInserts.find((c) => c.binds[10] === "7")!;
+		const c7Id = c7Insert.binds[0];
+		const commentUpdates = updates(captured, "comments");
+		expect(commentUpdates.some((u) => u.binds[2] === c7Id)).toBe(false);
+	});
+});
+
+// -------------------------------- 5. identity -------------------------------
+
+describe("identity", () => {
+	it("shares one ghost between c1 and c3 (same name+email), a second for c4", async () => {
+		const { db } = makeFreshDb();
+		const plan = await runIssoImport(db, FIXTURE, "secret");
+		// 5 distinct seeds when the tombstone is skipped (default): Alice/alice,
+		// Bob/bob, Alice/alice2, Carol/carol, anonymous/null.
+		expect(plan.new_users).toBe(5);
+	});
+
+	it("adds a sixth ghost for the tombstone's anonymous|alice@example.com under include_deleted", async () => {
+		const { db } = makeFreshDb();
+		const plan = await runIssoImport(db, FIXTURE, "secret", { include_deleted: true });
+		expect(plan.new_users).toBe(6);
+	});
+
+	it("names a null author anonymous and never sets source_id", () => {
+		const out = ISSO_ADAPTER.parse(FIXTURE);
+		const c8 = out.comments.find((c) => c.source_id === "8")!;
+		expect(c8.author.name).toBe("anonymous");
+		expect(c8.author.is_anonymous).toBe(true);
+		expect(c8.author.source_id).toBeUndefined();
+		for (const c of out.comments) {
+			expect(c.author.source_id).toBeUndefined();
+		}
+	});
+});
+
+// ------------------------------- 6. timestamps ------------------------------
+
+describe("timestamps", () => {
+	it("converts created_epoch to milliseconds", () => {
+		const out = ISSO_ADAPTER.parse(FIXTURE);
+		const c1 = out.comments.find((c) => c.source_id === "1")!;
+		expect(c1.created_at).toBe(Math.round(1700000000.123456 * 1000));
+	});
+
+	it("converts modified_epoch to milliseconds for an edited comment", () => {
+		const out = ISSO_ADAPTER.parse(FIXTURE);
+		const c9 = out.comments.find((c) => c.source_id === "9")!;
+		expect(c9.edited_at).toBe(Math.round(1700000900.666666 * 1000));
+	});
+
+	it("binds edited_at NULL for an unedited comment", async () => {
+		const { db, captured } = makeFreshDb();
+		await runIssoImport(db, FIXTURE, "secret");
+		const commentInserts = inserts(captured, "comments");
+		const c1Insert = commentInserts.find((c) => c.binds[10] === "1")!;
+		expect(c1Insert.binds[8]).toBeNull();
+	});
+});
+
+// -------------------------------- 7. markdown -------------------------------
+
+describe("markdown", () => {
+	it("passes the fixture body through verbatim as body_md and renders it", async () => {
+		const out = ISSO_ADAPTER.parse(FIXTURE);
+		const c1 = out.comments.find((c) => c.source_id === "1")!;
+		expect(c1.body_md).toBe(
+			"This is **bold** text, with a list:\n\n- one\n- two\n\na [link](https://example.com/), a blockquote:\n\n> quoted text\n\nand `inline code`.",
+		);
+
+		const { db, captured } = makeFreshDb();
+		await runIssoImport(db, FIXTURE, "secret");
+		const commentInserts = inserts(captured, "comments");
+		const c1Insert = commentInserts.find((c) => c.binds[10] === "1")!;
+		const html = c1Insert.binds[4] as string;
+		expect(html).toContain("<strong>");
+		expect(html).toContain("<blockquote>");
+		expect(html).toContain("<code>");
+		expect(html).toMatch(/<a [^>]*rel="nofollow ugc noopener"/);
+	});
+});
+
+// ---------------------------------- 8. site ---------------------------------
+
+describe("site", () => {
+	it("resolves a page link against the site origin", async () => {
+		const { db, captured } = makeFreshDb();
+		await runIssoImport(db, FIXTURE, "secret", { site: "https://blog.example.com" });
+		const postInserts = inserts(captured, "posts");
+		const hello = postInserts.find((p) => p.binds[0] === "hello-world")!;
+		expect(hello.binds[2]).toBe("https://blog.example.com/hello-world");
+		const deep = postInserts.find((p) => p.binds[0] === "posts/deep/nested/path")!;
+		expect(deep.binds[2]).toBe(
+			"https://blog.example.com/posts/deep/nested/path/?page=2",
+		);
+	});
+
+	it("leaves url null without a site", async () => {
+		const { db, captured } = makeFreshDb();
+		await runIssoImport(db, FIXTURE, "secret");
+		const postInserts = inserts(captured, "posts");
+		const hello = postInserts.find((p) => p.binds[0] === "hello-world")!;
+		expect(hello.binds[2]).toBeNull();
+	});
+
+	it("throws on a non-http(s) site", () => {
+		expect(() => issoAdapter({ site: "ftp://x" })).toThrow(
+			"isso import: --site must be an http(s) origin",
+		);
+	});
+});
+
+// ------------------------------ 9. idempotency ------------------------------
+
+describe("runIssoImport idempotency", () => {
+	it("inserts nothing on a re-run of the same export", async () => {
+		const { db, captured } = makeAlreadyImportedDb();
+		const plan = await runIssoImport(db, FIXTURE, "secret");
+		expect(plan.new_comments).toBe(0);
+		expect(plan.new_pages).toBe(0);
+		expect(plan.new_users).toBe(0);
+		expect(inserts(captured, "comments")).toHaveLength(0);
+	});
+});
+
+// ------------------------------ 10. include_spam ----------------------------
+
+describe("include_spam", () => {
+	it("is a no-op — isso never emits a spam status", async () => {
+		const { db } = makeFreshDb();
+		const plan = await runIssoImport(db, FIXTURE, "secret", { include_spam: true });
+		expect(plan.skipped_spam).toBe(0);
+	});
+});
+
+// ------------------------------ adapter identity ----------------------------
+
+describe("ISSO_ADAPTER identity", () => {
+	it("tags with source isso and its own slug fallback prefix", () => {
+		expect(ISSO_ADAPTER.source).toBe("isso");
+		expect(ISSO_ADAPTER.slugFallbackPrefix).toBe("isso-");
+	});
+});
+
