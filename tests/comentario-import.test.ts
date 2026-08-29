@@ -435,6 +435,31 @@ describe("COMENTARIO_ADAPTER — Commento v1", () => {
 		expect(out.comments).toHaveLength(1);
 		expect(out.comments[0]!.source_id).toBe("a");
 	});
+
+	// A filter that selects nothing is not an error anywhere downstream — the
+	// core imports an empty export and the run reports success — so a typo in
+	// the value the refusal told the operator to pass looks like a working
+	// import that moved zero rows.
+	it("refuses a host filter that names nothing, and names what would work", () => {
+		expect(() =>
+			comentarioAdapter({ domain: "typo.example" }).parse(
+				v1([
+					v1Comment({ commentHex: "a", host: "one.example" }),
+					v1Comment({ commentHex: "b", host: "two.example" }),
+				]),
+			),
+		).toThrow(/no comment on host "typo\.example".*one\.example, two\.example/);
+	});
+
+	// `--domain=` with nothing after it reaches the adapter as an empty
+	// string. That is an operator saying "every domain", not a filter that
+	// matches nothing, so it must not trip the refusal above.
+	it("reads an empty domain as no filter at all", () => {
+		const out = comentarioAdapter({ domain: "" }).parse(
+			v1([v1Comment({ commentHex: "a", host: "one.example" })]),
+		);
+		expect(out.comments).toHaveLength(1);
+	});
 });
 
 // ------------------------------ v3 normalising -----------------------------
@@ -656,6 +681,16 @@ describe("COMENTARIO_ADAPTER — Comentario v3", () => {
 			),
 		);
 		expect(out.threads).toHaveLength(1);
+	});
+
+	it("refuses a domainId filter that names nothing", () => {
+		expect(() =>
+			comentarioAdapter({
+				domain: "d0000000-0000-4000-8000-000000000009",
+			}).parse(v3([v3Comment()], [v3Page()])),
+		).toThrow(
+			/no page with domainId "d0000000-0000-4000-8000-000000000009".*d0000000-0000-4000-8000-000000000001/,
+		);
 	});
 });
 

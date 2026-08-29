@@ -459,10 +459,48 @@ const listIdentifiers = (values: Set<string>): string => {
 	return shown.join(", ") + (sorted.length > shown.length ? ", …" : "");
 };
 
+/**
+ * Refuse a domain filter that names nothing in the file.
+ *
+ * The filter is how an operator answers a multi-domain refusal, and the
+ * value they have to retype is a hostname or — for v3 — a UUID they only
+ * ever saw in an error message. Get it wrong and the filter selects no
+ * records at all, which is not an error anywhere downstream: the core
+ * imports an empty export happily and the run reports success having
+ * moved nothing. The operator's next move is then to go looking for a
+ * bug in the importer rather than a typo in their own argument.
+ *
+ * Named identifiers are safe in a message that reaches an admin response
+ * body for the same reason `listIdentifiers` is — they are the operator's
+ * own sites, not commenter data — and so is the rejected value, which the
+ * operator typed.
+ */
+const requireKnownDomain = (
+	message: string,
+	domain: string,
+	available: Set<string>,
+): void => {
+	if (available.has(domain)) return;
+	throw new Error(
+		available.size === 0
+			? `${message} "${domain}", and the file names none at all — nothing would be imported.`
+			: `${message} "${domain}" — nothing would be imported. This file has: ${listIdentifiers(available)}`,
+	);
+};
+
 const toV1Export = (
 	exp: Extract<ComentarioExport, { version: 1 }>,
 	domain: string | null,
 ): SourceExport => {
+	// Truthiness, not `!== null`: the filter below reads an empty value as "no
+	// filter", and `--domain=` on the CLI produces exactly that.
+	if (domain) {
+		requireKnownDomain(
+			"commento v1 export: no comment on host",
+			domain,
+			new Set(exp.comments.map((c) => c.host)),
+		);
+	}
 	const rows = domain
 		? exp.comments.filter((c) => c.host === domain)
 		: exp.comments;
@@ -541,6 +579,15 @@ const toV3Export = (
 	exp: Extract<ComentarioExport, { version: 3 }>,
 	domain: string | null,
 ): SourceExport => {
+	// Truthiness, not `!== null`: the filter below reads an empty value as "no
+	// filter", and `--domain=` on the CLI produces exactly that.
+	if (domain) {
+		requireKnownDomain(
+			"comentario v3 export: no page with domainId",
+			domain,
+			new Set(exp.pages.map((p) => p.domainId)),
+		);
+	}
 	const pages = domain
 		? exp.pages.filter((p) => p.domainId === domain)
 		: exp.pages;

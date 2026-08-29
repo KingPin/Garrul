@@ -1354,7 +1354,10 @@ before you run it:
   Domain field on the operator card) and run it once per domain. The
   error names the domains it found. For a v3 export that value is a
   `domainId` UUID, because a v3 export carries no hostnames at all;
-  for v1 it is a bare host.
+  for v1 it is a bare host. A value that matches nothing in the file
+  is refused as well, and the error names what would have worked — a
+  mistyped domain would otherwise select no records and report a
+  successful run that imported nothing.
 - **Bodies come across as the author typed them.** Comentario stores
   markdown, so nothing is converted and nothing is inferred from
   rendered HTML.
