@@ -43,6 +43,7 @@
     "import-disqus": "tsx scripts/import-disqus.ts",
     "import-remark42": "tsx scripts/import-remark42.ts",
     "import-comentario": "tsx scripts/import-comentario.ts",
+    "import-isso": "tsx scripts/import-isso.ts",
     "dump-isso": "tsx scripts/dump-isso.ts",
     "db:export": "bash scripts/db-export.sh",
     "upgrade": "tsx scripts/upgrade.ts",
