@@ -20,11 +20,10 @@
   root `c1`, `c7`/`c8` parent to root `c6`) mirrors that; it is not an
   arbitrary simplification.
 - **Tombstones**: `mode=4` rows are isso's soft-delete. `comments.delete()`
-  nulls `author` and `website` but leaves `email` and (per this fixture)
-  the row's own `text` as an empty string — it does not clear those
-  fields, and isso only *keeps* a mode-4 row at all while it still has
-  live children, so every tombstone below is load-bearing (dropping it
-  would orphan its replies).
+  nulls `author` and `website` and blanks `text` to `''`. `email` is the one
+  identity field it leaves in place. isso only *keeps* a mode-4 row at all
+  while it still has live children, so every tombstone below is
+  load-bearing (dropping it would orphan its replies).
 - **`voters`**: a 256-byte Bloom filter in a real database. `X'00'` here —
   the dumper never reads this column, so its exact contents don't matter
   for anything this fixture is used to test.

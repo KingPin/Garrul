@@ -91,8 +91,22 @@ const asNumber = (v: SQLOutputValue, field: string): number => {
 	return v;
 };
 
-const asNullableNumber = (v: SQLOutputValue): number | null =>
-	typeof v === "number" ? v : null;
+/**
+ * `null` passes through untouched; anything else must be a number. Isso's own
+ * DDL allows several columns this reads to be NULL, and a NULL is the one
+ * value that must always pass here — the caller decides which columns tolerate
+ * it by whether it calls this or `asNumber`. What must not pass silently is a
+ * value of the *wrong* type turning into `null` (e.g. a `parent` that failed
+ * to parse quietly re-rooting a reply) — that is why this throws instead of
+ * defaulting, same as `asNumber`.
+ */
+const asNullableNumber = (v: SQLOutputValue, field: string): number | null => {
+	if (v === null) return null;
+	if (typeof v !== "number") {
+		throw new Error(`isso dump: expected ${field} to be a number or null, got ${typeof v}`);
+	}
+	return v;
+};
 
 const asString = (v: SQLOutputValue, field: string): string => {
 	if (typeof v !== "string") {
@@ -101,8 +115,14 @@ const asString = (v: SQLOutputValue, field: string): string => {
 	return v;
 };
 
-const asNullableString = (v: SQLOutputValue): string | null =>
-	typeof v === "string" ? v : null;
+/** Same tolerance as `asNullableNumber`, for a string column. */
+const asNullableString = (v: SQLOutputValue, field: string): string | null => {
+	if (v === null) return null;
+	if (typeof v !== "string") {
+		throw new Error(`isso dump: expected ${field} to be a string or null, got ${typeof v}`);
+	}
+	return v;
+};
 
 /**
  * `created`/`modified` as a UTC `YYYY-MM-DD HH:MM:SS` string, seconds
@@ -125,10 +145,10 @@ export const formatIssoCreated = (epoch: number): string => {
  * `comments.id` — matching the intermediate format spec, and independent
  * of whatever order the rows happen to live in on disk.
  *
- * The column list is explicit rather than `SELECT *`: unlike the private
- * import-lab prototype this was measured against, this output is a
- * contract other code parses, so a future isso schema change adding a
- * column must not silently change what this emits.
+ * The column list is explicit rather than `SELECT *`: unlike the import-lab
+ * prototype this was measured against, this output is a contract other code
+ * parses, so a future isso schema change adding a column must not silently
+ * change what this emits.
  */
 export const dumpIsso = (dbPath: string): IssoDumpThread[] => {
 	const db = new DatabaseSync(dbPath, { readOnly: true });
@@ -145,19 +165,35 @@ export const dumpIsso = (dbPath: string): IssoDumpThread[] => {
 
 		const commentsByThread = new Map<number, IssoDumpComment[]>();
 		for (const row of commentRows) {
-			const tid = asNumber(row.tid ?? null, "comments.tid");
+			// `id` is a NOT NULL primary key, so it's the one column this reads
+			// without a row to blame yet — every other error on this row names
+			// it, because `mode` and `remote_addr` (and every other column here)
+			// are nullable in isso's own DDL, and "expected comments.mode to be a
+			// number, got object" is useless without knowing which row failed.
+			// Never the row's own content, only its id — that stays within the
+			// "errors never name content" rule.
+			const id = asNumber(row.id ?? null, "comments.id");
+			const tid = asNumber(row.tid ?? null, `comments.tid (comment ${id})`);
 			const comment: IssoDumpComment = {
-				id: asNumber(row.id ?? null, "comments.id"),
-				parent: asNullableNumber(row.parent ?? null),
-				mode: asNumber(row.mode ?? null, "comments.mode"),
-				created: formatIssoCreated(asNumber(row.created ?? null, "comments.created")),
-				created_epoch: asNumber(row.created ?? null, "comments.created"),
-				modified_epoch: asNullableNumber(row.modified ?? null),
-				author: asNullableString(row.author ?? null),
-				email: asNullableString(row.email ?? null),
-				website: asNullableString(row.website ?? null),
-				remote_addr: asString(row.remote_addr ?? null, "comments.remote_addr"),
-				text: asString(row.text ?? null, "comments.text"),
+				id,
+				parent: asNullableNumber(row.parent ?? null, `comments.parent (comment ${id})`),
+				mode: asNumber(row.mode ?? null, `comments.mode (comment ${id})`),
+				created: formatIssoCreated(
+					asNumber(row.created ?? null, `comments.created (comment ${id})`),
+				),
+				created_epoch: asNumber(row.created ?? null, `comments.created (comment ${id})`),
+				modified_epoch: asNullableNumber(
+					row.modified ?? null,
+					`comments.modified (comment ${id})`,
+				),
+				author: asNullableString(row.author ?? null, `comments.author (comment ${id})`),
+				email: asNullableString(row.email ?? null, `comments.email (comment ${id})`),
+				website: asNullableString(row.website ?? null, `comments.website (comment ${id})`),
+				remote_addr: asString(
+					row.remote_addr ?? null,
+					`comments.remote_addr (comment ${id})`,
+				),
+				text: asString(row.text ?? null, `comments.text (comment ${id})`),
 			};
 			const existing = commentsByThread.get(tid);
 			if (existing) existing.push(comment);
@@ -165,10 +201,12 @@ export const dumpIsso = (dbPath: string): IssoDumpThread[] => {
 		}
 
 		return threadRows.map((row) => {
+			// Same reasoning as the comment loop above: `id` first, then every
+			// other column's error names the thread it belongs to.
 			const id = asNumber(row.id ?? null, "threads.id");
 			return {
-				id: asString(row.uri ?? null, "threads.uri"),
-				title: asNullableString(row.title ?? null),
+				id: asString(row.uri ?? null, `threads.uri (thread ${id})`),
+				title: asNullableString(row.title ?? null, `threads.title (thread ${id})`),
 				comments: commentsByThread.get(id) ?? [],
 			};
 		});
@@ -189,9 +227,23 @@ const main = (): void => {
 		const arg = argv[i];
 		if (arg === undefined) continue;
 		if (arg === "--out") {
-			outPath = argv[i + 1] ?? null;
+			// A missing or flag-shaped value ("--out" as the last argument, or
+			// "--out --something-else") is a usage error, not "write to stdout" —
+			// falling through would silently ignore the operator's --out entirely.
+			const value = argv[i + 1];
+			if (value === undefined || value.startsWith("--")) {
+				console.error(USAGE);
+				process.exit(1);
+			}
+			outPath = value;
 			i++;
 			continue;
+		}
+		if (arg.startsWith("--")) {
+			// Any other flag is unrecognised. Without this, it fell into
+			// `positional` and could silently become the db path.
+			console.error(USAGE);
+			process.exit(1);
 		}
 		positional.push(arg);
 	}
@@ -205,7 +257,15 @@ const main = (): void => {
 	const threads = dumpIsso(dbPath);
 	const json = `${JSON.stringify(threads, null, 2)}\n`;
 	if (outPath) {
-		writeFileSync(outPath, json);
+		try {
+			writeFileSync(outPath, json);
+		} catch (err) {
+			// A raw stack trace here would be a Node internals dump for what is
+			// almost always an operator typo (bad directory, no permission).
+			const message = err instanceof Error ? err.message : String(err);
+			console.error(`isso dump: cannot write ${outPath}: ${message}`);
+			process.exit(1);
+		}
 	} else {
 		process.stdout.write(json);
 	}

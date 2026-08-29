@@ -16,9 +16,11 @@
  *   4. `created` formatting — UTC, whole-second precision, independent of
  *      the fixture.
  *   5. `voters`/`likes`/`dislikes`/`notification` never reach the output —
- *      none of them has a Garrul column, and two are checked with real
- *      non-default values in the fixture so an accidental pass-through
- *      would be visible.
+ *      none of them has a Garrul column. This assertion can't actually fail
+ *      against today's `dumpIsso` (the emitted object is a fixed literal,
+ *      not a spread), so it is a guard against a future `SELECT *` or
+ *      object-spread refactor reintroducing one of them, not a live pin —
+ *      the byte-equality test above is the real pin on today's behavior.
  *   6. A missing database file throws rather than returning nothing, the
  *      one aspect of the read-only open this suite can observe without a
  *      second writer.
@@ -28,7 +30,7 @@
  * approach tests/admin-import-endpoint.test.ts uses for a migrations-
  * driven DB.
  */
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -47,8 +49,13 @@ beforeAll(() => {
 	dir = mkdtempSync(join(tmpdir(), "isso-dump-test-"));
 	dbPath = join(dir, "comments.db");
 	const db = new DatabaseSync(dbPath);
-	db.exec(FIXTURE_SQL);
-	db.close();
+	try {
+		db.exec(FIXTURE_SQL);
+	} finally {
+		// A failed exec must not leave the handle open — afterAll removes
+		// `dir` regardless of whether this block succeeded.
+		db.close();
+	}
 });
 
 afterAll(() => {
@@ -86,6 +93,8 @@ describe("dumpIsso", () => {
 		expect(empty).toEqual({ id: "/empty", title: "Empty", comments: [] });
 	});
 
+	// Guards a future `SELECT *`/spread refactor — see the header note on why
+	// this can't fail against today's implementation.
 	it("never emits voters, likes, dislikes or notification", () => {
 		const threads = dumpIsso(dbPath);
 		for (const thread of threads) {
@@ -99,8 +108,13 @@ describe("dumpIsso", () => {
 		}
 	});
 
-	it("throws on a database path that does not exist", () => {
-		expect(() => dumpIsso(join(dir, "does-not-exist.db"))).toThrow();
+	it("throws on a database path that does not exist, and does not create one", () => {
+		const missing = join(dir, "does-not-exist.db");
+		expect(() => dumpIsso(missing)).toThrow();
+		// A read-write open would have created the file on open; this is the
+		// one aspect of `readOnly: true` this suite can observe without a
+		// second writer racing the same file.
+		expect(existsSync(missing)).toBe(false);
 	});
 });
 
