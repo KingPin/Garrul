@@ -303,6 +303,28 @@ describe("htmlToMarkdown", () => {
 			expect(out).not.toContain("<script");
 		});
 
+		// CodeQL js/incomplete-sanitization, and it was right: escaping `<` with
+		// a backslash is only sound if the backslashes already in the text are
+		// escaped first. These three are what that costs and what it buys.
+		it("does not let a source backslash re-open the tag it escaped", () => {
+			const out = roundTrip(`<p>\\&lt;script&gt;alert(1)\\&lt;/script&gt;</p>`);
+			expect(out).toContain("\\&lt;script&gt;");
+			expect(out).not.toContain("<script");
+		});
+
+		it("round-trips a Windows path unchanged", () => {
+			expect(roundTrip(`<p>path is C:\\Users\\ada</p>`)).toContain(
+				"path is C:\\Users\\ada",
+			);
+		});
+
+		it("keeps a backslash it used to drop", () => {
+			// Pre-fix this rendered "foo*bar*baz" — the backslash vanished. The
+			// emphasis still fires because `*` is not escaped; that is the
+			// acknowledged fidelity gap, and it is not content loss.
+			expect(roundTrip(`<p>foo\\*bar*baz</p>`)).toContain("foo\\<em>bar</em>baz");
+		});
+
 		it("leaves a bare link collapsing to its own URL", () => {
 			expect(
 				htmlToMarkdown(

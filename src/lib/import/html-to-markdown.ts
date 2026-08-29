@@ -62,14 +62,21 @@ export const stripTagsRepeatedly = (s: string): string => {
 // converter strips <blockquote> like every other tag — so there is no
 // intentional markup for this to swallow.
 //
-// Angle brackets only, deliberately. A backslash already in the source is
-// left as it is, so the one input this does not round-trip is a literal
-// "\<": it becomes "\\<" and `marked` reads that as an escaped backslash
-// followed by a live tag. Escaping backslashes as well would fix it and
-// would also rewrite every "C:\path" in every imported comment, which is a
-// worse trade for an input no observed export contains.
-const escapeAngles = (s: string): string =>
-	s.replace(/</g, "\\<").replace(/>/g, "\\>");
+// The backslash goes first, and it has to: escaping `<` with a backslash is
+// only sound if a backslash already in the source is itself escaped. Without
+// it "\<script\>" becomes "\\<script\>", which `marked` reads as an escaped
+// backslash followed by a *live* tag — the exact loss this function exists to
+// prevent, reintroduced by the fix for it. Doubling costs nothing elsewhere:
+// `marked` renders "\\" as one backslash, so "C:\path" survives as "C:\path"
+// either way, and a source "foo\*bar" now keeps its backslash instead of
+// dropping it.
+//
+// Angle brackets and the escape character, and nothing else. The other
+// markdown punctuation is still unescaped, so a literal "*" in the source can
+// start emphasis — a fidelity gap, not content loss, and one that belongs
+// with the per-source work in #104 rather than here.
+const escapeMarkup = (s: string): string =>
+	s.replace(/\\/g, "\\\\").replace(/</g, "\\<").replace(/>/g, "\\>");
 
 export const htmlToMarkdown = (html: string): string => {
 	if (!html) return "";
@@ -99,6 +106,6 @@ export const htmlToMarkdown = (html: string): string => {
 	// Decode first, then re-escape: the decode is what recovers "&amp;" and
 	// friends, and the escape is what stops the angle brackets it produces
 	// from being read back as markup by the renderer downstream.
-	text = escapeAngles(decodeEntities(text));
+	text = escapeMarkup(decodeEntities(text));
 	return text.trim();
 };
