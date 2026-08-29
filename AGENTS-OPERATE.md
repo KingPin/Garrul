@@ -1425,7 +1425,11 @@ the raw `.db` file itself. Five things are worth knowing:
   source's deleted comments, but isso only *keeps* a tombstone row
   while it still has live replies under it — skip it and those
   replies come across with no parent; pass `--include-deleted` and
-  they keep isso's original shape, tombstone included.
+  they keep isso's original shape, tombstone included. A tombstone
+  imports under the shared anonymous ghost, not under whoever wrote
+  it: isso's `delete()` leaves the `email` column populated, and
+  carrying that into the name+email seed would mint one ghost per
+  deleted author and re-attach an identity isso had already stripped.
 - **`--site=<origin>` supplies the host isso doesn't have.** isso
   stores a path (`threads.uri`), not a URL, so `posts.url` needs a
   host from somewhere else. Give `--site=https://blog.example.com`

@@ -611,10 +611,32 @@ describe("identity", () => {
 		expect(c4.binds[2]).not.toBe(c1.binds[2]);
 	});
 
-	it("adds a sixth ghost for the tombstone's anonymous|alice@example.com under include_deleted", async () => {
+	// isso's delete() nulls `author` but leaves `email`, so a tombstone
+	// arrives as anonymous|alice@example.com — a name+email seed nothing else
+	// shares. Keeping the email would mint one ghost per deleted author and
+	// re-attach a comment isso already stripped of its identity to that
+	// identity. The adapter drops it, so every tombstone lands on the same
+	// anonymous ghost c8 already uses.
+	it("lands the tombstone on the existing anonymous ghost under include_deleted", async () => {
 		const { db } = makeFreshDb();
 		const plan = await runIssoImport(db, FIXTURE, "secret", { include_deleted: true });
-		expect(plan.new_users).toBe(6);
+		expect(plan.new_users).toBe(5);
+	});
+
+	it("binds the tombstone and the anonymous comment to the same user_id", async () => {
+		const { db, captured } = makeFreshDb();
+		await runIssoImport(db, FIXTURE, "secret", { include_deleted: true });
+		const commentInserts = inserts(captured, "comments");
+		const tombstone = commentInserts.find((c) => c.binds[10] === "6")!;
+		const anonymous = commentInserts.find((c) => c.binds[10] === "8")!;
+		expect(tombstone.binds[2]).toBe(anonymous.binds[2]);
+	});
+
+	it("drops the tombstone's leftover email from the export", () => {
+		const out = ISSO_ADAPTER.parse(FIXTURE);
+		const c6 = out.comments.find((c) => c.source_id === "6")!;
+		expect(c6.author.name).toBe("anonymous");
+		expect(c6.author.email).toBeNull();
 	});
 
 	it("names a null author anonymous and never sets source_id", () => {

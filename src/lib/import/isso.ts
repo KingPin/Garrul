@@ -33,7 +33,11 @@
  * `mode=4` is isso's soft-delete: `comments.delete()` nulls `author` and
  * `website` and blanks `text` to `""`, but leaves `email` alone. Emitted here
  * as `status: "deleted"`, gated by the core's existing `include_deleted` —
- * no core change for it. isso only *keeps* a mode-4 row while it still has
+ * no core change for it. The leftover `email` is dropped rather than carried:
+ * identity is the name+email seed, so keeping it would mint a distinct ghost
+ * per deleted author — each holding one blank comment, each re-attaching an
+ * identity isso had already stripped. Nulled, every tombstone shares the one
+ * anonymous ghost. isso only *keeps* a mode-4 row while it still has
  * live children, so every tombstone in a real isso export is load-bearing:
  * dropping it (the default) leaves its replies as roots; `--include-deleted`
  * reproduces isso's exact thread shape, tombstone included.
@@ -484,7 +488,14 @@ const toExport = (threads: IssoThread[], site: string | null): SourceExport => {
 				body_md: c.text,
 				author: {
 					name: (c.author ?? "").trim() || "anonymous",
-					email: c.email || null,
+					// isso's delete() nulls `author` and `website` but leaves
+					// `email` behind, so a tombstone arrives carrying an
+					// identity isso itself already stripped from it. Keeping
+					// it would seed a ghost on anonymous|<that email> — one
+					// per deleted author, each holding a single blank comment,
+					// and each re-attaching a name isso deleted. Dropping it
+					// lands every tombstone on the one anonymous ghost.
+					email: status === "deleted" ? null : c.email || null,
 					is_anonymous: true,
 				},
 			});
