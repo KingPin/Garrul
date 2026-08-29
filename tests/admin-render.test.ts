@@ -1233,7 +1233,14 @@ describe("global keyboard shortcuts", () => {
 type CardData = {
 	source: string;
 	domain: string;
-	spec: { cli: string; domainFlag: boolean; accept: string; contentType: string };
+	site: string;
+	spec: {
+		cli: string;
+		domainFlag: boolean;
+		siteFlag: boolean;
+		accept: string;
+		contentType: string;
+	};
 	endpoint: string;
 	contentType: string;
 	accept: string;
@@ -1312,7 +1319,7 @@ describe("renderOperator — the import card", () => {
 		const options = [...html.matchAll(/<option value="([^"]+)"/g)].map(
 			(m) => m[1] as string,
 		);
-		expect(options).toEqual(["disqus", "remark42", "comentario"]);
+		expect(options).toEqual(["disqus", "remark42", "comentario", "isso"]);
 
 		const data = evalCardData(html);
 		for (const source of options) {
@@ -1325,6 +1332,7 @@ describe("renderOperator — the import card", () => {
 			expect(data.accept.length).toBeGreaterThan(0);
 			expect(data.spec.cli).toContain(`npm run import-${source}`);
 			expect(typeof data.spec.domainFlag).toBe("boolean");
+			expect(typeof data.spec.siteFlag).toBe("boolean");
 		}
 	});
 
@@ -1351,5 +1359,15 @@ describe("renderOperator — the import card", () => {
 		expect(html).toContain("domainFlag: true");
 		expect(html).toContain("domainFlag: false");
 		expect(html).toContain("x-import-domain");
+	});
+
+	// Only isso reads it — a path has no host of its own, so this is the one
+	// source where an operator can supply one for permalinks.
+	it("exposes the site field, and only for the source that reads it", () => {
+		expect(html).toContain('x-model="site"');
+		expect(html).toContain('x-show="spec.siteFlag"');
+		expect(html).toContain("siteFlag: true");
+		expect(html).toContain("siteFlag: false");
+		expect(html).toContain("x-import-site");
 	});
 });

@@ -172,6 +172,7 @@ const uploadTo =
 const upload = uploadTo("disqus", "application/xml");
 const uploadJsonl = uploadTo("remark42", "application/x-ndjson");
 const uploadJson = uploadTo("comentario", "application/json");
+const uploadIssoJson = uploadTo("isso", "application/json");
 
 const commentCount = (): number =>
 	(
@@ -538,5 +539,173 @@ describe("POST /admin/api/ops/import-comentario", () => {
 		const body = (await res.json()) as { error: string };
 		expect(body.error).toContain("comments[0]");
 		expect(body.error).not.toContain(secret);
+	});
+});
+
+// One thread: a root, a reply to it, a tombstone (mode 4), and a reply to
+// the tombstone — the shape --include-deleted exists to preserve.
+// Identity-free: invented names on example.com/.org, and the same
+// "127.0.0.0" isso itself writes for every anonymised remote_addr.
+const ISSO = JSON.stringify([
+	{
+		id: "/hello",
+		title: "Hello",
+		comments: [
+			{
+				id: 1,
+				parent: null,
+				mode: 1,
+				created: "2026-01-01 00:00:00",
+				created_epoch: 1767225600,
+				modified_epoch: null,
+				author: "Ada Example",
+				email: "ada@example.com",
+				website: null,
+				remote_addr: "127.0.0.0",
+				text: "first",
+			},
+			{
+				id: 2,
+				parent: 1,
+				mode: 1,
+				created: "2026-01-01 00:05:00",
+				created_epoch: 1767225900,
+				modified_epoch: null,
+				author: "Bob Example",
+				email: "bob@example.org",
+				website: null,
+				remote_addr: "127.0.0.0",
+				text: "a reply",
+			},
+			{
+				id: 3,
+				parent: null,
+				mode: 4,
+				created: "2026-01-01 00:10:00",
+				created_epoch: 1767226200,
+				modified_epoch: null,
+				author: null,
+				email: null,
+				website: null,
+				remote_addr: "127.0.0.0",
+				text: "",
+			},
+			{
+				id: 4,
+				parent: 3,
+				mode: 1,
+				created: "2026-01-01 00:15:00",
+				created_epoch: 1767226500,
+				modified_epoch: null,
+				author: "Carol Example",
+				email: "carol@example.com",
+				website: null,
+				remote_addr: "127.0.0.0",
+				text: "a reply to a deleted comment",
+			},
+		],
+	},
+]);
+
+describe("POST /admin/api/ops/import-isso", () => {
+	it("imports a plain JSON upload", async () => {
+		const res = await uploadIssoJson(ISSO);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as {
+			plan: { new_comments: number; new_pages: number };
+		};
+		// Comment 3 is a tombstone, skipped by default (no --include-deleted).
+		expect(body.plan.new_comments).toBe(3);
+		expect(body.plan.new_pages).toBe(1);
+		expect(commentCount()).toBe(3);
+	});
+
+	it("imports a gzipped upload identically", async () => {
+		const res = await uploadIssoJson(await gzip(ISSO));
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { plan: { new_comments: number } };
+		expect(body.plan.new_comments).toBe(3);
+		expect(commentCount()).toBe(3);
+	});
+
+	it("rejects a Comentario document sent to the isso endpoint", async () => {
+		const res = await uploadIssoJson(JSON.stringify({ version: 3 }));
+		expect(res.status).toBe(400);
+		expect(await res.json()).toEqual({ error: "not_isso_dump" });
+	});
+
+	it("rejects a Disqus export sent to the isso endpoint", async () => {
+		const res = await uploadIssoJson(XML);
+		expect(res.status).toBe(400);
+		expect(await res.json()).toEqual({ error: "not_isso_dump" });
+	});
+
+	it("rejects an empty body", async () => {
+		const res = await uploadIssoJson("");
+		expect(res.status).toBe(400);
+		expect(await res.json()).toEqual({ error: "empty_body" });
+	});
+
+	it("writes nothing on a dry run", async () => {
+		const res = await uploadIssoJson(ISSO, { "x-dry-run": "1" });
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as {
+			dry_run: boolean;
+			plan: { new_comments: number };
+		};
+		expect(body.dry_run).toBe(true);
+		expect(body.plan.new_comments).toBe(3);
+		expect(commentCount()).toBe(0);
+	});
+
+	it("include-deleted inserts the tombstone and re-parents its child onto it", async () => {
+		const res = await uploadIssoJson(ISSO, { "x-include-deleted": "1" });
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { plan: { new_comments: number } };
+		expect(body.plan.new_comments).toBe(4);
+		expect(commentCount()).toBe(4);
+
+		const tombstone = sqlite
+			.prepare(
+				"SELECT id, status FROM comments WHERE import_source = 'isso' AND import_id = '3'",
+			)
+			.get() as { id: string; status: string } | undefined;
+		expect(tombstone?.status).toBe("deleted");
+
+		const child = sqlite
+			.prepare(
+				"SELECT parent_id FROM comments WHERE import_source = 'isso' AND import_id = '4'",
+			)
+			.get() as { parent_id: string | null } | undefined;
+		expect(child?.parent_id).toBe(tombstone?.id);
+	});
+
+	it("sets posts.url from x-import-site", async () => {
+		const res = await uploadIssoJson(ISSO, {
+			"x-import-site": "https://blog.example.com",
+		});
+		expect(res.status).toBe(200);
+		const post = sqlite
+			.prepare("SELECT url FROM posts WHERE slug = 'hello'")
+			.get() as { url: string | null } | undefined;
+		expect(post?.url).toBe("https://blog.example.com/hello");
+	});
+
+	it("is idempotent across a plain and a gzipped upload of the same file", async () => {
+		expect((await uploadIssoJson(ISSO)).status).toBe(200);
+		const res = await uploadIssoJson(await gzip(ISSO));
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { plan: { new_comments: number } };
+		expect(body.plan.new_comments).toBe(0);
+		expect(commentCount()).toBe(3);
+	});
+
+	it("writes an import.isso audit row", async () => {
+		const res = await uploadIssoJson(ISSO);
+		expect(res.status).toBe(200);
+		const row = sqlite
+			.prepare("SELECT action FROM audit_log WHERE action = 'import.isso'")
+			.get() as { action: string } | undefined;
+		expect(row?.action).toBe("import.isso");
 	});
 });

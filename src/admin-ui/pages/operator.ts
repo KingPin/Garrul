@@ -288,6 +288,7 @@ ${seedCard}
   includeDeleted: false,
   includeSpam: false,
   domain: '',
+  site: '',
   // One card, every source. The endpoints stay separate on the server —
   // their format sniffs and error codes differ — but from here the only
   // things that vary are the URL, the content type, the file filter and
@@ -303,18 +304,28 @@ ${seedCard}
       accept: '.xml,.gz,application/xml,text/xml,application/gzip',
       cli: 'npm run import-disqus -- ./export.xml --dry-run',
       domainFlag: false,
+      siteFlag: false,
     },
     remark42: {
       contentType: 'application/x-ndjson',
       accept: '.json,.jsonl,.gz,application/json,application/gzip',
       cli: 'npm run import-remark42 -- ./userbackup.gz --dry-run',
       domainFlag: false,
+      siteFlag: false,
     },
     comentario: {
       contentType: 'application/json',
       accept: '.json,.gz,application/json,application/gzip',
       cli: 'npm run import-comentario -- ./export.json --dry-run',
       domainFlag: true,
+      siteFlag: false,
+    },
+    isso: {
+      contentType: 'application/json',
+      accept: '.json,.gz,application/json,application/gzip',
+      cli: 'npm run import-isso -- ./isso-dump.json --dry-run',
+      domainFlag: false,
+      siteFlag: true,
     },
   },
   get spec() { return this.sources[this.source] },
@@ -345,6 +356,11 @@ ${seedCard}
           ...(this.spec.domainFlag &amp;&amp; this.domain.trim()
             ? { 'x-import-domain': this.domain.trim() }
             : {}),
+          // Only isso reads it — a path has no host of its own, so this is
+          // the only source where an operator can supply one.
+          ...(this.spec.siteFlag &amp;&amp; this.site.trim()
+            ? { 'x-import-site': this.site.trim() }
+            : {}),
         },
         body,
       });
@@ -366,6 +382,7 @@ ${seedCard}
         <option value="disqus">Disqus</option>
         <option value="remark42">Remark42</option>
         <option value="comentario">Comentario / Commento</option>
+        <option value="isso">isso</option>
       </select>
     </label>
   </p>
@@ -388,6 +405,15 @@ ${seedCard}
     the source's comment ID. Comentario stores markdown, so bodies come
     across as the author typed them. What is marked spam is a comment a
     human moderator rejected; neither product has a spam classifier.</p>
+  <p class="muted" x-show="source === 'isso'">isso ships no export at
+    all — <code>comments.db</code> is its data store, read directly by
+    the isso server itself. Run <code>npm run dump-isso</code> against
+    that file on the machine that has it, then upload the JSON it
+    writes here. Idempotent, deduplicated by isso's own comment id.
+    isso stores markdown, so bodies pass through unchanged. Pending
+    comments land in the moderation queue. Tick "include deleted" to
+    keep isso's tombstones — it only retains one while it still has
+    replies, so dropping it leaves those replies with no parent.</p>
   <p x-show="spec.domainFlag">
     <label style="display:inline-flex;gap:0.3rem;align-items:center">
       Domain (optional)
@@ -402,6 +428,19 @@ ${seedCard}
     <code>/about</code> would silently become one page here. Leave this
     blank for a single-domain export; if the import is refused, the error
     names the domains it found, and you run it once per domain.</p>
+  <p x-show="spec.siteFlag">
+    <label style="display:inline-flex;gap:0.3rem;align-items:center">
+      Site origin (optional)
+      <input type="url" x-model="site" :disabled="busy"
+             placeholder="https://blog.example.com"
+             style="min-width:22rem">
+    </label>
+  </p>
+  <p class="muted" x-show="spec.siteFlag">isso stores paths, not URLs
+    — <code>threads.uri</code> has no host of its own. Without an
+    origin here, imported pages have no permalink URL until you set one
+    by hand; with it, each thread's link is resolved against this
+    origin.</p>
   <p>
     <label style="display:inline-flex;gap:0.3rem;align-items:center;margin-right:0.8rem">
       <input type="checkbox" x-model="dryRun"> Dry run (parse + plan only)
