@@ -44,6 +44,13 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
       - run: npm test
+      # Gate: nothing under tests/ may carry a real-world identity — an address
+      # on a live domain, an avatar URL with an account id in it, a profile URL,
+      # an account handle. Fixtures synthesise the shape of a real export; they
+      # are never a copy of one. The check encodes that as an invariant rather
+      # than a deny-list, so it needs no knowledge of whose identity it is
+      # protecting — which is the only form the check can take in a public repo.
+      - run: npm run identity:check
       # Gate: the committed release-manifest.json must match what the
       # generator derives from the source tree. Catches drift between
       # Bindings/secrets/migrations and the declared upgrade contract.

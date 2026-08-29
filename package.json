@@ -36,6 +36,7 @@
     "pretest": "npm run build:styles",
     "test:watch": "vitest",
     "pretest:watch": "npm run build:styles",
+    "identity:check": "tsx scripts/check-fixture-identities.ts",
     "migrate": "tsx src/db/migrate.ts",
     "rerender": "tsx scripts/rerender.ts",
     "seed-demo": "tsx scripts/seed-demo.ts",
