@@ -385,6 +385,19 @@ describe("COMENTARIO_ADAPTER — Commento v1", () => {
 		},
 	);
 
+	// A third spelling of "nobody", and the one a malformed export produces.
+	// `commenters[]` rejects an empty hex, so it can never name an author;
+	// reading it as registered emitted a commenter called "anonymous" that
+	// claimed not to be one.
+	it("reads a missing commenterHex as anonymous, not as a registered author", () => {
+		const out = COMENTARIO_ADAPTER.parse(
+			v1([v1Comment({ commenterHex: "" })], []),
+		);
+		expect(out.comments[0]!.author.is_anonymous).toBe(true);
+		expect(out.comments[0]!.author.source_id).toBeUndefined();
+		expect(out.comments[0]!.author.name).toBe("anonymous");
+	});
+
 	it("passes markdown through and never reads the html field", () => {
 		const out = COMENTARIO_ADAPTER.parse(
 			v1([v1Comment({ markdown: "**bold**", html: "<p>WRONG</p>" })]),

@@ -95,7 +95,9 @@
  *   v1  every anonymous comment shares one sentinel — either 64 zeros or the
  *       literal string `anonymous`, which upstream calls *"a special ugly case
  *       for the anonymous commenter in Commento"*. Keying on it would collapse
- *       every anonymous commenter in the forum onto a single ghost.
+ *       every anonymous commenter in the forum onto a single ghost. A comment
+ *       with no `commenterHex` at all is read the same way: `commenters[]`
+ *       rejects an empty one, so there is no author it could ever name.
  *   v3  the sentinel is the zero UUID, and the unregistered author's real name
  *       lives on the comment as `authorName`. Keying on the sentinel would
  *       throw that name away.
@@ -499,7 +501,13 @@ const toV1Export = (
 	}
 
 	const comments: SourceComment[] = rows.map((c) => {
-		const anonymous = V1_ANONYMOUS_HEXES.has(c.commenterHex);
+		// A missing hex is a third spelling of "nobody": `commenters[]` rejects
+		// an empty one, so it can never resolve to a registered author, and
+		// reading it as registered would emit an author named "anonymous" that
+		// claims not to be — the one shape the rest of the pipeline has no way
+		// to tell from a real account.
+		const anonymous =
+			!c.commenterHex || V1_ANONYMOUS_HEXES.has(c.commenterHex);
 		const commenter = byHex.get(c.commenterHex);
 		const author: SourceAuthor = {
 			name: commenter?.name || "anonymous",
@@ -508,7 +516,7 @@ const toV1Export = (
 			// Anonymous shares one sentinel hex forum-wide, so keying on it
 			// would collapse every anonymous commenter onto one ghost. Fall
 			// through to the core's name+email seed instead.
-			...(anonymous || !c.commenterHex ? {} : { source_id: c.commenterHex }),
+			...(anonymous ? {} : { source_id: c.commenterHex }),
 		};
 		return {
 			source_id: c.commentHex,
