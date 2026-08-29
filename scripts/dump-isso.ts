@@ -65,14 +65,14 @@ import { pathToFileURL } from "node:url";
 export type IssoDumpComment = {
 	id: number;
 	parent: number | null;
-	mode: number;
+	mode: number | null;
 	created: string;
 	created_epoch: number;
 	modified_epoch: number | null;
 	author: string | null;
 	email: string | null;
 	website: string | null;
-	remote_addr: string;
+	remote_addr: string | null;
 	text: string;
 };
 
@@ -180,17 +180,29 @@ export const dumpIsso = (dbPath: string): IssoDumpThread[] => {
 		for (const row of commentRows) {
 			// `id` is a NOT NULL primary key, so it's the one column this reads
 			// without a row to blame yet — every other error on this row names
-			// it, because `mode` and `remote_addr` (and every other column here)
-			// are nullable in isso's own DDL, and "expected comments.mode to be a
-			// number, got object" is useless without knowing which row failed.
-			// Never the row's own content, only its id — that stays within the
-			// "errors never name content" rule.
+			// it, because a wrong *type* in any other column is refused, and
+			// "expected comments.created to be a number, got string" is useless
+			// without knowing which row failed. Never the row's own content,
+			// only its id — that stays within the "errors never name content"
+			// rule.
+			//
+			// Which columns tolerate NULL follows isso's own DDL, not what the
+			// adapter would prefer. `mode` and `remote_addr` are nullable there,
+			// and a dumper that refused a NULL in either would turn a database
+			// isso itself runs happily against into an unexportable one, so
+			// both pass through as null — the adapter defaults a null `mode`
+			// to 1/approved (the generic format has no such column, so it
+			// already has to) and discards `remote_addr` outright. `created`
+			// and `text` stay required because isso declares both NOT NULL: a
+			// NULL there is a corrupt file, not a shape isso can produce, and
+			// there is no faithful value to invent for a comment with no
+			// timestamp.
 			const id = asNumber(row.id ?? null, "comments.id");
 			const tid = asNumber(row.tid ?? null, `comments.tid (comment ${id})`);
 			const comment: IssoDumpComment = {
 				id,
 				parent: asNullableNumber(row.parent ?? null, `comments.parent (comment ${id})`),
-				mode: asNumber(row.mode ?? null, `comments.mode (comment ${id})`),
+				mode: asNullableNumber(row.mode ?? null, `comments.mode (comment ${id})`),
 				created: formatIssoCreated(
 					asNumber(row.created ?? null, `comments.created (comment ${id})`),
 				),
@@ -202,7 +214,7 @@ export const dumpIsso = (dbPath: string): IssoDumpThread[] => {
 				author: asNullableString(row.author ?? null, `comments.author (comment ${id})`),
 				email: asNullableString(row.email ?? null, `comments.email (comment ${id})`),
 				website: asNullableString(row.website ?? null, `comments.website (comment ${id})`),
-				remote_addr: asString(
+				remote_addr: asNullableString(
 					row.remote_addr ?? null,
 					`comments.remote_addr (comment ${id})`,
 				),
@@ -213,16 +225,34 @@ export const dumpIsso = (dbPath: string): IssoDumpThread[] => {
 			else commentsByThread.set(tid, [comment]);
 		}
 
-		return threadRows.map((row) => {
+		const threads = threadRows.map((row) => {
 			// Same reasoning as the comment loop above: `id` first, then every
 			// other column's error names the thread it belongs to.
 			const id = asNumber(row.id ?? null, "threads.id");
+			const comments = commentsByThread.get(id) ?? [];
+			commentsByThread.delete(id);
 			return {
 				id: asString(row.uri ?? null, `threads.uri (thread ${id})`),
 				title: asNullableString(row.title ?? null, `threads.title (thread ${id})`),
-				comments: commentsByThread.get(id) ?? [],
+				comments,
 			};
 		});
+
+		// Whatever is still in the map is a comment whose `tid` matches no
+		// `threads` row. isso's DDL declares `tid REFERENCES threads(id)` but
+		// SQLite enforces nothing without `PRAGMA foreign_keys`, so a hand-
+		// edited or partially restored database can hold them. Emitting the
+		// dump without them would report success while silently losing
+		// comments; a transport that drops rows is worse than one that stops.
+		if (commentsByThread.size > 0) {
+			const orphans = [...commentsByThread.entries()]
+				.sort(([a], [b]) => a - b)
+				.map(([tid, rows]) => `tid ${tid}: comments ${rows.map((c) => c.id).join(", ")}`)
+				.join("; ");
+			throw new Error(`isso dump: comments reference threads that do not exist — ${orphans}`);
+		}
+
+		return threads;
 	} finally {
 		db.close();
 	}

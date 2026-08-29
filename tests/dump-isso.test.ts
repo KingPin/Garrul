@@ -24,6 +24,11 @@
  *   6. A missing database file throws rather than returning nothing, the
  *      one aspect of the read-only open this suite can observe without a
  *      second writer.
+ *   7. NULLs and orphans — a NULL `mode`/`remote_addr` passes through as
+ *      `null` (isso's DDL allows it), a NULL in a column isso itself
+ *      requires is refused with a message that says `null`, and a comment
+ *      whose `tid` matches no thread row stops the dump by name rather
+ *      than being silently dropped.
  *
  * Fixture is hand-written SQL (see tests/fixtures/isso/PROVENANCE.md),
  * built into a real file in a temp dir with node:sqlite — the same
@@ -119,13 +124,21 @@ describe("dumpIsso", () => {
 });
 
 /**
- * isso's own DDL leaves `mode` and `remote_addr` nullable while the dumper
- * requires both, so a NULL there is a real shape a real database can hold.
- * The dumper refuses it — a faithful dump does not invent a value — but the
+ * isso's own DDL leaves every `comments` column but `id` and `tid` nullable,
+ * so a NULL in any of them is a real shape a real database can hold. Which
+ * NULLs the dumper carries and which it refuses follows that DDL: `mode` and
+ * `remote_addr` pass through as `null` (the adapter defaults one and discards
+ * the other), while `created` and `text` stay required — there is no faithful
+ * value to invent for a comment with no timestamp. When it does refuse, the
  * message has to say which value it found, and `typeof null` is `"object"`,
  * which sends an operator looking for a JSON object in a SQLite column.
+ *
+ * The same harness covers a comment whose `tid` matches no thread row. isso
+ * declares the foreign key but SQLite enforces nothing without
+ * `PRAGMA foreign_keys`, so a hand-edited database can hold one; the dumper
+ * must stop and name it rather than emit a dump that silently lost it.
  */
-describe("dumpIsso — NULL in a required column", () => {
+describe("dumpIsso — NULLs and orphans a real database can hold", () => {
 	let nullDir: string;
 	let seq = 0;
 
@@ -152,17 +165,47 @@ describe("dumpIsso — NULL in a required column", () => {
 		rmSync(nullDir, { recursive: true, force: true });
 	});
 
-	it("says 'got null' for a NULL number column, not 'got object'", () => {
+	const commentById = (threads: ReturnType<typeof dumpIsso>, id: number) => {
+		const hit = threads.flatMap((t) => t.comments).find((c) => c.id === id);
+		if (!hit) throw new Error(`fixture has no comment ${id}`);
+		return hit;
+	};
+
+	it("carries a NULL mode through as null rather than refusing the database", () => {
 		const path = dbWith("UPDATE comments SET mode = NULL WHERE id = 1");
+		expect(commentById(dumpIsso(path), 1).mode).toBeNull();
+	});
+
+	it("carries a NULL remote_addr through as null rather than refusing the database", () => {
+		const path = dbWith("UPDATE comments SET remote_addr = NULL WHERE id = 1");
+		expect(commentById(dumpIsso(path), 1).remote_addr).toBeNull();
+	});
+
+	it("says 'got null' for a NULL in a still-required column, not 'got object'", () => {
+		// `threads.uri` is the one required column isso's DDL leaves nullable
+		// (`comments.created` and `comments.text` are NOT NULL at the source
+		// too, so a NULL there can't be built without rewriting the schema).
+		const path = dbWith("UPDATE threads SET uri = NULL WHERE id = 1");
 		expect(() => dumpIsso(path)).toThrow(
-			"isso dump: expected comments.mode (comment 1) to be a number, got null",
+			"isso dump: expected threads.uri (thread 1) to be a string, got null",
 		);
 	});
 
-	it("says 'got null' for a NULL string column, not 'got object'", () => {
-		const path = dbWith("UPDATE comments SET remote_addr = NULL WHERE id = 1");
+	it("still refuses a wrong type in a nullable column", () => {
+		const path = dbWith("UPDATE comments SET mode = 'approved' WHERE id = 1");
 		expect(() => dumpIsso(path)).toThrow(
-			"isso dump: expected comments.remote_addr (comment 1) to be a string, got null",
+			"isso dump: expected comments.mode (comment 1) to be a number or null, got string",
+		);
+	});
+
+	it("throws, naming the comments, when a tid matches no thread row", () => {
+		// node:sqlite turns foreign-key enforcement on by default; isso's own
+		// connection never does, which is exactly how such a row gets to exist.
+		const path = dbWith(
+			"PRAGMA foreign_keys = OFF; UPDATE comments SET tid = 999 WHERE id IN (1, 2)",
+		);
+		expect(() => dumpIsso(path)).toThrow(
+			"isso dump: comments reference threads that do not exist — tid 999: comments 1, 2",
 		);
 	});
 });

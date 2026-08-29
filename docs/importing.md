@@ -80,14 +80,14 @@ A top-level array of threads. Each thread carries a comments array:
 | `title` | string \| null | `threads.title` | Passed through as-is. |
 | `comments[].id` | number | `comments.id` | isso's own comment ID; becomes the adapter's `import_id` for idempotency. |
 | `comments[].parent` | number \| null | `comments.parent` | `null` for a root comment. Real isso never nests past one level — `comments.add()` resolves a reply to its top-level ancestor before inserting — so a parent always points at a root, never at another reply. |
-| `comments[].mode` | number | `comments.mode` | isso's moderation state, mapped in the adapter: `1` → `approved`, `2` → `pending`, `4` → `deleted` (isso's soft-delete tombstone). A missing or `null` `mode` defaults to `1`/`approved`; a present value must be an integer (a numeric string such as `"2"` is read as one), and any integer other than 1, 2 or 4 — or a value that is not an integer at all — is refused, naming the record. |
+| `comments[].mode` | number \| null | `comments.mode` | isso's moderation state, mapped in the adapter: `1` → `approved`, `2` → `pending`, `4` → `deleted` (isso's soft-delete tombstone). isso's DDL leaves the column nullable and the dumper carries a NULL through as `null` rather than refusing the database. A missing or `null` `mode` defaults to `1`/`approved`; a present value must be an integer (a numeric string such as `"2"` is read as one), and any integer other than 1, 2 or 4 — or a value that is not an integer at all — is refused, naming the record. |
 | `comments[].created` | string | `comments.created` | `created_epoch` formatted as UTC `YYYY-MM-DD HH:MM:SS`, seconds floored — the same shape isso's own importer reads back in (`isso import -t generic`). Used only as a fallback: the adapter parses this string (as UTC) when `created_epoch` is missing or not a finite number. See the round-trip note below before treating this as the value of record. |
 | `comments[].created_epoch` | number | `comments.created` | The raw epoch float seconds, unrounded. The adapter reads this field when it's present and finite; `created` exists for format parity with what isso's own importer reads, and is where the adapter falls back when this one isn't usable. |
 | `comments[].modified_epoch` | number \| null | `comments.modified` | `null` when the comment was never edited. |
 | `comments[].author` | string \| null | `comments.author` | `null` on a tombstone (isso's `delete()` nulls it) or on a comment that was never given a name. Adapter defaults a blank or missing name to the literal `"anonymous"`. |
 | `comments[].email` | string \| null | `comments.email` | Tombstones keep this in the dump — `delete()` nulls `author` and `website` but leaves `email` alone. The adapter drops it on a tombstone: keeping it would mint one ghost per deleted author and re-attach an identity isso had already stripped. Every tombstone lands on one dedicated ghost instead, seeded on a constant `source_id` rather than on name+email — a `anonymous|` seed is what a live comment posted with no name and no email gets, and the tombstones must never share that commenter's user row. |
 | `comments[].website` | string \| null | `comments.website` | Carried by the dumper but **discarded by the adapter** — `SourceAuthor` has no author-URL column. |
-| `comments[].remote_addr` | string | `comments.remote_addr` | Carried by the dumper but **discarded by the adapter** — isso already anonymises this to a /24, and Garrul hashes its own IPs with its own secret, so neither value is useful to the other. |
+| `comments[].remote_addr` | string \| null | `comments.remote_addr` | Carried by the dumper (`null` when the column is NULL) but **discarded by the adapter** — isso already anonymises this to a /24, and Garrul hashes its own IPs with its own secret, so neither value is useful to the other. |
 | `comments[].text` | string | `comments.text` | Raw markdown, passed through unchanged — isso stores markdown, so there's nothing to convert. Empty string on a tombstone. |
 
 `likes`, `dislikes`, `voters` and `notification` never reach the
@@ -105,6 +105,13 @@ ever mounted on. The adapter drops a thread with an empty `comments`
 array rather than importing it as an empty page. So the dump's own
 thread count can be higher than the dry-run plan's `pages_total` for the
 same file; that difference is expected, not a sign anything was lost.
+
+The reverse — a comment whose `tid` matches no `threads` row — is a
+hard error. isso declares the foreign key but SQLite enforces nothing
+without `PRAGMA foreign_keys`, so a hand-edited or partially restored
+database can hold such rows. The dumper refuses to write a dump that would
+silently drop them and names the affected comment ids instead; repair the
+`threads` table (or the stray `tid`) and re-run.
 
 ## The round trip
 
