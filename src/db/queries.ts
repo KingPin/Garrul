@@ -2534,7 +2534,7 @@ export const adminInsertAudit = async (
 	db: D1Database,
 	args: {
 		admin_id: string;
-		action: AdminAction | string;
+		action: AdminAction;
 		target_kind: AuditTargetKind;
 		target_id?: string | null;
 		reason?: string | null;
