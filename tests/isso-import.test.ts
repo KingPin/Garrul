@@ -15,10 +15,10 @@
  *      the safe range or a string only `Number()` calls numeric, an epoch
  *      that overflows the millisecond conversion, and a `uri` that makes
  *      `new URL` throw.
- *   2. `issoSlug` — R2: drop the query string and fragment, strip/collapse
- *      slashes, `isso-root` for `/`.
+ *   2. `issoSlug` — R2: strip/collapse slashes, `isso-root` for `/`; a `?`
+ *      or `#` is part of the thread id, never cut.
  *   3. Export shape over the committed fixture (5 threads on disk, one
- *      empty and dropped, two sharing a slug).
+ *      empty and dropped, a `?page=2` thread kept apart from its sibling).
  *   4. Moderation — isso's `mode` maps to Garrul's status vocabulary;
  *      tombstones (`mode=4`) sit behind `include_deleted` like every other
  *      source, and their replies re-root when the tombstone is skipped.
@@ -387,10 +387,6 @@ describe("issoSlug", () => {
 		expect(issoSlug("/hello-world")).toBe("hello-world");
 	});
 
-	it("drops the query string", () => {
-		expect(issoSlug("/posts/deep/nested/path/?page=2")).toBe("posts/deep/nested/path");
-	});
-
 	it("maps the root path to the isso-root sentinel", () => {
 		expect(issoSlug("/")).toBe("isso-root");
 	});
@@ -399,12 +395,24 @@ describe("issoSlug", () => {
 		expect(issoSlug("//a//b/")).toBe("a/b");
 	});
 
-	it("drops a fragment", () => {
-		expect(issoSlug("/a#b")).toBe("a");
+	// An isso `uri` is the thread's identity verbatim, not a URL. A `?` or
+	// `#` is only ever in one because the site owner put it in
+	// `data-isso-id`, so it separates threads — `/?p=1` and `/?p=2` are two
+	// pages on a WordPress-default-permalink site, `gallery#12` and
+	// `gallery#13` two anchors. Cutting there merged them all onto one page.
+	it("keeps a query string as part of the thread id", () => {
+		const a = issoSlug("/?p=1");
+		const b = issoSlug("/?p=2");
+		expect(a).not.toBe(b);
+		expect(a).not.toBe("isso-root");
+		expect(issoSlug("/posts/deep/nested/path/?page=2")).not.toBe(
+			issoSlug("/posts/deep/nested/path/"),
+		);
 	});
 
-	it("maps a query-only root path to the isso-root sentinel", () => {
-		expect(issoSlug("/?x=1")).toBe("isso-root");
+	it("keeps a fragment as part of the thread id", () => {
+		expect(issoSlug("/gallery#12")).not.toBe(issoSlug("/gallery#13"));
+		expect(issoSlug("/gallery#12")).not.toBe("gallery");
 	});
 });
 
@@ -444,10 +452,15 @@ describe("issoSlug — addressability", () => {
 		expect(issoSlug("/hello world")).not.toBe(issoSlug("/goodbye world"));
 	});
 
-	it("still merges two uris that differ only by query string", () => {
-		// The fallback keys on the derived slug, not the raw uri, so dropping
-		// the query string keeps merging the same pages it always did.
-		expect(issoSlug("/hello world?page=2")).toBe(issoSlug("/hello world"));
+	it("still merges two uris that differ only by slashes", () => {
+		// The fallback keys on the derived slug, not the raw uri, so the
+		// slash normalisation applies to a digest slug as much as a plain one.
+		expect(issoSlug("/hello world/")).toBe(issoSlug("hello world"));
+	});
+
+	it("gives a query-string thread its own digest slug", () => {
+		expect(issoSlug("/?p=1")).toMatch(FALLBACK_RE);
+		expect(issoSlug("/posts/deep/nested/path/?page=2")).toMatch(FALLBACK_RE);
 	});
 
 	it("imports an unaddressable thread onto the fallback slug end to end", async () => {
@@ -492,7 +505,7 @@ describe("ISSO_ADAPTER over the fixture", () => {
 		expect(out.threads.some((t) => t.source_id === "/empty")).toBe(false);
 	});
 
-	it("gives the query-string and no-query threads the same slug", () => {
+	it("keeps the query-string thread apart from its no-query sibling", () => {
 		const out = ISSO_ADAPTER.parse(FIXTURE);
 		const withQuery = out.threads.find(
 			(t) => t.source_id === "/posts/deep/nested/path/?page=2",
@@ -500,14 +513,16 @@ describe("ISSO_ADAPTER over the fixture", () => {
 		const withoutQuery = out.threads.find(
 			(t) => t.source_id === "/posts/deep/nested/path/",
 		)!;
-		expect(withQuery.slug).toBe(withoutQuery.slug);
+		expect(withoutQuery.slug).toBe("posts/deep/nested/path");
+		expect(withQuery.slug).toMatch(/^isso-[0-9a-f]{16}$/);
 	});
 
-	it("reports pages_total 4 and merged_pages 1 on a fresh-db dry run", async () => {
+	it("reports pages_total 4 and merged_pages 0 on a fresh-db dry run", async () => {
 		const { db } = makeFreshDb();
 		const plan = await runIssoImport(db, FIXTURE, "secret", { dry_run: true });
 		expect(plan.pages_total).toBe(4);
-		expect(plan.merged_pages).toBe(1);
+		expect(plan.merged_pages).toBe(0);
+		expect(plan.new_pages).toBe(4);
 	});
 
 	it("slug_override beats the adapter's own slug for every thread", async () => {
@@ -707,9 +722,10 @@ describe("site", () => {
 		const hello = postInserts.find((p) => p.binds[0] === "hello-world")!;
 		expect(hello.binds[2]).toBe("https://blog.example.com/hello-world");
 		const deep = postInserts.find((p) => p.binds[0] === "posts/deep/nested/path")!;
-		expect(deep.binds[2]).toBe(
-			"https://blog.example.com/posts/deep/nested/path/?page=2",
-		);
+		expect(deep.binds[2]).toBe("https://blog.example.com/posts/deep/nested/path/");
+		// The `?page=2` thread is its own page, and keeps its own link.
+		const paged = postInserts.find((p) => /^isso-[0-9a-f]{16}$/.test(p.binds[0] as string))!;
+		expect(paged.binds[2]).toBe("https://blog.example.com/posts/deep/nested/path/?page=2");
 	});
 
 	it("leaves url null without a site", async () => {

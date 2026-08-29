@@ -46,15 +46,17 @@
  *
  * isso has a path, not a URL, so `SourceThread.slug` (core, additive) is set
  * directly from `threads.uri` via `issoSlug` rather than routed through
- * `slugFromLink`: drop the query string, strip leading/trailing slashes,
- * collapse repeated slashes, and fall back to `isso-root` for `/`. The
- * core's own `merged_pages` counter still reports it when that collapses two
- * source threads (e.g. `/foo/` and `/foo/?page=2`) onto one slug.
+ * `slugFromLink`: strip leading/trailing slashes, collapse repeated slashes,
+ * and fall back to `isso-root` for `/`. Nothing is cut at `?` or `#` — an
+ * isso `uri` is an opaque thread id, not a URL, and a query string in one
+ * marks a distinct thread rather than a variant of the same page (see
+ * `issoSlug`). The core's own `merged_pages` counter still reports it when
+ * two uris do collapse onto one slug (`/foo` and `/foo/`).
  *
  * A `uri` is client-declared, so what it derives to is not necessarily a
- * slug the read API will accept — a space, a non-ASCII character, a `:` or
- * more than 200 characters all fail `SLUG_RE`. Those get the synthetic
- * `isso-<digest>` slug instead; see `issoSlug`.
+ * slug the read API will accept — a space, a non-ASCII character, a `:`, a
+ * `?` or more than 200 characters all fail `SLUG_RE`. Those get the
+ * synthetic `isso-<digest>` slug instead; see `issoSlug`.
  *
  * ## `site`
  *
@@ -349,34 +351,42 @@ const issoSlugDigest = (candidate: string): string => {
 /**
  * A Garrul slug from an isso thread's `uri` (R2).
  *
- * `slugFromLink` (core) drops the query string and fragment via
- * `URL.pathname` — this mirrors that by cutting at the first `?` or `#`
- * before stripping slashes, since a path has no `URL` to parse it with.
- * Repeated slashes collapse the same way `slugFromLink` collapses a link's
- * path. `/` has nothing left once stripped, so it gets the same synthetic
- * treatment as any other link-less thread: `isso-root`.
+ * Leading/trailing slashes are stripped and repeated slashes collapsed, the
+ * same way `slugFromLink` (core) treats a link's path. `/` has nothing left
+ * once stripped, so it gets the same synthetic treatment as any other
+ * link-less thread: `isso-root`.
+ *
+ * Unlike `slugFromLink`, nothing is cut at `?` or `#`. That function reads
+ * a real URL, where those characters open a query string and a fragment
+ * that never distinguish one page from another. An isso `uri` is not a URL:
+ * it is the thread's identity, verbatim — the widget sends `location.
+ * pathname` unless the host page set `data-isso-id`, and the isso server
+ * stores whatever arrived. A `?` or `#` can only be in there because the
+ * site owner put it in `data-isso-id`, which means the site had a separate
+ * thread on each side of it: a `/?p=1` / `/?p=2` permalink scheme, or
+ * `gallery#12` / `gallery#13` anchors. Cutting there would fold every one of
+ * those threads onto a single page, silently, with only `merged_pages` to
+ * hint at it. Kept whole, each stays its own thread; the characters fail the
+ * slug rule below and the thread lands on its own digest slug.
  *
  * ## Unaddressable uris
  *
- * isso's `uri` is client-declared free text — the widget sends whatever the
- * host page's `data-isso-id` or path says — so it can carry a space, a
- * non-ASCII character, a `:`, or run past 200 characters. A Garrul slug
- * cannot: the read API rejects anything outside `ISSO_ADDRESSABLE_SLUG_RE`
- * with a 400. Passing such a path through imports the comments onto a page
- * no reader can ever load, which is the worst of both outcomes — the import
- * reports success and the comments are unreachable.
+ * isso's `uri` is client-declared free text, so it can carry a space, a
+ * non-ASCII character, a `:`, a `?`, or run past 200 characters. A Garrul
+ * slug cannot: the read API rejects anything outside `SLUG_RE` with a 400.
+ * Passing such a path through imports the comments onto a page no reader
+ * can ever load, which is the worst of both outcomes — the import reports
+ * success and the comments are unreachable.
  *
  * So a candidate that fails the rule falls back to `isso-<digest>`, the same
  * `slugFallbackPrefix` a link-less thread gets from the core. The digest is
- * taken over the *derived* candidate rather than the raw uri, so two uris
- * differing only by query string still merge onto one page exactly as they
- * did before. The page keeps its title and (with `--site`) its URL, so it is
- * still identifiable in the admin UI; an operator who wants a prettier slug
- * renames the post there.
+ * taken over the *derived* candidate rather than the raw uri, so `/a b` and
+ * `/a b/` still land on one page. The page keeps its title and (with
+ * `--site`) its URL, so it is still identifiable in the admin UI; an
+ * operator who wants a prettier slug renames the post there.
  */
 export const issoSlug = (uri: string): string => {
-	const withoutQuery = uri.split(/[?#]/)[0] ?? uri;
-	const collapsed = withoutQuery.replace(/^\/+|\/+$/g, "").replace(/\/+/g, "/");
+	const collapsed = uri.replace(/^\/+|\/+$/g, "").replace(/\/+/g, "/");
 	const candidate = collapsed || "isso-root";
 	return ISSO_ADDRESSABLE_SLUG_RE.test(candidate)
 		? candidate

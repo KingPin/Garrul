@@ -1408,13 +1408,16 @@ the raw `.db` file itself. Five things are worth knowing:
 
 - **A `uri` that isn't a valid Garrul slug gets a synthetic one.**
   isso's `threads.uri` is client-declared, so it can hold a space, a
-  non-ASCII character, a `:`, or more than 200 characters — none of
-  which the read API accepts in a `slug` (`SLUG_RE`). Those threads
+  non-ASCII character, a `:`, a `?`, or more than 200 characters — none
+  of which the read API accepts in a `slug` (`SLUG_RE`). Those threads
   import onto `isso-<16 hex digits>` instead, a stable digest of the
   derived path, so the comments stay loadable; the page keeps its
   title and (with `--site`) its URL, so rename it in the admin UI if
   you want a prettier slug. A uri that already looks like a slug is
-  passed through unchanged.
+  passed through unchanged. Unlike the other sources, a query string
+  is **not** dropped: an isso uri is the thread id verbatim, and a `?`
+  is only in it because the site's `data-isso-id` put it there, so
+  `/?p=1` and `/?p=2` import as two pages, not one.
 - **No user accounts.** isso has none, so every commenter imports as
   anonymous; identity is the name+email HMAC seed, same as Disqus. A
   blank or missing name becomes the literal `"anonymous"`.
