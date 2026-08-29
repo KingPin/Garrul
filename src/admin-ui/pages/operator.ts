@@ -342,7 +342,7 @@ ${seedCard}
           'x-include-spam': this.includeSpam ? '1' : '0',
           // Only Comentario reads it, and only a non-empty value means
           // anything — sending it blank would still be an empty header.
-          ...(this.spec.domainFlag && this.domain.trim()
+          ...(this.spec.domainFlag &amp;&amp; this.domain.trim()
             ? { 'x-import-domain': this.domain.trim() }
             : {}),
         },

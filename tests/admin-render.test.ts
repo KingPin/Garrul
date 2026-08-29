@@ -1239,6 +1239,14 @@ type CardData = {
 	accept: string;
 };
 
+const ENTITIES: Record<string, string> = {
+	amp: "&",
+	lt: "<",
+	gt: ">",
+	quot: '"',
+	"#39": "'",
+};
+
 const evalCardData = (html: string): CardData => {
 	// The operator page has several Alpine components; anchor on the one
 	// that owns the source table rather than on the first `x-data` in the
@@ -1253,8 +1261,14 @@ const evalCardData = (html: string): CardData => {
 	const end = html.indexOf('"', open);
 	const body = html.slice(open, end);
 	// The card is authored as an attribute value, so its `&&` arrives
-	// HTML-escaped; undo that before parsing it as code.
-	const src = body.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">");
+	// HTML-escaped; undo that before parsing it as code. One pass over all
+	// the entities, not one pass each: chained replaces decode their own
+	// output, so `&amp;lt;` — the escaped *text* `&lt;` — would come back as
+	// a live `<`.
+	const src = body.replace(
+		/&(amp|lt|gt|quot|#39);/g,
+		(_, e: string) => ENTITIES[e] as string,
+	);
 	return new Function(`return (${src})`)() as CardData;
 };
 
@@ -1296,7 +1310,7 @@ describe("renderOperator — the import card", () => {
 	// happily on a table whose getters throw.
 	it("resolves every getter for every source it offers", () => {
 		const options = [...html.matchAll(/<option value="([^"]+)"/g)].map(
-			(m) => m[1],
+			(m) => m[1] as string,
 		);
 		expect(options).toEqual(["disqus", "remark42", "comentario"]);
 
