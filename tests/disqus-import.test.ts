@@ -24,6 +24,7 @@ import { describe, it, expect } from "vitest";
 import { safePostUrl, slugFromLink } from "../src/lib/import/core";
 import { parseDisqusXml, runDisqusImport } from "../src/lib/import/disqus";
 import { htmlToMarkdown } from "../src/lib/import/html-to-markdown";
+import { renderMarkdown } from "../src/lib/markdown";
 import { MAX_POST_TITLE } from "../src/lib/post-title";
 import { MAX_REPLY_DEPTH } from "../src/lib/tree";
 import { asD1 } from "./helpers/d1";
@@ -238,7 +239,77 @@ describe("htmlToMarkdown", () => {
 
 	it("decodes entities in the surviving text", () => {
 		const out = htmlToMarkdown(`<p>5 &lt; 10 &amp; counting</p>`);
-		expect(out).toContain("5 < 10 & counting");
+		// The ampersand decodes to itself; the angle bracket decodes and is
+		// then markdown-escaped, because a bare `<` here is markup to the
+		// renderer downstream rather than the character the author typed.
+		expect(out).toContain("5 \\< 10 & counting");
+		expect(renderMarkdown(out)).toContain("5 &lt; 10 &amp; counting");
+	});
+
+	// Every case below is a body that USED to arrive at the reader with text
+	// missing. A source that stores rendered HTML stores literal angle
+	// brackets as entities; decoding them without re-escaping handed `marked`
+	// something it read as a tag, and the strict allowlist then dropped it.
+	// The bodies most likely to contain angle brackets — code samples, a post
+	// about HTML — were the ones that lost the most, and one lost everything.
+	describe("angle brackets survive into the rendered body", () => {
+		const roundTrip = (html: string): string =>
+			renderMarkdown(htmlToMarkdown(html));
+
+		it("keeps a tag name written as prose", () => {
+			expect(roundTrip(`<p>use &lt;span&gt; for inline</p>`)).toContain(
+				"use &lt;span&gt; for inline",
+			);
+		});
+
+		it("keeps a generic type", () => {
+			expect(roundTrip(`<p>generic: List&lt;T&gt;</p>`)).toContain(
+				"generic: List&lt;T&gt;",
+			);
+		});
+
+		it("does not turn a whole code sample into an empty comment", () => {
+			// The worst case, and not a rare one: a comment that is nothing
+			// but a pasted snippet used to import as "".
+			const out = roundTrip(
+				`<pre><code>&lt;div class="x"&gt;hi&lt;/div&gt;</code></pre>`,
+			);
+			expect(out).not.toBe("");
+			expect(out).toContain("&lt;div");
+			expect(out).toContain("hi");
+		});
+
+		it("keeps a link label made of angle brackets", () => {
+			// The label is stripped of tags after the substitution runs, so
+			// decoding it early left "[](url)" — a link with no text at all.
+			const out = roundTrip(
+				`<p>see <a href="https://example.com/">&lt;the docs&gt;</a></p>`,
+			);
+			expect(out).toContain("&lt;the docs&gt;");
+			expect(out).toContain('href="https://example.com/"');
+		});
+
+		it("does not read a leading > as a blockquote", () => {
+			expect(roundTrip(`<p>&gt; not a quote</p>`)).toContain(
+				"&gt; not a quote",
+			);
+		});
+
+		it("still renders nothing executable for a real script tag", () => {
+			// The escape must not become a way to smuggle markup back in: the
+			// text arrives visible, as text, and the allowlist is untouched.
+			const out = roundTrip(`<p>&lt;script&gt;alert(1)&lt;/script&gt;</p>`);
+			expect(out).toContain("&lt;script&gt;");
+			expect(out).not.toContain("<script");
+		});
+
+		it("leaves a bare link collapsing to its own URL", () => {
+			expect(
+				htmlToMarkdown(
+					`<p><a href="https://example.com/x">https://example.com/x</a></p>`,
+				),
+			).toBe("https://example.com/x");
+		});
 	});
 });
 
