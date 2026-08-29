@@ -22,9 +22,10 @@
  *   4. Moderation — isso's `mode` maps to Garrul's status vocabulary;
  *      tombstones (`mode=4`) sit behind `include_deleted` like every other
  *      source, and their replies re-root when the tombstone is skipped.
- *   5. Identity — isso has no user accounts, so every author keys on
+ *   5. Identity — isso has no user accounts, so every live author keys on
  *      name+email (never `source_id`), and a blank/absent name becomes the
- *      literal `"anonymous"`.
+ *      literal `"anonymous"`. Tombstones alone key on a constant
+ *      `source_id`, so their ghost can never be a live commenter's row.
  *   6. Timestamps — isso's epoch float seconds become
  *      `Math.round(x * 1000)` milliseconds.
  *   7. Markdown passes through untouched and renders through the shared
@@ -47,6 +48,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
 	ISSO_ADAPTER,
+	TOMBSTONE_AUTHOR_ID,
 	issoAdapter,
 	issoSlug,
 	issoStatus,
@@ -630,37 +632,58 @@ describe("identity", () => {
 	// arrives as anonymous|alice@example.com — a name+email seed nothing else
 	// shares. Keeping the email would mint one ghost per deleted author and
 	// re-attach a comment isso already stripped of its identity to that
-	// identity. The adapter drops it, so every tombstone lands on the same
-	// anonymous ghost c8 already uses.
-	it("lands the tombstone on the existing anonymous ghost under include_deleted", async () => {
+	// identity. Dropping it and seeding on `anonymous|` would instead land
+	// every tombstone on whichever *live* commenter posted with no name and
+	// no email (c8 in the fixture). So tombstones get their own ghost, keyed
+	// on a constant source_id no name+email seed can equal.
+	it("mints one dedicated tombstone ghost under include_deleted", async () => {
 		const { db } = makeFreshDb();
 		const plan = await runIssoImport(db, FIXTURE, "secret", { include_deleted: true });
-		expect(plan.new_users).toBe(5);
+		// 5 live ghosts plus the tombstone ghost.
+		expect(plan.new_users).toBe(6);
 	});
 
-	it("binds the tombstone and the anonymous comment to the same user_id", async () => {
+	it("never binds the tombstone to the live anonymous commenter's user_id", async () => {
 		const { db, captured } = makeFreshDb();
 		await runIssoImport(db, FIXTURE, "secret", { include_deleted: true });
 		const commentInserts = inserts(captured, "comments");
 		const tombstone = commentInserts.find((c) => c.binds[10] === "6")!;
 		const anonymous = commentInserts.find((c) => c.binds[10] === "8")!;
-		expect(tombstone.binds[2]).toBe(anonymous.binds[2]);
+		expect(tombstone.binds[2]).not.toBe(anonymous.binds[2]);
 	});
 
-	it("drops the tombstone's leftover email from the export", () => {
-		const out = ISSO_ADAPTER.parse(FIXTURE);
-		const c6 = out.comments.find((c) => c.source_id === "6")!;
-		expect(c6.author.name).toBe("anonymous");
+	it("seeds every tombstone on the same constant source_id and drops its email", () => {
+		const out = ISSO_ADAPTER.parse(
+			dump([
+				{
+					id: "/t",
+					title: null,
+					comments: [
+						comment({ id: 601, mode: 4, author: null, email: "a@example.com", text: "" }),
+						comment({ id: 602, mode: 4, author: null, email: "b@example.com", text: "" }),
+					],
+				},
+			]),
+		);
+		for (const c of out.comments) {
+			expect(c.author.name).toBe("anonymous");
+			expect(c.author.email).toBeNull();
+			expect(c.author.is_anonymous).toBe(true);
+			expect(c.author.source_id).toBe(TOMBSTONE_AUTHOR_ID);
+		}
+		const c6 = ISSO_ADAPTER.parse(FIXTURE).comments.find((c) => c.source_id === "6")!;
 		expect(c6.author.email).toBeNull();
+		expect(c6.author.source_id).toBe(TOMBSTONE_AUTHOR_ID);
 	});
 
-	it("names a null author anonymous and never sets source_id", () => {
+	it("names a null author anonymous and sets source_id on no live comment", () => {
 		const out = ISSO_ADAPTER.parse(FIXTURE);
 		const c8 = out.comments.find((c) => c.source_id === "8")!;
 		expect(c8.author.name).toBe("anonymous");
 		expect(c8.author.is_anonymous).toBe(true);
 		expect(c8.author.source_id).toBeUndefined();
 		for (const c of out.comments) {
+			if (c.status === "deleted") continue;
 			expect(c.author.source_id).toBeUndefined();
 		}
 	});

@@ -23,10 +23,12 @@
  *
  * isso has none — every commenter is anonymous by construction, so unlike
  * Remark42 (which keys a registered author on its own user id) this adapter
- * never sets `SourceAuthor.source_id` and every author is `is_anonymous:
- * true`. Identity is the core's name+email seed, same as Disqus. A blank or
- * absent name becomes the literal `"anonymous"`, matching the other
- * adapters' convention.
+ * sets `SourceAuthor.source_id` on no live comment and every author is
+ * `is_anonymous: true`. Identity is the core's name+email seed, same as
+ * Disqus. A blank or absent name becomes the literal `"anonymous"`, matching
+ * the other adapters' convention. The one exception is the tombstone ghost
+ * below, which is keyed on a constant `source_id` precisely so it can never
+ * coincide with a name+email seed.
  *
  * ## Tombstones
  *
@@ -34,13 +36,18 @@
  * `website` and blanks `text` to `""`, but leaves `email` alone. Emitted here
  * as `status: "deleted"`, gated by the core's existing `include_deleted` —
  * no core change for it. The leftover `email` is dropped rather than carried:
- * identity is the name+email seed, so keeping it would mint a distinct ghost
- * per deleted author — each holding one blank comment, each re-attaching an
- * identity isso had already stripped. Nulled, every tombstone shares the one
- * anonymous ghost. isso only *keeps* a mode-4 row while it still has
- * live children, so every tombstone in a real isso export is load-bearing:
- * dropping it (the default) leaves its replies as roots; `--include-deleted`
- * reproduces isso's exact thread shape, tombstone included.
+ * keeping it would mint a distinct ghost per deleted author — each holding
+ * one blank comment, each re-attaching an identity isso had already
+ * stripped. Every tombstone lands instead on one dedicated ghost, seeded on
+ * `source_id: TOMBSTONE_AUTHOR_ID` rather than on name+email. A name+email
+ * seed of `anonymous|` is exactly what a *live* comment posted with no name
+ * and no email gets, so seeding tombstones that way would hand a real
+ * anonymous commenter's user row every deleted comment on the site — and a
+ * user-level ban or anonymise on that row would sweep the tombstones with
+ * it. isso only *keeps* a mode-4 row while it still has live children, so
+ * every tombstone in a real isso export is load-bearing: dropping it (the
+ * default) leaves its replies as roots; `--include-deleted` reproduces
+ * isso's exact thread shape, tombstone included.
  *
  * ## Slugs
  *
@@ -316,6 +323,16 @@ export const parseIssoDump = (input: string): IssoThread[] => {
 const ISSO_SLUG_PREFIX = "isso-";
 
 /**
+ * The `SourceAuthor.source_id` every tombstone is seeded on.
+ *
+ * Feeds the core's `authorSeed` as `isso:id:tombstone`, a string no
+ * name+email seed (`<name>|<email>`) can produce, so the tombstone ghost is
+ * its own user row and never a live commenter's. Part of the identity
+ * contract: changing it re-ghosts every previously imported tombstone.
+ */
+export const TOMBSTONE_AUTHOR_ID = "tombstone";
+
+/**
  * The slug alphabet the read API accepts.
  *
  * Mirrors `SLUG_RE` in `src/routes/api.comments.ts` — the source of truth,
@@ -496,18 +513,29 @@ const toExport = (threads: IssoThread[], site: string | null): SourceExport => {
 				edited_at:
 					c.modified_epoch != null ? epochMs(c.modified_epoch, ci, "modified_epoch") : null,
 				body_md: c.text,
-				author: {
-					name: (c.author ?? "").trim() || "anonymous",
-					// isso's delete() nulls `author` and `website` but leaves
-					// `email` behind, so a tombstone arrives carrying an
-					// identity isso itself already stripped from it. Keeping
-					// it would seed a ghost on anonymous|<that email> — one
-					// per deleted author, each holding a single blank comment,
-					// and each re-attaching a name isso deleted. Dropping it
-					// lands every tombstone on the one anonymous ghost.
-					email: status === "deleted" ? null : c.email || null,
-					is_anonymous: true,
-				},
+				author:
+					status === "deleted"
+						? // isso's delete() nulls `author` and `website` but
+							// leaves `email` behind, so a tombstone arrives
+							// carrying an identity isso itself already stripped
+							// from it. Keeping it would seed a ghost on
+							// anonymous|<that email> — one per deleted author,
+							// each re-attaching a name isso deleted. Dropping it
+							// and seeding on `anonymous|` instead would collide
+							// with a live no-name, no-email commenter. So the
+							// tombstone ghost is keyed on a constant source_id
+							// that no name+email seed can ever equal.
+							{
+								name: "anonymous",
+								email: null,
+								is_anonymous: true,
+								source_id: TOMBSTONE_AUTHOR_ID,
+							}
+						: {
+								name: (c.author ?? "").trim() || "anonymous",
+								email: c.email || null,
+								is_anonymous: true,
+							},
 			});
 		});
 	});
