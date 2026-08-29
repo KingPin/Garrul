@@ -47,6 +47,11 @@
  * core's own `merged_pages` counter still reports it when that collapses two
  * source threads (e.g. `/foo/` and `/foo/?page=2`) onto one slug.
  *
+ * A `uri` is client-declared, so what it derives to is not necessarily a
+ * slug the read API will accept — a space, a non-ASCII character, a `:` or
+ * more than 200 characters all fail `SLUG_RE`. Those get the synthetic
+ * `isso-<digest>` slug instead; see `issoSlug`.
+ *
  * ## `site`
  *
  * `posts.url` needs a host isso does not have — a thread's `uri` is a path.
@@ -301,6 +306,42 @@ export const parseIssoDump = (input: string): IssoThread[] => {
 	});
 };
 
+/** The synthetic-slug prefix, shared with the adapter's `slugFallbackPrefix`. */
+const ISSO_SLUG_PREFIX = "isso-";
+
+/**
+ * The slug alphabet the read API accepts.
+ *
+ * Mirrors `SLUG_RE` in `src/routes/api.comments.ts` — the source of truth,
+ * copied again in `api.bootstrap.ts` and `api.page-engagement.ts` — which
+ * `GET /api/v1/comments?slug=…` tests every incoming slug against and answers
+ * 400 for on a miss. It is copied rather than imported because an adapter
+ * must not depend on a route module; if that regex ever changes, this one
+ * changes with it.
+ */
+const ISSO_ADDRESSABLE_SLUG_RE = /^[a-zA-Z0-9_\-./]{1,200}$/;
+
+const FNV64_OFFSET_BASIS = 0xcbf29ce484222325n;
+const FNV64_PRIME = 0x100000001b3n;
+const UINT64_MASK = 0xffffffffffffffffn;
+
+/**
+ * A stable 16-hex-digit digest of a slug candidate, for the synthetic slug.
+ *
+ * FNV-1a over the UTF-8 bytes: not a security primitive and not trying to be
+ * — nothing here is secret and nothing is authenticated. What it has to be is
+ * *stable*, since re-running an import against a changed digest would mint a
+ * second page for every thread that used one, and wide enough that two
+ * unaddressable uris on one site do not silently share a page.
+ */
+const issoSlugDigest = (candidate: string): string => {
+	let h = FNV64_OFFSET_BASIS;
+	for (const byte of new TextEncoder().encode(candidate)) {
+		h = ((h ^ BigInt(byte)) * FNV64_PRIME) & UINT64_MASK;
+	}
+	return h.toString(16).padStart(16, "0");
+};
+
 /**
  * A Garrul slug from an isso thread's `uri` (R2).
  *
@@ -310,11 +351,32 @@ export const parseIssoDump = (input: string): IssoThread[] => {
  * Repeated slashes collapse the same way `slugFromLink` collapses a link's
  * path. `/` has nothing left once stripped, so it gets the same synthetic
  * treatment as any other link-less thread: `isso-root`.
+ *
+ * ## Unaddressable uris
+ *
+ * isso's `uri` is client-declared free text — the widget sends whatever the
+ * host page's `data-isso-id` or path says — so it can carry a space, a
+ * non-ASCII character, a `:`, or run past 200 characters. A Garrul slug
+ * cannot: the read API rejects anything outside `ISSO_ADDRESSABLE_SLUG_RE`
+ * with a 400. Passing such a path through imports the comments onto a page
+ * no reader can ever load, which is the worst of both outcomes — the import
+ * reports success and the comments are unreachable.
+ *
+ * So a candidate that fails the rule falls back to `isso-<digest>`, the same
+ * `slugFallbackPrefix` a link-less thread gets from the core. The digest is
+ * taken over the *derived* candidate rather than the raw uri, so two uris
+ * differing only by query string still merge onto one page exactly as they
+ * did before. The page keeps its title and (with `--site`) its URL, so it is
+ * still identifiable in the admin UI; an operator who wants a prettier slug
+ * renames the post there.
  */
 export const issoSlug = (uri: string): string => {
 	const withoutQuery = uri.split(/[?#]/)[0] ?? uri;
 	const collapsed = withoutQuery.replace(/^\/+|\/+$/g, "").replace(/\/+/g, "/");
-	return collapsed || "isso-root";
+	const candidate = collapsed || "isso-root";
+	return ISSO_ADDRESSABLE_SLUG_RE.test(candidate)
+		? candidate
+		: `${ISSO_SLUG_PREFIX}${issoSlugDigest(candidate)}`;
 };
 
 /**
@@ -460,7 +522,7 @@ export const issoAdapter = (opts: IssoAdapterOptions = {}): ImportAdapter => {
 	const site = validateSite(opts.site ?? null);
 	return {
 		source: "isso",
-		slugFallbackPrefix: "isso-",
+		slugFallbackPrefix: ISSO_SLUG_PREFIX,
 		parse(input: string): SourceExport {
 			return toExport(parseIssoDump(input), site);
 		},

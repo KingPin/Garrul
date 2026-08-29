@@ -53,6 +53,7 @@ import {
 	parseIssoDump,
 	runIssoImport,
 } from "../src/lib/import/isso";
+import { SLUG_RE } from "../src/routes/api.comments";
 import { asD1 } from "./helpers/d1";
 
 type Captured = { sql: string; binds: unknown[] };
@@ -404,6 +405,64 @@ describe("issoSlug", () => {
 
 	it("maps a query-only root path to the isso-root sentinel", () => {
 		expect(issoSlug("/?x=1")).toBe("isso-root");
+	});
+});
+
+// ------------------- 2a. slugs the read API can address ---------------------
+
+/**
+ * isso's `uri` is client-declared free text, but a Garrul slug is the path
+ * segment `GET /api/v1/comments?slug=…` validates against SLUG_RE. A uri
+ * carrying a space, a non-ASCII character, a `:` or more than 200 characters
+ * used to pass straight through, so the comments imported and then no reader
+ * could ever load them — a 400 on every request for that page.
+ *
+ * Pinned against the real SLUG_RE rather than a copy, so the adapter's
+ * mirrored constant cannot drift away from the route that enforces it.
+ */
+describe("issoSlug — addressability", () => {
+	const FALLBACK_RE = /^isso-[0-9a-f]{16}$/;
+
+	it("leaves a slug the read API already accepts alone", () => {
+		expect(issoSlug("/posts/2023/hello-world")).toBe("posts/2023/hello-world");
+		expect(SLUG_RE.test(issoSlug("/posts/2023/hello-world"))).toBe(true);
+	});
+
+	it.each([
+		["a space", "/hello world"],
+		["a non-ASCII character", "/über"],
+		["a colon", "/a:b"],
+		["over 200 characters", `/${"a".repeat(250)}`],
+	])("falls back for a uri with %s", (_label, uri) => {
+		const slug = issoSlug(uri);
+		expect(slug).toMatch(FALLBACK_RE);
+		expect(SLUG_RE.test(slug)).toBe(true);
+	});
+
+	it("is stable for the same uri and distinct for a different one", () => {
+		expect(issoSlug("/hello world")).toBe(issoSlug("/hello world"));
+		expect(issoSlug("/hello world")).not.toBe(issoSlug("/goodbye world"));
+	});
+
+	it("still merges two uris that differ only by query string", () => {
+		// The fallback keys on the derived slug, not the raw uri, so dropping
+		// the query string keeps merging the same pages it always did.
+		expect(issoSlug("/hello world?page=2")).toBe(issoSlug("/hello world"));
+	});
+
+	it("imports an unaddressable thread onto the fallback slug end to end", async () => {
+		const { db, captured } = makeFreshDb();
+		await runIssoImport(
+			db,
+			dump([{ id: "/hello world", title: null, comments: [comment({ id: 301 })] }]),
+			"secret",
+		);
+		const postInserts = inserts(captured, "posts");
+		expect(postInserts).toHaveLength(1);
+		const slug = postInserts[0]!.binds[0] as string;
+		expect(slug).toMatch(FALLBACK_RE);
+		const commentInserts = inserts(captured, "comments");
+		expect(commentInserts[0]!.binds[1]).toBe(slug);
 	});
 });
 
