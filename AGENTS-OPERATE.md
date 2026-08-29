@@ -903,10 +903,9 @@ Worker's 10 ms CPU budget before any of them get a say. 64 KB is far above every
 legitimate payload — the largest is a comment at the 10,000-character body limit.
 The exemptions are the import uploads — `POST /admin/api/ops/import-disqus`,
 `POST /admin/api/ops/import-remark42`, `POST /admin/api/ops/import-comentario`
-and `POST /admin/api/ops/import-isso`
-— which take an export — gzipped or not — up to 50 MB and enforce their own
-limit, on the decompressed bytes as well as the compressed ones. Implementation:
-`src/lib/body-limit.ts`.
+and `POST /admin/api/ops/import-isso` — which take an export — gzipped
+or not — up to 50 MB and enforce their own limit, on the decompressed
+bytes as well as the compressed ones. Implementation: `src/lib/body-limit.ts`.
 
 **Client IP is required, not guessed.** Every endpoint that meters or dedupes
 by IP — comments, votes, reactions, reports, page engagement, subscribe,
@@ -1257,19 +1256,17 @@ export inserts zero rows):
   capped at 50 MB, with dry-run / include-deleted / include-spam
   toggles.
 
-**Gzipped exports work as-is, on every path.** Disqus hands you a
-`.xml.gz`, Remark42's nightly `backup` writes a
-`userbackup-<site>-<ts>.gz`, and Comentario offers its JSON gzipped;
-hand any of them straight to the CLI or the upload and it is
-inflated in memory. isso's dumper writes plain JSON — there is no
-product-level gzip habit to match — but the same sniff accepts it
-gzipped too, if you compress it yourself moving it between machines.
-The 50 MB cap applies to the *decompressed* size
-too — a file that inflates past it is rejected with `413
-{"error":"too_large"}` partway through rather than allocated, which is
-what keeps a hostile few-KB upload from being a memory-exhaustion
-primitive. Note that the *compressed* file is also capped at 50 MB, so
-the practical ceiling is whichever binds first.
+**Gzipped exports work as-is, on every path.** Disqus hands you a `.xml.gz`,
+Remark42's nightly `backup` writes a `userbackup-<site>-<ts>.gz`, and
+Comentario offers its JSON gzipped; hand any of them straight to the CLI
+or the upload and it is inflated in memory. isso's dumper writes plain
+JSON — there is no product-level gzip habit to match — but the same
+sniff accepts it gzipped too, if you compress it yourself moving it between
+machines. The 50 MB cap applies to the *decompressed* size too — a file
+that inflates past it is rejected with `413 {"error":"too_large"}` partway
+through rather than allocated, which is what keeps a hostile few-KB upload
+from being a memory-exhaustion primitive. Note that the *compressed* file
+is also capped at 50 MB, so the practical ceiling is whichever binds first.
 
 Imported HTML is stripped and re-rendered through the standard
 markdown allowlist. Thread titles and links go through the same
@@ -1397,6 +1394,10 @@ npm run dump-isso -- /path/to/comments.db --out isso-dump.json
 IP_HASH_SECRET=... npm run import-isso -- ./isso-dump.json --dry-run
 ```
 
+Drop `--out` and the dumper writes to stdout instead, which is useful for
+piping straight off the isso host without an intermediate file on it:
+`ssh issohost 'npm run dump-isso -- /path/to/comments.db' > isso-dump.json`.
+
 Run the first command on whatever host actually has `comments.db` —
 it reads the file read-only with Node's built-in `node:sqlite` driver
 (no new dependency; this repo's `engines.node` is already `>=24`), so
@@ -1422,7 +1423,12 @@ the raw `.db` file itself. Four things are worth knowing:
   (or fill the admin card's **Site origin** field, header
   `x-import-site`) and each thread's link resolves against that
   origin; without it, imported posts have no permalink until you set
-  one by hand.
+  one by hand. The resolved link is kept only when its origin actually
+  matches `--site`'s — an absolute or protocol-relative `uri`
+  (`//evil.example/x`) resolves off that origin instead, so the post's
+  `url` is stored `NULL` rather than pointing somewhere `--site` never
+  named. No error either way; a poisoned thread still imports its
+  comments, just with no permalink.
 
 **Timestamps round-trip through UTC, not local time.** The dumper
 writes `created` as a UTC `YYYY-MM-DD HH:MM:SS` string alongside the
@@ -1437,15 +1443,15 @@ and this caveat in more detail.
 
 **The importer is source-agnostic underneath.** `src/lib/import/core.ts`
 holds everything true of every source — identity derivation,
-idempotency, threading, depth capping, the size and gzip handling — and
-`src/lib/import/disqus.ts`, `src/lib/import/remark42.ts`,
+idempotency, threading, depth capping, the size and gzip handling
+— and `src/lib/import/disqus.ts`, `src/lib/import/remark42.ts`,
 `src/lib/import/comentario.ts` and `src/lib/import/isso.ts` are just the
-adapters that know how to read one format each. The CLIs are thin for the same reason:
-`scripts/import-cli.ts` holds the flag parsing, the wrangler-backed D1
-shim and the error hygiene, and each `scripts/import-<source>.ts` is a
-docblock plus a call. A new adapter is one
-file exporting an `ImportAdapter`; the remaining sources are tracked in
- #104, and they inherit all of the above rather than reimplementing it.
+adapters that know how to read one format each. The CLIs are thin for the same
+reason: `scripts/import-cli.ts` holds the flag parsing, the wrangler-backed
+D1 shim and the error hygiene, and each `scripts/import-<source>.ts` is a
+docblock plus a call. A new adapter is one file exporting an `ImportAdapter`;
+the remaining sources are tracked in #104, and they inherit all of the
+above rather than reimplementing it.
 
 **`IP_HASH_SECRET` is required for the CLI, and must be the same
 secret the Worker uses.** It keys the ghost-identity HMAC above, so a

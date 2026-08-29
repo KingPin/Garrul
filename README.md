@@ -41,10 +41,11 @@ dashboard page); every other integration is optional.
   `npm run import-comentario -- ./export.json --dry-run` first. The Comentario
   reader also takes a legacy Commento export. isso ships no export at all, so
   it's two steps — `npm run dump-isso -- ./comments.db --out dump.json` to
-  read its SQLite store, then `npm run import-isso -- ./dump.json --dry-run`
-  (see [`docs/importing.md`](docs/importing.md)). Idempotent,
-  so a re-run inserts nothing; closed threads stay closed and spam stays
-  out of the public tree
+  read its SQLite store, then either `npm run import-isso -- ./dump.json
+  --dry-run` or upload that same `dump.json` on the admin UI same as the
+  other three sources (see [`docs/importing.md`](docs/importing.md)).
+  Idempotent, so a re-run inserts nothing; closed threads stay closed and
+  spam stays out of the public tree
 - **Admin UI**: moderation queue, user management, and settings you
   change without a redeploy
 - **RSS feeds**, comment counts, permalinks

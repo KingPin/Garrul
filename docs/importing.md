@@ -4,8 +4,8 @@ Garrul reads four comment systems today: Disqus, Remark42, Comentario (and
 its predecessor Commento), and isso. All four share one core
 (`src/lib/import/core.ts`) and one contract — idempotent by the source's own
 comment ID, markdown in and out, moderation state carried across rather than
-flattened to approved, and every INSERT-only so a re-run never overwrites a
-decision an operator made on this side.
+flattened to approved, and every write INSERT-only so a re-run never
+overwrites a decision an operator made on this side.
 
 Disqus, Remark42 and Comentario/Commento are **single-step**: each product
 writes an export file, and you hand that file straight to the CLI or the
@@ -38,13 +38,13 @@ may ever be reachable from the Worker bundle, so the dumper stays in
 `src/lib/import/` like the others and ships in the Worker for the admin
 upload path.
 
-The JSON the dumper emits deliberately mirrors isso's own generic import
-format (the shape `isso import -t generic` reads back in, per
-`isso/migrate.py`), plus a handful of additive fields the adapter needs that
-format doesn't carry on its own. That choice is what makes the round-trip
-statement below true, and it's also just a sensible format to standardize
-on — it's the one isso's own maintainers designed for moving comments
-between installs.
+The JSON the dumper emits deliberately mirrors the shape isso's own
+importer reads (`isso import -t generic`, per `isso/migrate.py`'s
+`Generic` class — isso has no *writer* for this format, only a reader),
+plus a handful of additive fields the adapter needs that format doesn't
+carry on its own. That choice is what makes the round-trip statement below
+true, and it's also just a sensible format to standardize on — it's the
+one isso's own maintainers designed for moving comments between installs.
 
 ## The intermediate format
 
@@ -80,9 +80,9 @@ A top-level array of threads. Each thread carries a comments array:
 | `title` | string \| null | `threads.title` | Passed through as-is. |
 | `comments[].id` | number | `comments.id` | isso's own comment ID; becomes the adapter's `import_id` for idempotency. |
 | `comments[].parent` | number \| null | `comments.parent` | `null` for a root comment. Real isso never nests past one level — `comments.add()` resolves a reply to its top-level ancestor before inserting — so a parent always points at a root, never at another reply. |
-| `comments[].mode` | number | `comments.mode` | isso's moderation state, mapped in the adapter: `1` → `approved`, `2` → `pending`, `4` → `deleted` (isso's soft-delete tombstone). Any other value is refused. |
-| `comments[].created` | string | `comments.created` | `created_epoch` formatted as UTC `YYYY-MM-DD HH:MM:SS`, seconds floored — the same shape isso's own generic-format writer produces. See the round-trip note below before treating this as the value of record. |
-| `comments[].created_epoch` | number | `comments.created` | The raw epoch float seconds, unrounded. This is the field the adapter actually uses; `created` exists for format parity with isso's own writer. |
+| `comments[].mode` | number | `comments.mode` | isso's moderation state, mapped in the adapter: `1` → `approved`, `2` → `pending`, `4` → `deleted` (isso's soft-delete tombstone). A *missing* `mode` field defaults to `1`/`approved`; any other value that **is** present (not 1, 2 or 4) is refused. |
+| `comments[].created` | string | `comments.created` | `created_epoch` formatted as UTC `YYYY-MM-DD HH:MM:SS`, seconds floored — the same shape isso's own importer reads back in (`isso import -t generic`). Used only as a fallback: the adapter parses this string (as UTC) when `created_epoch` is missing or not a finite number. See the round-trip note below before treating this as the value of record. |
+| `comments[].created_epoch` | number | `comments.created` | The raw epoch float seconds, unrounded. The adapter reads this field when it's present and finite; `created` exists for format parity with what isso's own importer reads, and is where the adapter falls back when this one isn't usable. |
 | `comments[].modified_epoch` | number \| null | `comments.modified` | `null` when the comment was never edited. |
 | `comments[].author` | string \| null | `comments.author` | `null` on a tombstone (isso's `delete()` nulls it) or on a comment that was never given a name. Adapter defaults a blank or missing name to the literal `"anonymous"`. |
 | `comments[].email` | string \| null | `comments.email` | Tombstones keep this — `delete()` nulls `author` and `website` but leaves `email` alone. |
@@ -99,11 +99,18 @@ Threads are ordered by `threads.id`; comments within a thread by
 `comments.id`. Two-space indented JSON with a trailing newline, so a
 regenerated dump diffs cleanly against a previously committed one.
 
+The dumper emits every thread row it finds, including ones with no
+comments at all — isso keeps a `threads` row for any page the widget was
+ever mounted on. The adapter drops a thread with an empty `comments`
+array rather than importing it as an empty page. So the dump's own
+thread count can be higher than the dry-run plan's `pages_total` for the
+same file; that difference is expected, not a sign anything was lost.
+
 ## The round trip
 
 `isso import -t generic <dump.json>` accepts the dumper's output — it's the
-same shape isso's own writer produces. But the round trip isn't lossless in
-both directions:
+same shape isso's own importer reads back in. But the round trip isn't
+lossless in both directions:
 
 - isso's importer **ignores `parent` and `mode` on the way in**. Every
   comment it reads back becomes an approved root, regardless of what this
@@ -129,7 +136,10 @@ isso's `comments.db` usually lives on whatever host runs the isso server —
 not necessarily the machine you'll run the Garrul import from. So this is a
 two-machine (or two-step) job:
 
-1. **On the machine with `comments.db`**, dump it to JSON:
+1. **On the machine with `comments.db`**, dump it to JSON. That machine
+   needs a Garrul checkout (for `npm run dump-isso`) and Node ≥ 24 — the
+   same minimum this repo already requires, since `node:sqlite` is what
+   the dumper reads the file with:
 
    ```bash
    npm run dump-isso -- /path/to/comments.db --out isso-dump.json
@@ -137,9 +147,12 @@ two-machine (or two-step) job:
 
    This opens the database read-only — isso can keep running against the
    same file while this reads it — and never writes anything back to it.
-   Move `isso-dump.json` to wherever you'll run the import from (it's a
-   plain JSON file; gzip it first if you like, both the CLI and the admin
-   upload sniff and inflate it either way).
+   Drop `--out` and it writes to stdout instead, which is handy for piping
+   straight off the isso host without leaving a file behind on it:
+   `ssh issohost 'npm run dump-isso -- /path/to/comments.db' >
+   isso-dump.json`. Move `isso-dump.json` to wherever you'll run the
+   import from (it's a plain JSON file; gzip it first if you like, both
+   the CLI and the admin upload sniff and inflate it either way).
 
 2. **Import the JSON**, either from the CLI or the admin UI:
 
@@ -153,7 +166,12 @@ two-machine (or two-step) job:
      the deployed D1 instead of local Miniflare.
    - Admin upload: `/admin/operator` → **Import comments** → source
      **isso**. Same dry-run / include-deleted toggles as the CLI, plus a
-     **Site origin** field (see below).
+     **Site origin** field (see below). The card also shows an "include
+     spam" toggle (`x-include-spam`) shared with every other source, but
+     it's a no-op here — isso only ever has modes 1/2/4, no spam
+     verdict, so the adapter never emits `status: "spam"` for it to
+     gate. The CLI wrapper doesn't expose the flag at all, for the same
+     reason.
 
    Flags, either path:
 
@@ -169,7 +187,12 @@ two-machine (or two-step) job:
      `https://blog.example.com`, say — and each thread's link resolves
      against that origin. Leave it unset and imported posts get no
      permalink until you set one by hand later; that's a normal state for a
-     source with no URL concept of its own, not an error.
+     source with no URL concept of its own, not an error. The resolved
+     link is kept only when its origin matches `--site`'s exactly — an
+     absolute or protocol-relative `uri` (`//evil.example/x`) resolves off
+     that origin instead, so the thread's `url` is stored `NULL` rather
+     than pointing somewhere `--site` never named. That's silent, not an
+     error: the thread's comments still import, just with no permalink.
 
 Both paths are idempotent: every comment carries `import_source='isso'` and
 isso's own comment ID as `import_id`, so re-running the same dump — the CLI
