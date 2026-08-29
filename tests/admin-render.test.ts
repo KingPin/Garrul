@@ -324,6 +324,16 @@ describe("renderAudit", () => {
 		expect(html).toContain('value="sub.unsubscribe"');
 	});
 
+	// All four import sources write audit rows; the dropdown has to offer all
+	// four or three of them are unfilterable despite being logged.
+	it("offers every import source in the action dropdown", () => {
+		const html = renderAudit([], filters, null, adminActions);
+		expect(html).toContain('value="import.disqus"');
+		expect(html).toContain('value="import.remark42"');
+		expect(html).toContain('value="import.comentario"');
+		expect(html).toContain('value="import.isso"');
+	});
+
 	it("links comment targets to /admin/comments/:id", () => {
 		const html = renderAudit(
 			[

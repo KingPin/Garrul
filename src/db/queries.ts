@@ -2496,6 +2496,12 @@ export const ADMIN_ACTIONS = [
 	// prefilled from a saved reply — `meta.saved_reply_id` records which.
 	"comment.reply",
 	"import.disqus",
+	// Landed alongside `import.disqus` in routes/admin.ts, but never added
+	// here — so rows for these three sources were audited but unfilterable
+	// on the audit page or via `?action=`, unlike Disqus's own rows.
+	"import.remark42",
+	"import.comentario",
+	"import.isso",
 	// Moderator notes. The audit row records that a note was written or
 	// removed and on what — never the body. A note is internal by design, and
 	// copying it into a log that has its own retention sweep and its own
