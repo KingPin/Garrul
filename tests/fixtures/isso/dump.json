@@ -1,0 +1,187 @@
+[
+  {
+    "id": "/hello-world",
+    "title": "Hello World",
+    "comments": [
+      {
+        "id": 1,
+        "parent": null,
+        "mode": 1,
+        "created": "2023-11-14 22:13:20",
+        "created_epoch": 1700000000.123456,
+        "modified_epoch": null,
+        "author": "Alice Example",
+        "email": "alice@example.com",
+        "website": "https://alice.example.com",
+        "remote_addr": "127.0.0.0",
+        "text": "This is **bold** text, with a list:\n\n- one\n- two\n\na [link](https://example.com/), a blockquote:\n\n> quoted text\n\nand `inline code`."
+      },
+      {
+        "id": 2,
+        "parent": null,
+        "mode": 1,
+        "created": "2023-11-14 22:15:00",
+        "created_epoch": 1700000100.234567,
+        "modified_epoch": null,
+        "author": "Bob Example",
+        "email": "bob@example.org",
+        "website": null,
+        "remote_addr": "127.0.0.0",
+        "text": "A short reply from Bob."
+      },
+      {
+        "id": 3,
+        "parent": 1,
+        "mode": 1,
+        "created": "2023-11-14 22:16:40",
+        "created_epoch": 1700000200.345678,
+        "modified_epoch": null,
+        "author": "Alice Example",
+        "email": "alice@example.com",
+        "website": "https://alice.example.com",
+        "remote_addr": "127.0.0.0",
+        "text": "Replying to Alice — still Alice."
+      },
+      {
+        "id": 4,
+        "parent": null,
+        "mode": 1,
+        "created": "2023-11-14 22:18:20",
+        "created_epoch": 1700000300.456789,
+        "modified_epoch": null,
+        "author": "Alice Example",
+        "email": "alice2@example.net",
+        "website": null,
+        "remote_addr": "127.0.0.0",
+        "text": "Alice again, from a different address this time."
+      },
+      {
+        "id": 5,
+        "parent": null,
+        "mode": 2,
+        "created": "2023-11-14 22:20:00",
+        "created_epoch": 1700000400.111111,
+        "modified_epoch": null,
+        "author": "Carol Example",
+        "email": "carol@example.com",
+        "website": null,
+        "remote_addr": "127.0.0.0",
+        "text": "Awaiting moderation from Carol."
+      },
+      {
+        "id": 6,
+        "parent": null,
+        "mode": 4,
+        "created": "2023-11-14 22:21:40",
+        "created_epoch": 1700000500.222222,
+        "modified_epoch": null,
+        "author": null,
+        "email": "alice@example.com",
+        "website": null,
+        "remote_addr": "127.0.0.0",
+        "text": ""
+      },
+      {
+        "id": 7,
+        "parent": 6,
+        "mode": 1,
+        "created": "2023-11-14 22:23:20",
+        "created_epoch": 1700000600.333333,
+        "modified_epoch": null,
+        "author": "Bob Example",
+        "email": "bob@example.org",
+        "website": null,
+        "remote_addr": "127.0.0.0",
+        "text": "Bob follows up on the removed comment."
+      },
+      {
+        "id": 8,
+        "parent": 6,
+        "mode": 1,
+        "created": "2023-11-14 22:25:00",
+        "created_epoch": 1700000700.444444,
+        "modified_epoch": null,
+        "author": null,
+        "email": null,
+        "website": null,
+        "remote_addr": "127.0.0.0",
+        "text": "An anonymous reply."
+      },
+      {
+        "id": 9,
+        "parent": null,
+        "mode": 1,
+        "created": "2023-11-14 22:26:40",
+        "created_epoch": 1700000800.555555,
+        "modified_epoch": 1700000900.666666,
+        "author": "Bob Example",
+        "email": "bob@example.org",
+        "website": null,
+        "remote_addr": "127.0.0.0",
+        "text": "Bob edits this comment after posting it."
+      }
+    ]
+  },
+  {
+    "id": "/posts/deep/nested/path/?page=2",
+    "title": null,
+    "comments": [
+      {
+        "id": 10,
+        "parent": null,
+        "mode": 1,
+        "created": "2023-11-14 22:28:20",
+        "created_epoch": 1700000900.777777,
+        "modified_epoch": null,
+        "author": "Bob Example",
+        "email": "bob@example.org",
+        "website": null,
+        "remote_addr": "127.0.0.0",
+        "text": "First comment on the paginated URL."
+      }
+    ]
+  },
+  {
+    "id": "/posts/deep/nested/path/",
+    "title": "Deep",
+    "comments": [
+      {
+        "id": 11,
+        "parent": null,
+        "mode": 1,
+        "created": "2023-11-14 22:30:00",
+        "created_epoch": 1700001000.888888,
+        "modified_epoch": null,
+        "author": "Alice Example",
+        "email": "alice@example.com",
+        "website": null,
+        "remote_addr": "127.0.0.0",
+        "text": "Same page without the query string."
+      }
+    ]
+  },
+  {
+    "id": "/empty",
+    "title": "Empty",
+    "comments": []
+  },
+  {
+    "id": "/",
+    "title": "Home",
+    "comments": [
+      {
+        "id": 12,
+        "parent": null,
+        "mode": 1,
+        "created": "2023-11-14 22:31:40",
+        "created_epoch": 1700001100.999999,
+        "modified_epoch": null,
+        "author": "Carol Example",
+        "email": "carol@example.com",
+        "website": null,
+        "remote_addr": "127.0.0.0",
+        "text": "A comment on the home page."
+      }
+    ]
+  }
+]

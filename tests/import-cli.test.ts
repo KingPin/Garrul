@@ -16,6 +16,8 @@
  * Not covered: `wranglerD1`, which shells out to a real wrangler, and
  * `parseImportArgs` / `requireSecret`, which call process.exit.
  */
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { BindError, inline, parseRows, resolve } from "../scripts/import-cli";
 
@@ -205,5 +207,32 @@ describe("parseRows", () => {
 		expect(() => parseRows(`${banner}\n[{"results":{"a":1}}]`)).toThrow(
 			/non-array `results`/,
 		);
+	});
+});
+
+/**
+ * `parseImportArgs` parses `--slug=` for every source, but each CLI has to
+ * forward it into `runImport` itself. The isso CLI shipped without that line
+ * while the other three had it, so `npm run import-isso -- --slug=x` parsed
+ * the flag, reported no error, and ignored it — a silent no-op, the failure
+ * mode this file exists to keep out of the import path.
+ *
+ * Read off the source text rather than by running the CLIs: each is a
+ * top-level IIFE that reads a file, shells out to wrangler and calls
+ * process.exit, so there is nothing importable to assert against. Coarse,
+ * but it catches exactly the drift that happened.
+ */
+describe("every import CLI forwards --slug", () => {
+	const SOURCES = ["disqus", "remark42", "comentario", "isso"];
+
+	it.each(SOURCES)("import-%s forwards slug_override", (source) => {
+		const src = readFileSync(join(__dirname, `../scripts/import-${source}.ts`), "utf8");
+		expect(src).toContain("slug_override: args.slugOverride");
+	});
+
+	it("import-isso names --slug in its usage string", () => {
+		const src = readFileSync(join(__dirname, "../scripts/import-isso.ts"), "utf8");
+		const usage = /usage: npm run \$\{TAG\} -- (.*)`/.exec(src)?.[1] ?? "";
+		expect(usage).toContain("[--slug=<slug>]");
 	});
 });

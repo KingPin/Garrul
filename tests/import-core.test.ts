@@ -282,6 +282,65 @@ describe("ghost identity derivation", () => {
 		expect(plan.merged_pages).toBe(0);
 	});
 
+	// The read API answers 400 for any slug outside SLUG_RE, so a posts row
+	// with such a slug is a page no reader can load. The core refuses to
+	// create one rather than reporting a successful import of unreachable
+	// comments.
+	it("refuses an empty slug_override (`--slug=`) before touching the database", async () => {
+		const exported = exportOf([{ name: "A", email: null, is_anonymous: true }]);
+		const { db, captured } = makeFreshDb();
+		await expect(
+			runImport(db, stubAdapter("remark42", exported), "", "test-secret", {
+				slug_override: "",
+			}),
+		).rejects.toThrow('import: slug override "" is not a valid slug');
+		expect(captured).toEqual([]);
+	});
+
+	it("refuses a slug_override the read API would reject", async () => {
+		const exported = exportOf([{ name: "A", email: null, is_anonymous: true }]);
+		const { db, captured } = makeFreshDb();
+		await expect(
+			runImport(db, stubAdapter("remark42", exported), "", "test-secret", {
+				slug_override: "bad slug",
+			}),
+		).rejects.toThrow('import: slug override "bad slug" is not a valid slug');
+		expect(captured).toEqual([]);
+	});
+
+	it("uses an adapter-supplied thread slug over one derived from the link", async () => {
+		const exported = exportOf([{ name: "A", email: null, is_anonymous: true }]);
+		exported.threads[0]!.slug = "from/the/source";
+		const { db, captured } = makeFreshDb();
+		await runImport(db, stubAdapter("isso", exported), "", "test-secret");
+		const post = captured.find((c) => c.sql.startsWith("INSERT INTO posts"));
+		expect(post!.binds[0]).toBe("from/the/source");
+	});
+
+	it("refuses an adapter-supplied thread slug the read API would reject, naming the thread", async () => {
+		const exported = exportOf([{ name: "A", email: null, is_anonymous: true }]);
+		exported.threads[0]!.slug = "has a space";
+		const { db, captured } = makeFreshDb();
+		await expect(
+			runImport(db, stubAdapter("isso", exported), "", "test-secret"),
+		).rejects.toThrow("import: threads[0] carries a slug the read API would reject");
+		expect(captured).toEqual([]);
+	});
+
+	it("still passes a link-derived slug through unchecked, as it always has", async () => {
+		// Pre-existing behavior, pinned so the adapter-slug check above cannot
+		// quietly grow to cover it: a percent-encoded path imported before this
+		// check existed and must keep importing.
+		const exported = exportOf(
+			[{ name: "A", email: null, is_anonymous: true }],
+			"https://example.com/caf%C3%A9",
+		);
+		const { db, captured } = makeFreshDb();
+		await runImport(db, stubAdapter("disqus", exported), "", "test-secret");
+		const post = captured.find((c) => c.sql.startsWith("INSERT INTO posts"));
+		expect(post!.binds[0]).toBe("caf%C3%A9");
+	});
+
 	it("falls back to a source-prefixed slug when a thread has no link", async () => {
 		const exported = exportOf(
 			[{ name: "A", email: null, is_anonymous: true }],

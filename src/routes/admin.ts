@@ -174,6 +174,7 @@ import {
 } from "../lib/import/core";
 import { runComentarioImport } from "../lib/import/comentario";
 import { runDisqusImport } from "../lib/import/disqus";
+import { runIssoImport } from "../lib/import/isso";
 import { runRemark42Import } from "../lib/import/remark42";
 import { rerenderBatch, rerenderStats } from "../db/rerender";
 import {
@@ -2707,6 +2708,93 @@ admin.post("/api/ops/import-comentario", async (c) => {
 		// Safe to hand back: the adapter's messages name a record index and
 		// never a record, and a Comentario export carries display names and
 		// email addresses.
+		return c.json({ error: `import_failed:${(err as Error).message}` }, 400);
+	}
+});
+
+// ----------------------------- isso import ---------------------------------
+//
+// Admin-only, same shape as the routes above, and separate from them for the
+// same reason: the format sniff and the wrong-file error code are exactly
+// what an operator notices, and folding sources into one route means
+// returning one source's error code for another's file.
+//
+// isso ships no export command — its own `comments.db` is the data store.
+// The body here is never the raw SQLite file; it is the JSON intermediate
+// `npm run dump-isso` produces (locally, on the machine that has the DB) or
+// the CLI's `--out`. `runIssoImport` never touches SQLite itself, so no
+// driver reaches the Worker bundle.
+
+admin.post("/api/ops/import-isso", async (c) => {
+	const user = await requireAdmin(c);
+	if (user instanceof Response) return user;
+
+	const contentLength = Number(c.req.header("content-length") ?? "0");
+	if (contentLength > MAX_IMPORT_BYTES) {
+		return c.json({ error: "too_large" }, 413);
+	}
+	const buf = await c.req.arrayBuffer();
+	if (buf.byteLength === 0) return c.json({ error: "empty_body" }, 400);
+	if (buf.byteLength > MAX_IMPORT_BYTES) {
+		return c.json({ error: "too_large" }, 413);
+	}
+	// The dumper's own JSON output is never gzipped, but an operator moving
+	// it between machines might compress it anyway — sniff before the shape
+	// check so that case isn't rejected as the wrong file.
+	let doc: string;
+	try {
+		doc = await decodeImportInput(buf);
+	} catch (err) {
+		if (err instanceof ImportTooLargeError) {
+			return c.json({ error: "too_large" }, 413);
+		}
+		return c.json({ error: "not_isso_dump" }, 400);
+	}
+	// Cheap shape check only: a top-level JSON array — `[` then, after any
+	// whitespace, either `]` (an empty export) or `{` (the first thread).
+	// That is enough to turn away every other format this UI accepts (a
+	// Comentario document is an object, Disqus is XML, Remark42 is NDJSON)
+	// without reading into the first thread, whose keys can sit in any
+	// order and, behind a long `id` or `title`, well past any fixed window.
+	// The adapter does the real validation and its errors name a record
+	// position rather than a record, so letting it speak beyond this point
+	// is safe.
+	const looksRight = /^\s*\[\s*[{\]]/.test(doc.slice(0, 4096));
+	if (!looksRight) {
+		return c.json({ error: "not_isso_dump" }, 400);
+	}
+
+	const dryRun = c.req.header("x-dry-run") === "1";
+	const includeDeleted = c.req.header("x-include-deleted") === "1";
+	const includeSpam = c.req.header("x-include-spam") === "1";
+	// isso has a path, not a URL — this supplies the host `posts.url` needs.
+	// An invalid value surfaces through the adapter's own validation below
+	// rather than a separate check here.
+	const site = c.req.header("x-import-site")?.trim() || null;
+
+	const secret = c.env.IP_HASH_SECRET;
+	if (!secret) return c.json({ error: "ip_hash_secret_missing" }, 500);
+
+	try {
+		const plan = await runIssoImport(c.env.DB, doc, secret, {
+			dry_run: dryRun,
+			include_deleted: includeDeleted,
+			include_spam: includeSpam,
+			site,
+		});
+		await adminInsertAudit(c.env.DB, {
+			admin_id: user.id,
+			action: "import.isso",
+			target_kind: "system",
+			target_id: null,
+			meta: { dry_run: dryRun, ...plan },
+		});
+		return c.json({ ok: true, dry_run: dryRun, plan });
+	} catch (err) {
+		// Safe to hand back: the adapter's messages name a record index and
+		// never a record, and an isso dump carries display names and email
+		// addresses. Also the path an invalid --site/x-import-site value
+		// takes — runIssoImport validates it and throws before parsing.
 		return c.json({ error: `import_failed:${(err as Error).message}` }, 400);
 	}
 });

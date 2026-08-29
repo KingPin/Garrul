@@ -633,4 +633,14 @@ describe("ADMIN_ACTIONS", () => {
 		// validate against — dropping it would make old rows unfilterable.
 		expect(ADMIN_ACTIONS).toContain("saved_reply.post");
 	});
+
+	it("offers all four import sources to the audit filter, not just Disqus", () => {
+		// import.remark42, import.comentario and import.isso all wrote audit
+		// rows well before any of the three was added here — those rows were
+		// unfilterable on the audit page and via `?action=` the whole time.
+		expect(ADMIN_ACTIONS).toContain("import.disqus");
+		expect(ADMIN_ACTIONS).toContain("import.remark42");
+		expect(ADMIN_ACTIONS).toContain("import.comentario");
+		expect(ADMIN_ACTIONS).toContain("import.isso");
+	});
 });

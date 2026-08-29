@@ -27,6 +27,10 @@ const makeApp = () => {
 	};
 	app.post("/api/v1/comments", handler);
 	app.post("/admin/api/ops/import-disqus", handler);
+	app.post("/admin/api/ops/import-remark42", handler);
+	app.post("/admin/api/ops/import-comentario", handler);
+	app.post("/admin/api/ops/import-isso", handler);
+	app.post("/admin/api/ops/rerender", handler);
 	app.get("/api/v1/comments", async (c) => {
 		handlerRuns++;
 		return c.json({ ok: true });
@@ -123,6 +127,42 @@ describe("jsonBodyLimit — exemptions", () => {
 		});
 		expect(res.status).toBe(200);
 		expect(runs()).toBe(1);
+	});
+
+	// Every import route takes an export up to MAX_IMPORT_BYTES (50 MB) and
+	// enforces that ceiling itself. The operator card and AGENTS-OPERATE.md
+	// promise all four the same headroom, so all four have to be exempt —
+	// exempting only the first one shipped made the other three reject any
+	// export bigger than a rounding error.
+	const IMPORT_PATHS = [
+		"/admin/api/ops/import-disqus",
+		"/admin/api/ops/import-remark42",
+		"/admin/api/ops/import-comentario",
+		"/admin/api/ops/import-isso",
+	];
+
+	it.each(IMPORT_PATHS)("does not cap %s", async (path) => {
+		const { app, runs } = makeApp();
+		const res = await app.request(path, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: jsonOfBytes(100 * 1024),
+		});
+		expect(res.status).not.toBe(413);
+		expect(res.status).toBe(200);
+		expect(runs()).toBe(1);
+	});
+
+	it("still caps a non-import admin ops route", async () => {
+		const { app, runs } = makeApp();
+		const res = await app.request("/admin/api/ops/rerender", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: jsonOfBytes(100 * 1024),
+		});
+		expect(res.status).toBe(413);
+		expect(await res.json()).toEqual({ error: "too_large" });
+		expect(runs()).toBe(0);
 	});
 
 	it("does not cap a route by content-type", async () => {

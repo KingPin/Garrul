@@ -29,6 +29,7 @@ tag's docs rather than `main`.
 | Doc | Covers |
 | --- | --- |
 | [`../AGENTS-OPERATE.md`](../AGENTS-OPERATE.md) | The operator manual: vars vs. secrets, `ALLOWED_ORIGINS`, Turnstile, OAuth providers, email, day-to-day operation, backups, upgrades. |
+| [`importing.md`](importing.md) | isso's two-step import: dump `comments.db` to JSON, then run the CLI or admin upload. The intermediate format, the round-trip caveats, and the operator procedure. Disqus, Remark42 and Comentario/Commento are single-step and stay documented in `AGENTS-OPERATE.md`. |
 | [`troubleshooting.md`](troubleshooting.md) | Symptom-by-symptom fixes across setup, embedding, OAuth, cookies/sessions, notification email, and performance. |
 | [`ANTISPAM.md`](ANTISPAM.md) | What's always on, which optional layers to enable, and how to work the moderation queue. |
 | [`notifications.md`](notifications.md) | **Which channel notifies whom.** Reply notifications by email are built in — the reader flow, the queue-and-cron mechanism, the three settings that turn it on, and how it degrades when you don't. Plus where webhooks and the Telegram bot fit. |
