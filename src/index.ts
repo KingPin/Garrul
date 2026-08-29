@@ -315,7 +315,7 @@ app.use("*", async (c, next) => {
 // Body size cap, ahead of every route that parses one. Registered globally
 // rather than per-surface so a new route can't be added without it; requests
 // with no body fall straight through. See src/lib/body-limit.ts for the
-// import-disqus exemption and why it's keyed on path, not content-type.
+// import-route exemptions and why they're keyed on path, not content-type.
 app.use("*", jsonBodyLimit());
 
 app.use("/api/*", corsAndCsrf());

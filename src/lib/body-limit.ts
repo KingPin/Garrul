@@ -22,15 +22,26 @@ export const MAX_JSON_BYTES = 64 * 1024;
  * Routes that legitimately take a body orders of magnitude larger than a JSON
  * payload, and which enforce their own limit.
  *
- * `POST /admin/api/ops/import-disqus` takes a raw Disqus XML export up to
- * `MAX_IMPORT_BYTES` (50 MB) and does its own content-length check plus a
- * byte-accurate recheck after reading. Exempting it by *path* rather than by
- * content-type is deliberate: `Request.json()` parses regardless of the
- * declared content-type, so a content-type test would be an attacker-controlled
- * bypass of the cap on every other route.
+ * Every `POST /admin/api/ops/import-*` route takes a whole comment-system
+ * export — Disqus XML, or the JSON the Remark42, Comentario and isso paths
+ * read — up to `MAX_IMPORT_BYTES` (50 MB), and each does its own
+ * content-length check plus a byte-accurate recheck after reading. That is
+ * why the list is every import route rather than the first one shipped: an
+ * import route left off it silently caps at 64 KB while its operator card
+ * still promises 50 MB, which is a `413` on any export worth importing.
+ *
+ * Exempting by *path* rather than by content-type is deliberate:
+ * `Request.json()` parses regardless of the declared content-type, so a
+ * content-type test would be an attacker-controlled bypass of the cap on
+ * every other route. The list is spelled out rather than matched by prefix
+ * for the same reason — a future `/admin/api/ops/import-…` route that does
+ * *not* do its own byte check must not inherit the exemption by accident.
  */
 const EXEMPT_PATHS: ReadonlySet<string> = new Set([
 	"/admin/api/ops/import-disqus",
+	"/admin/api/ops/import-remark42",
+	"/admin/api/ops/import-comentario",
+	"/admin/api/ops/import-isso",
 ]);
 
 /**
