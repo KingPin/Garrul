@@ -33,13 +33,16 @@ dashboard page); every other integration is optional.
   sanitizer always on, four tunable heuristics and an optional classifier
   on top, everything routed to the queue
   ([`docs/ANTISPAM.md`](docs/ANTISPAM.md))
-- **Import from Disqus, Remark42 or Comentario**: upload the export in the
-  admin UI — the `.xml.gz` Disqus hands you, the `userbackup-<site>-<ts>.gz`
+- **Import from Disqus, Remark42, Comentario or isso**: upload the export in
+  the admin UI — the `.xml.gz` Disqus hands you, the `userbackup-<site>-<ts>.gz`
   Remark42 writes nightly, or Comentario's JSON export, no unzipping — or run
   `npm run import-disqus -- ./export.xml.gz --dry-run` /
   `npm run import-remark42 -- ./userbackup.gz --dry-run` /
   `npm run import-comentario -- ./export.json --dry-run` first. The Comentario
-  reader also takes a legacy Commento export. Idempotent,
+  reader also takes a legacy Commento export. isso ships no export at all, so
+  it's two steps — `npm run dump-isso -- ./comments.db --out dump.json` to
+  read its SQLite store, then `npm run import-isso -- ./dump.json --dry-run`
+  (see [`docs/importing.md`](docs/importing.md)). Idempotent,
   so a re-run inserts nothing; closed threads stay closed and spam stays
   out of the public tree
 - **Admin UI**: moderation queue, user management, and settings you

@@ -28,7 +28,7 @@ src/
                         #   webhook, webhook-sig, cors, log, settings, thread, email (Resend)
                         #   import/  — source-agnostic importer core + one file per source adapter
                         #              core.ts, html-to-markdown.ts, disqus.ts, remark42.ts,
-                        #              comentario.ts
+                        #              comentario.ts, isso.ts
   i18n/                 # en.ts string table; t(key) shim
   widget/               # embed.ts (source), embed.bundled.ts (generated), load-error.ts
                         #   boot.ts — the mount fetches + fallback rule; DOM-free so it is the one
@@ -46,9 +46,11 @@ examples/               # host-site integration snippets (astro, wordpress, hugo
 scripts/                # setup.sh, rerender.ts, seed-demo.ts, db-export.sh, build-embed.ts,
                         #   build-agents-md.ts, build-version.ts, check-bundle-size.ts,
                         #   import-cli.ts (shared CLI plumbing), import-disqus.ts,
-                        #   import-remark42.ts, import-comentario.ts, upgrade.ts, upgrade/
+                        #   import-remark42.ts, import-comentario.ts, dump-isso.ts,
+                        #   import-isso.ts, upgrade.ts, upgrade/
 docs/                   # THEMING.md, ANTISPAM.md, troubleshooting.md, webhooks.md, telegram.md,
-                        #   api-keys-design.md, privacy-policy.template.md, tos.template.md
+                        #   api-keys-design.md, privacy-policy.template.md, tos.template.md,
+                        #   importing.md
 .github/workflows/      # ci.yml, release.yml, docs-sync.yml
 ```
 
@@ -92,6 +94,18 @@ Never log or store raw IPs. Hash via HMAC-SHA-256 with `IP_HASH_SECRET` as the k
 `comentario.ts` — which reads both Comentario v3 and legacy Commento v1 off
 the document's own `version` field, under one `import_source` tag because they
 are one product lineage. #104 tracks the rest. A new adapter is one file exporting an `ImportAdapter` — `source`, `slugFallbackPrefix`, `parse(input) => SourceExport` — plus a thin `run<Source>Import` wrapper over `runImport`. Nothing else should need to change.
+
+Most sources write their own export file that an adapter parses directly —
+call that Class A. isso (`isso.ts`) has no export command at all; its
+`comments.db` SQLite file *is* the data store, so it's Class B: a node-only
+dumper (`scripts/dump-isso.ts`, `node:sqlite` — built into Node ≥ 22.5, zero
+new dependencies since this repo's `engines.node` is already `>=24`) reads
+the file directly and emits a JSON intermediate mirroring isso's own generic
+import format, and an ordinary adapter parses that intermediate the same
+way any other adapter parses a real export. The dumper stays under
+`scripts/`, never `src/lib/import/`, because no SQLite driver may ever be
+reachable from the Worker bundle. See `docs/importing.md` for the
+intermediate format and the operator procedure.
 
 Five rules the core enforces, so no adapter has to:
 
