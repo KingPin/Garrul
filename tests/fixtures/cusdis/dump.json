@@ -1,0 +1,329 @@
+{
+  "source": "cusdis",
+  "version": 1,
+  "projects": [
+    {
+      "id": "11111111-1111-4111-8111-111111111111",
+      "title": "Example Blog",
+      "pages": [
+        {
+          "id": "p0000001-0000-4000-8000-000000000001",
+          "slug": "/hello-world",
+          "url": "https://blog.example.com/hello-world",
+          "title": "Hello World",
+          "comments": [
+            {
+              "id": "c0000001-0000-4000-8000-000000000001",
+              "parent_id": null,
+              "created_at": 1700000000000,
+              "updated_at": 1700000000000,
+              "deleted_at": null,
+              "approved": true,
+              "by_nickname": "Alice Example",
+              "by_email": "alice@example.com",
+              "content": "This is **bold** text, with a list:\n\n- one\n- two\n\na [link](https://example.com/), a blockquote:\n\n> quoted text\n\nand `inline code`."
+            },
+            {
+              "id": "c0000002-0000-4000-8000-000000000002",
+              "parent_id": null,
+              "created_at": 1700000100000,
+              "updated_at": 1700000100000,
+              "deleted_at": null,
+              "approved": true,
+              "by_nickname": "Bob Example",
+              "by_email": "bob@example.org",
+              "content": "A short reply from Bob."
+            },
+            {
+              "id": "c0000003-0000-4000-8000-000000000003",
+              "parent_id": "c0000001-0000-4000-8000-000000000001",
+              "created_at": 1700000200000,
+              "updated_at": 1700000200000,
+              "deleted_at": null,
+              "approved": true,
+              "by_nickname": "Alice Example",
+              "by_email": "alice@example.com",
+              "content": "Replying to Alice — still Alice."
+            },
+            {
+              "id": "c0000004-0000-4000-8000-000000000004",
+              "parent_id": null,
+              "created_at": 1700000300000,
+              "updated_at": 1700000300000,
+              "deleted_at": null,
+              "approved": true,
+              "by_nickname": "Alice Example",
+              "by_email": null,
+              "content": "Alice again, without leaving an address this time."
+            },
+            {
+              "id": "c0000005-0000-4000-8000-000000000005",
+              "parent_id": null,
+              "created_at": 1700000400000,
+              "updated_at": 1700000400000,
+              "deleted_at": null,
+              "approved": false,
+              "by_nickname": "Carol Example",
+              "by_email": "carol@example.com",
+              "content": "Awaiting moderation from Carol."
+            },
+            {
+              "id": "c0000006-0000-4000-8000-000000000006",
+              "parent_id": null,
+              "created_at": 1700000500000,
+              "updated_at": 1700000500000,
+              "deleted_at": 1700001500000,
+              "approved": true,
+              "by_nickname": "Dave Example",
+              "by_email": "dave@example.net",
+              "content": "This comment was removed by the moderator but its replies stayed."
+            },
+            {
+              "id": "c0000007-0000-4000-8000-000000000007",
+              "parent_id": "c0000006-0000-4000-8000-000000000006",
+              "created_at": 1700000600000,
+              "updated_at": 1700000600000,
+              "deleted_at": null,
+              "approved": true,
+              "by_nickname": "Bob Example",
+              "by_email": "bob@example.org",
+              "content": "Bob follows up on the removed comment."
+            },
+            {
+              "id": "c0000008-0000-4000-8000-000000000008",
+              "parent_id": "c0000006-0000-4000-8000-000000000006",
+              "created_at": 1700000700000,
+              "updated_at": 1700000700000,
+              "deleted_at": null,
+              "approved": true,
+              "by_nickname": "",
+              "by_email": null,
+              "content": "A reply with no name at all."
+            },
+            {
+              "id": "c0000009-0000-4000-8000-000000000009",
+              "parent_id": null,
+              "created_at": 1700000800000,
+              "updated_at": 1700000900000,
+              "deleted_at": null,
+              "approved": true,
+              "by_nickname": "Bob Example",
+              "by_email": "bob@example.org",
+              "content": "Bob edits this comment after posting it."
+            },
+            {
+              "id": "c0000010-0000-4000-8000-000000000010",
+              "parent_id": null,
+              "created_at": 1700000900000,
+              "updated_at": 1700000900000,
+              "deleted_at": 1700001600000,
+              "approved": true,
+              "by_nickname": "Dave Example",
+              "by_email": "dave@example.net",
+              "content": "Removed, and nobody had replied to it."
+            },
+            {
+              "id": "c0000011-0000-4000-8000-000000000011",
+              "parent_id": "c0000001-0000-4000-8000-000000000001",
+              "created_at": 1700001000000,
+              "updated_at": 1700001000000,
+              "deleted_at": null,
+              "approved": false,
+              "by_nickname": "Carol Example",
+              "by_email": "carol@example.com",
+              "content": "An unapproved reply to Alice."
+            }
+          ]
+        },
+        {
+          "id": "p0000002-0000-4000-8000-000000000002",
+          "slug": "/about",
+          "url": null,
+          "title": null,
+          "comments": [
+            {
+              "id": "c0000012-0000-4000-8000-000000000012",
+              "parent_id": null,
+              "created_at": 1700001100000,
+              "updated_at": 1700001100000,
+              "deleted_at": null,
+              "approved": true,
+              "by_nickname": "Carol Example",
+              "by_email": "carol@example.com",
+              "content": "A comment on a page Cusdis knows only by slug."
+            }
+          ]
+        },
+        {
+          "id": "p0000003-0000-4000-8000-000000000003",
+          "slug": "/deep-thread",
+          "url": "https://blog.example.com/deep-thread",
+          "title": "Deep",
+          "comments": [
+            {
+              "id": "d0000001-0000-4000-8000-000000000001",
+              "parent_id": null,
+              "created_at": 1700002001000,
+              "updated_at": 1700002001000,
+              "deleted_at": null,
+              "approved": true,
+              "by_nickname": "Alice Example",
+              "by_email": "alice@example.com",
+              "content": "Depth 1."
+            },
+            {
+              "id": "d0000002-0000-4000-8000-000000000002",
+              "parent_id": "d0000001-0000-4000-8000-000000000001",
+              "created_at": 1700002002000,
+              "updated_at": 1700002002000,
+              "deleted_at": null,
+              "approved": true,
+              "by_nickname": "Bob Example",
+              "by_email": "bob@example.org",
+              "content": "Depth 2."
+            },
+            {
+              "id": "d0000003-0000-4000-8000-000000000003",
+              "parent_id": "d0000002-0000-4000-8000-000000000002",
+              "created_at": 1700002003000,
+              "updated_at": 1700002003000,
+              "deleted_at": null,
+              "approved": true,
+              "by_nickname": "Alice Example",
+              "by_email": "alice@example.com",
+              "content": "Depth 3."
+            },
+            {
+              "id": "d0000004-0000-4000-8000-000000000004",
+              "parent_id": "d0000003-0000-4000-8000-000000000003",
+              "created_at": 1700002004000,
+              "updated_at": 1700002004000,
+              "deleted_at": null,
+              "approved": true,
+              "by_nickname": "Bob Example",
+              "by_email": "bob@example.org",
+              "content": "Depth 4."
+            },
+            {
+              "id": "d0000005-0000-4000-8000-000000000005",
+              "parent_id": "d0000004-0000-4000-8000-000000000004",
+              "created_at": 1700002005000,
+              "updated_at": 1700002005000,
+              "deleted_at": null,
+              "approved": true,
+              "by_nickname": "Alice Example",
+              "by_email": "alice@example.com",
+              "content": "Depth 5."
+            },
+            {
+              "id": "d0000006-0000-4000-8000-000000000006",
+              "parent_id": "d0000005-0000-4000-8000-000000000005",
+              "created_at": 1700002006000,
+              "updated_at": 1700002006000,
+              "deleted_at": null,
+              "approved": true,
+              "by_nickname": "Bob Example",
+              "by_email": "bob@example.org",
+              "content": "Depth 6."
+            },
+            {
+              "id": "d0000007-0000-4000-8000-000000000007",
+              "parent_id": "d0000006-0000-4000-8000-000000000006",
+              "created_at": 1700002007000,
+              "updated_at": 1700002007000,
+              "deleted_at": null,
+              "approved": true,
+              "by_nickname": "Alice Example",
+              "by_email": "alice@example.com",
+              "content": "Depth 7."
+            },
+            {
+              "id": "d0000008-0000-4000-8000-000000000008",
+              "parent_id": "d0000007-0000-4000-8000-000000000007",
+              "created_at": 1700002008000,
+              "updated_at": 1700002008000,
+              "deleted_at": null,
+              "approved": true,
+              "by_nickname": "Bob Example",
+              "by_email": "bob@example.org",
+              "content": "Depth 8."
+            },
+            {
+              "id": "d0000009-0000-4000-8000-000000000009",
+              "parent_id": "d0000008-0000-4000-8000-000000000008",
+              "created_at": 1700002009000,
+              "updated_at": 1700002009000,
+              "deleted_at": null,
+              "approved": true,
+              "by_nickname": "Alice Example",
+              "by_email": "alice@example.com",
+              "content": "Depth 9 — past the cap."
+            },
+            {
+              "id": "d0000010-0000-4000-8000-000000000010",
+              "parent_id": "d0000009-0000-4000-8000-000000000009",
+              "created_at": 1700002010000,
+              "updated_at": 1700002010000,
+              "deleted_at": null,
+              "approved": true,
+              "by_nickname": "Bob Example",
+              "by_email": "bob@example.org",
+              "content": "Depth 10 — also past the cap."
+            }
+          ]
+        },
+        {
+          "id": "p0000004-0000-4000-8000-000000000004",
+          "slug": "/what is this?",
+          "url": null,
+          "title": "Odd slug",
+          "comments": [
+            {
+              "id": "c0000013-0000-4000-8000-000000000013",
+              "parent_id": null,
+              "created_at": 1700003100000,
+              "updated_at": 1700003100000,
+              "deleted_at": null,
+              "approved": true,
+              "by_nickname": "Alice Example",
+              "by_email": "alice@example.com",
+              "content": "A comment on a page whose slug is not a slug."
+            }
+          ]
+        },
+        {
+          "id": "p0000005-0000-4000-8000-000000000005",
+          "slug": "/empty",
+          "url": "https://blog.example.com/empty",
+          "title": "Empty",
+          "comments": []
+        }
+      ]
+    },
+    {
+      "id": "22222222-2222-4222-8222-222222222222",
+      "title": "Example Docs",
+      "pages": [
+        {
+          "id": "p0000006-0000-4000-8000-000000000006",
+          "slug": "/about",
+          "url": "https://docs.example.com/about",
+          "title": "About the docs",
+          "comments": [
+            {
+              "id": "c0000014-0000-4000-8000-000000000014",
+              "parent_id": null,
+              "created_at": 1700005100000,
+              "updated_at": 1700005100000,
+              "deleted_at": null,
+              "approved": true,
+              "by_nickname": "Erin Example",
+              "by_email": "erin@example.com",
+              "content": "A comment on the other project's about page."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
