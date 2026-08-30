@@ -82,8 +82,10 @@ INSERT INTO "pages" ("id", "slug", "url", "title", "created_at", "updated_at", "
 -- (Cusdis' moderation queue), c6 root soft-deleted (deletedAt set; Cusdis
 -- keeps nickname, email and content on a deleted row and does NOT cascade
 -- to replies), c7/c8 replies to the deleted c6 (c8 with a blank nickname
--- and no email), c9 root edited (updated_at > created_at), c10 root
--- soft-deleted with no replies at all, c11 an unapproved reply to c1.
+-- and no email), c9 root with updated_at > created_at (a moderation bump —
+-- Cusdis has no edit feature, so the adapter must NOT read it as an edit),
+-- c10 root soft-deleted with no replies at all, c11 an unapproved reply to
+-- c1.
 INSERT INTO "comments" ("id", "pageId", "created_at", "updated_at", "deletedAt", "moderatorId", "by_email", "by_nickname", "content", "approved", "parentId") VALUES
 	('c0000005-0000-4000-8000-000000000005', 'p0000001-0000-4000-8000-000000000001', 1700000400000, 1700000400000, NULL, NULL, 'carol@example.com', 'Carol Example', 'Awaiting moderation from Carol.', 0, NULL),
 	('c0000001-0000-4000-8000-000000000001', 'p0000001-0000-4000-8000-000000000001', 1700000000000, 1700000000000, NULL, 'u0000001-0000-4000-8000-000000000001', 'alice@example.com', 'Alice Example', 'This is **bold** text, with a list:
