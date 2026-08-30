@@ -7,7 +7,7 @@
  * passed in the args array can't break out into shell metacharacters.
  */
 import { spawnSync } from "node:child_process";
-import { readFileSync, writeFileSync, appendFileSync, existsSync } from "node:fs";
+import { readFileSync, appendFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { parseTomlVars } from "./toml-vars";
 import type { TomlVars } from "./toml-vars";
@@ -245,11 +245,9 @@ export const appendUpgradeLog = (
 ): void => {
 	const path = join(repoRoot, ".garrul-upgrade-log.json");
 	const line = `${JSON.stringify({ ...entry, ts: Date.now() })}\n`;
-	if (existsSync(path)) {
-		appendFileSync(path, line);
-	} else {
-		writeFileSync(path, line);
-	}
+	// appendFileSync creates the file when it is missing, so no exists-check —
+	// the check/write pair was also a TOCTOU race (CodeQL js/file-system-race).
+	appendFileSync(path, line);
 };
 
 export const wranglerVersion = (): string | null => {

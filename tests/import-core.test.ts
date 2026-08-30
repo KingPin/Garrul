@@ -767,7 +767,7 @@ describe("decodeImportInput", () => {
 		);
 		// An export carries names, emails and IPs. None of it belongs in an
 		// error string that reaches a log or an HTTP body.
-		await expect(decodeImportInput(u8)).rejects.not.toThrow(/example\.com/);
+		await expect(decodeImportInput(u8)).rejects.not.toThrow("example.com");
 	});
 
 	it("aborts a decompression bomb instead of inflating it", async () => {
