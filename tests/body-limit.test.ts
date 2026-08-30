@@ -30,6 +30,7 @@ const makeApp = () => {
 	app.post("/admin/api/ops/import-remark42", handler);
 	app.post("/admin/api/ops/import-comentario", handler);
 	app.post("/admin/api/ops/import-isso", handler);
+	app.post("/admin/api/ops/import-cusdis", handler);
 	app.post("/admin/api/ops/rerender", handler);
 	app.get("/api/v1/comments", async (c) => {
 		handlerRuns++;
@@ -131,14 +132,15 @@ describe("jsonBodyLimit — exemptions", () => {
 
 	// Every import route takes an export up to MAX_IMPORT_BYTES (50 MB) and
 	// enforces that ceiling itself. The operator card and AGENTS-OPERATE.md
-	// promise all four the same headroom, so all four have to be exempt —
-	// exempting only the first one shipped made the other three reject any
+	// promise all five the same headroom, so all five have to be exempt —
+	// exempting only the first one shipped made the others reject any
 	// export bigger than a rounding error.
 	const IMPORT_PATHS = [
 		"/admin/api/ops/import-disqus",
 		"/admin/api/ops/import-remark42",
 		"/admin/api/ops/import-comentario",
 		"/admin/api/ops/import-isso",
+		"/admin/api/ops/import-cusdis",
 	];
 
 	it.each(IMPORT_PATHS)("does not cap %s", async (path) => {
