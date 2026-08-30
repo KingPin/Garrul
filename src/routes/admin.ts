@@ -173,6 +173,7 @@ import {
 	decodeImportInput,
 } from "../lib/import/core";
 import { runComentarioImport } from "../lib/import/comentario";
+import { runCusdisImport } from "../lib/import/cusdis";
 import { runDisqusImport } from "../lib/import/disqus";
 import { runIssoImport } from "../lib/import/isso";
 import { runRemark42Import } from "../lib/import/remark42";
@@ -2795,6 +2796,82 @@ admin.post("/api/ops/import-isso", async (c) => {
 		// never a record, and an isso dump carries display names and email
 		// addresses. Also the path an invalid --site/x-import-site value
 		// takes — runIssoImport validates it and throws before parsing.
+		return c.json({ error: `import_failed:${(err as Error).message}` }, 400);
+	}
+});
+
+// ---------------------------- Cusdis import --------------------------------
+//
+// Same shape and the same reasons as the isso route above. Cusdis is
+// deprecated upstream and ships no export; the body is the JSON intermediate
+// `npm run dump-cusdis` writes from its `db.sqlite`, never the SQLite file.
+// `runCusdisImport` never touches SQLite, so no driver reaches the bundle.
+
+admin.post("/api/ops/import-cusdis", async (c) => {
+	const user = await requireAdmin(c);
+	if (user instanceof Response) return user;
+
+	const contentLength = Number(c.req.header("content-length") ?? "0");
+	if (contentLength > MAX_IMPORT_BYTES) {
+		return c.json({ error: "too_large" }, 413);
+	}
+	const buf = await c.req.arrayBuffer();
+	if (buf.byteLength === 0) return c.json({ error: "empty_body" }, 400);
+	if (buf.byteLength > MAX_IMPORT_BYTES) {
+		return c.json({ error: "too_large" }, 413);
+	}
+	let doc: string;
+	try {
+		doc = await decodeImportInput(buf);
+	} catch (err) {
+		if (err instanceof ImportTooLargeError) {
+			return c.json({ error: "too_large" }, 413);
+		}
+		return c.json({ error: "not_cusdis_dump" }, 400);
+	}
+	// Shape check: the dumper always writes `source` as the document's first
+	// key, and that ordering is part of the intermediate's contract (see
+	// scripts/dump-cusdis.ts). It is what tells this file apart from a
+	// Comentario document (an object keyed on `version`) without parsing it,
+	// and it holds for a hand-serialised dump too as long as the key order
+	// is kept. The adapter does the real validation past this point.
+	const looksRight = /^\s*\{\s*"source"\s*:\s*"cusdis"/.test(doc.slice(0, 4096));
+	if (!looksRight) {
+		return c.json({ error: "not_cusdis_dump" }, 400);
+	}
+
+	const dryRun = c.req.header("x-dry-run") === "1";
+	const includeDeleted = c.req.header("x-include-deleted") === "1";
+	const includeSpam = c.req.header("x-include-spam") === "1";
+	// One Cusdis database holds every project (site); the same header the
+	// Comentario route reads for its domain selects one here, by project id.
+	const project = c.req.header("x-import-domain")?.trim() || null;
+	// A Cusdis page's url is client-declared and often empty — this supplies
+	// the origin those pages resolve against. Validated by the adapter.
+	const site = c.req.header("x-import-site")?.trim() || null;
+
+	const secret = c.env.IP_HASH_SECRET;
+	if (!secret) return c.json({ error: "ip_hash_secret_missing" }, 500);
+
+	try {
+		const plan = await runCusdisImport(c.env.DB, doc, secret, {
+			dry_run: dryRun,
+			include_deleted: includeDeleted,
+			include_spam: includeSpam,
+			project,
+			site,
+		});
+		await adminInsertAudit(c.env.DB, {
+			admin_id: user.id,
+			action: "import.cusdis",
+			target_kind: "system",
+			target_id: null,
+			meta: { dry_run: dryRun, ...plan },
+		});
+		return c.json({ ok: true, dry_run: dryRun, plan });
+	} catch (err) {
+		// Safe to hand back: the adapter's messages name a JSON path, a
+		// project id/title or a site flag, never a nickname, email or body.
 		return c.json({ error: `import_failed:${(err as Error).message}` }, 400);
 	}
 });

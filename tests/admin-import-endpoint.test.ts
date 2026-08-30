@@ -173,6 +173,7 @@ const upload = uploadTo("disqus", "application/xml");
 const uploadJsonl = uploadTo("remark42", "application/x-ndjson");
 const uploadJson = uploadTo("comentario", "application/json");
 const uploadIssoJson = uploadTo("isso", "application/json");
+const uploadCusdisJson = uploadTo("cusdis", "application/json");
 
 const commentCount = (): number =>
 	(
@@ -740,5 +741,256 @@ describe("POST /admin/api/ops/import-isso", () => {
 			.prepare("SELECT action FROM audit_log WHERE action = 'import.isso'")
 			.get() as { action: string } | undefined;
 		expect(row?.action).toBe("import.isso");
+	});
+});
+
+// A Cusdis dump as `npm run dump-cusdis` writes it: `source` first, then
+// projects → pages → comments. Two projects, so the endpoint's project
+// selection (x-import-domain) is exercised; comment 3 is soft-deleted with
+// a live reply, so include-deleted is too.
+const CUSDIS_BLOG = "11111111-1111-4111-8111-111111111111";
+const CUSDIS_DOCS = "22222222-2222-4222-8222-222222222222";
+const cusdisComment = (
+	id: string,
+	over: Partial<Record<string, unknown>> = {},
+): Record<string, unknown> => ({
+	id,
+	parent_id: null,
+	created_at: 1767225600000,
+	updated_at: 1767225600000,
+	deleted_at: null,
+	approved: true,
+	by_nickname: "Ada Example",
+	by_email: "ada@example.com",
+	content: `comment ${id}`,
+	...over,
+});
+const CUSDIS = JSON.stringify({
+	source: "cusdis",
+	version: 1,
+	projects: [
+		{
+			id: CUSDIS_BLOG,
+			title: "Blog",
+			pages: [
+				{
+					id: "p-1",
+					slug: "/hello",
+					url: null,
+					title: "Hello",
+					comments: [
+						cusdisComment("c-1"),
+						cusdisComment("c-2", {
+							parent_id: "c-1",
+							created_at: 1767225900000,
+							by_nickname: "Bob Example",
+							by_email: "bob@example.org",
+						}),
+						cusdisComment("c-3", {
+							created_at: 1767226200000,
+							deleted_at: 1767230000000,
+							by_nickname: "Carol Example",
+							by_email: "carol@example.com",
+						}),
+						cusdisComment("c-4", {
+							parent_id: "c-3",
+							created_at: 1767226500000,
+							approved: false,
+							by_nickname: "Dan Example",
+							by_email: null,
+						}),
+					],
+				},
+			],
+		},
+		{
+			id: CUSDIS_DOCS,
+			title: "Docs",
+			pages: [
+				{
+					id: "p-2",
+					slug: "/hello",
+					url: "https://docs.example.com/hello",
+					title: null,
+					comments: [cusdisComment("c-5", { by_nickname: "Erin Example", by_email: null })],
+				},
+			],
+		},
+	],
+});
+const CUSDIS_ONE_PROJECT = JSON.stringify({
+	...(JSON.parse(CUSDIS) as { projects: unknown[] }),
+	projects: (JSON.parse(CUSDIS) as { projects: unknown[] }).projects.slice(0, 1),
+});
+
+describe("POST /admin/api/ops/import-cusdis", () => {
+	const blog = { "x-import-domain": CUSDIS_BLOG };
+
+	it("imports a single-project dump with no project header", async () => {
+		const res = await uploadCusdisJson(CUSDIS_ONE_PROJECT);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as {
+			plan: { new_comments: number; new_pages: number };
+		};
+		// c-3 is soft-deleted, skipped by default.
+		expect(body.plan.new_comments).toBe(3);
+		expect(body.plan.new_pages).toBe(1);
+		expect(commentCount()).toBe(3);
+	});
+
+	it("refuses a two-project dump without a project header, naming both projects", async () => {
+		const res = await uploadCusdisJson(CUSDIS);
+		expect(res.status).toBe(400);
+		const body = (await res.json()) as { error: string };
+		expect(body.error).toContain("import_failed:cusdis dump: 2 projects in one file");
+		expect(body.error).toContain(`${CUSDIS_BLOG} (Blog)`);
+		expect(body.error).toContain(`${CUSDIS_DOCS} (Docs)`);
+		expect(commentCount()).toBe(0);
+	});
+
+	it("selects a project by id through x-import-domain", async () => {
+		const res = await uploadCusdisJson(CUSDIS, { "x-import-domain": CUSDIS_DOCS });
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { plan: { new_comments: number } };
+		expect(body.plan.new_comments).toBe(1);
+		const post = sqlite
+			.prepare("SELECT url FROM posts WHERE slug = 'hello'")
+			.get() as { url: string | null } | undefined;
+		expect(post?.url).toBe("https://docs.example.com/hello");
+	});
+
+	it("refuses an unknown project id and lists the ids the dump has", async () => {
+		const res = await uploadCusdisJson(CUSDIS, { "x-import-domain": "nope" });
+		expect(res.status).toBe(400);
+		const body = (await res.json()) as { error: string };
+		expect(body.error).toContain('no project with id "nope"');
+		expect(body.error).toContain(CUSDIS_BLOG);
+		expect(commentCount()).toBe(0);
+	});
+
+	it("imports a gzipped upload identically", async () => {
+		const res = await uploadCusdisJson(await gzip(CUSDIS), blog);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { plan: { new_comments: number } };
+		expect(body.plan.new_comments).toBe(3);
+		expect(commentCount()).toBe(3);
+	});
+
+	it("rejects a Comentario document sent to the Cusdis endpoint", async () => {
+		const res = await uploadCusdisJson(JSON.stringify({ version: 3 }));
+		expect(res.status).toBe(400);
+		expect(await res.json()).toEqual({ error: "not_cusdis_dump" });
+	});
+
+	it("rejects an isso dump sent to the Cusdis endpoint", async () => {
+		const res = await uploadCusdisJson(ISSO);
+		expect(res.status).toBe(400);
+		expect(await res.json()).toEqual({ error: "not_cusdis_dump" });
+	});
+
+	it("rejects a Remark42 export (NDJSON) sent to the Cusdis endpoint", async () => {
+		const res = await uploadCusdisJson('{"id":"1"}\n{"id":"2"}\n');
+		expect(res.status).toBe(400);
+		expect(await res.json()).toEqual({ error: "not_cusdis_dump" });
+	});
+
+	it("rejects a Disqus export sent to the Cusdis endpoint", async () => {
+		const res = await uploadCusdisJson(XML);
+		expect(res.status).toBe(400);
+		expect(await res.json()).toEqual({ error: "not_cusdis_dump" });
+	});
+
+	it("rejects a Cusdis dump sent to the isso endpoint", async () => {
+		const res = await uploadIssoJson(CUSDIS);
+		expect(res.status).toBe(400);
+		expect(await res.json()).toEqual({ error: "not_isso_dump" });
+	});
+
+	it("rejects an empty body", async () => {
+		const res = await uploadCusdisJson("");
+		expect(res.status).toBe(400);
+		expect(await res.json()).toEqual({ error: "empty_body" });
+	});
+
+	it("writes nothing on a dry run", async () => {
+		const res = await uploadCusdisJson(CUSDIS, { ...blog, "x-dry-run": "1" });
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as {
+			dry_run: boolean;
+			plan: { new_comments: number };
+		};
+		expect(body.dry_run).toBe(true);
+		expect(body.plan.new_comments).toBe(3);
+		expect(commentCount()).toBe(0);
+	});
+
+	it("lands the unapproved comment in the queue as pending", async () => {
+		const res = await uploadCusdisJson(CUSDIS, blog);
+		expect(res.status).toBe(200);
+		const row = sqlite
+			.prepare(
+				"SELECT status FROM comments WHERE import_source = 'cusdis' AND import_id = 'c-4'",
+			)
+			.get() as { status: string } | undefined;
+		expect(row?.status).toBe("pending");
+	});
+
+	it("include-deleted inserts the soft-deleted comment and re-parents its child onto it", async () => {
+		const res = await uploadCusdisJson(CUSDIS, { ...blog, "x-include-deleted": "1" });
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { plan: { new_comments: number } };
+		expect(body.plan.new_comments).toBe(4);
+
+		const deleted = sqlite
+			.prepare(
+				"SELECT id, status FROM comments WHERE import_source = 'cusdis' AND import_id = 'c-3'",
+			)
+			.get() as { id: string; status: string } | undefined;
+		expect(deleted?.status).toBe("deleted");
+
+		const child = sqlite
+			.prepare(
+				"SELECT parent_id FROM comments WHERE import_source = 'cusdis' AND import_id = 'c-4'",
+			)
+			.get() as { parent_id: string | null } | undefined;
+		expect(child?.parent_id).toBe(deleted?.id);
+	});
+
+	it("sets posts.url from x-import-site for a page with no url", async () => {
+		const res = await uploadCusdisJson(CUSDIS, {
+			...blog,
+			"x-import-site": "https://blog.example.com",
+		});
+		expect(res.status).toBe(200);
+		const post = sqlite
+			.prepare("SELECT url FROM posts WHERE slug = 'hello'")
+			.get() as { url: string | null } | undefined;
+		expect(post?.url).toBe("https://blog.example.com/hello");
+	});
+
+	it("rejects an unparseable x-import-site rather than importing with no permalinks", async () => {
+		const res = await uploadCusdisJson(CUSDIS, { ...blog, "x-import-site": "not-a-url" });
+		expect(res.status).toBe(400);
+		const body = (await res.json()) as { error: string };
+		expect(body.error).toContain("site must be an http(s) origin (--site / x-import-site)");
+		expect(commentCount()).toBe(0);
+	});
+
+	it("is idempotent across a plain and a gzipped upload of the same file", async () => {
+		expect((await uploadCusdisJson(CUSDIS, blog)).status).toBe(200);
+		const res = await uploadCusdisJson(await gzip(CUSDIS), blog);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { plan: { new_comments: number } };
+		expect(body.plan.new_comments).toBe(0);
+		expect(commentCount()).toBe(3);
+	});
+
+	it("writes an import.cusdis audit row", async () => {
+		const res = await uploadCusdisJson(CUSDIS, blog);
+		expect(res.status).toBe(200);
+		const row = sqlite
+			.prepare("SELECT action FROM audit_log WHERE action = 'import.cusdis'")
+			.get() as { action: string } | undefined;
+		expect(row?.action).toBe("import.cusdis");
 	});
 });

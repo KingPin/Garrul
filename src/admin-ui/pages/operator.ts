@@ -327,6 +327,13 @@ ${seedCard}
       domainFlag: false,
       siteFlag: true,
     },
+    cusdis: {
+      contentType: 'application/json',
+      accept: '.json,.gz,application/json,application/gzip',
+      cli: 'npm run import-cusdis -- ./cusdis-dump.json --dry-run',
+      domainFlag: true,
+      siteFlag: true,
+    },
   },
   get spec() { return this.sources[this.source] },
   get endpoint() { return '/admin/api/ops/import-' + this.source },
@@ -383,6 +390,7 @@ ${seedCard}
         <option value="remark42">Remark42</option>
         <option value="comentario">Comentario / Commento</option>
         <option value="isso">isso</option>
+        <option value="cusdis">Cusdis</option>
       </select>
     </label>
   </p>
@@ -414,20 +422,36 @@ ${seedCard}
     comments land in the moderation queue. Tick "include deleted" to
     keep isso's tombstones — it only retains one while it still has
     replies, so dropping it leaves those replies with no parent.</p>
+  <p class="muted" x-show="source === 'cusdis'">Cusdis is deprecated
+    upstream and ships no export — <code>db.sqlite</code> is its data
+    store. Run <code>npm run dump-cusdis</code> against that file on the
+    machine that has it, then upload the JSON it writes here. Idempotent,
+    deduplicated by Cusdis' own comment id. Cusdis stores markdown, so
+    bodies pass through unchanged. Unapproved comments land in the
+    moderation queue. Tick "include deleted" to keep soft-deleted
+    comments — Cusdis keeps their author and text, and a deleted parent's
+    replies otherwise become top-level.</p>
   <p x-show="spec.domainFlag">
     <label style="display:inline-flex;gap:0.3rem;align-items:center">
-      Domain (optional)
+      <span x-text="source === 'cusdis' ? 'Project (optional)' : 'Domain (optional)'"></span>
       <input type="text" x-model="domain" :disabled="busy"
-             placeholder="domainId UUID, or a host for Commento v1"
+             :placeholder="source === 'cusdis' ? 'project id UUID' : 'domainId UUID, or a host for Commento v1'"
              style="min-width:22rem">
     </label>
   </p>
-  <p class="muted" x-show="spec.domainFlag">Both products are multi-site
-    and neither namespaces page paths by site, so an export carrying two
-    domains is refused rather than flattened — two sites'
-    <code>/about</code> would silently become one page here. Leave this
-    blank for a single-domain export; if the import is refused, the error
-    names the domains it found, and you run it once per domain.</p>
+  <p class="muted" x-show="spec.domainFlag &amp;&amp; source !== 'cusdis'">Both
+    products are multi-site and neither namespaces page paths by site, so
+    an export carrying two domains is refused rather than flattened — two
+    sites' <code>/about</code> would silently become one page here. Leave
+    this blank for a single-domain export; if the import is refused, the
+    error names the domains it found, and you run it once per domain.</p>
+  <p class="muted" x-show="source === 'cusdis'">One Cusdis database holds
+    every project (site) you created, and pages on two projects can share
+    a path, so a dump carrying two projects is refused rather than
+    flattened. Leave this blank for a single-project dump; if the import
+    is refused, the error names each project's id and title, and you run
+    it once per project — by id, since Cusdis does not keep titles
+    unique.</p>
   <p x-show="spec.siteFlag">
     <label style="display:inline-flex;gap:0.3rem;align-items:center">
       Site origin (optional)
@@ -436,11 +460,16 @@ ${seedCard}
              style="min-width:22rem">
     </label>
   </p>
-  <p class="muted" x-show="spec.siteFlag">isso stores paths, not URLs
+  <p class="muted" x-show="source === 'isso'">isso stores paths, not URLs
     — <code>threads.uri</code> has no host of its own. Without an
     origin here, imported pages have no permalink URL until you set one
     by hand; with it, each thread's link is resolved against this
     origin.</p>
+  <p class="muted" x-show="source === 'cusdis'">A Cusdis page's URL is
+    whatever the host page passed as <code>data-page-url</code>, and it
+    is often empty. Pages that have one keep it; for the rest, an origin
+    here resolves the page's path into a permalink, and without one they
+    have no URL until you set one by hand.</p>
   <p>
     <label style="display:inline-flex;gap:0.3rem;align-items:center;margin-right:0.8rem">
       <input type="checkbox" x-model="dryRun"> Dry run (parse + plan only)

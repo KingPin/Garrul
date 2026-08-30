@@ -2502,6 +2502,7 @@ export const ADMIN_ACTIONS = [
 	"import.remark42",
 	"import.comentario",
 	"import.isso",
+	"import.cusdis",
 	// Moderator notes. The audit row records that a note was written or
 	// removed and on what — never the body. A note is internal by design, and
 	// copying it into a log that has its own retention sweep and its own
