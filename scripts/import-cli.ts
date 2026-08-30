@@ -37,20 +37,38 @@ export type ImportCliArgs = {
 	option: (name: string) => string | null;
 };
 
+/** The bare (valueless) flags every importer CLI accepts. */
+const BOOLEAN_FLAGS = new Set(["--remote", "--dry-run", "--include-deleted", "--include-spam"]);
+
 /**
  * Parse the flag set every importer CLI shares.
  *
- * Exits 2 with `usage` when no path is given, which is the one argument
- * error worth stopping on — a missing adapter-specific flag is the
- * adapter's business.
+ * Exits 2 with `usage` on a missing path, a second positional, or a bare
+ * `--flag` that is not one of the shared booleans. The last two are the same
+ * mistake seen from either side: `--site https://blog.example` (a space
+ * where the `=` goes) is an unknown flag `--site` followed by a stray
+ * positional. Before this check both were ignored, so the run went ahead
+ * with `site` unset, imported every url-less page with no permalink, and
+ * printed a clean plan — the flag the operator typed simply did nothing. A
+ * value-carrying `--name=value` is accepted for any `name`; which of those
+ * mean anything is the adapter's business.
  */
 export const parseImportArgs = (
 	argv: string[],
 	usage: string,
 ): ImportCliArgs => {
 	const positional = argv.filter((a) => !a.startsWith("--"));
+	const unknownFlags = argv.filter(
+		(a) => a.startsWith("--") && !a.includes("=") && !BOOLEAN_FLAGS.has(a),
+	);
 	const path = positional[0];
-	if (!path) {
+	if (!path || positional.length > 1 || unknownFlags.length > 0) {
+		for (const flag of unknownFlags) {
+			console.error(`unknown flag ${flag} (an option takes its value as --${flag.slice(2)}=<value>)`);
+		}
+		if (positional.length > 1) {
+			console.error(`unexpected argument ${positional[1]}`);
+		}
 		console.error(usage);
 		process.exit(2);
 	}

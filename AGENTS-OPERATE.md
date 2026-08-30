@@ -902,8 +902,9 @@ whole body, so without it a multi-megabyte payload costs a full parse against th
 Worker's 10 ms CPU budget before any of them get a say. 64 KB is far above every
 legitimate payload — the largest is a comment at the 10,000-character body limit.
 The exemptions are the import uploads — `POST /admin/api/ops/import-disqus`,
-`POST /admin/api/ops/import-remark42`, `POST /admin/api/ops/import-comentario`
-and `POST /admin/api/ops/import-isso` — which take an export — gzipped
+`POST /admin/api/ops/import-remark42`, `POST /admin/api/ops/import-comentario`,
+`POST /admin/api/ops/import-isso` and `POST /admin/api/ops/import-cusdis` —
+which take an export — gzipped
 or not — up to 50 MB and enforce their own limit, on the decompressed
 bytes as well as the compressed ones. Implementation: `src/lib/body-limit.ts`.
 
@@ -948,7 +949,7 @@ Pages (top nav):
 | `/admin/users/:id` | User detail: all their comments paginated, reactions received, audit history affecting them, the **Moderator notes** card, Ban/Unban, role controls, and two folded-away admin-only panels — **Export personal data** and **Erase personal data** (both below). |
 | `/admin/audit` | Audit log with filter form (admin, action, target kind/id, date range). |
 | `/admin/subscriptions` | Email subscription list. Filter by email/post/confirmed/unsubscribed. Actions: manual unsubscribe, resend confirmation. |
-| `/admin/operator` | Batch operations: rerender stale comments (POSTs `/admin/api/ops/rerender` in 50-row chunks until done), seed-demo (idempotent; gated to `ENV != "production"`), the comment import upload (Disqus XML, a Remark42 backup, a Comentario/Commento JSON export, or the JSON `npm run dump-isso` produces from an isso `comments.db` — gzipped or not — see below), and two retention cards — IP-hash and audit-log — each showing how many rows are past the configured window and offering a manual drain. |
+| `/admin/operator` | Batch operations: rerender stale comments (POSTs `/admin/api/ops/rerender` in 50-row chunks until done), seed-demo (idempotent; gated to `ENV != "production"`), the comment import upload (Disqus XML, a Remark42 backup, a Comentario/Commento JSON export, or the JSON `npm run dump-isso` / `npm run dump-cusdis` produces from an isso `comments.db` or a Cusdis `db.sqlite` — gzipped or not — see below), and two retention cards — IP-hash and audit-log — each showing how many rows are past the configured window and offering a manual drain. |
 | `/admin/settings` | Editable form for feature flags, display/pagination numbers, and the moderation dials (edit window, thread auto-close, community auto-collapse, the three anti-spam heuristics), saved to the `settings` D1 table (no redeploy — see section 5). Also renders a read-only `(set)`/`(unset)` summary of deploy-time config (Turnstile, email, OAuth, spam provider), which still changes via `wrangler secret put` / `wrangler.toml`. |
 | `/admin/webhooks` | Outbound webhook endpoints: add/pause/delete, per-endpoint secret + event filter, adapter (`generic` / `slack` / `discord` / `telegram`), failure counts and retry status. |
 | `/admin/telegram` | **Admin-only.** Telegram operator bot: shows whether the bot token/webhook secret are set, links your personal Telegram account (one-time code or deep link), toggles the daily digest, and unlinks. See `docs/telegram.md`. |
@@ -1239,9 +1240,9 @@ releases advertising a key that did nothing. `/` and `?` are inert
 while you are typing and under any modifier; `Esc` is matched before
 that guard, so a popover left open still closes from inside a textarea.
 
-**Comment import.** Four sources today — Disqus, Remark42, Comentario
-(which also reads a legacy Commento export) and isso — each with two
-entry points, all of them idempotent (deduplicated by the source's own
+**Comment import.** Five sources today — Disqus, Remark42, Comentario
+(which also reads a legacy Commento export), isso and Cusdis — each with
+two entry points, all of them idempotent (deduplicated by the source's own
 comment ID, tracked in `0009_import_tracking.sql`; re-running the same
 export inserts zero rows):
 
@@ -1249,9 +1250,11 @@ export inserts zero rows):
   `IP_HASH_SECRET=... npm run import-disqus -- ./export.xml --dry-run`,
   `IP_HASH_SECRET=... npm run import-remark42 -- ./userbackup.gz
   --dry-run`, `IP_HASH_SECRET=... npm run import-comentario --
-  ./export.json --dry-run`, or `IP_HASH_SECRET=... npm run import-isso
-  -- ./isso-dump.json --dry-run`, then without `--dry-run` to commit.
-  isso needs a step before that one — see **isso specifics** below.
+  ./export.json --dry-run`, `IP_HASH_SECRET=... npm run import-isso
+  -- ./isso-dump.json --dry-run`, or `IP_HASH_SECRET=... npm run
+  import-cusdis -- ./cusdis-dump.json --dry-run`, then without
+  `--dry-run` to commit. isso and Cusdis need a step before that one —
+  see **isso specifics** and **Cusdis specifics** below.
 - Admin upload on `/admin/operator` — one card with a source select,
   capped at 50 MB, with dry-run / include-deleted / include-spam
   toggles.
@@ -1259,10 +1262,10 @@ export inserts zero rows):
 **Gzipped exports work as-is, on every path.** Disqus hands you a `.xml.gz`,
 Remark42's nightly `backup` writes a `userbackup-<site>-<ts>.gz`, and
 Comentario offers its JSON gzipped; hand any of them straight to the CLI
-or the upload and it is inflated in memory. isso's dumper writes plain
-JSON — there is no product-level gzip habit to match — but the same
-sniff accepts it gzipped too, if you compress it yourself moving it between
-machines. The 50 MB cap applies to the *decompressed* size too — a file
+or the upload and it is inflated in memory. The isso and Cusdis dumpers
+write plain JSON — there is no product-level gzip habit to match — but
+the same sniff accepts it gzipped too, if you compress it yourself moving
+it between machines. The 50 MB cap applies to the *decompressed* size too — a file
 that inflates past it is rejected with `413 {"error":"too_large"}` partway
 through rather than allocated, which is what keeps a hostile few-KB upload
 from being a memory-exhaustion primitive. Note that the *compressed* file
@@ -1460,12 +1463,57 @@ an approved root and its timestamp shifts by the importing machine's
 UTC offset. See `docs/importing.md` for the full intermediate format
 and this caveat in more detail.
 
+**Cusdis specifics.** Cusdis (`djyde/cusdis`) is deprecated upstream and,
+like isso, ships no export — its `db.sqlite` *is* the data store. Same
+two-step shape, SQLite only (a Postgres/MySQL instance is converted to
+SQLite first):
+
+```bash
+npm run dump-cusdis -- /path/to/db.sqlite --out cusdis-dump.json
+IP_HASH_SECRET=... npm run import-cusdis -- ./cusdis-dump.json --dry-run
+```
+
+The dumper opens the file read-only, reads only `projects`, `pages` and
+`comments`, and never emits `projects.token` (the widget API token) or
+any of next-auth's operator tables. Four things differ from isso:
+
+- **One database, many projects — pick one by id.** A Cusdis "project"
+  is one site, and pages on two projects can share a slug, so a dump
+  with more than one project is refused rather than flattened. The
+  refusal lists each project's id and title; pass `--project=<id>` (or
+  fill the admin card's **Project** field, header `x-import-domain`) and
+  run once per project. Selection is by id because Cusdis puts no
+  uniqueness constraint on titles. A single-project dump needs no flag.
+- **`updated_at` is not an edit.** Cusdis has no comment-edit feature;
+  its `updated_at` is Prisma's `@updatedAt`, bumped by approve and
+  delete. `edited_at` is always `null` on a Cusdis import so moderated
+  comments do not show as "edited".
+- **Soft-deleted comments keep their author.** `deleted_at` touches only
+  that column — nickname, email and body stay — and a delete does not
+  cascade to replies. Skipped by default; `--include-deleted` brings them
+  across under their real author (no tombstone ghost, the data is still
+  there) and keeps a deleted parent's replies attached.
+- **Pages may or may not carry a URL.** `pages.url` is whatever the host
+  page passed as `data-page-url`, often empty. A page that has one keeps
+  it; for the rest, `--site=<origin>` (admin: **Site origin**,
+  `x-import-site`) resolves the page's slug into a permalink, same-origin
+  only, exactly as for isso. A `--site` that is not an http(s) origin is
+  an error rather than a silent no-URL import.
+
+Slugs derive from `pages.slug` (client-declared `data-page-id`) exactly as
+isso's from `threads.uri`, digest fallback (`cusdis-<16 hex digits>`)
+included. Unapproved comments land in the moderation queue as `pending`;
+Cusdis has no spam state, so `--include-spam` is a no-op. Bodies are
+markdown and pass through unchanged. `docs/importing.md` has the full
+intermediate format.
+
 **The importer is source-agnostic underneath.** `src/lib/import/core.ts`
 holds everything true of every source — identity derivation,
 idempotency, threading, depth capping, the size and gzip handling
 — and `src/lib/import/disqus.ts`, `src/lib/import/remark42.ts`,
-`src/lib/import/comentario.ts` and `src/lib/import/isso.ts` are just the
-adapters that know how to read one format each. The CLIs are thin for the same
+`src/lib/import/comentario.ts`, `src/lib/import/isso.ts` and
+`src/lib/import/cusdis.ts` are just the adapters that know how to read one
+format each. The CLIs are thin for the same
 reason: `scripts/import-cli.ts` holds the flag parsing, the wrangler-backed
 D1 shim and the error hygiene, and each `scripts/import-<source>.ts` is a
 docblock plus a call. A new adapter is one file exporting an `ImportAdapter`;

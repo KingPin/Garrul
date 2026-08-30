@@ -33,19 +33,21 @@ dashboard page); every other integration is optional.
   sanitizer always on, four tunable heuristics and an optional classifier
   on top, everything routed to the queue
   ([`docs/ANTISPAM.md`](docs/ANTISPAM.md))
-- **Import from Disqus, Remark42, Comentario or isso**: upload the export in
-  the admin UI — the `.xml.gz` Disqus hands you, the `userbackup-<site>-<ts>.gz`
-  Remark42 writes nightly, or Comentario's JSON export, no unzipping — or run
+- **Import from Disqus, Remark42, Comentario, isso or Cusdis**: upload the
+  export in the admin UI — the `.xml.gz` Disqus hands you, the
+  `userbackup-<site>-<ts>.gz` Remark42 writes nightly, or Comentario's JSON
+  export, no unzipping — or run
   `npm run import-disqus -- ./export.xml.gz --dry-run` /
   `npm run import-remark42 -- ./userbackup.gz --dry-run` /
   `npm run import-comentario -- ./export.json --dry-run` first. The Comentario
-  reader also takes a legacy Commento export. isso ships no export at all, so
-  it's two steps — `npm run dump-isso -- ./comments.db --out dump.json` to
-  read its SQLite store, then either `npm run import-isso -- ./dump.json
-  --dry-run` or upload that same `dump.json` on the admin UI same as the
-  other three sources (see [`docs/importing.md`](docs/importing.md)).
-  Idempotent, so a re-run inserts nothing; closed threads stay closed and
-  spam stays out of the public tree
+  reader also takes a legacy Commento export. isso and Cusdis ship no export
+  at all, so they're two steps — `npm run dump-isso -- ./comments.db --out
+  dump.json` or `npm run dump-cusdis -- ./db.sqlite --out dump.json` to read
+  the SQLite store, then either `npm run import-isso` / `npm run
+  import-cusdis -- ./dump.json --dry-run` or upload that same `dump.json` on
+  the admin UI same as the other sources (see
+  [`docs/importing.md`](docs/importing.md)). Idempotent, so a re-run inserts
+  nothing; closed threads stay closed and spam stays out of the public tree
 - **Admin UI**: moderation queue, user management, and settings you
   change without a redeploy
 - **RSS feeds**, comment counts, permalinks

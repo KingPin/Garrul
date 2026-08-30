@@ -324,14 +324,15 @@ describe("renderAudit", () => {
 		expect(html).toContain('value="sub.unsubscribe"');
 	});
 
-	// All four import sources write audit rows; the dropdown has to offer all
-	// four or three of them are unfilterable despite being logged.
+	// All five import sources write audit rows; the dropdown has to offer all
+	// five or some of them are unfilterable despite being logged.
 	it("offers every import source in the action dropdown", () => {
 		const html = renderAudit([], filters, null, adminActions);
 		expect(html).toContain('value="import.disqus"');
 		expect(html).toContain('value="import.remark42"');
 		expect(html).toContain('value="import.comentario"');
 		expect(html).toContain('value="import.isso"');
+		expect(html).toContain('value="import.cusdis"');
 	});
 
 	it("links comment targets to /admin/comments/:id", () => {
@@ -1329,7 +1330,7 @@ describe("renderOperator — the import card", () => {
 		const options = [...html.matchAll(/<option value="([^"]+)"/g)].map(
 			(m) => m[1] as string,
 		);
-		expect(options).toEqual(["disqus", "remark42", "comentario", "isso"]);
+		expect(options).toEqual(["disqus", "remark42", "comentario", "isso", "cusdis"]);
 
 		const data = evalCardData(html);
 		for (const source of options) {
@@ -1360,10 +1361,11 @@ describe("renderOperator — the import card", () => {
 		expect(html).toContain("userbackup");
 	});
 
-	// Only Comentario takes one, and it is not decoration: a multi-domain
-	// export is refused outright, so without this field that operator has no
-	// way through the admin UI at all.
-	it("exposes the domain field, and only for the source that reads it", () => {
+	// Only the multi-site sources take one (Comentario's domain, Cusdis'
+	// project), and it is not decoration: a multi-domain export is refused
+	// outright, so without this field that operator has no way through the
+	// admin UI at all.
+	it("exposes the domain field, and only for the sources that read it", () => {
 		expect(html).toContain('x-model="domain"');
 		expect(html).toContain('x-show="spec.domainFlag"');
 		expect(html).toContain("domainFlag: true");
@@ -1371,9 +1373,9 @@ describe("renderOperator — the import card", () => {
 		expect(html).toContain("x-import-domain");
 	});
 
-	// Only isso reads it — a path has no host of its own, so this is the one
-	// source where an operator can supply one for permalinks.
-	it("exposes the site field, and only for the source that reads it", () => {
+	// Only isso and Cusdis read it — both store a path rather than a URL, so
+	// these are the sources where an operator can supply a host for permalinks.
+	it("exposes the site field, and only for the sources that read it", () => {
 		expect(html).toContain('x-model="site"');
 		expect(html).toContain('x-show="spec.siteFlag"');
 		expect(html).toContain("siteFlag: true");

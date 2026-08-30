@@ -19,7 +19,13 @@ import {
 	MAX_IMPORT_BYTES,
 	authorSeed,
 	decodeImportInput,
+	listIdentifiers,
+	requireKnownIdentifier,
+	resolveOnSite,
 	runImport,
+	slugDigest,
+	slugFromPath,
+	validateSiteOrigin,
 } from "../src/lib/import/core";
 import { asD1 } from "./helpers/d1";
 
@@ -569,6 +575,142 @@ describe("source fidelity mappings", () => {
 	});
 });
 
+describe("parent guards", () => {
+	// Two threads, one comment each, plus whatever the case adds. Every
+	// comment is approved so nothing is skipped for moderation reasons; the
+	// only thing that can drop a link is the guard under test.
+	const twoThreads = (extra: SourceExport["comments"]): SourceExport => ({
+		threads: [
+			{ source_id: "t1", link: "https://example.com/a", title: "A", created_at: AT },
+			{ source_id: "t2", link: "https://example.com/b", title: "B", created_at: AT },
+		],
+		comments: [
+			{
+				source_id: "a1",
+				thread_source_id: "t1",
+				parent_source_id: null,
+				created_at: AT,
+				status: "approved" as const,
+				body_md: "a",
+				author: { name: "A", email: null, is_anonymous: true },
+			},
+			{
+				source_id: "b1",
+				thread_source_id: "t2",
+				parent_source_id: null,
+				created_at: AT,
+				status: "approved" as const,
+				body_md: "b",
+				author: { name: "B", email: null, is_anonymous: true },
+			},
+			...extra,
+		],
+	});
+	const reply = (
+		source_id: string,
+		thread_source_id: string,
+		parent_source_id: string,
+	): SourceExport["comments"][number] => ({
+		source_id,
+		thread_source_id,
+		parent_source_id,
+		created_at: AT + 1,
+		status: "approved" as const,
+		body_md: "re",
+		author: { name: "R", email: null, is_anonymous: true },
+	});
+	// UPDATE binds: parent_id, depth, id. The core issues one per linked child
+	// and none for a root, so a missing UPDATE is the re-root.
+	const parentUpdates = (captured: Captured[]) =>
+		captured.filter((c) => c.sql.startsWith("UPDATE comments"));
+	const nativeId = (captured: Captured[], importId: string) =>
+		captured.find((c) => c.sql.startsWith("INSERT INTO comments") && c.binds[10] === importId)
+			?.binds[0];
+
+	it("links a reply to a parent on the same thread", async () => {
+		const { db, captured } = makeFreshDb();
+		await runImport(db, stubAdapter("x", twoThreads([reply("a2", "t1", "a1")])), "", "s");
+		const ups = parentUpdates(captured);
+		expect(ups).toHaveLength(1);
+		expect(ups[0]?.binds[0]).toBe(nativeId(captured, "a1"));
+		expect(ups[0]?.binds[1]).toBe(2);
+		expect(ups[0]?.binds[2]).toBe(nativeId(captured, "a2"));
+	});
+
+	it("re-roots a reply whose parent is on another thread", async () => {
+		// Source ids are global, thread membership is not: without the guard
+		// b2 would be UPDATEd to hang under a1, a row on a different post.
+		const { db, captured } = makeFreshDb();
+		await runImport(db, stubAdapter("x", twoThreads([reply("b2", "t2", "a1")])), "", "s");
+		expect(nativeId(captured, "b2")).toBeDefined();
+		expect(parentUpdates(captured)).toHaveLength(0);
+	});
+
+	it("re-roots a reply that names itself as its parent", async () => {
+		const { db, captured } = makeFreshDb();
+		await runImport(db, stubAdapter("x", twoThreads([reply("a2", "t1", "a2")])), "", "s");
+		expect(nativeId(captured, "a2")).toBeDefined();
+		expect(parentUpdates(captured)).toHaveLength(0);
+	});
+
+	it("re-roots a reply whose parent is not in the export", async () => {
+		const { db, captured } = makeFreshDb();
+		await runImport(db, stubAdapter("x", twoThreads([reply("a2", "t1", "ghost")])), "", "s");
+		expect(nativeId(captured, "a2")).toBeDefined();
+		expect(parentUpdates(captured)).toHaveLength(0);
+	});
+
+	it("still links the rest of the chain around a re-rooted reply", async () => {
+		// a2 -> a1 is fine; a3 -> b1 crosses threads. a3 becomes a root, a2 stays.
+		const { db, captured } = makeFreshDb();
+		await runImport(
+			db,
+			stubAdapter("x", twoThreads([reply("a2", "t1", "a1"), reply("a3", "t1", "b1")])),
+			"",
+			"s",
+		);
+		const ups = parentUpdates(captured);
+		expect(ups.map((u) => u.binds[2])).toEqual([nativeId(captured, "a2")]);
+	});
+});
+
+describe("validateSiteOrigin", () => {
+	it("passes null and an http(s) origin through", () => {
+		expect(validateSiteOrigin("isso", null)).toBeNull();
+		expect(validateSiteOrigin("isso", "https://blog.example.com")).toBe("https://blog.example.com");
+		expect(validateSiteOrigin("isso", "http://localhost:8787")).toBe("http://localhost:8787");
+	});
+
+	it("names the source and both doors in the error", () => {
+		// The adapters' own messages, verbatim: both admin cards surface this
+		// string, and the tests for each adapter pin it.
+		expect(() => validateSiteOrigin("isso", "ftp://x")).toThrow(
+			"isso import: site must be an http(s) origin (--site / x-import-site)",
+		);
+		expect(() => validateSiteOrigin("cusdis", "not a url")).toThrow(
+			"cusdis import: site must be an http(s) origin (--site / x-import-site)",
+		);
+	});
+});
+
+describe("resolveOnSite", () => {
+	const site = "https://blog.example.com";
+
+	it("resolves a path onto the site origin", () => {
+		expect(resolveOnSite("/hello", site)).toBe("https://blog.example.com/hello");
+		expect(resolveOnSite("what is this?", site)).toBe("https://blog.example.com/what%20is%20this?");
+	});
+
+	it("nulls a path that resolves off the origin", () => {
+		expect(resolveOnSite("//evil.example/x", site)).toBeNull();
+		expect(resolveOnSite("https://evil.example/x", site)).toBeNull();
+	});
+
+	it("nulls a path new URL rejects instead of throwing", () => {
+		expect(resolveOnSite("https://[", site)).toBeNull();
+	});
+});
+
 describe("decodeImportInput", () => {
 	const gzip = async (s: string): Promise<Uint8Array> => {
 		const src = new ReadableStream<Uint8Array>({
@@ -634,5 +776,75 @@ describe("decodeImportInput", () => {
 		const bomb = await gzip("A".repeat(MAX_IMPORT_BYTES + 1024));
 		expect(bomb.byteLength).toBeLessThan(1024 * 1024);
 		await expect(decodeImportInput(bomb)).rejects.toThrow(ImportTooLargeError);
+	});
+});
+
+/**
+ * `slugFromPath` is the shared rule for sources that store a path rather than
+ * a URL (isso `threads.uri`, Cusdis `pages.slug`). It was written inside the
+ * isso adapter and lifted here when Cusdis needed it; the isso suite still
+ * pins it through `issoSlug`, this pins the helper's own contract.
+ */
+describe("slugFromPath", () => {
+	it("strips and collapses slashes", () => {
+		expect(slugFromPath("/posts/deep//nested/", "x-", "x-root")).toBe("posts/deep/nested");
+		expect(slugFromPath("hello-world", "x-", "x-root")).toBe("hello-world");
+	});
+
+	it("names an empty path after the given root", () => {
+		expect(slugFromPath("/", "x-", "x-root")).toBe("x-root");
+		expect(slugFromPath("", "x-", "x-root")).toBe("x-root");
+		expect(slugFromPath("///", "x-", "x-root")).toBe("x-root");
+	});
+
+	it("keeps ? and # as part of the identity, and digests the result", () => {
+		const paged = slugFromPath("/posts/a?page=2", "x-", "x-root");
+		expect(paged).toMatch(/^x-[0-9a-f]{16}$/);
+		expect(paged).not.toBe(slugFromPath("/posts/a", "x-", "x-root"));
+		expect(slugFromPath("/gallery#12", "x-", "x-root")).not.toBe(
+			slugFromPath("/gallery#13", "x-", "x-root"),
+		);
+	});
+
+	it("digests a path the read API would reject", () => {
+		for (const bad of ["/a b", "/über", "/a:b", `/${"x".repeat(201)}`]) {
+			expect(slugFromPath(bad, "x-", "x-root")).toMatch(/^x-[0-9a-f]{16}$/);
+		}
+	});
+
+	it("digests the derived candidate, so slash variants share a page", () => {
+		expect(slugFromPath("/a b", "x-", "x-root")).toBe(slugFromPath("/a b/", "x-", "x-root"));
+		expect(slugFromPath("/a b", "x-", "x-root")).toBe(`x-${slugDigest("a b")}`);
+	});
+
+	it("is stable — the digest is part of the idempotency contract", () => {
+		// FNV-1a 64 of "a b". Changing this value re-pages every digested
+		// thread on re-import; if this test fails, that is the bug.
+		expect(slugDigest("a b")).toBe("e63f991904833892");
+	});
+});
+
+describe("requireKnownIdentifier", () => {
+	it("passes silently when the value is present", () => {
+		expect(() => requireKnownIdentifier("m", "a", new Set(["a", "b"]))).not.toThrow();
+	});
+
+	it("names the available identifiers when the value is absent", () => {
+		expect(() => requireKnownIdentifier("no site", "z", new Set(["b", "a"]))).toThrow(
+			'no site "z" — nothing would be imported. This file has: a, b',
+		);
+	});
+
+	it("says so when the file names none at all", () => {
+		expect(() => requireKnownIdentifier("no site", "z", new Set())).toThrow(
+			/names none at all/,
+		);
+	});
+
+	it("caps the listing at ten", () => {
+		const many = new Set(Array.from({ length: 12 }, (_, i) => `s${String(i).padStart(2, "0")}`));
+		expect(listIdentifiers(many)).toBe(
+			"s00, s01, s02, s03, s04, s05, s06, s07, s08, s09, …",
+		);
 	});
 });

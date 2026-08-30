@@ -1,7 +1,7 @@
 # Importing comments
 
-Garrul reads four comment systems today: Disqus, Remark42, Comentario (and
-its predecessor Commento), and isso. All four share one core
+Garrul reads five comment systems today: Disqus, Remark42, Comentario (and
+its predecessor Commento), isso, and Cusdis. All five share one core
 (`src/lib/import/core.ts`) and one contract — idempotent by the source's own
 comment ID, markdown in and out, moderation state carried across rather than
 flattened to approved, and every write INSERT-only so a re-run never
@@ -14,10 +14,13 @@ writes an export file, and you hand that file straight to the CLI or the
 section 10, alongside the rest of day-to-day operation — this page doesn't
 repeat that.
 
-isso is different, and gets its own page because of it: isso ships no export
-command at all. `comments.db` — a SQLite file — *is* the data store, read
-directly by the isso server itself. Getting comments out of it is a
-**two-step** process, and this page is that second step's manual.
+isso and Cusdis are different, and get this page because of it: neither
+ships an export command at all. isso's `comments.db` and Cusdis' `db.sqlite`
+— both SQLite files — *are* the data stores, read directly by the server
+itself. Getting comments out of either is a **two-step** process, and this
+page is that second step's manual. isso comes first; the
+[Cusdis section](#cusdis) follows the same pattern and calls out only what
+differs.
 
 ## Why isso needs a dumper
 
@@ -208,3 +211,176 @@ two-machine (or two-step) job:
 Both paths are idempotent: every comment carries `import_source='isso'` and
 isso's own comment ID as `import_id`, so re-running the same dump — the CLI
 against the same file twice, or a re-upload — inserts zero new rows.
+
+## Cusdis
+
+[Cusdis](https://github.com/djyde/cusdis) is deprecated upstream and ships
+no export — no dashboard button, no CLI, no export endpoint; its README now
+points users who want their data at a support email. Its `db.sqlite` *is*
+the data store, so it is the same two-step shape as isso:
+
+1. **`scripts/dump-cusdis.ts`** (`npm run dump-cusdis`) reads `db.sqlite`
+   with `node:sqlite` and writes a JSON document.
+2. **`src/lib/import/cusdis.ts`** is an ordinary adapter over that JSON.
+   It never touches SQLite, so nothing SQLite-shaped reaches the Worker.
+
+**SQLite only.** Cusdis' `DB_TYPE` also allows `pgsql` and `mysql` with a
+structurally identical schema, but SQLite is the default and what its
+documented docker quickstart uses. If your instance runs on Postgres or
+MySQL, convert to SQLite first (`pg_dump` → `sqlite3`, or any of the usual
+converters); the intermediate is database-agnostic, so a second dumper
+could emit the same shape later without touching the adapter.
+
+### Why not the API
+
+Cusdis has three read paths and none is usable for this, recorded here so
+nobody retries them: `GET /api/open/comments` returns only `approved: true`
+rows and never `by_email` (silently lossy); `GET
+/api/open/project/{id}/comments/latest` is authenticated but *destructive*
+— it marks what it returns as read; and the dashboard route is gated by a
+NextAuth session cookie with no public contract.
+
+### The intermediate format
+
+Cusdis has no import format of its own to mirror (its only importer reads
+Disqus XML), so this is Garrul's own shape, nested the way the tables
+relate — a project owns pages, a page owns comments. The dumper writes
+`source` first so the format tag is the first thing a reader sees; the admin
+upload sniffs on the `"source": "cusdis"` pair wherever it sits in the
+file.s head, so a dump re-serialised with sorted keys still uploads.
+
+```json
+{
+  "source": "cusdis",
+  "version": 1,
+  "projects": [
+    {
+      "id": "11111111-1111-4111-8111-111111111111",
+      "title": "Example Blog",
+      "deleted_at": null,
+      "pages": [
+        {
+          "id": "p0000001-0000-4000-8000-000000000001",
+          "slug": "/hello-world",
+          "url": "https://blog.example.com/hello-world",
+          "title": "Hello World",
+          "comments": [
+            {
+              "id": "c0000001-0000-4000-8000-000000000001",
+              "parent_id": null,
+              "created_at": 1700000000000,
+              "updated_at": 1700000000000,
+              "deleted_at": null,
+              "approved": true,
+              "by_nickname": "Alice Example",
+              "by_email": "alice@example.com",
+              "content": "raw **markdown**"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
+```
+
+| Field | Type | Source column | Note |
+| --- | --- | --- | --- |
+| `source` | `"cusdis"` | — | Format tag. The admin upload sniffs on it; the adapter refuses any other value. |
+| `version` | `1` | — | Intermediate version. The adapter refuses any other value. |
+| `projects[].id` | string | `projects.id` | Cusdis' project UUID — one project is one site. This is what `--project` / `x-import-domain` selects on. |
+| `projects[].title` | string | `projects.title` | Display only; Cusdis puts no uniqueness constraint on it, which is why selection is by id. |
+| `projects[].deleted_at` | number \| null | `projects.deleted_at` | Cusdis soft-deletes a whole project the way it soft-deletes a comment: the row, its pages and their comments all stay. Without `--project`, only projects with `null` here count — a deleted site is left out of an unfiltered import, and a dump whose every project is deleted is refused rather than imported. Naming a deleted project's id imports it. |
+| `pages[].id` | string | `pages.id` | Page UUID. The adapter keys threads on it, not on `slug`, so two pages in one project that happen to share a slug still resolve their parents independently; the core then merges them onto one Garrul page by slug. |
+| `pages[].slug` | string | `pages.slug` | Whatever the host page passed as `data-page-id` — a path by convention (`/hello-world`), but client-declared, so anything. Becomes the Garrul slug the same way an isso `uri` does: leading/trailing slashes stripped, runs collapsed, `/` falling back to `cusdis-root`, and a result the read API would reject (`SLUG_RE`) replaced by `cusdis-<16 hex digits>`, a stable digest of the derived path. Nothing is cut at `?` or `#`. |
+| `pages[].url` | string \| null | `pages.url` | Whatever the host page passed as `data-page-url`, often empty. Used as the post's permalink when it parses as an http(s) URL — and, under `--site`, only when it is on that origin; otherwise the adapter falls back to `--site` resolution (below), and without that the post has no URL. |
+| `pages[].title` | string \| null | `pages.title` | Client-declared `data-page-title`; nullable. |
+| `comments[].id` | string | `comments.id` | Cusdis' own comment UUID; becomes `import_id` for idempotency. |
+| `comments[].parent_id` | string \| null | `comments.parentId` | `null` for a root. Cusdis nests without limit; the core flattens anything past `MAX_REPLY_DEPTH` onto the deepest allowed ancestor. A parent that is not on the same page — possible only in a hand-edited database — is dropped by the core and the comment re-rooted, as is a parent missing from the dump. |
+| `comments[].created_at` | number | `comments.created_at` | Epoch **milliseconds**, Prisma's SQLite `DateTime` encoding, which is also Garrul's unit, so it passes through untouched. |
+| `comments[].updated_at` | number | `comments.updated_at` | Carried, but **not read as an edit**. Cusdis has no comment-edit feature; this is Prisma's `@updatedAt`, bumped by approve and delete, so deriving `edited_at` from it would mark every moderated comment "edited". `edited_at` is always `null` on a Cusdis import. |
+| `comments[].deleted_at` | number \| null | `comments.deletedAt` | Cusdis' soft delete. Set → `status: "deleted"`, gated by `--include-deleted`. The row keeps its nickname, email and content, so a deleted comment imports under its real author, not a tombstone ghost. |
+| `comments[].approved` | boolean | `comments.approved` | Cusdis' one moderation bit, stored as `0`/`1` and emitted as a real boolean. `true` → `approved`, `false` → `pending` (never gated — it lands in the moderation queue). Cusdis has no spam state, so `--include-spam` is a no-op. |
+| `comments[].by_nickname` | string | `comments.by_nickname` | Required in Cusdis. A blank one becomes the literal `"anonymous"`. |
+| `comments[].by_email` | string \| null | `comments.by_email` | Optional in Cusdis and often empty. Identity is the core's name+email HMAC seed, same as isso and Disqus — Cusdis has no commenter accounts. |
+| `comments[].content` | string | `comments.content` | Raw markdown, passed through unchanged. |
+
+Not emitted, deliberately: `projects.token` is the widget's API token — a
+credential — and `moderatorId`, `ownerId`, `webhook`,
+`fetch_latest_comments_at` and the notification flags name the operator or
+configure the instance. The database also holds next-auth's `users`,
+`accounts`, `sessions` and `verification_requests`; those describe the
+operator's login, not commenters, and hold live OAuth and session tokens.
+The dumper reads `projects`, `pages` and `comments` and nothing else.
+
+Projects and pages are ordered by id; comments within a page by
+`created_at`, then id. Two-space indented JSON with a trailing newline, so
+a regenerated dump diffs cleanly against a previous one.
+
+The dumper emits every page row it finds, including ones with no comments.
+The adapter drops a page with an empty `comments` array, so the dump's
+page count can exceed the dry-run plan's `pages_total`; that is expected.
+A comment whose `pageId` matches no page, or a page whose `projectId`
+matches no project, is a hard error: the dumper names the affected ids
+rather than silently dropping them.
+
+### Operator procedure
+
+Same two-machine shape as isso:
+
+1. **On the machine with `db.sqlite`** (a Garrul checkout and Node ≥ 24):
+
+   ```bash
+   npm run dump-cusdis -- /path/to/db.sqlite --out cusdis-dump.json
+   ```
+
+   Read-only — Cusdis can keep running against the file. Drop `--out` to
+   write to stdout, e.g. `ssh cusdishost 'npm run dump-cusdis --
+   /path/to/db.sqlite' > cusdis-dump.json`. Gzip it for the move if you
+   like; both import paths sniff and inflate it.
+
+2. **Import the JSON**, from the CLI or the admin UI:
+
+   - CLI:
+
+     ```bash
+     IP_HASH_SECRET=... npm run import-cusdis -- ./cusdis-dump.json --dry-run
+     ```
+
+     Drop `--dry-run` once the plan looks right; add `--remote` for the
+     deployed D1.
+   - Admin upload: `/admin/operator` → **Import comments** → source
+     **Cusdis**. Same toggles as the CLI, plus the **Project** and
+     **Site origin** fields below.
+
+   Flags, either path:
+
+   - `--project=<id>` (CLI) / **Project** (admin, header `x-import-domain`)
+     — one Cusdis database holds every project (site) you created, and
+     pages on two projects can share a slug, so a dump with more than one
+     project is **refused** rather than flattened. The refusal lists each
+     project's id and title; pass the id — Cusdis does not keep titles
+     unique — and run once per project you want. A single-project dump
+     needs no flag. A project you deleted in Cusdis (its row is still in
+     the database, `deleted_at` set) is not counted and not imported unless
+     you pass its id; a dump where every project is deleted is refused
+     with the ids so you can opt in.
+   - `--include-deleted` / the "include deleted" toggle — brings across
+     soft-deleted comments (`deleted_at` set). Cusdis does not cascade a
+     delete to replies, so without this a deleted parent's replies come
+     across as roots; with it, the thread keeps its exact shape and the
+     deleted comment keeps its real author and text.
+   - `--site=<origin>` (CLI) / **Site origin** (admin, header
+     `x-import-site`) — a page's `url` is client-declared and often empty.
+     Without this, a page's `url` is used as-is when it has one and the
+     rest have no URL until you set one by hand. With it, every permalink
+     is pinned to this origin: a `url` on it is kept, and for any other
+     page — no `url`, or one on some other host — the slug is resolved
+     against this origin instead, same-origin only, exactly as for isso.
+     An origin that is not `http(s)://…` is an error, not a silent no-URL
+     import.
+   - `--slug=<slug>` (CLI only) — put every imported comment on one page.
+
+Idempotent like the rest: `import_source='cusdis'` plus Cusdis' comment UUID
+as `import_id`, so a re-run — same file, or plain then gzipped — inserts
+zero rows.

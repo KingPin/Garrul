@@ -14,12 +14,13 @@
  * wrong rows and reports success.
  *
  * Not covered: `wranglerD1`, which shells out to a real wrangler, and
- * `parseImportArgs` / `requireSecret`, which call process.exit.
+ * `requireSecret`, which calls process.exit. `parseImportArgs` also exits,
+ * but is covered at the bottom with the exit stubbed.
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
-import { BindError, inline, parseRows, resolve } from "../scripts/import-cli";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { BindError, inline, parseImportArgs, parseRows, resolve } from "../scripts/import-cli";
 
 describe("inline", () => {
 	it("renders null and undefined as SQL NULL", () => {
@@ -223,7 +224,7 @@ describe("parseRows", () => {
  * but it catches exactly the drift that happened.
  */
 describe("every import CLI forwards --slug", () => {
-	const SOURCES = ["disqus", "remark42", "comentario", "isso"];
+	const SOURCES = ["disqus", "remark42", "comentario", "isso", "cusdis"];
 
 	it.each(SOURCES)("import-%s forwards slug_override", (source) => {
 		const src = readFileSync(join(__dirname, `../scripts/import-${source}.ts`), "utf8");
@@ -234,5 +235,73 @@ describe("every import CLI forwards --slug", () => {
 		const src = readFileSync(join(__dirname, "../scripts/import-isso.ts"), "utf8");
 		const usage = /usage: npm run \$\{TAG\} -- (.*)`/.exec(src)?.[1] ?? "";
 		expect(usage).toContain("[--slug=<slug>]");
+	});
+});
+
+/**
+ * `parseImportArgs` exits the process on a bad invocation, so these tests
+ * stub `process.exit` to throw and assert on the throw. The header's "not
+ * covered" note predates the strictness added here.
+ */
+describe("parseImportArgs", () => {
+	const USAGE = "usage: test";
+	const exitSpy = () =>
+		vi.spyOn(process, "exit").mockImplementation(((code: number) => {
+			throw new Error(`exit ${code}`);
+		}) as never);
+	const quiet = () => vi.spyOn(console, "error").mockImplementation(() => {});
+
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
+	it("parses the shared booleans and a --name=value option", () => {
+		const args = parseImportArgs(
+			["dump.json", "--remote", "--dry-run", "--include-deleted", "--site=https://a.example"],
+			USAGE,
+		);
+		expect(args.path).toBe("dump.json");
+		expect(args.isRemote).toBe(true);
+		expect(args.dryRun).toBe(true);
+		expect(args.includeDeleted).toBe(true);
+		expect(args.includeSpam).toBe(false);
+		expect(args.option("site")).toBe("https://a.example");
+		expect(args.option("project")).toBeNull();
+	});
+
+	it("exits 2 with usage when no path is given", () => {
+		exitSpy();
+		const err = quiet();
+		expect(() => parseImportArgs(["--dry-run"], USAGE)).toThrow("exit 2");
+		expect(err).toHaveBeenCalledWith(USAGE);
+	});
+
+	it("rejects the space form of an option instead of silently dropping it", () => {
+		// `--site https://a.example` is an unknown bare flag plus a stray
+		// positional. Before this check it parsed as site=null and the run
+		// went ahead with no permalinks.
+		exitSpy();
+		const err = quiet();
+		expect(() => parseImportArgs(["dump.json", "--site", "https://a.example"], USAGE)).toThrow(
+			"exit 2",
+		);
+		const lines = err.mock.calls.map((c) => String(c[0]));
+		expect(lines.some((l) => l.includes("unknown flag --site") && l.includes("--site=<value>"))).toBe(
+			true,
+		);
+		expect(lines.some((l) => l.includes("unexpected argument https://a.example"))).toBe(true);
+		expect(lines.at(-1)).toBe(USAGE);
+	});
+
+	it("rejects an unknown bare flag", () => {
+		exitSpy();
+		quiet();
+		expect(() => parseImportArgs(["dump.json", "--verbose"], USAGE)).toThrow("exit 2");
+	});
+
+	it("rejects a second positional", () => {
+		exitSpy();
+		quiet();
+		expect(() => parseImportArgs(["dump.json", "other.json"], USAGE)).toThrow("exit 2");
 	});
 });

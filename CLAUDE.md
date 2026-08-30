@@ -28,7 +28,7 @@ src/
                         #   webhook, webhook-sig, cors, log, settings, thread, email (Resend)
                         #   import/  — source-agnostic importer core + one file per source adapter
                         #              core.ts, html-to-markdown.ts, disqus.ts, remark42.ts,
-                        #              comentario.ts, isso.ts
+                        #              comentario.ts, isso.ts, cusdis.ts
   i18n/                 # en.ts string table; t(key) shim
   widget/               # embed.ts (source), embed.bundled.ts (generated), load-error.ts
                         #   boot.ts — the mount fetches + fallback rule; DOM-free so it is the one
@@ -47,7 +47,8 @@ scripts/                # setup.sh, rerender.ts, seed-demo.ts, db-export.sh, bui
                         #   build-agents-md.ts, build-version.ts, check-bundle-size.ts,
                         #   import-cli.ts (shared CLI plumbing), import-disqus.ts,
                         #   import-remark42.ts, import-comentario.ts, dump-isso.ts,
-                        #   import-isso.ts, upgrade.ts, upgrade/
+                        #   import-isso.ts, dump-cusdis.ts, import-cusdis.ts,
+                        #   upgrade.ts, upgrade/
 docs/                   # THEMING.md, ANTISPAM.md, troubleshooting.md, webhooks.md, telegram.md,
                         #   api-keys-design.md, privacy-policy.template.md, tos.template.md,
                         #   importing.md
@@ -104,8 +105,13 @@ the file directly and emits a JSON intermediate mirroring isso's own generic
 import format, and an ordinary adapter parses that intermediate the same
 way any other adapter parses a real export. The dumper stays under
 `scripts/`, never `src/lib/import/`, because no SQLite driver may ever be
-reachable from the Worker bundle. See `docs/importing.md` for the
-intermediate format and the operator procedure.
+reachable from the Worker bundle. Cusdis (`cusdis.ts`, `scripts/dump-cusdis.ts`)
+is the second Class B source, same split; its intermediate is Garrul's own
+shape (Cusdis has no import format to mirror), tagged `source: "cusdis"`, which
+is what the admin upload sniffs on. A multi-site source's per-site filter
+(Comentario's `domain`, Cusdis' `project`) lives on the **adapter**, not the
+dumper, so one dump serves every project. See `docs/importing.md` for the
+intermediate formats and the operator procedure.
 
 Five rules the core enforces, so no adapter has to:
 

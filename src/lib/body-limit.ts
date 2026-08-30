@@ -42,6 +42,7 @@ const EXEMPT_PATHS: ReadonlySet<string> = new Set([
 	"/admin/api/ops/import-remark42",
 	"/admin/api/ops/import-comentario",
 	"/admin/api/ops/import-isso",
+	"/admin/api/ops/import-cusdis",
 ]);
 
 /**

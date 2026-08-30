@@ -94,7 +94,6 @@
  * created_at`/`edited_at` are epoch milliseconds, so every value here is
  * `Math.round(x * 1000)`.
  */
-import { SLUG_RE } from "../slug";
 import {
 	type ImportAdapter,
 	type ImportOptions,
@@ -104,7 +103,10 @@ import {
 	type SourceExport,
 	type SourceStatus,
 	type SourceThread,
+	resolveOnSite,
 	runImport,
+	slugFromPath,
+	validateSiteOrigin,
 } from "./core";
 
 /** One comment in the intermediate, after parsing and defaulting. */
@@ -333,69 +335,21 @@ const ISSO_SLUG_PREFIX = "isso-";
  */
 export const TOMBSTONE_AUTHOR_ID = "tombstone";
 
-const FNV64_OFFSET_BASIS = 0xcbf29ce484222325n;
-const FNV64_PRIME = 0x100000001b3n;
-const UINT64_MASK = 0xffffffffffffffffn;
-
 /**
- * A stable 16-hex-digit digest of a slug candidate, for the synthetic slug.
+ * A Garrul slug from an isso thread's `uri` (R2) — `slugFromPath` (core)
+ * with this adapter's prefix and `isso-root` for `/`. The path-not-URL
+ * treatment (nothing cut at `?` or `#`, an unaddressable uri digested onto
+ * `isso-<digest>`) is documented on that helper; it was written here first
+ * and lifted when Cusdis needed the same rule for `pages.slug`.
  *
- * FNV-1a over the UTF-8 bytes: not a security primitive and not trying to be
- * — nothing here is secret and nothing is authenticated. What it has to be is
- * *stable*, since re-running an import against a changed digest would mint a
- * second page for every thread that used one, and wide enough that two
- * unaddressable uris on one site do not silently share a page.
+ * Why `?`/`#` matter for isso specifically: the widget sends
+ * `location.pathname` unless the host page set `data-isso-id`, and the isso
+ * server stores whatever arrived. A `?` or `#` can only be in there because
+ * the site owner put it in `data-isso-id`, which means the site had a
+ * separate thread on each side of it — a `/?p=1` / `/?p=2` permalink
+ * scheme, or `gallery#12` / `gallery#13` anchors.
  */
-const issoSlugDigest = (candidate: string): string => {
-	let h = FNV64_OFFSET_BASIS;
-	for (const byte of new TextEncoder().encode(candidate)) {
-		h = ((h ^ BigInt(byte)) * FNV64_PRIME) & UINT64_MASK;
-	}
-	return h.toString(16).padStart(16, "0");
-};
-
-/**
- * A Garrul slug from an isso thread's `uri` (R2).
- *
- * Leading/trailing slashes are stripped and repeated slashes collapsed, the
- * same way `slugFromLink` (core) treats a link's path. `/` has nothing left
- * once stripped, so it gets the same synthetic treatment as any other
- * link-less thread: `isso-root`.
- *
- * Unlike `slugFromLink`, nothing is cut at `?` or `#`. That function reads
- * a real URL, where those characters open a query string and a fragment
- * that never distinguish one page from another. An isso `uri` is not a URL:
- * it is the thread's identity, verbatim — the widget sends `location.
- * pathname` unless the host page set `data-isso-id`, and the isso server
- * stores whatever arrived. A `?` or `#` can only be in there because the
- * site owner put it in `data-isso-id`, which means the site had a separate
- * thread on each side of it: a `/?p=1` / `/?p=2` permalink scheme, or
- * `gallery#12` / `gallery#13` anchors. Cutting there would fold every one of
- * those threads onto a single page, silently, with only `merged_pages` to
- * hint at it. Kept whole, each stays its own thread; the characters fail the
- * slug rule below and the thread lands on its own digest slug.
- *
- * ## Unaddressable uris
- *
- * isso's `uri` is client-declared free text, so it can carry a space, a
- * non-ASCII character, a `:`, a `?`, or run past 200 characters. A Garrul
- * slug cannot: the read API rejects anything outside `SLUG_RE` with a 400.
- * Passing such a path through imports the comments onto a page no reader
- * can ever load, which is the worst of both outcomes — the import reports
- * success and the comments are unreachable.
- *
- * So a candidate that fails the rule falls back to `isso-<digest>`, the same
- * `slugFallbackPrefix` a link-less thread gets from the core. The digest is
- * taken over the *derived* candidate rather than the raw uri, so `/a b` and
- * `/a b/` still land on one page. The page keeps its title and (with
- * `--site`) its URL, so it is still identifiable in the admin UI; an
- * operator who wants a prettier slug renames the post there.
- */
-export const issoSlug = (uri: string): string => {
-	const collapsed = uri.replace(/^\/+|\/+$/g, "").replace(/\/+/g, "/");
-	const candidate = collapsed || "isso-root";
-	return SLUG_RE.test(candidate) ? candidate : `${ISSO_SLUG_PREFIX}${issoSlugDigest(candidate)}`;
-};
+export const issoSlug = (uri: string): string => slugFromPath(uri, ISSO_SLUG_PREFIX, "isso-root");
 
 /**
  * isso's `mode` integer, mapped onto Garrul's moderation vocabulary.
@@ -428,10 +382,6 @@ export const issoStatus = (mode: number, index: string): SourceStatus => {
 const toExport = (threads: IssoThread[], site: string | null): SourceExport => {
 	const outThreads: SourceThread[] = [];
 	const comments: SourceComment[] = [];
-	// Hoisted once: re-parsing `site` per thread is wasted work, and `site`
-	// was already validated as an http(s) origin at adapter construction.
-	const siteOrigin = site ? new URL(site).origin : null;
-
 	threads.forEach((t, ti) => {
 		if (t.comments.length === 0) return;
 
@@ -463,23 +413,9 @@ const toExport = (threads: IssoThread[], site: string | null): SourceExport => {
 		}
 
 		// `uri` is client-declared, so a crafted value (`//evil.example/x`,
-		// or an absolute URL) can resolve off `site`'s own origin. Keep the
-		// link only when it lands back on that origin; otherwise null it out
-		// rather than throwing — one poisoned thread must not abort an
-		// otherwise-good import. A `uri` that `new URL` rejects outright
-		// (`"http://"`, `"https://["`) takes the same route for the same
-		// reason: an uncaught throw here aborts the whole import with a
-		// message that names no index at all.
-		let resolvedLink: URL | null = null;
-		if (site) {
-			try {
-				resolvedLink = new URL(t.id, site);
-			} catch {
-				resolvedLink = null;
-			}
-		}
-		const link =
-			resolvedLink && resolvedLink.origin === siteOrigin ? resolvedLink.href : null;
+		// or an absolute URL) can resolve off `site`'s own origin; the core
+		// keeps the link only when it lands back on that origin (R10).
+		const link = site ? resolveOnSite(t.id, site) : null;
 
 		outThreads.push({
 			source_id: t.id,
@@ -540,33 +476,8 @@ export type IssoAdapterOptions = {
 	site?: string | null;
 };
 
-/**
- * Names both doors, because both reach this check and neither operator can
- * see the other's.
- *
- * `POST /admin/api/ops/import-isso` surfaces this message verbatim on the
- * operator card, where the field is called **Site origin** and the header is
- * `x-import-site` — an operator there has no `--site` to correct, so a
- * message that names only the CLI flag reads as a bug in the page.
- */
-const SITE_ERROR = "isso import: site must be an http(s) origin (--site / x-import-site)";
-
-const validateSite = (site: string | null): string | null => {
-	if (!site) return null;
-	let u: URL;
-	try {
-		u = new URL(site);
-	} catch {
-		throw new Error(SITE_ERROR);
-	}
-	if (u.protocol !== "http:" && u.protocol !== "https:") {
-		throw new Error(SITE_ERROR);
-	}
-	return site;
-};
-
 export const issoAdapter = (opts: IssoAdapterOptions = {}): ImportAdapter => {
-	const site = validateSite(opts.site ?? null);
+	const site = validateSiteOrigin("isso", opts.site ?? null);
 	return {
 		source: "isso",
 		slugFallbackPrefix: ISSO_SLUG_PREFIX,
