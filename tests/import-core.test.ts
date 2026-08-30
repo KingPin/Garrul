@@ -21,9 +21,11 @@ import {
 	decodeImportInput,
 	listIdentifiers,
 	requireKnownIdentifier,
+	resolveOnSite,
 	runImport,
 	slugDigest,
 	slugFromPath,
+	validateSiteOrigin,
 } from "../src/lib/import/core";
 import { asD1 } from "./helpers/d1";
 
@@ -669,6 +671,43 @@ describe("parent guards", () => {
 		);
 		const ups = parentUpdates(captured);
 		expect(ups.map((u) => u.binds[2])).toEqual([nativeId(captured, "a2")]);
+	});
+});
+
+describe("validateSiteOrigin", () => {
+	it("passes null and an http(s) origin through", () => {
+		expect(validateSiteOrigin("isso", null)).toBeNull();
+		expect(validateSiteOrigin("isso", "https://blog.example.com")).toBe("https://blog.example.com");
+		expect(validateSiteOrigin("isso", "http://localhost:8787")).toBe("http://localhost:8787");
+	});
+
+	it("names the source and both doors in the error", () => {
+		// The adapters' own messages, verbatim: both admin cards surface this
+		// string, and the tests for each adapter pin it.
+		expect(() => validateSiteOrigin("isso", "ftp://x")).toThrow(
+			"isso import: site must be an http(s) origin (--site / x-import-site)",
+		);
+		expect(() => validateSiteOrigin("cusdis", "not a url")).toThrow(
+			"cusdis import: site must be an http(s) origin (--site / x-import-site)",
+		);
+	});
+});
+
+describe("resolveOnSite", () => {
+	const site = "https://blog.example.com";
+
+	it("resolves a path onto the site origin", () => {
+		expect(resolveOnSite("/hello", site)).toBe("https://blog.example.com/hello");
+		expect(resolveOnSite("what is this?", site)).toBe("https://blog.example.com/what%20is%20this?");
+	});
+
+	it("nulls a path that resolves off the origin", () => {
+		expect(resolveOnSite("//evil.example/x", site)).toBeNull();
+		expect(resolveOnSite("https://evil.example/x", site)).toBeNull();
+	});
+
+	it("nulls a path new URL rejects instead of throwing", () => {
+		expect(resolveOnSite("https://[", site)).toBeNull();
 	});
 });
 

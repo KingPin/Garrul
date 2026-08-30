@@ -291,7 +291,7 @@ file.s head, so a dump re-serialised with sorted keys still uploads.
 | `projects[].title` | string | `projects.title` | Display only; Cusdis puts no uniqueness constraint on it, which is why selection is by id. |
 | `pages[].id` | string | `pages.id` | Page UUID. The adapter keys threads on it, not on `slug`, so two pages in one project that happen to share a slug still resolve their parents independently; the core then merges them onto one Garrul page by slug. |
 | `pages[].slug` | string | `pages.slug` | Whatever the host page passed as `data-page-id` — a path by convention (`/hello-world`), but client-declared, so anything. Becomes the Garrul slug the same way an isso `uri` does: leading/trailing slashes stripped, runs collapsed, `/` falling back to `cusdis-root`, and a result the read API would reject (`SLUG_RE`) replaced by `cusdis-<16 hex digits>`, a stable digest of the derived path. Nothing is cut at `?` or `#`. |
-| `pages[].url` | string \| null | `pages.url` | Whatever the host page passed as `data-page-url`, often empty. Used as the post's permalink when it parses as an http(s) URL; otherwise the adapter falls back to `--site` resolution (below), and without that the post has no URL. |
+| `pages[].url` | string \| null | `pages.url` | Whatever the host page passed as `data-page-url`, often empty. Used as the post's permalink when it parses as an http(s) URL — and, under `--site`, only when it is on that origin; otherwise the adapter falls back to `--site` resolution (below), and without that the post has no URL. |
 | `pages[].title` | string \| null | `pages.title` | Client-declared `data-page-title`; nullable. |
 | `comments[].id` | string | `comments.id` | Cusdis' own comment UUID; becomes `import_id` for idempotency. |
 | `comments[].parent_id` | string \| null | `comments.parentId` | `null` for a root. Cusdis nests without limit; the core flattens anything past `MAX_REPLY_DEPTH` onto the deepest allowed ancestor. A parent that is not on the same page — possible only in a hand-edited database — is dropped by the core and the comment re-rooted, as is a parent missing from the dump. |
@@ -367,11 +367,13 @@ Same two-machine shape as isso:
      deleted comment keeps its real author and text.
    - `--site=<origin>` (CLI) / **Site origin** (admin, header
      `x-import-site`) — a page's `url` is client-declared and often empty.
-     For pages that have one, it is used as-is; for the rest, this origin
-     resolves the page's slug into a permalink, same-origin only, exactly
-     as for isso. Without it, such pages have no URL until you set one by
-     hand. An origin that is not `http(s)://…` is an error, not a silent
-     no-URL import.
+     Without this, a page's `url` is used as-is when it has one and the
+     rest have no URL until you set one by hand. With it, every permalink
+     is pinned to this origin: a `url` on it is kept, and for any other
+     page — no `url`, or one on some other host — the slug is resolved
+     against this origin instead, same-origin only, exactly as for isso.
+     An origin that is not `http(s)://…` is an error, not a silent no-URL
+     import.
    - `--slug=<slug>` (CLI only) — put every imported comment on one page.
 
 Idempotent like the rest: `import_source='cusdis'` plus Cusdis' comment UUID

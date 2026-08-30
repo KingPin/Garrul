@@ -103,8 +103,10 @@ import {
 	type SourceExport,
 	type SourceStatus,
 	type SourceThread,
+	resolveOnSite,
 	runImport,
 	slugFromPath,
+	validateSiteOrigin,
 } from "./core";
 
 /** One comment in the intermediate, after parsing and defaulting. */
@@ -380,10 +382,6 @@ export const issoStatus = (mode: number, index: string): SourceStatus => {
 const toExport = (threads: IssoThread[], site: string | null): SourceExport => {
 	const outThreads: SourceThread[] = [];
 	const comments: SourceComment[] = [];
-	// Hoisted once: re-parsing `site` per thread is wasted work, and `site`
-	// was already validated as an http(s) origin at adapter construction.
-	const siteOrigin = site ? new URL(site).origin : null;
-
 	threads.forEach((t, ti) => {
 		if (t.comments.length === 0) return;
 
@@ -415,23 +413,9 @@ const toExport = (threads: IssoThread[], site: string | null): SourceExport => {
 		}
 
 		// `uri` is client-declared, so a crafted value (`//evil.example/x`,
-		// or an absolute URL) can resolve off `site`'s own origin. Keep the
-		// link only when it lands back on that origin; otherwise null it out
-		// rather than throwing — one poisoned thread must not abort an
-		// otherwise-good import. A `uri` that `new URL` rejects outright
-		// (`"http://"`, `"https://["`) takes the same route for the same
-		// reason: an uncaught throw here aborts the whole import with a
-		// message that names no index at all.
-		let resolvedLink: URL | null = null;
-		if (site) {
-			try {
-				resolvedLink = new URL(t.id, site);
-			} catch {
-				resolvedLink = null;
-			}
-		}
-		const link =
-			resolvedLink && resolvedLink.origin === siteOrigin ? resolvedLink.href : null;
+		// or an absolute URL) can resolve off `site`'s own origin; the core
+		// keeps the link only when it lands back on that origin (R10).
+		const link = site ? resolveOnSite(t.id, site) : null;
 
 		outThreads.push({
 			source_id: t.id,
@@ -492,33 +476,8 @@ export type IssoAdapterOptions = {
 	site?: string | null;
 };
 
-/**
- * Names both doors, because both reach this check and neither operator can
- * see the other's.
- *
- * `POST /admin/api/ops/import-isso` surfaces this message verbatim on the
- * operator card, where the field is called **Site origin** and the header is
- * `x-import-site` — an operator there has no `--site` to correct, so a
- * message that names only the CLI flag reads as a bug in the page.
- */
-const SITE_ERROR = "isso import: site must be an http(s) origin (--site / x-import-site)";
-
-const validateSite = (site: string | null): string | null => {
-	if (!site) return null;
-	let u: URL;
-	try {
-		u = new URL(site);
-	} catch {
-		throw new Error(SITE_ERROR);
-	}
-	if (u.protocol !== "http:" && u.protocol !== "https:") {
-		throw new Error(SITE_ERROR);
-	}
-	return site;
-};
-
 export const issoAdapter = (opts: IssoAdapterOptions = {}): ImportAdapter => {
-	const site = validateSite(opts.site ?? null);
+	const site = validateSiteOrigin("isso", opts.site ?? null);
 	return {
 		source: "isso",
 		slugFallbackPrefix: ISSO_SLUG_PREFIX,

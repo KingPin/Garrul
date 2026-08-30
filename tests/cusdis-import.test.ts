@@ -373,6 +373,18 @@ describe("threads", () => {
 		expect(out.comments).toHaveLength(1);
 	});
 
+	it("sets aside an off-origin page url under a site and resolves the slug instead", () => {
+		// `url` is client-declared like `slug`; once the operator has named an
+		// origin, neither gets to point a permalink somewhere else.
+		const d = dump([
+			project({ pages: [page({ slug: "/hello", url: "https://evil.example/hello" })] }),
+		]);
+		const out = cusdisAdapter({ site: "https://blog.example.com" }).parse(d);
+		expect(out.threads[0]?.link).toBe("https://blog.example.com/hello");
+		// Without a site there is nothing to pin to, so the url stands.
+		expect(CUSDIS_ADAPTER.parse(d).threads[0]?.link).toBe("https://evil.example/hello");
+	});
+
 	it("ignores a page url that is not http(s)", () => {
 		const d = dump([project({ pages: [page({ url: "javascript:alert(1)" })] })]);
 		expect(CUSDIS_ADAPTER.parse(d).threads[0]?.link).toBeNull();

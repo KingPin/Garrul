@@ -408,6 +408,57 @@ export const requireKnownIdentifier = (
 };
 
 /**
+ * Validate an adapter's optional `site` origin, or throw naming both doors.
+ *
+ * A source that stores paths rather than URLs (isso's `threads.uri`, Cusdis'
+ * `pages.slug`) needs a host from the operator before it can write a
+ * permalink. Must parse as `http:`/`https:` — checked eagerly, at adapter
+ * construction, rather than left to surface as a broken permalink later.
+ *
+ * The message names both the CLI flag and the admin header because both
+ * reach this check and neither operator can see the other's: the admin
+ * upload surfaces it verbatim on the operator card, where the field is
+ * called **Site origin**, so a message naming only `--site` reads there as
+ * a bug in the page. `source` is the adapter's tag, so the prefix stays
+ * "isso import:" / "cusdis import:" exactly as each shipped.
+ */
+export const validateSiteOrigin = (source: string, site: string | null): string | null => {
+	if (!site) return null;
+	const error = () =>
+		new Error(`${source} import: site must be an http(s) origin (--site / x-import-site)`);
+	let u: URL;
+	try {
+		u = new URL(site);
+	} catch {
+		throw error();
+	}
+	if (u.protocol !== "http:" && u.protocol !== "https:") throw error();
+	return site;
+};
+
+/**
+ * Resolve a client-declared path against `site`, keeping the result only
+ * when it lands on `site`'s own origin.
+ *
+ * The path is whatever a host page once passed to the widget, so a crafted
+ * one (`//evil.example/x`, or an absolute URL) can resolve off the origin
+ * the operator named. Nulled rather than thrown — one poisoned thread must
+ * not abort an otherwise-good import — and a path `new URL` rejects
+ * outright (`"http://"`, `"https://["`) takes the same route for the same
+ * reason: an uncaught throw here names no index at all. `site` must already
+ * have passed `validateSiteOrigin`.
+ */
+export const resolveOnSite = (path: string, site: string): string | null => {
+	let resolved: URL;
+	try {
+		resolved = new URL(path, site);
+	} catch {
+		return null;
+	}
+	return resolved.origin === new URL(site).origin ? resolved.href : null;
+};
+
+/**
  * A thread link reduced to something safe to store in `posts.url`, or null.
  *
  * `posts.url` is what `permalink.ts` redirects a reader to, so a non-http(s)

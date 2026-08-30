@@ -70,11 +70,13 @@
  * anything. It goes through the shared `slugFromPath`: leading/trailing
  * slashes stripped, runs collapsed, and a result the read API would reject
  * (`SLUG_RE`) replaced by a stable digest under the `cusdis-` prefix.
- * `Page.url` is likewise client-declared (`data-page-url`) and nullable;
- * it is used when it parses as an http(s) URL. When it is absent, the
- * optional `site` origin resolves the slug the same way the isso adapter
- * does — same-origin only, so a slug of `//evil.example/x` cannot smuggle
- * a foreign link in. Without either, the link is `null`.
+ * `Page.url` is likewise client-declared (`data-page-url`) and nullable.
+ * Without a `site`, it is used whenever it parses as an http(s) URL. With
+ * one, the optional `site` origin pins every link: a `url` on that origin
+ * is kept, anything else falls back to resolving the slug against `site`,
+ * same-origin only — so neither a slug of `//evil.example/x` nor a `url`
+ * of `https://evil.example/x` can smuggle a foreign permalink past the
+ * origin the operator named. Without either, the link is `null`.
  *
  * ## Threads keyed on page id, not slug
  *
@@ -94,8 +96,10 @@ import {
 	type SourceThread,
 	listIdentifiers,
 	requireKnownIdentifier,
+	resolveOnSite,
 	runImport,
 	slugFromPath,
+	validateSiteOrigin,
 } from "./core";
 
 export type CusdisComment = {
@@ -246,25 +250,30 @@ export const cusdisStatus = (c: Pick<CusdisComment, "approved" | "deleted_at">):
  * anything else (a relative path, a `javascript:` URL, garbage) falls
  * through to site resolution or `null`.
  */
-const pageUrl = (url: string | null): string | null => {
+const pageUrl = (url: string | null): URL | null => {
 	if (!url) return null;
 	try {
 		const u = new URL(url);
-		return u.protocol === "http:" || u.protocol === "https:" ? u.href : null;
+		return u.protocol === "http:" || u.protocol === "https:" ? u : null;
 	} catch {
 		return null;
 	}
 };
 
-const resolveAgainstSite = (slug: string, site: string | null): string | null => {
-	if (!site) return null;
-	let resolved: URL;
-	try {
-		resolved = new URL(slug, site);
-	} catch {
-		return null;
-	}
-	return resolved.origin === new URL(site).origin ? resolved.href : null;
+/**
+ * The permalink for a page — see "Slugs and links" in the header.
+ *
+ * Without `site` the page's own `url` is the only source of a link, so it is
+ * taken as it is. With `site`, the operator has named the origin every
+ * permalink must land on, and a client-declared `url` gets no more trust
+ * than a client-declared slug: off-origin, it is set aside and the slug is
+ * resolved against `site` instead (which may itself come back null).
+ */
+const pageLink = (page: CusdisPage, site: string | null): string | null => {
+	const own = pageUrl(page.url);
+	if (!site) return own?.href ?? null;
+	if (own && own.origin === new URL(site).origin) return own.href;
+	return resolveOnSite(page.slug, site);
 };
 
 const selectProject = (dump: CusdisDump, project: string | null): CusdisProject | null => {
@@ -308,7 +317,7 @@ const toExport = (dump: CusdisDump, project: string | null, site: string | null)
 		threads.push({
 			source_id: page.id,
 			slug: cusdisSlug(page.slug),
-			link: pageUrl(page.url) ?? resolveAgainstSite(page.slug, site),
+			link: pageLink(page, site),
 			title: page.title,
 			created_at: createdAt,
 		});
@@ -343,22 +352,8 @@ export type CusdisAdapterOptions = {
 	site?: string | null;
 };
 
-const SITE_ERROR = "cusdis import: site must be an http(s) origin (--site / x-import-site)";
-
-const validateSite = (site: string | null): string | null => {
-	if (!site) return null;
-	let u: URL;
-	try {
-		u = new URL(site);
-	} catch {
-		throw new Error(SITE_ERROR);
-	}
-	if (u.protocol !== "http:" && u.protocol !== "https:") throw new Error(SITE_ERROR);
-	return site;
-};
-
 export const cusdisAdapter = (opts: CusdisAdapterOptions = {}): ImportAdapter => {
-	const site = validateSite(opts.site ?? null);
+	const site = validateSiteOrigin("cusdis", opts.site ?? null);
 	const project = opts.project ?? null;
 	return {
 		source: "cusdis",
