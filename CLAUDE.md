@@ -94,7 +94,7 @@ Never log or store raw IPs. Hash via HMAC-SHA-256 with `IP_HASH_SECRET` as the k
 `src/lib/import/core.ts` owns everything that is true of every source; a source adapter owns only how to read its own export. Disqus was the first adapter (`disqus.ts`), followed by `remark42.ts` and
 `comentario.ts` — which reads both Comentario v3 and legacy Commento v1 off
 the document's own `version` field, under one `import_source` tag because they
-are one product lineage. #104 tracks the rest. A new adapter is one file exporting an `ImportAdapter` — `source`, `slugFallbackPrefix`, `parse(input) => SourceExport` — plus a thin `run<Source>Import` wrapper over `runImport`. Nothing else should need to change.
+are one product lineage. #110 tracks the deferred remainder (utterances/giscus). A new adapter is one file exporting an `ImportAdapter` — `source`, `slugFallbackPrefix`, `parse(input) => SourceExport` — plus a thin `run<Source>Import` wrapper over `runImport`. Nothing else should need to change.
 
 Most sources write their own export file that an adapter parses directly —
 call that Class A. isso (`isso.ts`) has no export command at all; its
