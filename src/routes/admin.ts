@@ -2673,8 +2673,13 @@ admin.post("/api/ops/import-comentario", async (c) => {
 	// errors name a record position rather than a record, so letting it
 	// speak is safe. This exists so an operator who picks a `.csv` gets a
 	// clear answer instead of a parser message.
+	//
+	// A Cusdis dump is also an object with a `version` key, and the v1
+	// adapter parses one as an empty export — no throw, a plan of zeros and
+	// an `import.comentario` audit row. Its `source` key is what sets it
+	// apart; no Comentario or Commento document has one.
 	const head = doc.slice(0, 4096).trimStart();
-	if (!head.startsWith("{") || !head.includes('"version"')) {
+	if (!head.startsWith("{") || !head.includes('"version"') || head.includes('"source"')) {
 		return c.json({ error: "not_comentario_export" }, 400);
 	}
 
@@ -2829,13 +2834,16 @@ admin.post("/api/ops/import-cusdis", async (c) => {
 		}
 		return c.json({ error: "not_cusdis_dump" }, 400);
 	}
-	// Shape check: the dumper always writes `source` as the document's first
-	// key, and that ordering is part of the intermediate's contract (see
-	// scripts/dump-cusdis.ts). It is what tells this file apart from a
-	// Comentario document (an object keyed on `version`) without parsing it,
-	// and it holds for a hand-serialised dump too as long as the key order
-	// is kept. The adapter does the real validation past this point.
-	const looksRight = /^\s*\{\s*"source"\s*:\s*"cusdis"/.test(doc.slice(0, 4096));
+	// Shape check: a JSON object carrying `"source": "cusdis"` somewhere in
+	// its head. That pair is what tells this file apart from a Comentario
+	// document (an object keyed on `version`) without parsing it. The dumper
+	// writes `source` first, but the sniff does not depend on the order — the
+	// CLI does no sniff at all and the adapter's own check is order-free, so
+	// a dump re-serialised through `jq -S` or `json.dumps(sort_keys=True)`
+	// has to land the same way on both entry points. The adapter does the
+	// real validation past this point.
+	const head = doc.slice(0, 4096).trimStart();
+	const looksRight = head.startsWith("{") && /"source"\s*:\s*"cusdis"/.test(head);
 	if (!looksRight) {
 		return c.json({ error: "not_cusdis_dump" }, 400);
 	}

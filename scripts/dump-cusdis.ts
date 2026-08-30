@@ -45,8 +45,9 @@
  *         comments: [ { id, parent_id, created_at, updated_at, deleted_at,
  *                       approved, by_nickname, by_email, content } ] } ] } ] }
  *
- * `source` is always the first key, and the admin upload route's format
- * sniff depends on that; it is part of the contract, not incidental.
+ * `source` is written first so a reader — human or the admin upload
+ * route.s sniff — sees the format tag before anything else. The sniff
+ * itself is order-free, so a re-serialised dump still uploads.
  *
  * A transport, not a translator: rows arrive as Cusdis wrote them.
  * `approved` and `deleted_at` travel through untranslated — mapping them
@@ -120,7 +121,7 @@ export type CusdisDumpProject = {
 	pages: CusdisDumpPage[];
 };
 
-/** The whole document. `source` first — the upload route sniffs on it. */
+/** The whole document. `source` first, so the format tag is the first thing read. */
 export type CusdisDump = {
 	source: "cusdis";
 	version: 1;

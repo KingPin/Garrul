@@ -107,8 +107,8 @@ way any other adapter parses a real export. The dumper stays under
 `scripts/`, never `src/lib/import/`, because no SQLite driver may ever be
 reachable from the Worker bundle. Cusdis (`cusdis.ts`, `scripts/dump-cusdis.ts`)
 is the second Class B source, same split; its intermediate is Garrul's own
-shape (Cusdis has no import format to mirror), with `source` as the first key
-because the admin upload sniffs on it. A multi-site source's per-site filter
+shape (Cusdis has no import format to mirror), tagged `source: "cusdis"`, which
+is what the admin upload sniffs on. A multi-site source's per-site filter
 (Comentario's `domain`, Cusdis' `project`) lives on the **adapter**, not the
 dumper, so one dump serves every project. See `docs/importing.md` for the
 intermediate formats and the operator procedure.

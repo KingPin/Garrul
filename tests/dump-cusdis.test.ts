@@ -14,7 +14,7 @@
  *      is where a page with no comments gets dropped.
  *   4. Shape — `approved` is a real boolean, `deleted_at` is a number or
  *      null, timestamps are epoch milliseconds untouched, `source` is the
- *      first key (the admin route's sniff depends on it).
+ *      first key.
  *   5. `projects.token` never reaches the output — it is the widget API
  *      credential — nor do `moderatorId`, `ownerId`, `webhook` or the
  *      notification columns. The fixture sets the token to a known
@@ -84,7 +84,7 @@ describe("dumpCusdis", () => {
 		expect(serialised).toBe(DUMP_JSON_BYTES);
 	});
 
-	it("puts source first, so the upload route can sniff on it", () => {
+	it("puts source first, so the format tag is the first thing a reader sees", () => {
 		const dump = dumpCusdis(dbPath);
 		expect(Object.keys(dump)).toEqual(["source", "version", "projects"]);
 		expect(dump.source).toBe("cusdis");

@@ -444,6 +444,16 @@ describe("POST /admin/api/ops/import-comentario", () => {
 		expect(await res.json()).toEqual({ error: "not_comentario_export" });
 	});
 
+	it("rejects a Cusdis dump sent to the Comentario endpoint", async () => {
+		// A Cusdis dump is also an object with a `version` key, and the v1
+		// adapter parses it as an empty export: no throw, a plan of zeros, an
+		// import.comentario audit row. The `source` key is what tells them apart.
+		const res = await uploadJson(CUSDIS);
+		expect(res.status).toBe(400);
+		expect(await res.json()).toEqual({ error: "not_comentario_export" });
+		expect(commentCount()).toBe(0);
+	});
+
 	it("is idempotent across a plain and a gzipped upload of the same file", async () => {
 		expect((await uploadJson(COMENTARIO)).status).toBe(200);
 		const res = await uploadJson(await gzip(COMENTARIO));
@@ -904,6 +914,21 @@ describe("POST /admin/api/ops/import-cusdis", () => {
 		const res = await uploadIssoJson(CUSDIS);
 		expect(res.status).toBe(400);
 		expect(await res.json()).toEqual({ error: "not_isso_dump" });
+	});
+
+	it("accepts a dump whose keys were re-sorted, as the CLI does", async () => {
+		// `jq -S` and `json.dumps(sort_keys=True)` put `projects` before
+		// `source`. The CLI does no sniff and the adapter.s check is order-free,
+		// so the upload has to agree with them on the same bytes.
+		const sorted = JSON.stringify(
+			Object.fromEntries(
+				Object.entries(JSON.parse(CUSDIS_ONE_PROJECT) as Record<string, unknown>).sort(),
+			),
+		);
+		expect(sorted.startsWith('{"projects"')).toBe(true);
+		const res = await uploadCusdisJson(sorted);
+		expect(res.status).toBe(200);
+		expect(commentCount()).toBe(3);
 	});
 
 	it("rejects an empty body", async () => {

@@ -244,9 +244,10 @@ NextAuth session cookie with no public contract.
 
 Cusdis has no import format of its own to mirror (its only importer reads
 Disqus XML), so this is Garrul's own shape, nested the way the tables
-relate — a project owns pages, a page owns comments. `source` is always the
-first key: the admin upload sniffs the file by it, so that order is part of
-the contract.
+relate — a project owns pages, a page owns comments. The dumper writes
+`source` first so the format tag is the first thing a reader sees; the admin
+upload sniffs on the `"source": "cusdis"` pair wherever it sits in the
+file.s head, so a dump re-serialised with sorted keys still uploads.
 
 ```json
 {
@@ -284,7 +285,7 @@ the contract.
 
 | Field | Type | Source column | Note |
 | --- | --- | --- | --- |
-| `source` | `"cusdis"` | — | Format tag. Must be the first key. |
+| `source` | `"cusdis"` | — | Format tag. The admin upload sniffs on it; the adapter refuses any other value. |
 | `version` | `1` | — | Intermediate version. The adapter refuses any other value. |
 | `projects[].id` | string | `projects.id` | Cusdis' project UUID — one project is one site. This is what `--project` / `x-import-domain` selects on. |
 | `projects[].title` | string | `projects.title` | Display only; Cusdis puts no uniqueness constraint on it, which is why selection is by id. |
