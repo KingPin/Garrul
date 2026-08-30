@@ -1,0 +1,55 @@
+# CodeQL advanced setup. This file replaces GitHub's "default setup" so the
+# scan config is versioned and reviewable like the rest of CI.
+#
+# - `security-extended` trades some precision for broader security coverage;
+#   the default-setup scan this replaces ran the plain `default` suite.
+# - The `actions` language scans the workflows themselves (untrusted-input,
+#   injection, unpinned-action queries).
+# - PR merges block on new high/critical findings via the repo's code-scanning
+#   check-failure threshold plus a ruleset that requires these checks on main.
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly, matching the cadence the default setup ran on.
+    - cron: "17 4 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write # upload SARIF to the Security tab
+      actions: read
+
+    strategy:
+      # One language failing should still report the other's verdict.
+      fail-fast: false
+      matrix:
+        include:
+          - language: javascript-typescript
+            build-mode: none
+          - language: actions
+            build-mode: none
+
+    steps:
+      # Pinned to a commit SHA, not a tag — see the note in ci.yml.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: github/codeql-action/init@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          queries: security-extended
+
+      - uses: github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+        with:
+          category: "/language:${{ matrix.language }}"

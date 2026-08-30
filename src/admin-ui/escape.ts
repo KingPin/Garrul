@@ -24,8 +24,14 @@ export const jsLiteral = (s: string): string => escapeHtml(jsLiteralRaw(s));
 // a block that is escapeHtml'd as a whole further out (see the x-data blobs in
 // admin-ui/pages/*). Running escapeHtml twice would emit `&amp;quot;`, which
 // decodes to the text `&quot;` instead of a quote and breaks the expression.
+// Chained single-character replaces rather than one char-class regex with a
+// function replacer: the output is byte-identical, but CodeQL's
+// js/bad-code-sanitization query only models literal-replacement escaping, so
+// the function form gets every jsLiteral flow flagged as unsanitized.
 export const jsLiteralRaw = (s: string): string =>
-	JSON.stringify(s).replace(
-		/[<>/\u2028\u2029]/g,
-		(c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`,
-	);
+	JSON.stringify(s)
+		.replace(/</g, "\\u003c")
+		.replace(/>/g, "\\u003e")
+		.replace(/\//g, "\\u002f")
+		.replace(/\u2028/g, "\\u2028")
+		.replace(/\u2029/g, "\\u2029");
