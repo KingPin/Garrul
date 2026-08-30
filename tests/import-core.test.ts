@@ -573,6 +573,105 @@ describe("source fidelity mappings", () => {
 	});
 });
 
+describe("parent guards", () => {
+	// Two threads, one comment each, plus whatever the case adds. Every
+	// comment is approved so nothing is skipped for moderation reasons; the
+	// only thing that can drop a link is the guard under test.
+	const twoThreads = (extra: SourceExport["comments"]): SourceExport => ({
+		threads: [
+			{ source_id: "t1", link: "https://example.com/a", title: "A", created_at: AT },
+			{ source_id: "t2", link: "https://example.com/b", title: "B", created_at: AT },
+		],
+		comments: [
+			{
+				source_id: "a1",
+				thread_source_id: "t1",
+				parent_source_id: null,
+				created_at: AT,
+				status: "approved" as const,
+				body_md: "a",
+				author: { name: "A", email: null, is_anonymous: true },
+			},
+			{
+				source_id: "b1",
+				thread_source_id: "t2",
+				parent_source_id: null,
+				created_at: AT,
+				status: "approved" as const,
+				body_md: "b",
+				author: { name: "B", email: null, is_anonymous: true },
+			},
+			...extra,
+		],
+	});
+	const reply = (
+		source_id: string,
+		thread_source_id: string,
+		parent_source_id: string,
+	): SourceExport["comments"][number] => ({
+		source_id,
+		thread_source_id,
+		parent_source_id,
+		created_at: AT + 1,
+		status: "approved" as const,
+		body_md: "re",
+		author: { name: "R", email: null, is_anonymous: true },
+	});
+	// UPDATE binds: parent_id, depth, id. The core issues one per linked child
+	// and none for a root, so a missing UPDATE is the re-root.
+	const parentUpdates = (captured: Captured[]) =>
+		captured.filter((c) => c.sql.startsWith("UPDATE comments"));
+	const nativeId = (captured: Captured[], importId: string) =>
+		captured.find((c) => c.sql.startsWith("INSERT INTO comments") && c.binds[10] === importId)
+			?.binds[0];
+
+	it("links a reply to a parent on the same thread", async () => {
+		const { db, captured } = makeFreshDb();
+		await runImport(db, stubAdapter("x", twoThreads([reply("a2", "t1", "a1")])), "", "s");
+		const ups = parentUpdates(captured);
+		expect(ups).toHaveLength(1);
+		expect(ups[0]?.binds[0]).toBe(nativeId(captured, "a1"));
+		expect(ups[0]?.binds[1]).toBe(2);
+		expect(ups[0]?.binds[2]).toBe(nativeId(captured, "a2"));
+	});
+
+	it("re-roots a reply whose parent is on another thread", async () => {
+		// Source ids are global, thread membership is not: without the guard
+		// b2 would be UPDATEd to hang under a1, a row on a different post.
+		const { db, captured } = makeFreshDb();
+		await runImport(db, stubAdapter("x", twoThreads([reply("b2", "t2", "a1")])), "", "s");
+		expect(nativeId(captured, "b2")).toBeDefined();
+		expect(parentUpdates(captured)).toHaveLength(0);
+	});
+
+	it("re-roots a reply that names itself as its parent", async () => {
+		const { db, captured } = makeFreshDb();
+		await runImport(db, stubAdapter("x", twoThreads([reply("a2", "t1", "a2")])), "", "s");
+		expect(nativeId(captured, "a2")).toBeDefined();
+		expect(parentUpdates(captured)).toHaveLength(0);
+	});
+
+	it("re-roots a reply whose parent is not in the export", async () => {
+		const { db, captured } = makeFreshDb();
+		await runImport(db, stubAdapter("x", twoThreads([reply("a2", "t1", "ghost")])), "", "s");
+		expect(nativeId(captured, "a2")).toBeDefined();
+		expect(parentUpdates(captured)).toHaveLength(0);
+	});
+
+	it("still links the rest of the chain around a re-rooted reply", async () => {
+		// a2 -> a1 is fine; a3 -> b1 crosses threads. a3 becomes a root, a2 stays.
+		const { db, captured } = makeFreshDb();
+		await runImport(
+			db,
+			stubAdapter("x", twoThreads([reply("a2", "t1", "a1"), reply("a3", "t1", "b1")])),
+			"",
+			"s",
+		);
+		const ups = parentUpdates(captured);
+		expect(ups.map((u) => u.binds[2])).toEqual([nativeId(captured, "a2")]);
+	});
+});
+
 describe("decodeImportInput", () => {
 	const gzip = async (s: string): Promise<Uint8Array> => {
 		const src = new ReadableStream<Uint8Array>({

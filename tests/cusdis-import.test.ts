@@ -446,7 +446,7 @@ describe("threading", () => {
 		expect(out.comments.find((c) => c.source_id === cid(3))?.parent_source_id).toBe(cid(1));
 	});
 
-	it("re-roots a parent that lives on another page", () => {
+	it("passes a cross-page parent through; the core re-roots it", () => {
 		const d = dump([
 			project({
 				pages: [
@@ -460,12 +460,15 @@ describe("threading", () => {
 			}),
 		]);
 		const out = CUSDIS_ADAPTER.parse(d);
-		expect(out.comments.find((c) => c.source_id === "b-1")?.parent_source_id).toBeNull();
+		// Adapters do not second-guess threading: `thread_source_id` is the
+		// page id, and the core drops a parent link that crosses threads (see
+		// tests/import-core.test.ts, "parent guards").
+		expect(out.comments.find((c) => c.source_id === "b-1")?.parent_source_id).toBe("a-1");
 	});
 
-	it("re-roots a parent that exists nowhere", () => {
+	it("passes a parent that exists nowhere through; the core re-roots it", () => {
 		const d = dump([project({ pages: [page({ comments: [comment({ parent_id: "ghost" })] })] })]);
-		expect(CUSDIS_ADAPTER.parse(d).comments[0]?.parent_source_id).toBeNull();
+		expect(CUSDIS_ADAPTER.parse(d).comments[0]?.parent_source_id).toBe("ghost");
 	});
 
 	it("flattens the ten-deep chain to MAX_REPLY_DEPTH", async () => {

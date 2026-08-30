@@ -735,11 +735,25 @@ export const runImport = async (
 		// Effective parent links: only pairs where BOTH sides were imported. A
 		// comment whose parent was skipped stays a root, and depth has to reflect
 		// that, so resolve depth from this map rather than from parent_source_id.
+		//
+		// Two more shapes are re-rooted here rather than trusted. A comment that
+		// names itself as its parent would otherwise be UPDATEd to point at its
+		// own row — depthOf terminates on the cycle, but the row it leaves
+		// behind is a self-loop the read path has to notice. And a parent on a
+		// different thread would hang the reply under a page it was never
+		// posted to: source ids are global, thread membership is not, and the
+		// SQL UPDATE below has no idea which post either row is on. Neither
+		// appears in a well-formed export; both appear in a hand-edited one,
+		// and every adapter walks untrusted input.
+		const threadOf = new Map<string, string>();
+		for (const c of parsed.comments) threadOf.set(c.source_id, c.thread_source_id);
 		const effectiveParent = new Map<string, string>();
 		for (const c of parsed.comments) {
 			if (!c.parent_source_id) continue;
+			if (c.parent_source_id === c.source_id) continue;
 			if (!nativeIdBySourceId.has(c.source_id)) continue;
 			if (!nativeIdBySourceId.has(c.parent_source_id)) continue;
+			if (threadOf.get(c.parent_source_id) !== c.thread_source_id) continue;
 			effectiveParent.set(c.source_id, c.parent_source_id);
 		}
 

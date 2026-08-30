@@ -78,11 +78,10 @@
  *
  * ## Threads keyed on page id, not slug
  *
- * `thread_source_id` is the page's UUID, and a comment's parent must be on
- * the same page. Cusdis' `parentId` is a global self-relation that its
- * own UI never points across pages, but a hand-edited database could; the
- * core resolves parents globally by `source_id`, so such a reply would be
- * hung under a thread it does not belong to. It is re-rooted here instead.
+ * `thread_source_id` is the page's UUID. Cusdis' `parentId` is a global
+ * self-relation that its own UI never points across pages, but a
+ * hand-edited database could; the core re-roots a reply whose parent sits
+ * on another thread, so the adapter passes `parent_id` through as it is.
  */
 import {
 	type ImportAdapter,
@@ -314,15 +313,13 @@ const toExport = (dump: CusdisDump, project: string | null, site: string | null)
 			created_at: createdAt,
 		});
 
-		const onThisPage = new Set(page.comments.map((c) => c.id));
 		for (const c of page.comments) {
 			comments.push({
 				source_id: c.id,
 				thread_source_id: page.id,
-				// A parent on another page (or nowhere) is re-rooted — see the
-				// header. `effectiveParent` in the core is global by source_id
-				// and would otherwise hang this reply under a foreign thread.
-				parent_source_id: c.parent_id !== null && onThisPage.has(c.parent_id) ? c.parent_id : null,
+				// Passed through as-is. A parent that is missing, on another
+				// page, or the comment itself is re-rooted by the core.
+				parent_source_id: c.parent_id,
 				created_at: c.created_at,
 				status: cusdisStatus(c),
 				edited_at: null,
