@@ -19,7 +19,11 @@ import {
 	MAX_IMPORT_BYTES,
 	authorSeed,
 	decodeImportInput,
+	listIdentifiers,
+	requireKnownIdentifier,
 	runImport,
+	slugDigest,
+	slugFromPath,
 } from "../src/lib/import/core";
 import { asD1 } from "./helpers/d1";
 
@@ -634,5 +638,75 @@ describe("decodeImportInput", () => {
 		const bomb = await gzip("A".repeat(MAX_IMPORT_BYTES + 1024));
 		expect(bomb.byteLength).toBeLessThan(1024 * 1024);
 		await expect(decodeImportInput(bomb)).rejects.toThrow(ImportTooLargeError);
+	});
+});
+
+/**
+ * `slugFromPath` is the shared rule for sources that store a path rather than
+ * a URL (isso `threads.uri`, Cusdis `pages.slug`). It was written inside the
+ * isso adapter and lifted here when Cusdis needed it; the isso suite still
+ * pins it through `issoSlug`, this pins the helper's own contract.
+ */
+describe("slugFromPath", () => {
+	it("strips and collapses slashes", () => {
+		expect(slugFromPath("/posts/deep//nested/", "x-", "x-root")).toBe("posts/deep/nested");
+		expect(slugFromPath("hello-world", "x-", "x-root")).toBe("hello-world");
+	});
+
+	it("names an empty path after the given root", () => {
+		expect(slugFromPath("/", "x-", "x-root")).toBe("x-root");
+		expect(slugFromPath("", "x-", "x-root")).toBe("x-root");
+		expect(slugFromPath("///", "x-", "x-root")).toBe("x-root");
+	});
+
+	it("keeps ? and # as part of the identity, and digests the result", () => {
+		const paged = slugFromPath("/posts/a?page=2", "x-", "x-root");
+		expect(paged).toMatch(/^x-[0-9a-f]{16}$/);
+		expect(paged).not.toBe(slugFromPath("/posts/a", "x-", "x-root"));
+		expect(slugFromPath("/gallery#12", "x-", "x-root")).not.toBe(
+			slugFromPath("/gallery#13", "x-", "x-root"),
+		);
+	});
+
+	it("digests a path the read API would reject", () => {
+		for (const bad of ["/a b", "/über", "/a:b", `/${"x".repeat(201)}`]) {
+			expect(slugFromPath(bad, "x-", "x-root")).toMatch(/^x-[0-9a-f]{16}$/);
+		}
+	});
+
+	it("digests the derived candidate, so slash variants share a page", () => {
+		expect(slugFromPath("/a b", "x-", "x-root")).toBe(slugFromPath("/a b/", "x-", "x-root"));
+		expect(slugFromPath("/a b", "x-", "x-root")).toBe(`x-${slugDigest("a b")}`);
+	});
+
+	it("is stable — the digest is part of the idempotency contract", () => {
+		// FNV-1a 64 of "a b". Changing this value re-pages every digested
+		// thread on re-import; if this test fails, that is the bug.
+		expect(slugDigest("a b")).toBe("e63f991904833892");
+	});
+});
+
+describe("requireKnownIdentifier", () => {
+	it("passes silently when the value is present", () => {
+		expect(() => requireKnownIdentifier("m", "a", new Set(["a", "b"]))).not.toThrow();
+	});
+
+	it("names the available identifiers when the value is absent", () => {
+		expect(() => requireKnownIdentifier("no site", "z", new Set(["b", "a"]))).toThrow(
+			'no site "z" — nothing would be imported. This file has: a, b',
+		);
+	});
+
+	it("says so when the file names none at all", () => {
+		expect(() => requireKnownIdentifier("no site", "z", new Set())).toThrow(
+			/names none at all/,
+		);
+	});
+
+	it("caps the listing at ten", () => {
+		const many = new Set(Array.from({ length: 12 }, (_, i) => `s${String(i).padStart(2, "0")}`));
+		expect(listIdentifiers(many)).toBe(
+			"s00, s01, s02, s03, s04, s05, s06, s07, s08, s09, …",
+		);
 	});
 });

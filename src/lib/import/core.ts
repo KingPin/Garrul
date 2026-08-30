@@ -303,6 +303,110 @@ export const slugFromLink = (link: string | null, fallback: string): string => {
 	}
 };
 
+const FNV64_OFFSET_BASIS = 0xcbf29ce484222325n;
+const FNV64_PRIME = 0x100000001b3n;
+const UINT64_MASK = 0xffffffffffffffffn;
+
+/**
+ * A stable 16-hex-digit digest of a slug candidate, for a synthetic slug.
+ *
+ * FNV-1a over the UTF-8 bytes: not a security primitive and not trying to be
+ * — nothing here is secret and nothing is authenticated. What it has to be is
+ * *stable*, since re-running an import against a changed digest would mint a
+ * second page for every thread that used one, and wide enough that two
+ * unaddressable paths on one site do not silently share a page.
+ */
+export const slugDigest = (candidate: string): string => {
+	let h = FNV64_OFFSET_BASIS;
+	for (const byte of new TextEncoder().encode(candidate)) {
+		h = ((h ^ BigInt(byte)) * FNV64_PRIME) & UINT64_MASK;
+	}
+	return h.toString(16).padStart(16, "0");
+};
+
+/**
+ * A Garrul slug from a source that stores a *path*, not a URL — isso's
+ * `threads.uri`, Cusdis' `pages.slug`. Leading/trailing slashes are stripped
+ * and repeated slashes collapsed, the same way `slugFromLink` treats a link's
+ * path; a path with nothing left once stripped (`/`) becomes `root`.
+ *
+ * Unlike `slugFromLink`, nothing is cut at `?` or `#`. That function reads a
+ * real URL, where those characters open a query string and a fragment that
+ * never distinguish one page from another. A source-declared path is the
+ * thread's identity, verbatim: a `?` or `#` can only be in it because the
+ * site owner put it there, which means the site had a separate thread on
+ * each side of it. Cutting there would fold every one of those threads onto
+ * a single page, silently, with only `merged_pages` to hint at it.
+ *
+ * ## Unaddressable paths
+ *
+ * A client-declared path can carry a space, a non-ASCII character, a `:`, a
+ * `?`, or run past 200 characters. A Garrul slug cannot: the read API
+ * rejects anything outside `SLUG_RE` with a 400. Passing such a path through
+ * imports the comments onto a page no reader can ever load, which is the
+ * worst of both outcomes — the import reports success and the comments are
+ * unreachable. So a candidate that fails the rule falls back to
+ * `<prefix><digest>`, the same `slugFallbackPrefix` a link-less thread gets.
+ * The digest is taken over the *derived* candidate rather than the raw path,
+ * so `/a b` and `/a b/` still land on one page. The page keeps its title and
+ * (where the adapter has one) its URL, so it is still identifiable in the
+ * admin UI; an operator who wants a prettier slug renames the post there.
+ */
+export const slugFromPath = (path: string, prefix: string, root: string): string => {
+	const collapsed = path.replace(/^\/+|\/+$/g, "").replace(/\/+/g, "/");
+	const candidate = collapsed || root;
+	return SLUG_RE.test(candidate) ? candidate : `${prefix}${slugDigest(candidate)}`;
+};
+
+/**
+ * Render the identifiers a multi-site export was refused for.
+ *
+ * The refusal tells an operator to re-run with a filter, which is only
+ * actionable if they know what to pass — and for a source whose site id is
+ * a UUID that appears nowhere but inside the file, they cannot work it out.
+ * Naming them is the difference between a wall and a next step.
+ *
+ * Safe to put in an error that reaches an admin response body, unlike the
+ * record content every other throw in an adapter withholds: these are the
+ * operator's own site identifiers, not commenter data. Capped and sorted
+ * anyway, so a file with a thousand sites produces a message and not a
+ * dump.
+ */
+export const listIdentifiers = (values: Set<string>): string => {
+	const sorted = [...values].sort();
+	const shown = sorted.slice(0, 10);
+	return shown.join(", ") + (sorted.length > shown.length ? ", …" : "");
+};
+
+/**
+ * Refuse a site filter that names nothing in the file.
+ *
+ * The filter is how an operator answers a multi-site refusal, and the value
+ * they have to retype is a hostname or a UUID they only ever saw in an error
+ * message. Get it wrong and the filter selects no records at all, which is
+ * not an error anywhere downstream: the core imports an empty export happily
+ * and the run reports success having moved nothing. The operator's next move
+ * is then to go looking for a bug in the importer rather than a typo in
+ * their own argument.
+ *
+ * Named identifiers are safe in a message that reaches an admin response
+ * body for the same reason `listIdentifiers` is — they are the operator's
+ * own sites, not commenter data — and so is the rejected value, which the
+ * operator typed.
+ */
+export const requireKnownIdentifier = (
+	message: string,
+	value: string,
+	available: Set<string>,
+): void => {
+	if (available.has(value)) return;
+	throw new Error(
+		available.size === 0
+			? `${message} "${value}", and the file names none at all — nothing would be imported.`
+			: `${message} "${value}" — nothing would be imported. This file has: ${listIdentifiers(available)}`,
+	);
+};
+
 /**
  * A thread link reduced to something safe to store in `posts.url`, or null.
  *
