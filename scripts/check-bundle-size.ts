@@ -16,7 +16,7 @@
  * Run after `npm run build:embed`. CI invokes it via `npm run size`.
  */
 import { gzipSync } from "node:zlib";
-import { readFileSync, statSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -26,16 +26,17 @@ const BUNDLE = join(ROOT, "dist/embed.js");
 
 const LIMIT_GZ_BYTES = 30 * 1024;
 
+// Read directly and report on failure — a stat-then-read pair is a TOCTOU
+// race (CodeQL js/file-system-race), and the read's own error covers it.
+let raw: Buffer;
 try {
-	statSync(BUNDLE);
+	raw = readFileSync(BUNDLE);
 } catch {
 	console.error(
 		`[size] ${BUNDLE} does not exist — run \`npm run build:embed\` first.`,
 	);
 	process.exit(1);
 }
-
-const raw = readFileSync(BUNDLE);
 const gz = gzipSync(raw, { level: 9 });
 
 const kb = (n: number) => (n / 1024).toFixed(2);
