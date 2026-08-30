@@ -64,65 +64,6 @@ export const REACTION_KIND_SET: ReadonlySet<string> = new Set(
 );
 
 /**
- * Kinds this build still accepts on the wire but no longer renders.
- *
- * `like` 👍 was renamed to `fire` 🔥 in v2.10.0 — 👍 sat directly above an
- * up-vote button and meant the same thing twice. Migration 0022 rewrites the
- * stored rows, but a deploy and a migration are two events with a gap between
- * them, and whichever lands second leaves a window: old code writing `like`
- * after the rewrite would create rows no build can display. Accepting the old
- * spelling and normalizing it on the way in closes the window in both
- * directions.
- *
- * Removable once no deployment can still be running a pre-2.10.0 bundle.
- *
- * A `Map` rather than an object literal because the input is a wire value: a
- * plain object resolves inherited keys, so `"constructor"` and `"toString"`
- * would come back as *functions* and `"__proto__"` as `Object.prototype`, all
- * still typed `string`. Nothing downstream is hurt by that today only because
- * both callers immediately reject on `REACTION_KIND_SET`, which is too thin a
- * thread to hang a type signature on.
- */
-const DEPRECATED_KINDS: ReadonlyMap<string, string> = new Map([
-	["like", "fire"],
-]);
-
-/**
- * Map a wire value to the kind to store. Unknown kinds pass through unchanged
- * for the caller's own membership check to reject — this must never be the
- * thing that decides whether a kind is allowed.
- */
-export const normalizeReactionKind = (kind: string): string =>
-	DEPRECATED_KINDS.get(kind) ?? kind;
-
-/**
- * Echo a totals map back under the spelling the caller actually asked for.
- *
- * Accepting `like` on the way in is only half the job: the totals a route
- * returns are keyed by the *stored* kind, so a pre-2.10.0 bundle POSTs `like`,
- * gets `{ fire: N }` back, finds no `like` entry, and paints that cell to 0 —
- * then hides the button outright for an anonymous reader, because zero-count
- * kinds are hidden from them. The reader watches the button they just pressed
- * disappear. The page bar's variant is worse: `0` next to `aria-pressed="true"`.
- *
- * So when normalization rewrote the kind, send the count under both spellings.
- * A current bundle never triggers this (it asks for `fire`, nothing is
- * rewritten, the response shape is byte-identical), and the alias is drawn from
- * `DEPRECATED_KINDS` rather than trusting the raw wire value, so this cannot
- * mint a key from arbitrary caller input.
- *
- * Goes away with `DEPRECATED_KINDS`.
- */
-export const withDeprecatedAlias = (
-	totals: Record<string, number>,
-	requested: string,
-): Record<string, number> => {
-	const stored = DEPRECATED_KINDS.get(requested);
-	if (stored === undefined) return totals;
-	return { ...totals, [requested]: totals[stored] ?? 0 };
-};
-
-/**
  * Fold a toggle response back into a comment's reaction list.
  *
  * `totals` is authoritative for counts (it is a fresh aggregate over the

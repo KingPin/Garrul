@@ -276,26 +276,20 @@ describe("page reactions — toggle/dedup", () => {
 		expect(res.status).toBe(400);
 	});
 
-	it("counts the deprecated `like` as `fire` and answers in both spellings", async () => {
-		// Same alias as the comment-level route: an old cached bundle keeps working
-		// and lands its row under the kind this build renders. The article bar and
-		// the comment rows share one vocabulary, so they have to share this too.
-		//
-		// This used to assert `reactions.like` was *absent*, which pinned the bug:
-		// the only client that asks in that spelling is also the only one that reads
-		// the count back by it, and `{ fire: 1 }` alone makes its bar render 0 under
-		// a button it has just marked aria-pressed="true".
+	it("rejects the retired `like` spelling with 400", async () => {
+		// `like` became `fire` in v2.10.0 and was accepted on the wire as a
+		// deprecated alias through v2.23.x; the alias is removed, so the old
+		// spelling fails the same membership check as any unknown kind.
 		const { app, env } = mkApp({ page_reactions_enabled: true });
 		const res = await post(app, env, "/reactions", { slug: "p", kind: "like" });
-		expect(res.status).toBe(200);
-		const body = (await res.json()) as { reactions: Record<string, number> };
-		expect(body.reactions.fire).toBe(1);
-		expect(body.reactions.like).toBe(1);
+		expect(res.status).toBe(400);
+		const body = (await res.json()) as { error: string };
+		expect(body.error).toBe("invalid_kind");
 	});
 
-	it("does not invent an alias key for a current kind", async () => {
-		// The alias is strictly for callers that asked in the old spelling; a
-		// current bundle must see the response shape it has always seen.
+	it("keys totals by the stored kind alone", async () => {
+		// Response-shape pin: `reactions` is exactly the aggregate over stored
+		// rows — no synthesized keys.
 		const { app, env } = mkApp({ page_reactions_enabled: true });
 		const res = await post(app, env, "/reactions", { slug: "p", kind: "fire" });
 		expect(res.status).toBe(200);
