@@ -223,7 +223,7 @@ describe("parseRows", () => {
  * but it catches exactly the drift that happened.
  */
 describe("every import CLI forwards --slug", () => {
-	const SOURCES = ["disqus", "remark42", "comentario", "isso"];
+	const SOURCES = ["disqus", "remark42", "comentario", "isso", "cusdis"];
 
 	it.each(SOURCES)("import-%s forwards slug_override", (source) => {
 		const src = readFileSync(join(__dirname, `../scripts/import-${source}.ts`), "utf8");

@@ -44,6 +44,7 @@
     "import-remark42": "tsx scripts/import-remark42.ts",
     "import-comentario": "tsx scripts/import-comentario.ts",
     "import-isso": "tsx scripts/import-isso.ts",
+    "import-cusdis": "tsx scripts/import-cusdis.ts",
     "dump-isso": "tsx scripts/dump-isso.ts",
     "dump-cusdis": "tsx scripts/dump-cusdis.ts",
     "db:export": "bash scripts/db-export.sh",
