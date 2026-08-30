@@ -358,13 +358,14 @@ ${seedCard}
           'x-dry-run': this.dryRun ? '1' : '0',
           'x-include-deleted': this.includeDeleted ? '1' : '0',
           'x-include-spam': this.includeSpam ? '1' : '0',
-          // Only Comentario reads it, and only a non-empty value means
-          // anything — sending it blank would still be an empty header.
+          // Only the multi-site sources read it (Comentario's domain,
+          // Cusdis' project id), and only a non-empty value means anything
+          // — sending it blank would still be an empty header.
           ...(this.spec.domainFlag &amp;&amp; this.domain.trim()
             ? { 'x-import-domain': this.domain.trim() }
             : {}),
-          // Only isso reads it — a path has no host of its own, so this is
-          // the only source where an operator can supply one.
+          // Only the sources that store a path rather than a URL read it
+          // (isso always, Cusdis when a page has no url of its own).
           ...(this.spec.siteFlag &amp;&amp; this.site.trim()
             ? { 'x-import-site': this.site.trim() }
             : {}),
