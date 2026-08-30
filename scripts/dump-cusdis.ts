@@ -40,7 +40,7 @@
  * relate — a project owns pages, a page owns comments:
  *
  *   { source: "cusdis", version: 1,
- *     projects: [ { id, title,
+ *     projects: [ { id, title, deleted_at,
  *       pages: [ { id, slug, url, title,
  *         comments: [ { id, parent_id, created_at, updated_at, deleted_at,
  *                       approved, by_nickname, by_email, content } ] } ] } ] }
@@ -118,6 +118,12 @@ export type CusdisDumpPage = {
 export type CusdisDumpProject = {
 	id: string;
 	title: string;
+	/**
+	 * Cusdis soft-deletes a whole project the same way it soft-deletes a
+	 * comment: the row, its pages and their comments all stay. Carried so the
+	 * adapter can leave a deleted site out of an unfiltered import.
+	 */
+	deleted_at: number | null;
 	pages: CusdisDumpPage[];
 };
 
@@ -143,6 +149,21 @@ const asNumber = (v: SQLOutputValue, field: string): number => {
 	if (typeof v !== "number") {
 		throw new Error(`cusdis dump: expected ${field} to be a number, got ${typeName(v)}`);
 	}
+	return asInteger(v, field);
+};
+
+/**
+ * Every numeric column the dumper reads is an epoch-millisecond timestamp,
+ * and the adapter refuses anything that is not a safe integer. A REAL in one
+ * of these columns — a hand-typed `1700000000000.5`, or a value past 2^53 —
+ * would therefore dump cleanly and fail only at import, with a message
+ * naming a position in the JSON rather than a row in the database. Refuse it
+ * here, where the row is still in view.
+ */
+const asInteger = (v: number, field: string): number => {
+	if (!Number.isSafeInteger(v)) {
+		throw new Error(`cusdis dump: expected ${field} to be an integer, got ${v}`);
+	}
 	return v;
 };
 
@@ -159,7 +180,7 @@ const asNullableNumber = (v: SQLOutputValue, field: string): number | null => {
 	if (typeof v !== "number") {
 		throw new Error(`cusdis dump: expected ${field} to be a number or null, got ${typeName(v)}`);
 	}
-	return v;
+	return asInteger(v, field);
 };
 
 const asString = (v: SQLOutputValue, field: string): string => {
@@ -204,7 +225,7 @@ const asBoolean = (v: SQLOutputValue, field: string): boolean => {
 export const dumpCusdis = (dbPath: string): CusdisDump => {
 	const db = new DatabaseSync(dbPath, { readOnly: true });
 	try {
-		const projectRows: Row[] = db.prepare('SELECT id, title FROM projects ORDER BY id').all();
+		const projectRows: Row[] = db.prepare('SELECT id, title, deleted_at FROM projects ORDER BY id').all();
 		const pageRows: Row[] = db
 			.prepare('SELECT id, slug, url, title, "projectId" FROM pages ORDER BY id')
 			.all();
@@ -273,6 +294,7 @@ export const dumpCusdis = (dbPath: string): CusdisDump => {
 			return {
 				id,
 				title: asString(row.title ?? null, `projects.title (project ${id})`),
+				deleted_at: asNullableNumber(row.deleted_at ?? null, `projects.deleted_at (project ${id})`),
 				pages,
 			};
 		});

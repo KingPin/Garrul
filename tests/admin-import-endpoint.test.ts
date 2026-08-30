@@ -782,6 +782,7 @@ const CUSDIS = JSON.stringify({
 		{
 			id: CUSDIS_BLOG,
 			title: "Blog",
+			deleted_at: null,
 			pages: [
 				{
 					id: "p-1",
@@ -816,6 +817,7 @@ const CUSDIS = JSON.stringify({
 		{
 			id: CUSDIS_DOCS,
 			title: "Docs",
+			deleted_at: null,
 			pages: [
 				{
 					id: "p-2",

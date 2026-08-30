@@ -431,7 +431,8 @@ ${seedCard}
     bodies pass through unchanged. Unapproved comments land in the
     moderation queue. Tick "include deleted" to keep soft-deleted
     comments — Cusdis keeps their author and text, and a deleted parent's
-    replies otherwise become top-level.</p>
+    replies otherwise become top-level. A project you deleted in Cusdis is
+    left out unless you name its id below.</p>
   <p x-show="spec.domainFlag">
     <label style="display:inline-flex;gap:0.3rem;align-items:center">
       <span x-text="source === 'cusdis' ? 'Project (optional)' : 'Domain (optional)'"></span>

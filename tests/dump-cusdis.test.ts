@@ -45,6 +45,7 @@ const DUMP_JSON_BYTES = readFileSync(DUMP_JSON_PATH, "utf8");
 
 const BLOG = "11111111-1111-4111-8111-111111111111";
 const DOCS = "22222222-2222-4222-8222-222222222222";
+const OLD = "33333333-3333-4333-8333-333333333333";
 const cid = (n: number): string => `c${String(n).padStart(7, "0")}-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const pid = (n: number): string => `p${String(n).padStart(7, "0")}-0000-4000-8000-${String(n).padStart(12, "0")}`;
 
@@ -94,9 +95,10 @@ describe("dumpCusdis", () => {
 
 	it("orders projects and pages by id and comments by (created_at, id), regardless of insert order", () => {
 		const dump = dumpCusdis(dbPath);
-		expect(dump.projects.map((p) => p.id)).toEqual([BLOG, DOCS]);
+		expect(dump.projects.map((p) => p.id)).toEqual([BLOG, DOCS, OLD]);
 		expect(dump.projects[0]?.pages.map((p) => p.id)).toEqual([1, 2, 3, 4, 5].map(pid));
 		expect(dump.projects[1]?.pages.map((p) => p.id)).toEqual([pid(6)]);
+		expect(dump.projects[2]?.pages.map((p) => p.id)).toEqual([pid(7)]);
 		const hello = pageBySlug(dump, BLOG, "/hello-world");
 		expect(hello.comments.map((c) => c.id)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].map(cid));
 	});
@@ -142,10 +144,18 @@ describe("dumpCusdis", () => {
 		expect(byId.get(cid(8))?.by_nickname).toBe("");
 	});
 
+	it("carries projects.deleted_at through as a number or null", () => {
+		// The dumper is a transport: a deleted project's pages and comments are
+		// emitted like any other's, and the adapter decides what to do with it.
+		const dump = dumpCusdis(dbPath);
+		expect(dump.projects.map((p) => p.deleted_at)).toEqual([null, null, 1700006000000]);
+		expect(dump.projects[2]?.pages[0]?.comments).toHaveLength(1);
+	});
+
 	it("emits exactly the documented keys, in order, on every level", () => {
 		const dump = dumpCusdis(dbPath);
 		for (const project of dump.projects) {
-			expect(Object.keys(project)).toEqual(["id", "title", "pages"]);
+			expect(Object.keys(project)).toEqual(["id", "title", "deleted_at", "pages"]);
 			for (const page of project.pages) {
 				expect(Object.keys(page)).toEqual(["id", "slug", "url", "title", "comments"]);
 				for (const comment of page.comments) {
@@ -235,6 +245,20 @@ describe("dumpCusdis — NULLs, wrong types and orphans a real database can hold
 		const path = dbWith(`UPDATE comments SET created_at = '2023-11-14 22:13:20' WHERE id = '${cid(1)}'`);
 		expect(() => dumpCusdis(path)).toThrow(
 			`cusdis dump: expected comments.created_at (comment ${cid(1)}) to be a number, got string`,
+		);
+	});
+
+	it("refuses a REAL in a timestamp column rather than dumping a value the adapter will reject", () => {
+		// SQLite's DATETIME affinity is NUMERIC, so a hand-typed 1700000000000.5
+		// is stored as a REAL and read back as one. The adapter refuses any
+		// non-integer epoch, so this has to fail here, naming the row.
+		const path = dbWith(`UPDATE comments SET created_at = 1700000000000.5 WHERE id = '${cid(1)}'`);
+		expect(() => dumpCusdis(path)).toThrow(
+			`cusdis dump: expected comments.created_at (comment ${cid(1)}) to be an integer, got 1700000000000.5`,
+		);
+		const nullable = dbWith(`UPDATE comments SET "deletedAt" = 0.5 WHERE id = '${cid(1)}'`);
+		expect(() => dumpCusdis(nullable)).toThrow(
+			`cusdis dump: expected comments.deletedAt (comment ${cid(1)}) to be an integer, got 0.5`,
 		);
 	});
 

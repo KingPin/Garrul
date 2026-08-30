@@ -54,14 +54,18 @@ CREATE TABLE "comments" (
 	CONSTRAINT "comments_parentId_fkey" FOREIGN KEY ("parentId") REFERENCES "comments" ("id") ON DELETE SET NULL ON UPDATE CASCADE
 );
 
--- Two projects in one database. One Cusdis instance hosts many sites, and a
--- whole-DB dump spans all of them; both carry an `/about` page so a flattening
--- import would collide them. `token` is the project's widget API token — a
--- credential — and is set here precisely so a test can prove the dumper never
--- emits it. Inserted out of id order.
+-- Three projects in one database. One Cusdis instance hosts many sites, and a
+-- whole-DB dump spans all of them; the two live ones both carry an `/about`
+-- page so a flattening import would collide them. The third is soft-deleted
+-- (`deleted_at` set — Cusdis keeps the row, its pages and comments), so an
+-- unfiltered import must leave it out and an explicit id must still reach it.
+-- `token` is the project's widget API token — a credential — and is set here
+-- precisely so a test can prove the dumper never emits it. Inserted out of id
+-- order.
 INSERT INTO "projects" ("id", "title", "created_at", "updated_at", "deleted_at", "ownerId", "token", "fetch_latest_comments_at", "enable_notification", "webhook", "enableWebhook") VALUES
 	('22222222-2222-4222-8222-222222222222', 'Example Docs', 1700000000000, 1700000000000, NULL, 'u0000001-0000-4000-8000-000000000001', 'fixture-token-do-not-emit-2', NULL, 1, NULL, NULL),
-	('11111111-1111-4111-8111-111111111111', 'Example Blog', 1699990000000, 1699990000000, NULL, 'u0000001-0000-4000-8000-000000000001', 'fixture-token-do-not-emit-1', 1700002000000, 1, NULL, NULL);
+	('11111111-1111-4111-8111-111111111111', 'Example Blog', 1699990000000, 1699990000000, NULL, 'u0000001-0000-4000-8000-000000000001', 'fixture-token-do-not-emit-1', 1700002000000, 1, NULL, NULL),
+	('33333333-3333-4333-8333-333333333333', 'Old Site', 1699980000000, 1700006000000, 1700006000000, 'u0000001-0000-4000-8000-000000000001', 'fixture-token-do-not-emit-3', NULL, 1, NULL, NULL);
 
 -- Pages. `slug` is what the widget sent as `data-page-id` — client-declared,
 -- so it can be anything (see /what is this?). `url` and `title` are both
@@ -74,7 +78,8 @@ INSERT INTO "pages" ("id", "slug", "url", "title", "created_at", "updated_at", "
 	('p0000003-0000-4000-8000-000000000003', '/deep-thread', 'https://blog.example.com/deep-thread', 'Deep', 1700002000000, 1700002000000, '11111111-1111-4111-8111-111111111111'),
 	('p0000004-0000-4000-8000-000000000004', '/what is this?', NULL, 'Odd slug', 1700003000000, 1700003000000, '11111111-1111-4111-8111-111111111111'),
 	('p0000005-0000-4000-8000-000000000005', '/empty', 'https://blog.example.com/empty', 'Empty', 1700004000000, 1700004000000, '11111111-1111-4111-8111-111111111111'),
-	('p0000006-0000-4000-8000-000000000006', '/about', 'https://docs.example.com/about', 'About the docs', 1700005000000, 1700005000000, '22222222-2222-4222-8222-222222222222');
+	('p0000006-0000-4000-8000-000000000006', '/about', 'https://docs.example.com/about', 'About the docs', 1700005000000, 1700005000000, '22222222-2222-4222-8222-222222222222'),
+	('p0000007-0000-4000-8000-000000000007', '/archive', NULL, 'Archive', 1699985000000, 1699985000000, '33333333-3333-4333-8333-333333333333');
 
 -- /hello-world (project 1): c1 root, c2 root (markdown body), c3 reply-to-c1
 -- (same name+email as c1: one ghost), c4 root (same name, NULL email: a
@@ -136,3 +141,8 @@ INSERT INTO "comments" ("id", "pageId", "created_at", "updated_at", "deletedAt",
 -- /about (project 2): the colliding page on the other site.
 INSERT INTO "comments" ("id", "pageId", "created_at", "updated_at", "deletedAt", "moderatorId", "by_email", "by_nickname", "content", "approved", "parentId") VALUES
 	('c0000014-0000-4000-8000-000000000014', 'p0000006-0000-4000-8000-000000000006', 1700005100000, 1700005100000, NULL, NULL, 'erin@example.com', 'Erin Example', 'A comment on the other project''s about page.', 1, NULL);
+
+-- /archive (project 3, deleted): a live comment on a page of a soft-deleted
+-- project. Cusdis' project delete does not cascade, so the row is intact.
+INSERT INTO "comments" ("id", "pageId", "created_at", "updated_at", "deletedAt", "moderatorId", "by_email", "by_nickname", "content", "approved", "parentId") VALUES
+	('c0000015-0000-4000-8000-000000000015', 'p0000007-0000-4000-8000-000000000007', 1699985100000, 1699985100000, NULL, NULL, 'frank@example.org', 'Frank Example', 'A comment on the retired site.', 1, NULL);

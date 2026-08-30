@@ -32,7 +32,9 @@
  *                       operator created, and Garrul slugs are single-site.
  *                       A dump with more than one project is refused until
  *                       this names one — by project **id** (titles are not
- *                       unique). The refusal lists the ids and titles.
+ *                       unique). The refusal lists the ids and titles. A
+ *                       project deleted in Cusdis is not counted and not
+ *                       imported unless this names it.
  *   --site=<origin>     A page's `url` is client-declared and often empty.
  *                       When given, a page without one has its slug
  *                       resolved against this origin for `posts.url`;

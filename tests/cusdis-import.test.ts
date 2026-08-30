@@ -8,6 +8,7 @@
  *      `/what is this?` page lands on a digest the read API accepts.
  *   3. status — `deleted_at` wins, then `approved` → approved / pending.
  *   4. project selection — a two-project file is refused by id *and* title,
+ *      a project deleted in Cusdis is skipped unless named by id,
  *      `project` selects one by id, an unknown id lists what the file has,
  *      an empty filter is no filter.
  *   5. links — `url` when http(s), else `site` resolution (same-origin
@@ -100,11 +101,14 @@ const FIXTURE = readFileSync(join(__dirname, "fixtures/cusdis/dump.json"), "utf8
 
 const BLOG = "11111111-1111-4111-8111-111111111111";
 const DOCS = "22222222-2222-4222-8222-222222222222";
+/** Soft-deleted in Cusdis (`deleted_at` set); one page, one live comment. */
+const OLD = "33333333-3333-4333-8333-333333333333";
 const cid = (n: number): string => `c${String(n).padStart(7, "0")}-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const did = (n: number): string => `d${String(n).padStart(7, "0")}-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const pid = (n: number): string => `p${String(n).padStart(7, "0")}-0000-4000-8000-${String(n).padStart(12, "0")}`;
 
-// The fixture holds two projects, so every whole-fixture parse selects one.
+// The fixture holds two live projects (and a deleted one), so every
+// whole-fixture parse selects one.
 const BLOG_ADAPTER = cusdisAdapter({ project: BLOG });
 
 // ------------------------------ synthetic dumps -----------------------------
@@ -134,6 +138,7 @@ const page = (over: Partial<Record<string, unknown>> = {}) => ({
 const project = (over: Partial<Record<string, unknown>> = {}) => ({
 	id: "proj-1",
 	title: "Site",
+	deleted_at: null,
 	pages: [page()],
 	...over,
 });
@@ -146,8 +151,9 @@ const dump = (projects: Record<string, unknown>[]) =>
 describe("parseCusdisDump", () => {
 	it("parses the committed fixture", () => {
 		const parsed = parseCusdisDump(FIXTURE);
-		expect(parsed.projects.map((p) => p.id)).toEqual([BLOG, DOCS]);
+		expect(parsed.projects.map((p) => p.id)).toEqual([BLOG, DOCS, OLD]);
 		expect(parsed.projects[0]?.pages).toHaveLength(5);
+		expect(parsed.projects[2]?.deleted_at).toBe(1700006000000);
 	});
 
 	it("refuses non-JSON", () => {
@@ -289,10 +295,37 @@ describe("cusdisStatus", () => {
 // ---------------------------- 4. project selection --------------------------
 
 describe("project selection", () => {
-	it("refuses a two-project file, naming each project by id and title", () => {
+	it("refuses a two-project file, naming each live project by id and title", () => {
 		expect(() => CUSDIS_ADAPTER.parse(FIXTURE)).toThrow(
-			`cusdis dump: 2 projects in one file — Garrul slugs are single-site, so import one project at a time (pass a project id to select one): ${BLOG} (Example Blog), ${DOCS} (Example Docs)`,
+			`cusdis dump: 2 projects in one file — Garrul slugs are single-site, so import one project at a time (pass a project id to select one): ${BLOG} (Example Blog), ${DOCS} (Example Docs) (not counting 1 deleted in Cusdis)`,
 		);
+	});
+
+	it("does not mention deleted projects when there are none", () => {
+		const d = dump([project({ id: "a", title: "A" }), project({ id: "b", title: "B" })]);
+		expect(() => CUSDIS_ADAPTER.parse(d)).toThrow(/select one\): a \(A\), b \(B\)$/);
+	});
+
+	it("skips a deleted project when no filter is given", () => {
+		const d = dump([
+			project({ id: "gone", title: "Gone", deleted_at: 1700000000000 }),
+			project({ id: "live", title: "Live", pages: [page({ id: "p-live" })] }),
+		]);
+		expect(CUSDIS_ADAPTER.parse(d).threads.map((t) => t.source_id)).toEqual(["p-live"]);
+	});
+
+	it("refuses a file whose every project is deleted, naming them", () => {
+		const d = dump([project({ id: "gone", title: "Gone", deleted_at: 1700000000000 })]);
+		expect(() => CUSDIS_ADAPTER.parse(d)).toThrow(
+			"cusdis dump: every project in this file is deleted in Cusdis — pass a project id to import one anyway: gone (Gone)",
+		);
+	});
+
+	it("selects a deleted project when its id is given explicitly", () => {
+		const out = cusdisAdapter({ project: OLD }).parse(FIXTURE);
+		expect(out.threads.map((t) => t.source_id)).toEqual([pid(7)]);
+		expect(out.threads[0]?.slug).toBe("archive");
+		expect(out.comments.map((c) => c.source_id)).toEqual([cid(15)]);
 	});
 
 	it("selects one project by id", () => {
@@ -304,7 +337,7 @@ describe("project selection", () => {
 
 	it("refuses an unknown project id and lists what the file has", () => {
 		expect(() => cusdisAdapter({ project: "nope" }).parse(FIXTURE)).toThrow(
-			`cusdis dump: no project with id "nope" — nothing would be imported. This file has: ${BLOG}, ${DOCS}`,
+			`cusdis dump: no project with id "nope" — nothing would be imported. This file has: ${BLOG}, ${DOCS}, ${OLD}`,
 		);
 	});
 

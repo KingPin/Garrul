@@ -22,12 +22,15 @@
   is a real person's. `npm run identity:check` enforces this for everything
   under `tests/`.
 - **`token`**: the project's widget API token is a credential. It is set to
-  an obvious placeholder on both projects so `tests/dump-cusdis.test.ts` can
+  an obvious placeholder on every project so `tests/dump-cusdis.test.ts` can
   assert the dumper never emits it — a redaction that can't be tested is a
   redaction nobody knows is still there.
-- **Two projects**: one Cusdis instance hosts many sites, and both fixture
-  projects carry an `/about` page. This is the shape the adapter's
-  `project` filter exists for.
+- **Three projects**: one Cusdis instance hosts many sites, and both live
+  fixture projects carry an `/about` page. This is the shape the adapter's
+  `project` filter exists for. The third (`Old Site`) is soft-deleted —
+  `deleted_at` set, page and comment intact, exactly as Cusdis leaves a
+  deleted project — so the adapter's live-only default and its explicit-id
+  override are both exercised.
 - **Soft-delete**: `deletedAt` is a nullable timestamp, not a boolean, and
   Cusdis' `deleteComment` sets only that column — nickname, email and
   content stay, and replies are not touched. `c6` is a deleted parent with

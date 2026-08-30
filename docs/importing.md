@@ -257,6 +257,7 @@ file.s head, so a dump re-serialised with sorted keys still uploads.
     {
       "id": "11111111-1111-4111-8111-111111111111",
       "title": "Example Blog",
+      "deleted_at": null,
       "pages": [
         {
           "id": "p0000001-0000-4000-8000-000000000001",
@@ -289,6 +290,7 @@ file.s head, so a dump re-serialised with sorted keys still uploads.
 | `version` | `1` | — | Intermediate version. The adapter refuses any other value. |
 | `projects[].id` | string | `projects.id` | Cusdis' project UUID — one project is one site. This is what `--project` / `x-import-domain` selects on. |
 | `projects[].title` | string | `projects.title` | Display only; Cusdis puts no uniqueness constraint on it, which is why selection is by id. |
+| `projects[].deleted_at` | number \| null | `projects.deleted_at` | Cusdis soft-deletes a whole project the way it soft-deletes a comment: the row, its pages and their comments all stay. Without `--project`, only projects with `null` here count — a deleted site is left out of an unfiltered import, and a dump whose every project is deleted is refused rather than imported. Naming a deleted project's id imports it. |
 | `pages[].id` | string | `pages.id` | Page UUID. The adapter keys threads on it, not on `slug`, so two pages in one project that happen to share a slug still resolve their parents independently; the core then merges them onto one Garrul page by slug. |
 | `pages[].slug` | string | `pages.slug` | Whatever the host page passed as `data-page-id` — a path by convention (`/hello-world`), but client-declared, so anything. Becomes the Garrul slug the same way an isso `uri` does: leading/trailing slashes stripped, runs collapsed, `/` falling back to `cusdis-root`, and a result the read API would reject (`SLUG_RE`) replaced by `cusdis-<16 hex digits>`, a stable digest of the derived path. Nothing is cut at `?` or `#`. |
 | `pages[].url` | string \| null | `pages.url` | Whatever the host page passed as `data-page-url`, often empty. Used as the post's permalink when it parses as an http(s) URL — and, under `--site`, only when it is on that origin; otherwise the adapter falls back to `--site` resolution (below), and without that the post has no URL. |
@@ -359,7 +361,10 @@ Same two-machine shape as isso:
      project is **refused** rather than flattened. The refusal lists each
      project's id and title; pass the id — Cusdis does not keep titles
      unique — and run once per project you want. A single-project dump
-     needs no flag.
+     needs no flag. A project you deleted in Cusdis (its row is still in
+     the database, `deleted_at` set) is not counted and not imported unless
+     you pass its id; a dump where every project is deleted is refused
+     with the ids so you can opt in.
    - `--include-deleted` / the "include deleted" toggle — brings across
      soft-deleted comments (`deleted_at` set). Cusdis does not cascade a
      delete to replies, so without this a deleted parent's replies come

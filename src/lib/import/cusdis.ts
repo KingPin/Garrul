@@ -26,6 +26,14 @@
  * by **id**, never by title, because Cusdis puts no uniqueness constraint
  * on `projects.title`. Same policy as the Comentario adapter's `domain`.
  *
+ * Cusdis soft-deletes a project the way it soft-deletes a comment — the row
+ * and everything under it stay, `deleted_at` is set, the dashboard hides
+ * it. Without a filter only **live** projects count: a file with one live
+ * project imports it, several live ones are refused as above, and a file
+ * whose every project is deleted is refused rather than imported, naming
+ * them. An explicit `project` id may name a deleted project — the operator
+ * who types an id has seen the refusal, and the data is still there.
+ *
  * ## No user accounts
  *
  * A Cusdis commenter is never a registered user: identity lives on the
@@ -125,6 +133,7 @@ export type CusdisPage = {
 export type CusdisProject = {
 	id: string;
 	title: string;
+	deleted_at: number | null;
 	pages: CusdisPage[];
 };
 
@@ -200,6 +209,7 @@ const readProject = (raw: unknown, where: string): CusdisProject => {
 	return {
 		id: readString(raw.id, `${where}.id`),
 		title: readString(raw.title, `${where}.title`),
+		deleted_at: readNullableEpochMs(raw.deleted_at, `${where}.deleted_at`),
 		pages: raw.pages.map((p, pi) => readPage(p, `${where}.pages[${pi}]`)),
 	};
 };
@@ -287,15 +297,26 @@ const selectProject = (dump: CusdisDump, project: string | null): CusdisProject 
 		);
 		return dump.projects.find((p) => p.id === project) ?? null;
 	}
-	if (dump.projects.length > 1) {
-		// Name both id and title: the id is what `--project` takes, the title
-		// is how the operator knows their sites apart.
-		const named = new Set(dump.projects.map((p) => `${p.id} (${p.title})`));
+	// Name both id and title: the id is what `--project` takes, the title
+	// is how the operator knows their sites apart.
+	const named = (projects: CusdisProject[]) =>
+		listIdentifiers(new Set(projects.map((p) => `${p.id} (${p.title})`)));
+	const live = dump.projects.filter((p) => p.deleted_at === null);
+	if (live.length > 1) {
+		const deleted = dump.projects.length - live.length;
 		throw new Error(
-			`cusdis dump: ${dump.projects.length} projects in one file — Garrul slugs are single-site, so import one project at a time (pass a project id to select one): ${listIdentifiers(named)}`,
+			`cusdis dump: ${live.length} projects in one file — Garrul slugs are single-site, so import one project at a time (pass a project id to select one): ${named(live)}${deleted > 0 ? ` (not counting ${deleted} deleted in Cusdis)` : ""}`,
 		);
 	}
-	return dump.projects[0] ?? null;
+	if (live.length === 0 && dump.projects.length > 0) {
+		// Nothing live to fall back on. Importing a deleted site because it
+		// happened to be the only one would be a surprise; refusing and naming
+		// it lets the operator opt in by id.
+		throw new Error(
+			`cusdis dump: every project in this file is deleted in Cusdis — pass a project id to import one anyway: ${named(dump.projects)}`,
+		);
+	}
+	return live[0] ?? null;
 };
 
 const toExport = (dump: CusdisDump, project: string | null, site: string | null): SourceExport => {
