@@ -19,13 +19,9 @@ import { installMockCaches, uninstallMockCaches } from "./helpers/mock-caches";
 const COMMENT_ID = "01HC000000000000000000ABCD";
 const GHOST_ID = "01HU000000000000000000";
 
-// `writes` collects every (sql, args) pair a test cares to inspect. Only the
-// deprecated-alias test uses it — the kind that gets *stored* is not visible in
-// the response, so it has to be read off the statement.
-const makeDb = (status: string, writes: { sql: string; args: unknown[] }[] = []) => ({
+const makeDb = (status: string) => ({
 	prepare: (sql: string) => ({
-		bind(...args: unknown[]) {
-			writes.push({ sql, args });
+		bind() {
 			return this;
 		},
 		async first() {
@@ -102,14 +98,11 @@ const makeKv = () => ({
 	async delete() {},
 });
 
-const mkApp = (
-	status = "approved",
-	writes: { sql: string; args: unknown[] }[] = [],
-) => {
+const mkApp = (status = "approved") => {
 	const app = new Hono<{ Bindings: Record<string, unknown> }>();
 	app.route("/r", reactions);
 	const env = {
-		DB: makeDb(status, writes),
+		DB: makeDb(status),
 		TREE_CACHE: makeKv(),
 		SESSIONS: makeKv(),
 		ANALYTICS: { writeDataPoint: () => {} },
