@@ -12,7 +12,6 @@ import {
 	REACTION_KINDS,
 	REACTION_KIND_SET,
 	mergeReactionTotals,
-	normalizeReactionKind,
 } from "../src/widget/reactions";
 
 const prev = [
@@ -82,41 +81,10 @@ describe("the vocabulary", () => {
 
 	it("no longer offers `like`", () => {
 		// 👍 duplicated the up-vote directly below it; migration 0022 renamed the
-		// stored rows to `fire`. Re-adding it would resurrect the duplication and
-		// collide with the deprecated-alias mapping below.
+		// stored rows to `fire`. The wire alias that accepted `like` during the
+		// transition was removed in v2.24.0 — re-adding the kind would resurrect
+		// the duplication.
 		expect(REACTION_KIND_SET.has("like")).toBe(false);
 		expect(REACTION_KIND_SET.has("fire")).toBe(true);
-	});
-});
-
-describe("normalizeReactionKind", () => {
-	it("maps the deprecated `like` onto `fire`", () => {
-		// A pre-2.10.0 bundle in a reader's cache still POSTs `like`. Without this
-		// it would 400 — or, worse, land a row no build can render.
-		expect(normalizeReactionKind("like")).toBe("fire");
-	});
-
-	it("leaves a current kind alone", () => {
-		for (const r of REACTION_KINDS) {
-			expect(normalizeReactionKind(r.kind)).toBe(r.kind);
-		}
-	});
-
-	it("passes an unknown kind through unchanged", () => {
-		// Load-bearing: the routes reject on REACTION_KIND_SET *after* normalizing,
-		// so anything this invented would become a kind the API accepts.
-		expect(normalizeReactionKind("shrug")).toBe("shrug");
-		expect(REACTION_KIND_SET.has(normalizeReactionKind("shrug"))).toBe(false);
-	});
-
-	it("does not resolve inherited object keys", () => {
-		// The input is a wire value. A plain-object lookup answers for every key on
-		// Object.prototype, so these returned a function (or Object.prototype)
-		// while still typed `string` — a lie waiting for the first caller that
-		// trusts the return value instead of re-checking membership.
-		for (const key of ["constructor", "toString", "valueOf", "__proto__"]) {
-			expect(normalizeReactionKind(key)).toBe(key);
-			expect(typeof normalizeReactionKind(key)).toBe("string");
-		}
 	});
 });

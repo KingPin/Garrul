@@ -415,15 +415,12 @@ and a sort selector above the list. Neither needs any host-page wiring:
   the up-vote sitting directly below it) and `wow` was added. Migration
   0022 rewrites stored rows in both `reactions` and `page_reactions`, so
   anything reading `reactions.like` off `/api/v1/counts` or a tree
-  response sees `reactions.fire` after upgrading. Both POST routes still
-  accept `like` on the wire for one release and store it as `fire`, so a
-  reader holding a cached pre-2.10.0 bundle keeps working. That
-  compatibility runs both ways: a POST in the deprecated spelling gets
-  its answer echoed in the same spelling, so the response carries both
-  `fire` and a `like` key with the identical count. Without the echo the
-  old bundle would look up a key that is no longer there and blank the
-  cell it just incremented. Emoji are native unicode — the widget ships
-  no icon artwork.
+  response sees `reactions.fire` after upgrading. Both POST routes
+  accepted `like` on the wire as a deprecated alias during a transition
+  window; **removed in v2.24.0** — a POST with `kind: "like"` now
+  answers `400 invalid_kind`. A script pinned to the old spelling must
+  send `fire` instead. Emoji are native unicode — the widget ships no
+  icon artwork.
 - **Comment reactions patch in place** (since v2.9.0). Toggling an emoji
   on a comment (`POST /api/v1/reactions` `{comment_id, kind}`) no longer
   re-fetches and re-renders the
@@ -431,11 +428,7 @@ and a sort selector above the list. Neither needs any host-page wiring:
   `reactions` is `{kind: count}` for that one comment, and the widget
   updates just that row. Scroll position, open reply composers and typed
   drafts survive a reaction now. Zero-count kinds are absent from
-  `reactions`, matching the list payload — with one exception: the
-  deprecated-spelling echo above always carries a value, so a POST for
-  `like` that removes the last reaction answers `{"like": 0}`. Old
-  bundles drop non-positive counts on merge, which is exactly how they
-  clear the cell.
+  `reactions`, matching the list payload.
 - **Sorting** defaults to `new` (newest top-level threads first). `top`
   orders top-level threads by net score (`score_up - score_down`,
   newer-first on ties); replies inside a thread always stay

@@ -482,6 +482,16 @@
         "Safe to defer — old comments render as before in the meantime — but they will not pick up the sanitizer hardening until you do."
       ],
       "addedIn": "2.0.0"
+    },
+    {
+      "id": "like-reaction-alias-removed",
+      "summary": "The deprecated `like` reaction wire alias (kept since the v2.10.0 rename to `fire`) is removed. `POST /api/v1/reactions` and `POST /api/v1/page-engagement/reactions` now answer HTTP 400 `invalid_kind` to `kind: \"like\"`. The bundled widget has sent `fire` since v2.10.0, so only third-party scripts pinned to the old spelling are affected.",
+      "manualSteps": [
+        "Nothing to run for a standard install — cached pre-2.10.0 widget bundles expired long ago (embed.js caches for at most ~25 hours).",
+        "If any of your own scripts POST reactions with `kind: \"like\"` (the endpoints are documented in AGENTS.md), change them to send `fire` before upgrading.",
+        "Rollback is redeploying the prior tag: no migrations and no secrets are involved."
+      ],
+      "addedIn": "2.24.0"
     }
   ]
 }

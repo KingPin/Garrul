@@ -19,13 +19,9 @@ import { installMockCaches, uninstallMockCaches } from "./helpers/mock-caches";
 const COMMENT_ID = "01HC000000000000000000ABCD";
 const GHOST_ID = "01HU000000000000000000";
 
-// `writes` collects every (sql, args) pair a test cares to inspect. Only the
-// deprecated-alias test uses it — the kind that gets *stored* is not visible in
-// the response, so it has to be read off the statement.
-const makeDb = (status: string, writes: { sql: string; args: unknown[] }[] = []) => ({
+const makeDb = (status: string) => ({
 	prepare: (sql: string) => ({
-		bind(...args: unknown[]) {
-			writes.push({ sql, args });
+		bind() {
 			return this;
 		},
 		async first() {
@@ -102,14 +98,11 @@ const makeKv = () => ({
 	async delete() {},
 });
 
-const mkApp = (
-	status = "approved",
-	writes: { sql: string; args: unknown[] }[] = [],
-) => {
+const mkApp = (status = "approved") => {
 	const app = new Hono<{ Bindings: Record<string, unknown> }>();
 	app.route("/r", reactions);
 	const env = {
-		DB: makeDb(status, writes),
+		DB: makeDb(status),
 		TREE_CACHE: makeKv(),
 		SESSIONS: makeKv(),
 		ANALYTICS: { writeDataPoint: () => {} },
@@ -160,44 +153,17 @@ describe("POST /reactions — input validation", () => {
 		expect(body.error).toBe("invalid_kind");
 	});
 
-	it("accepts the deprecated `like` and stores it as `fire`", async () => {
-		// A reader holding a pre-2.10.0 bundle in cache still POSTs `like`.
-		// Rejecting it would break their buttons; storing it verbatim would land
-		// a row no build renders, which is exactly what migration 0022 cleaned up.
-		installMockCaches();
-		const writes: { sql: string; args: unknown[] }[] = [];
-		const { app, env } = mkApp("approved", writes);
+	it("rejects the retired `like` spelling with 400", async () => {
+		// `like` became `fire` in v2.10.0 and was accepted on the wire as a
+		// deprecated alias through v2.23.x. The alias is removed: pre-2.10.0
+		// bundles aged out of every cache long ago (embed.js is cached for at
+		// most ~25h), so a `like` today is a third-party script pinned to the
+		// old spelling — see the breakingChanges entry in release-manifest.json.
+		const { app, env } = mkApp();
 		const res = await post(app, env, { comment_id: COMMENT_ID, kind: "like" });
-		expect(res.status).toBe(200);
-		const insert = writes.find((w) => w.sql.includes("INSERT INTO reactions"));
-		// (comment_id, user_id, kind, created_at) — see toggleReaction.
-		expect(insert?.args[2]).toBe("fire");
-	});
-
-	it("answers a deprecated `like` in both spellings", async () => {
-		// Storing it as `fire` is only half the alias. That old bundle patches its
-		// row with mergeReactionTotals(prev, totals, "like", true) — keyed on `fire`
-		// alone it finds nothing, paints the cell to 0, and (for an anonymous
-		// reader, who never sees zero-count kinds) hides the button that was just
-		// pressed. Both spellings carry the same count.
-		installMockCaches();
-		const { app, env } = mkApp("approved");
-		const res = await post(app, env, { comment_id: COMMENT_ID, kind: "like" });
-		expect(res.status).toBe(200);
-		const body = (await res.json()) as { reactions: Record<string, number> };
-		expect(body.reactions.like).toBe(body.reactions.fire);
-		expect(body.reactions.like).toBeGreaterThan(0);
-	});
-
-	it("does not invent an alias key for a current kind", async () => {
-		// A current bundle asks for `fire`, nothing is rewritten, and it must see
-		// the response shape it has always seen.
-		installMockCaches();
-		const { app, env } = mkApp("approved");
-		const res = await post(app, env, { comment_id: COMMENT_ID, kind: "fire" });
-		expect(res.status).toBe(200);
-		const body = (await res.json()) as { reactions: Record<string, number> };
-		expect(body.reactions.like).toBeUndefined();
+		expect(res.status).toBe(400);
+		const body = (await res.json()) as { error: string };
+		expect(body.error).toBe("invalid_kind");
 	});
 
 	it("rejects a malformed JSON body with 400", async () => {
