@@ -3,6 +3,7 @@ import { en, type StringKey } from "./en";
 import { es } from "./es";
 import { fr } from "./fr";
 import { it } from "./it";
+import { nl } from "./nl";
 
 export type { StringKey };
 
@@ -81,6 +82,7 @@ export const LOCALES: Record<string, LocaleMeta> = {
 	es: { label: "Spanish", endonym: "Español", rtl: false, status: "machine-seeded" },
 	fr: { label: "French", endonym: "Français", rtl: false, status: "machine-seeded" },
 	it: { label: "Italian", endonym: "Italiano", rtl: false, status: "machine-seeded" },
+	nl: { label: "Dutch", endonym: "Nederlands", rtl: false, status: "machine-seeded" },
 };
 
 export type LocaleTable = Partial<Record<StringKey, Message>>;
@@ -93,7 +95,7 @@ export type LocaleTable = Partial<Record<StringKey, Message>>;
  * time someone adds a locale and forgets it, which is precisely the failure the
  * parity test exists to catch.
  */
-export const TABLES: Record<string, LocaleTable> = { en, de, es, fr, it };
+export const TABLES: Record<string, LocaleTable> = { en, de, es, fr, it, nl };
 
 /**
  * Whitelist check. Everything that reaches `tFor` from a request goes here.
