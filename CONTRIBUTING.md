@@ -107,8 +107,8 @@ it looks for a change in the set of variable *names*.
 This is the easiest useful PR in the repo, and the one we most need
 from people who aren't us.
 
-Garrul ships German, Spanish, French, Italian, Japanese, Dutch, Polish
-and Portuguese. **Every one of them is machine-seeded: LLM output that
+Garrul ships German, Spanish, French, Italian, Japanese, Norwegian
+Bokmål, Dutch, Polish and Portuguese. **Every one of them is machine-seeded: LLM output that
 no native speaker has checked.** What
 that fails at is register and consistency — "Post" as a noun where it
 should be an imperative, formal address where the rest of the file is

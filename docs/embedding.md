@@ -70,7 +70,7 @@ German composer under English prose reads as broken. `Accept-Language` and
 <div id="garrul" data-slug="my-post" data-lang="de"></div>
 ```
 
-English plus `de`, `es`, `fr`, `it`, `ja`, `nl`, `pl` and `pt` ship —
+English plus `de`, `es`, `fr`, `it`, `ja`, `nb`, `nl`, `pl` and `pt` ship —
 [the full table is in `i18n.md`](i18n.md#shipped-locales). Everything but
 English is **machine-seeded** (LLM output no native speaker has checked), so
 those are reachable only through an explicit `data-lang` and are never picked

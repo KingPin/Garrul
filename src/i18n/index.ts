@@ -4,6 +4,7 @@ import { es } from "./es";
 import { fr } from "./fr";
 import { it } from "./it";
 import { ja } from "./ja";
+import { nb } from "./nb";
 import { nl } from "./nl";
 import { pl } from "./pl";
 import { pt } from "./pt";
@@ -86,6 +87,20 @@ export const LOCALES: Record<string, LocaleMeta> = {
 	fr: { label: "French", endonym: "Français", rtl: false, status: "machine-seeded" },
 	it: { label: "Italian", endonym: "Italiano", rtl: false, status: "machine-seeded" },
 	ja: { label: "Japanese", endonym: "日本語", rtl: false, status: "machine-seeded" },
+	// `nb`, not `no`: the table is Bokmål specifically, and calling it `no` would
+	// claim the macrolanguage — including Nynorsk, which this is not and which
+	// can still arrive as its own `nn` entry. The cost is that a host page with
+	// `<html lang="no">` never matches, because `no` and `nb` are sibling primary
+	// subtags rather than tag-and-variant, so matchLocale's primary-subtag hop
+	// can't bridge them the way it bridges `pt-BR` → `pt`. That costs nothing
+	// while this is machine-seeded (never selected from `<html lang>` at all) and
+	// becomes worth revisiting if a native speaker ever promotes it to reviewed.
+	nb: {
+		label: "Norwegian Bokmål",
+		endonym: "Norsk bokmål",
+		rtl: false,
+		status: "machine-seeded",
+	},
 	nl: { label: "Dutch", endonym: "Nederlands", rtl: false, status: "machine-seeded" },
 	pl: { label: "Polish", endonym: "Polski", rtl: false, status: "machine-seeded" },
 	// Bare `pt`, not `pt-BR`: matchLocale tries the exact tag and then the primary
@@ -104,7 +119,18 @@ export type LocaleTable = Partial<Record<StringKey, Message>>;
  * time someone adds a locale and forgets it, which is precisely the failure the
  * parity test exists to catch.
  */
-export const TABLES: Record<string, LocaleTable> = { en, de, es, fr, it, ja, nl, pl, pt };
+export const TABLES: Record<string, LocaleTable> = {
+	en,
+	de,
+	es,
+	fr,
+	it,
+	ja,
+	nb,
+	nl,
+	pl,
+	pt,
+};
 
 /**
  * Whitelist check. Everything that reaches `tFor` from a request goes here.
