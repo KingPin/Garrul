@@ -2,6 +2,7 @@ import { de } from "./de";
 import { en, type StringKey } from "./en";
 import { es } from "./es";
 import { fr } from "./fr";
+import { it } from "./it";
 
 export type { StringKey };
 
@@ -62,19 +63,24 @@ export const FALLBACK_LOCALE = "en";
 /**
  * Every locale Garrul knows about.
  *
- * `de`/`es`/`fr` are machine-seeded: LLM output that no native speaker has
- * checked. They ship because the alternative — holding translations until a
+ * Everything but English is machine-seeded: LLM output that no native speaker
+ * has checked. They ship because the alternative — holding translations until a
  * volunteer appears — is how a project ends up with none, and because the
  * `machine-seeded` status confines them to operators who explicitly asked for
  * the language. What fails in machine translation of ~90 short UI strings is
  * register and consistency, not comprehensibility: exactly what a native
  * operator spots in thirty seconds and fixes in a five-line PR.
+ *
+ * Keep this list sorted by tag after English, and keep `TABLES` and
+ * `WIDGET_TABLES` in the same order — the parity test checks that a registered
+ * locale has both, but nothing enforces the reading order for a human.
  */
 export const LOCALES: Record<string, LocaleMeta> = {
 	en: { label: "English", endonym: "English", rtl: false, status: "source" },
 	de: { label: "German", endonym: "Deutsch", rtl: false, status: "machine-seeded" },
 	es: { label: "Spanish", endonym: "Español", rtl: false, status: "machine-seeded" },
 	fr: { label: "French", endonym: "Français", rtl: false, status: "machine-seeded" },
+	it: { label: "Italian", endonym: "Italiano", rtl: false, status: "machine-seeded" },
 };
 
 export type LocaleTable = Partial<Record<StringKey, Message>>;
@@ -87,7 +93,7 @@ export type LocaleTable = Partial<Record<StringKey, Message>>;
  * time someone adds a locale and forgets it, which is precisely the failure the
  * parity test exists to catch.
  */
-export const TABLES: Record<string, LocaleTable> = { en, de, es, fr };
+export const TABLES: Record<string, LocaleTable> = { en, de, es, fr, it };
 
 /**
  * Whitelist check. Everything that reaches `tFor` from a request goes here.
