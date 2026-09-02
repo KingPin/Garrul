@@ -5,6 +5,7 @@ import { fr } from "./fr";
 import { it } from "./it";
 import { ja } from "./ja";
 import { nl } from "./nl";
+import { pl } from "./pl";
 import { pt } from "./pt";
 
 export type { StringKey };
@@ -86,6 +87,7 @@ export const LOCALES: Record<string, LocaleMeta> = {
 	it: { label: "Italian", endonym: "Italiano", rtl: false, status: "machine-seeded" },
 	ja: { label: "Japanese", endonym: "日本語", rtl: false, status: "machine-seeded" },
 	nl: { label: "Dutch", endonym: "Nederlands", rtl: false, status: "machine-seeded" },
+	pl: { label: "Polish", endonym: "Polski", rtl: false, status: "machine-seeded" },
 	// Bare `pt`, not `pt-BR`: matchLocale tries the exact tag and then the primary
 	// subtag, so a `pt-BR` key would never match a host page's `<html lang="pt">`.
 	// One table serves both variants — see the variant policy in src/i18n/pt.ts.
@@ -102,7 +104,7 @@ export type LocaleTable = Partial<Record<StringKey, Message>>;
  * time someone adds a locale and forgets it, which is precisely the failure the
  * parity test exists to catch.
  */
-export const TABLES: Record<string, LocaleTable> = { en, de, es, fr, it, ja, nl, pt };
+export const TABLES: Record<string, LocaleTable> = { en, de, es, fr, it, ja, nl, pl, pt };
 
 /**
  * Whitelist check. Everything that reaches `tFor` from a request goes here.
@@ -140,11 +142,12 @@ const rulesFor = (locale: string): Intl.PluralRules => {
 /**
  * Category fallbacks, applied after the locale's own selected category.
  *
- * `one` is in the chain because several languages (Russian, Polish, Ukrainian)
+ * `one` is in the chain because several languages (Polish, Russian, Ukrainian)
  * never select `other` for an integer — a table filled in only as
- * `{one, other}` would otherwise resolve to nothing for most counts. None of
- * those locales ship yet; the chain costs one array entry and removes a
- * silent-breakage class that nobody could see in review.
+ * `{one, other}` would otherwise resolve to nothing for most counts. `pl` ships
+ * and is exactly this case, so its table carries `one`/`few`/`many` and treats
+ * `other` as the fraction-only form. The chain costs one array entry and
+ * removes a silent-breakage class that nobody could see in review.
  */
 const FALLBACK_FORMS: Intl.LDMLPluralRule[] = ["other", "one"];
 
