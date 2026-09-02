@@ -797,7 +797,7 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
 		group: "Display & pagination",
 		hint: "language for the widget, feed and emails (auto = follow the host page)",
 		description:
-			"Language the widget, the Atom feed and notification emails render in. `auto` (the default) means *not configured*, which lets the host page's `<html lang>` pick one; set an explicit tag to override the page. Accepts `auto` plus any locale Garrul ships — see the locale table in the README. An unknown tag falls back to `auto`. Machine-seeded translations are never selected from `<html lang>`; reaching one requires either this setting or `data-lang` on the embed. Comment text itself is never translated.",
+			"Language the widget, the Atom feed and notification emails render in. `auto` (the default) means *not configured*, which lets the host page's `<html lang>` pick one; set an explicit tag to override the page. Accepts `auto` plus any locale Garrul ships — see the shipped-locales table in `docs/i18n.md`. An unknown tag falls back to `auto`. Machine-seeded translations are never selected from `<html lang>`; reaching one requires either this setting or `data-lang` on the embed. Comment text itself is never translated.",
 		example: "auto",
 		adminEditable: true,
 		addedIn: "2.7.0",

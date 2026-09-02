@@ -346,6 +346,12 @@ reads the language.
 Regional tags match their base language (`de-AT` → `de`), and anything
 unrecognized falls back to English rather than failing the mount.
 
+Shipped tags: `en` (source) plus `de`, `es`, `fr`, `it`, `ja`, `nl`, `pl`
+and `pt` — every one of the eight machine-seeded, so every one of them is
+opt-in per the paragraph above. `pt` is the bare primary subtag and serves
+`pt-BR` and `pt-PT` alike; there is no `pt-BR` entry to match. The current
+list with endonyms is `docs/i18n.md`.
+
 Notes for integrators:
 
 - **English costs nothing on the wire.** The English table is compiled
