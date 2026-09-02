@@ -28,7 +28,7 @@ src/
                   ip-hash, webhook*, email, tree-cache, moderation, …
     import/       core.ts (source-agnostic importer) + one adapter per source
     spam/         heuristics, blocklist, akismet, workers-ai
-  i18n/           per-locale string tables (en + 8), widget/ mirrors them for the
+  i18n/           per-locale string tables (en + 9), widget/ mirrors them for the
                   widget surface, negotiate.ts (resolveLocale), tFor()
   widget/         embed.ts (source) → embed.bundled.ts (generated); boot.ts is the
                   DOM-free mount/fallback logic and the only browser-free testable part
