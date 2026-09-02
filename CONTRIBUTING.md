@@ -107,8 +107,9 @@ it looks for a change in the set of variable *names*.
 This is the easiest useful PR in the repo, and the one we most need
 from people who aren't us.
 
-Garrul ships German, Spanish and French. **All three are
-machine-seeded: LLM output that no native speaker has checked.** What
+Garrul ships German, Spanish, French, Italian, Japanese, Dutch, Polish
+and Portuguese. **Every one of them is machine-seeded: LLM output that
+no native speaker has checked.** What
 that fails at is register and consistency — "Post" as a noun where it
 should be an imperative, formal address where the rest of the file is
 informal — not comprehensibility. Those are exactly the mistakes a
@@ -136,7 +137,7 @@ and `src/i18n/index.ts`, and add an entry to `LOCALES` in
 `src/i18n/index.ts`:
 
 ```ts
-it: { label: "Italian", endonym: "Italiano", rtl: false, status: "machine-seeded" },
+sv: { label: "Swedish", endonym: "Svenska", rtl: false, status: "machine-seeded" },
 ```
 
 `endonym` is the language's name *in that language* — it's what an
