@@ -17,9 +17,10 @@ import { de } from "./de";
 import { es } from "./es";
 import { fr } from "./fr";
 import { it } from "./it";
+import { ja } from "./ja";
 import { nl } from "./nl";
 
 /** A locale's overrides. Partial by design; missing keys render English. */
 export type WidgetTable = Partial<Record<WidgetKey, StringValue>>;
 
-export const WIDGET_TABLES: Record<string, WidgetTable> = { de, es, fr, it, nl };
+export const WIDGET_TABLES: Record<string, WidgetTable> = { de, es, fr, it, ja, nl };
