@@ -107,11 +107,11 @@ export const ja = {
 	"w.reported": "報告しました。ありがとうございます",
 
 	// ── Votes and reactions ─────────────────────────────────────────────────
-	"w.vote.up": "高く評価",
-	"w.vote.down": "低く評価",
+	"w.vote.up": "高評価",
+	"w.vote.down": "低評価",
 	"w.page.helpful": "参考になりましたか？",
-	"w.page.up": "このページを高く評価",
-	"w.page.down": "このページを低く評価",
+	"w.page.up": "このページを高評価",
+	"w.page.down": "このページを低評価",
 	"w.page.react_prompt": "どう思いましたか？",
 	"w.react.fire": "最高",
 	"w.react.love": "好き",

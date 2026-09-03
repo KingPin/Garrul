@@ -103,5 +103,5 @@ export const pl = {
 	"feed.title": "Komentarze do {title}",
 	// Both genders are possible and the feed has no gender data, so the
 	// bracketed feminine ending is the standard Polish hedge.
-	"feed.entry_title": "{author} skomentował(a)",
+	"feed.entry_title": "Komentarz od {author}",
 } satisfies LocaleTable;
