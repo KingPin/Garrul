@@ -248,10 +248,11 @@ const interpolate = (template: string, vars: Vars | undefined): string => {
  * Pick the wording for `n` out of a category map.
  *
  * The fallback chain is selected → `other` → `one` → English, and every hop
- * earns its place. `de`/`es`/`fr` never need the last two, but Russian and
- * Polish never return `other` for an integer at all, so a table that only
- * filled `other` would render nothing for them — a breakage invisible to
- * anyone who doesn't read the language.
+ * earns its place. The Latin-script European locales never need the last two,
+ * but `pl` never returns `other` for an integer at all — its categories are
+ * `one`/`few`/`many` — so a table that only filled `other` would render
+ * nothing for it, a breakage invisible to anyone who doesn't read the
+ * language. `ja` is the mirror case: one category, `other`, and no `one`.
  */
 const selectPlural = (
 	forms: PluralForms,

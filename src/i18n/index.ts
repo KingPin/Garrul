@@ -2,6 +2,12 @@ import { de } from "./de";
 import { en, type StringKey } from "./en";
 import { es } from "./es";
 import { fr } from "./fr";
+import { it } from "./it";
+import { ja } from "./ja";
+import { nb } from "./nb";
+import { nl } from "./nl";
+import { pl } from "./pl";
+import { pt } from "./pt";
 
 export type { StringKey };
 
@@ -62,19 +68,45 @@ export const FALLBACK_LOCALE = "en";
 /**
  * Every locale Garrul knows about.
  *
- * `de`/`es`/`fr` are machine-seeded: LLM output that no native speaker has
- * checked. They ship because the alternative — holding translations until a
+ * Everything but English is machine-seeded: LLM output that no native speaker
+ * has checked. They ship because the alternative — holding translations until a
  * volunteer appears — is how a project ends up with none, and because the
  * `machine-seeded` status confines them to operators who explicitly asked for
  * the language. What fails in machine translation of ~90 short UI strings is
  * register and consistency, not comprehensibility: exactly what a native
  * operator spots in thirty seconds and fixes in a five-line PR.
+ *
+ * Keep this list sorted by tag after English, and keep `TABLES` and
+ * `WIDGET_TABLES` in the same order — the parity test checks that a registered
+ * locale has both, but nothing enforces the reading order for a human.
  */
 export const LOCALES: Record<string, LocaleMeta> = {
 	en: { label: "English", endonym: "English", rtl: false, status: "source" },
 	de: { label: "German", endonym: "Deutsch", rtl: false, status: "machine-seeded" },
 	es: { label: "Spanish", endonym: "Español", rtl: false, status: "machine-seeded" },
 	fr: { label: "French", endonym: "Français", rtl: false, status: "machine-seeded" },
+	it: { label: "Italian", endonym: "Italiano", rtl: false, status: "machine-seeded" },
+	ja: { label: "Japanese", endonym: "日本語", rtl: false, status: "machine-seeded" },
+	// `nb`, not `no`: the table is Bokmål specifically, and calling it `no` would
+	// claim the macrolanguage — including Nynorsk, which this is not and which
+	// can still arrive as its own `nn` entry. The cost is that a host page with
+	// `<html lang="no">` never matches, because `no` and `nb` are sibling primary
+	// subtags rather than tag-and-variant, so matchLocale's primary-subtag hop
+	// can't bridge them the way it bridges `pt-BR` → `pt`. That costs nothing
+	// while this is machine-seeded (never selected from `<html lang>` at all) and
+	// becomes worth revisiting if a native speaker ever promotes it to reviewed.
+	nb: {
+		label: "Norwegian Bokmål",
+		endonym: "Norsk bokmål",
+		rtl: false,
+		status: "machine-seeded",
+	},
+	nl: { label: "Dutch", endonym: "Nederlands", rtl: false, status: "machine-seeded" },
+	pl: { label: "Polish", endonym: "Polski", rtl: false, status: "machine-seeded" },
+	// Bare `pt`, not `pt-BR`: matchLocale tries the exact tag and then the primary
+	// subtag, so a `pt-BR` key would never match a host page's `<html lang="pt">`.
+	// One table serves both variants — see the variant policy in src/i18n/pt.ts.
+	pt: { label: "Portuguese", endonym: "Português", rtl: false, status: "machine-seeded" },
 };
 
 export type LocaleTable = Partial<Record<StringKey, Message>>;
@@ -87,7 +119,18 @@ export type LocaleTable = Partial<Record<StringKey, Message>>;
  * time someone adds a locale and forgets it, which is precisely the failure the
  * parity test exists to catch.
  */
-export const TABLES: Record<string, LocaleTable> = { en, de, es, fr };
+export const TABLES: Record<string, LocaleTable> = {
+	en,
+	de,
+	es,
+	fr,
+	it,
+	ja,
+	nb,
+	nl,
+	pl,
+	pt,
+};
 
 /**
  * Whitelist check. Everything that reaches `tFor` from a request goes here.
@@ -125,11 +168,12 @@ const rulesFor = (locale: string): Intl.PluralRules => {
 /**
  * Category fallbacks, applied after the locale's own selected category.
  *
- * `one` is in the chain because several languages (Russian, Polish, Ukrainian)
+ * `one` is in the chain because several languages (Polish, Russian, Ukrainian)
  * never select `other` for an integer — a table filled in only as
- * `{one, other}` would otherwise resolve to nothing for most counts. None of
- * those locales ship yet; the chain costs one array entry and removes a
- * silent-breakage class that nobody could see in review.
+ * `{one, other}` would otherwise resolve to nothing for most counts. `pl` ships
+ * and is exactly this case, so its table carries `one`/`few`/`many` and treats
+ * `other` as the fraction-only form. The chain costs one array entry and
+ * removes a silent-breakage class that nobody could see in review.
  */
 const FALLBACK_FORMS: Intl.LDMLPluralRule[] = ["other", "one"];
 

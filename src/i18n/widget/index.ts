@@ -16,8 +16,24 @@ import type { StringValue, WidgetKey } from "../../widget/strings";
 import { de } from "./de";
 import { es } from "./es";
 import { fr } from "./fr";
+import { it } from "./it";
+import { ja } from "./ja";
+import { nb } from "./nb";
+import { nl } from "./nl";
+import { pl } from "./pl";
+import { pt } from "./pt";
 
 /** A locale's overrides. Partial by design; missing keys render English. */
 export type WidgetTable = Partial<Record<WidgetKey, StringValue>>;
 
-export const WIDGET_TABLES: Record<string, WidgetTable> = { de, es, fr };
+export const WIDGET_TABLES: Record<string, WidgetTable> = {
+	de,
+	es,
+	fr,
+	it,
+	ja,
+	nb,
+	nl,
+	pl,
+	pt,
+};

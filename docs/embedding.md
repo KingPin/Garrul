@@ -70,10 +70,11 @@ German composer under English prose reads as broken. `Accept-Language` and
 <div id="garrul" data-slug="my-post" data-lang="de"></div>
 ```
 
-English, German, Spanish and French ship. The last three are
-**machine-seeded** (LLM output no native speaker has checked), so they are
-reachable only through an explicit `data-lang` and are never picked up
-automatically from your `<html lang>`. If you speak one, correcting it is a
+English plus `de`, `es`, `fr`, `it`, `ja`, `nb`, `nl`, `pl` and `pt` ship —
+[the full table is in `i18n.md`](i18n.md#shipped-locales). Everything but
+English is **machine-seeded** (LLM output no native speaker has checked), so
+those are reachable only through an explicit `data-lang` and are never picked
+up automatically from your `<html lang>`. If you speak one, correcting it is a
 five-line PR and promotes the locale to reviewed:
 [`../CONTRIBUTING.md`](../CONTRIBUTING.md#translations-wanted).
 
