@@ -106,7 +106,7 @@ export const pl = {
 	// "pozostało: 4 min" — `{time}` arrives already formatted by Intl, unit
 	// included. The colon construction is deliberate: Polish would otherwise
 	// inflect the unit on the number inside the slot, which this file cannot see.
-	"w.edit_left": "pozostało: {time}",
+	"w.edit_left": "pozostało {time}",
 	"w.edit_last_minute": "pozostało mniej niż minuta",
 	"w.edit_expired": "Czas na edycję minął.",
 	"w.delete": "Usuń",
@@ -175,7 +175,7 @@ export const pl = {
 	"w.load_more_failed": "Nie udało się wczytać więcej: {detail}",
 
 	// ── Identity ────────────────────────────────────────────────────────────
-	"w.posting_as": "Publikujesz jako {name}",
+	"w.posting_as": "Publikowanie jako {name}",
 	"w.sign_out": "Wyloguj",
 	"w.signin_prompt": "Zaloguj się, aby otrzymać odznakę weryfikacji:",
 

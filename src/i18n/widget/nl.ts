@@ -146,7 +146,7 @@ export const nl = {
 	"w.subscribe.done": "Bevestig via de e-mail die we hebben gestuurd.",
 	"w.subscribe.failed": "Abonneren is mislukt. Probeer het opnieuw.",
 	"w.subscribe.ratelimit": "Te veel verzoeken. Probeer het later opnieuw.",
-	"w.subscribe.awaiting": "Bevestig de e-mail die we stuurden, of druk om te annuleren",
+	"w.subscribe.awaiting": "Bevestig de e-mail die we hebben gestuurd, of druk om te annuleren",
 	"w.unsubscribe": "Geen e-mail meer bij nieuwe reacties op dit bericht",
 	"w.unsubscribe.done": "Je krijgt geen e-mail meer over deze discussie.",
 	"w.unsubscribe.failed": "Afmelden is mislukt. Probeer het opnieuw.",

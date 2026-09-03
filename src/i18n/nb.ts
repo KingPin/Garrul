@@ -65,9 +65,9 @@ export const nb = {
 	"ui.subscribe.confirmed_page":
 		"Du er påmeldt varsler om kommentarer på «{title}».",
 	"ui.subscribe.already_unsubscribed":
-		"Du er allerede avmeldt varsler om kommentarer på «{title}».",
+		"Du er allerede avmeldt fra varsler om kommentarer på «{title}».",
 	"ui.subscribe.unsubscribed":
-		"Du er avmeldt varsler om kommentarer på «{title}».",
+		"Du er avmeldt fra varsler om kommentarer på «{title}».",
 	"ui.subscribe.unsubscribe_confirm":
 		"Vil du melde deg av varsler om kommentarer på «{title}»?",
 	"ui.subscribe.unsubscribe_cta": "Ja, meld meg av",
@@ -79,7 +79,7 @@ export const nb = {
 	"ui.subscribe.unsubscribe_row_cta": "Meld av",
 	"ui.subscribe.unsubscribe_all_cta": "Meld av alle tråder",
 	"ui.subscribe.unsubscribed_all":
-		"Du er avmeldt varsler om kommentarer i alle tråder.",
+		"Du er avmeldt fra varsler om kommentarer i alle tråder.",
 
 	// Transactional email
 	"email.confirm.subject": "Bekreft abonnementet på kommentarer til {title}",
