@@ -310,6 +310,14 @@ subscriptions.post("/", async (c) => {
 	});
 });
 
+/**
+ * Confirm is POST-confirmed, exactly like unsubscribe below. The GET the mail
+ * links to only renders a form; the write happens on the same-origin POST. A
+ * GET that wrote let every link-scanning gateway and prefetching mail client
+ * complete a double-opt-in the recipient never saw — which is the one thing
+ * double-opt-in exists to rule out. The token stays the capability; the POST
+ * exists to make sure a human pressed the button.
+ */
 subscriptions.get("/confirm/:token", async (c) => {
 	const token = c.req.param("token");
 	if (!token) return c.text("missing token", 400);
@@ -322,9 +330,46 @@ subscriptions.get("/confirm/:token", async (c) => {
 		);
 	}
 
-	// Idempotent by its WHERE clause, so no pre-read guard is needed: a mail
-	// client's prefetch may already have confirmed the row, and the human's later
-	// click still has to land on the success page.
+	const post = await getPost(c.env.DB, sub.post_slug);
+	const postLabel = post?.title ?? sub.post_slug;
+	const locale = landingLocale(sub.locale, c.get("locale"));
+	const t = tFor(locale);
+
+	// Already confirmed (an earlier click, or auto_confirm): land on the success
+	// page rather than offering to confirm again.
+	if (sub.confirmed_at != null) {
+		return c.html(
+			pageHtml(fillTitleHtml(t("ui.subscribe.confirmed_page"), postLabel), locale),
+		);
+	}
+
+	return c.html(
+		actionPageHtml(
+			{
+				prompt: "ui.subscribe.confirm_prompt",
+				cta: "ui.subscribe.confirm_cta",
+				note: "ui.subscribe.confirm_note",
+			},
+			postLabel,
+			locale,
+			t,
+		),
+	);
+});
+
+subscriptions.post("/confirm/:token", async (c) => {
+	const token = c.req.param("token");
+	if (!token) return c.text("missing token", 400);
+
+	const sub = await getSubscriptionByConfirmToken(c.env.DB, token);
+	if (!sub) {
+		const locale = landingLocale(null, c.get("locale"));
+		return c.html(
+			pageHtml(escapeHtml(tFor(locale)("ui.subscribe.link_expired")), locale),
+		);
+	}
+
+	// Idempotent by its WHERE clause: a second submit lands on the same page.
 	await confirmSubscription(c.env.DB, sub.id);
 
 	const post = await getPost(c.env.DB, sub.post_slug);
@@ -797,23 +842,48 @@ ${extra}
  *
  * `postLabel` is raw — `fillTitleHtml` escapes it along with its template.
  */
-const confirmPageHtml = (
+type ActionPageKeys = {
+	prompt: Parameters<Translator>[0];
+	cta: Parameters<Translator>[0];
+	note: Parameters<Translator>[0];
+};
+
+const actionPageHtml = (
+	keys: ActionPageKeys,
 	postLabel: string,
 	locale: string,
 	t: Translator,
 	manage = "",
 ): string =>
 	pageHtml(
-		fillTitleHtml(t("ui.subscribe.unsubscribe_confirm"), postLabel),
+		fillTitleHtml(t(keys.prompt), postLabel),
 		locale,
 		`<form method="post">
   <button type="submit" style="font:inherit;padding:0.5rem 1rem;cursor:pointer">
-    ${escapeHtml(t("ui.subscribe.unsubscribe_cta"))}
+    ${escapeHtml(t(keys.cta))}
   </button>
 </form>
 <p style="color:#6b7280;font-size:0.875rem">
-  ${escapeHtml(t("ui.subscribe.unsubscribe_note"))}
+  ${escapeHtml(t(keys.note))}
 </p>${manage}`,
+	);
+
+const confirmPageHtml = (
+	postLabel: string,
+	locale: string,
+	t: Translator,
+	manage = "",
+): string =>
+	actionPageHtml(
+		{
+			prompt: "ui.subscribe.unsubscribe_confirm",
+			cta: "ui.subscribe.unsubscribe_cta",
+			note: "ui.subscribe.unsubscribe_note",
+		},
+		postLabel,
+		locale,
+		t,
+		manage,
 	);
 
 const BUTTON_STYLE = "font:inherit;padding:0.35rem 0.75rem;cursor:pointer";

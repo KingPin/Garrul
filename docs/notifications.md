@@ -31,7 +31,10 @@ doesn't tell anybody anything.
    next to the checkbox. ("Signed in" isn't the test — X/Twitter gives us no
    address, so those readers get the field too.)
 2. Gets a confirmation email and clicks the link
-   (`GET /api/v1/subscribe/confirm/:token`). This is real double-opt-in:
+   (`GET /api/v1/subscribe/confirm/:token`), which opens a page with one
+   button; pressing it (`POST` to the same URL) confirms. The click alone
+   writes nothing, so a mail scanner or prefetching client that follows every
+   link cannot confirm on the reader's behalf. This is real double-opt-in:
    nothing is delivered to an unconfirmed address.
    **Exception:** a signed-in reader whose OAuth provider verified their
    address (GitHub, Google) is confirmed on the spot — the provider already

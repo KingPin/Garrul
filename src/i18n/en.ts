@@ -53,6 +53,14 @@ export const en = {
 	"ui.subscribe.unsubscribe_cta": "Yes, unsubscribe me",
 	"ui.subscribe.unsubscribe_note":
 		"Nothing has changed yet — you stay subscribed until you confirm.",
+	// The confirm link is POST-confirmed for the same reason unsubscribe is:
+	// mail scanners prefetch every URL, and a GET that wrote confirmed
+	// subscriptions nobody asked for.
+	"ui.subscribe.confirm_prompt":
+		'Turn on comment notifications for "{title}"?',
+	"ui.subscribe.confirm_cta": "Yes, notify me",
+	"ui.subscribe.confirm_note":
+		"Nothing has changed yet — you won't get notifications until you confirm.",
 	// The rest of the same page: everything else this address follows, so a
 	// reader with twenty threads doesn't have to hunt down twenty emails.
 	"ui.subscribe.manage_others":

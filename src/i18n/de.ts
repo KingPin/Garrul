@@ -59,6 +59,11 @@ export const de = {
 	"ui.subscribe.unsubscribe_cta": "Ja, abbestellen",
 	"ui.subscribe.unsubscribe_note":
 		"Es hat sich noch nichts geändert — das Abo bleibt bis zur Bestätigung bestehen.",
+	"ui.subscribe.confirm_prompt":
+		"Benachrichtigungen zu Kommentaren bei „{title}“ aktivieren?",
+	"ui.subscribe.confirm_cta": "Ja, benachrichtigen",
+	"ui.subscribe.confirm_note":
+		"Es hat sich noch nichts geändert — Benachrichtigungen kommen erst nach der Bestätigung.",
 
 	// Transactional email
 	"email.confirm.subject": "Abo für Kommentare zu {title} bestätigen",

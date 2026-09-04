@@ -53,6 +53,9 @@ const CARVE_OUT_PATHS: readonly RegExp[] = [
  */
 const SELF_ORIGIN_POST_PATHS: readonly RegExp[] = [
 	/^\/api\/v1\/subscribe\/unsubscribe\/[^/]+\/?$/,
+	// The double-opt-in confirm button, same shape and same reasoning: the
+	// emailed GET renders a form, this POST does the write.
+	/^\/api\/v1\/subscribe\/confirm\/[^/]+\/?$/,
 	// The other two buttons on that same page: unsubscribe from every thread
 	// this address follows, and unsubscribe one listed row by its id. Same form,
 	// same page, same token capability — they only need their own entries

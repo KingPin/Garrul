@@ -700,6 +700,9 @@ Triggers (events that produce a send):
   when only the secret was missing would hide that misconfiguration
   instead of surfacing it in the logs.
 - An unsubscribe-link click opens a confirmation page and sends nothing.
+  The confirm link works the same way: the emailed GET renders a button,
+  and only the same-origin POST behind it marks the subscription confirmed,
+  so link-scanning mail gateways cannot complete a double-opt-in.
 
 Nothing sends *inline* on the request path: every notification is
 queued to D1 and flushed by the cron, so a slow or failing Resend never
