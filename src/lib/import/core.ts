@@ -718,6 +718,13 @@ export const runImport = async (
 	plan.new_users = usersToInsert.size;
 
 	const nativeIdBySourceId = new Map<string, string>();
+	// Source ids whose row THIS run inserted. `nativeIdBySourceId` also carries
+	// rows an earlier run left behind, because a new reply may hang under one
+	// of them — but only rows minted here may be re-parented below. An
+	// existing row's parent_id is an operator-visible fact by now (a moderator
+	// may have moved or deleted its parent), and "imports write on INSERT,
+	// never UPDATE" is the rule that keeps a re-run from undoing that.
+	const insertedThisRun = new Set<string>();
 	for (const c of parsed.comments) {
 		const skip = isSkipped(c.status, opts);
 		if (skip) {
@@ -748,6 +755,7 @@ export const runImport = async (
 			plan.new_comments += 1;
 			continue;
 		}
+		insertedThisRun.add(c.source_id);
 		await db
 			.prepare(
 				// parent_id and depth are both NULL/1 here: parents are linked in a
@@ -839,6 +847,9 @@ export const runImport = async (
 		};
 
 		for (const [childSourceId, parentSourceId] of effectiveParent) {
+			// The map is built over every comment so depth resolves through
+			// ancestors an earlier run imported; the write is restricted here.
+			if (!insertedThisRun.has(childSourceId)) continue;
 			const child = nativeIdBySourceId.get(childSourceId)!;
 			let parentEffective = parentSourceId;
 			let depth = depthOf(childSourceId);
@@ -854,9 +865,24 @@ export const runImport = async (
 				depth -= 1;
 			}
 			const parent = nativeIdBySourceId.get(parentEffective)!;
+			// The WHERE re-states in SQL what `insertedThisRun` guarantees in
+			// code: the row is this source's, carries this import id, and has no
+			// parent yet — the shape every row leaves the INSERT above in. A
+			// wrong native id, or a row a moderator has since re-parented,
+			// matches zero rows instead of being rewritten.
 			await db
-				.prepare(`UPDATE comments SET parent_id = ?, depth = ? WHERE id = ?`)
-				.bind(parent, Math.min(depth, MAX_REPLY_DEPTH), child)
+				.prepare(
+					`UPDATE comments SET parent_id = ?, depth = ?
+					  WHERE id = ? AND import_source = ? AND import_id = ?
+					    AND parent_id IS NULL`,
+				)
+				.bind(
+					parent,
+					Math.min(depth, MAX_REPLY_DEPTH),
+					child,
+					adapter.source,
+					childSourceId,
+				)
 				.run();
 		}
 	}
