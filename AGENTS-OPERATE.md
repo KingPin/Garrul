@@ -1676,7 +1676,9 @@ every `ip_hash` in the database — so a name like `backup.sql` in a
 clone of this repo is one `git add -A` away from committing all of it.
 A directory prefix is fine (`../backups/garrul-backup-nightly.sql`);
 only the basename is checked. `npm run db:export` with no argument
-picks a conforming name for you.
+picks a conforming name for you. The script runs under `umask 077`, so the
+dump is created owner-read/write only (`0600`) rather than the shell's
+usual world-readable default; `chmod` it yourself if you copy it elsewhere.
 
 **KV considerations.** Don't bother backing up KV: `RATE_LIMITS` only
 holds the optional Workers-AI spam verdict cache (rate limiting itself
