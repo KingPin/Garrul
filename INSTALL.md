@@ -337,6 +337,15 @@ Useful flags:
 | `--skip-deploy`         | Stop after migrations. Useful when staging a deploy by hand.  |
 | `--rerender`            | Run `npm run rerender -- --remote` after deploy (if the renderer version bumped). |
 
+The release lookup uses the GitHub API, which allows 60 unauthenticated
+requests per hour per IP. If it fails with a rate-limit 403, either wait
+for the reset time it prints or export a token for the run — both
+`GITHUB_TOKEN` and `GH_TOKEN` are honored, and neither is required:
+
+```bash
+GH_TOKEN=$(gh auth token) npm run upgrade
+```
+
 The admin UI (`/admin`) shows a dismissible banner when a newer
 release is available; the check is cached in KV for 1h and only fires
 on admin requests.

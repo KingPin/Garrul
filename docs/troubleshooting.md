@@ -47,6 +47,29 @@ Causes, in order of likelihood:
 Once fixed, `npm run upgrade -- --dry-run` should show only the drift
 the new version actually introduces.
 
+### `npm run upgrade` fails with "GitHub releases/latest returned 403"
+
+GitHub allows 60 unauthenticated API requests per hour per IP, and the
+counter is shared with everything else on your network. When it is
+exhausted the script names the cause and the reset time:
+
+```
+GitHub releases/latest returned 403 for KingPin/Garrul: GitHub API rate
+limit exhausted (resets at 2026-09-04T02:49:45.000Z) — set GITHUB_TOKEN
+(or GH_TOKEN) to raise the 60 req/hr unauthenticated cap
+```
+
+Either wait for the reset or run once with a token. Any token works,
+including the one `gh` already holds; no scopes are needed for a public
+repository:
+
+```bash
+GH_TOKEN=$(gh auth token) npm run upgrade
+```
+
+The token is optional and only raises the limit. Without it the script
+behaves exactly as before.
+
 ### Migration fails on a fresh D1: "table foo already exists"
 
 Migrations are idempotent (`CREATE TABLE IF NOT EXISTS`). If you see
