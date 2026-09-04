@@ -11,6 +11,13 @@
  * Interactive flow prints the GitHub release notes (when available) and
  * the drift plan, then asks for confirmation. `--yes` skips that prompt.
  *
+ * Preflight requires a Cloudflare login (`wrangler whoami`) before anything
+ * is fetched or read. The drift plan is built from live reads of the Worker's
+ * secrets and the D1 `_migrations` table; if either read fails the run stops
+ * with the wrangler error instead of treating the deployment as empty. The
+ * one exception is a D1 database with no `_migrations` table at all, which is
+ * a fresh install and legitimately has zero applied migrations.
+ *
  * Flags:
  *   --dry-run            Print the plan and exit; no side effects.
  *   --yes                Skip confirmations. Missing secrets become hard errors.
@@ -52,9 +59,11 @@ import {
 	diffRenderer,
 	hasMutations,
 	blocksAutoApply,
+	looksLikeLostInstall,
 	type Plan,
 } from "./upgrade/drift";
 import * as wranglerModule from "./upgrade/wrangler";
+import { WranglerReadError } from "./upgrade/wrangler";
 import * as gitModule from "./upgrade/git";
 import { confirm } from "./upgrade/prompt";
 import { buildManifest } from "./upgrade/build-manifest";
@@ -213,7 +222,12 @@ const computePlan = (
 	const presentSecrets = wrangler.listSecrets();
 	// By binding, not by database_name: the operator names their own D1.
 	const targetDb = target.d1Databases[0]?.binding ?? "DB";
-	const applied = wrangler.queryAppliedMigrations(targetDb, true);
+	// No block in wrangler.toml means the database is about to be created by
+	// this run (plan.d1.missing); nothing can be applied on it yet, and asking
+	// wrangler about an unbound binding is an error, not an empty answer.
+	const applied = toml.d1Bindings.includes(targetDb)
+		? wrangler.queryAppliedMigrations(targetDb, true)
+		: [];
 
 	return {
 		secrets: diffSecrets(presentSecrets, target.secrets),
@@ -236,11 +250,81 @@ const computePlan = (
 	};
 };
 
+/**
+ * Printed when the plan cannot be trusted because wrangler could not read the
+ * live deployment. Every line is for an operator at a terminal: what went
+ * wrong, why the run stopped instead of showing a plan, and the two ways to
+ * fix it. The `detail` is wrangler's own text so the fix matches the cause.
+ */
+const printCannotReachCloudflare = (
+	headline: string,
+	detail: string,
+	opts: { maybeMisconfigured: boolean },
+): void => {
+	console.error("");
+	console.error(`✘ ${headline}`);
+	console.error("");
+	console.error(`  wrangler said: ${detail}`);
+	console.error("");
+	console.error(
+		"  The upgrade plan is a comparison against your live Worker — its",
+	);
+	console.error(
+		"  secrets and the migrations already applied to your D1 database.",
+	);
+	console.error(
+		"  Without that reading, every secret would show as missing and every",
+	);
+	console.error(
+		"  migration as pending, so nothing is shown rather than a wrong plan.",
+	);
+	console.error("");
+	console.error("  To fix it, do one of these and then re-run `npm run upgrade`:");
+	console.error("");
+	console.error("    • At a terminal:   npx wrangler login");
+	console.error("      (also the fix when a previous login has expired)");
+	console.error("    • In CI or a script:   export CLOUDFLARE_API_TOKEN=<token>");
+	console.error(
+		"      Token needs Workers Scripts:Edit and D1:Edit on this account.",
+	);
+	if (opts.maybeMisconfigured) {
+		console.error(
+			"    • Already logged in?  Check that `name`, `account_id` and the D1",
+		);
+		console.error(
+			"      `database_id` in wrangler.toml are the ones for this deployment.",
+		);
+	}
+	console.error("");
+	console.error(
+		"  Nothing was changed. Your Worker, database and secrets are as they were.",
+	);
+};
+
 const printPlan = (current: Manifest, target: Manifest, plan: Plan): void => {
 	console.log("");
 	console.log(`Plan: ${current.version} → ${target.version}`);
 	console.log("");
 
+	if (looksLikeLostInstall(plan, target)) {
+		console.log("⚠ This plan reads like a brand-new install, but it is not one:");
+		console.log(
+			"  wrangler.toml already names a D1 database, yet every required",
+		);
+		console.log(
+			"  secret shows as missing and every migration as pending. On an",
+		);
+		console.log(
+			"  instance that has been running, that usually means wrangler is",
+		);
+		console.log(
+			"  talking to the wrong account or Worker — check `npx wrangler whoami`",
+		);
+		console.log(
+			"  and the `name` / `account_id` in wrangler.toml before answering yes.",
+		);
+		console.log("");
+	}
 	if (plan.placeholders.length > 0) {
 		// First, not last: this is a "your instance is misconfigured right now"
 		// warning rather than anything about the upgrade, and burying it under
@@ -532,6 +616,25 @@ export const main = async (
 		stepFail("working tree is dirty (use --allow-dirty to override)");
 		process.exit(1);
 	}
+	// Before anything is fetched or compared: a logged-out wrangler used to
+	// sail through here and surface only as an all-missing plan five steps
+	// later, with nothing naming the real cause.
+	const auth = wrangler.checkAuth();
+	if (!auth.ok) {
+		stepFail(
+			auth.reason === "not_logged_in"
+				? "wrangler is not logged in to Cloudflare"
+				: "could not run `wrangler whoami`",
+		);
+		printCannotReachCloudflare(
+			auth.reason === "not_logged_in"
+				? "Wrangler is not logged in to Cloudflare."
+				: "Wrangler could not check who is logged in.",
+			auth.detail,
+			{ maybeMisconfigured: auth.reason !== "not_logged_in" },
+		);
+		process.exit(1);
+	}
 	stepOk();
 
 	step("Resolving target version…");
@@ -593,7 +696,19 @@ export const main = async (
 	}
 
 	step("Detecting drift…");
-	const plan = computePlan(local, target, wrangler);
+	let plan: Plan;
+	try {
+		plan = computePlan(local, target, wrangler);
+	} catch (err) {
+		if (!(err instanceof WranglerReadError)) throw err;
+		stepFail(`could not ${err.what}`);
+		// Preflight already proved a login exists, so a failure here is more
+		// likely a wrong Worker name or database id than a missing token.
+		printCannotReachCloudflare(`Wrangler could not ${err.what}.`, err.detail, {
+			maybeMisconfigured: true,
+		});
+		process.exit(1);
+	}
 	stepOk();
 
 	const blockers = blocksAutoApply(plan);
