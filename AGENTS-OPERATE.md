@@ -1869,10 +1869,10 @@ npm run upgrade -- --version v0.2.0   # target a specific tag
 
 The 12 steps (each prints `→ name… OK`):
 
-1. **Preflight** — `wrangler --version` ≥ 4, clean working tree (unless `--allow-dirty`)
+1. **Preflight** — `wrangler --version` ≥ 4, clean working tree (unless `--allow-dirty`), and a Cloudflare login (`wrangler whoami`; note it exits 0 even when logged out, so the output is checked). A logged-out wrangler stops the run here with the fix printed (`npx wrangler login`, or `CLOUDFLARE_API_TOKEN` for CI) and nothing is fetched or changed
 2. **Resolve target** — `--version vX.Y.Z` or GitHub latest release; exit 0 if already there
 3. **Fetch manifests** — local from disk, remote from `raw.githubusercontent.com`; refuses if `target.minPreviousVersion > current`
-4. **Drift detection** (read-only): secrets via `wrangler secret list`; `[vars]`, KV and D1 by parsing `wrangler.toml`; migrations via `SELECT name FROM _migrations`; renderer via `CURRENT_RENDERER_VERSION` vs `target.renderer.version`. Also compares each `[vars]` *value* against the placeholder the target ships — see *Unedited placeholders* below
+4. **Drift detection** (read-only): secrets via `wrangler secret list`; `[vars]`, KV and D1 by parsing `wrangler.toml`; migrations via `SELECT name FROM _migrations`; renderer via `CURRENT_RENDERER_VERSION` vs `target.renderer.version`. Also compares each `[vars]` *value* against the placeholder the target ships — see *Unedited placeholders* below. If either live read fails (expired token, wrong `name`/`account_id`/`database_id`, network), the run stops and prints wrangler's error rather than planning against an empty deployment; the one read failure treated as "zero applied" is a D1 database with no `_migrations` table, which is a genuine fresh install. As a second guard, a plan on a configured install that lists *every* migration pending and *every* required secret missing is flagged as a likely misread before the confirm prompt
 5. **Print plan** grouped as config drift / migrations / breaking changes
 6. **Confirm** (`Proceed? [y/N]`) unless `--yes`
 7. **Checkout** the target tag, then verify the `release-manifest.json` in
