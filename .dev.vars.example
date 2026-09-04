@@ -86,5 +86,5 @@ SPAM_FORM_TS_SECRET=""
 CF_API_TOKEN=""
 
 # --- Update checks ---
-# read-only public_repo token; raises the 60 req/hr cap
+# no-permission token; raises the 60 req/hr cap
 GITHUB_TOKEN=""

@@ -322,7 +322,7 @@ interactive_secrets() {
 	put_secret AKISMET_SITE_URL "public site URL registered with Akismet"
 	put_secret SPAM_FORM_TS_SECRET "HMAC key for signed form-timestamp tokens"
 	put_secret CF_API_TOKEN "Analytics-read token; scopes in AGENTS-OPERATE §5"
-	put_secret GITHUB_TOKEN "read-only public_repo token; raises the 60 req/hr cap"
+	put_secret GITHUB_TOKEN "no-permission token; raises the 60 req/hr cap"
 # END:interactive-secrets
 }
 
