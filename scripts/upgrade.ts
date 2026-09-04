@@ -18,6 +18,11 @@
  * one exception is a D1 database with no `_migrations` table at all, which is
  * a fresh install and legitimately has zero applied migrations.
  *
+ * Release lookups go to the GitHub API, which allows 60 unauthenticated
+ * requests per hour per IP. Setting `GITHUB_TOKEN` (or `GH_TOKEN`, as `gh`
+ * exports) sends it as a Bearer token and raises the cap; both are optional
+ * and their absence changes nothing but the limit.
+ *
  * Flags:
  *   --dry-run            Print the plan and exit; no side effects.
  *   --yes                Skip confirmations. Missing secrets become hard errors.
@@ -46,6 +51,7 @@ import {
 	type Manifest,
 } from "./upgrade/manifest";
 import { plainText, releaseNotesLines } from "./upgrade/plain-text";
+import { describeGithubFailure, githubHeaders } from "./upgrade/github";
 import {
 	diffSecrets,
 	diffVars,
@@ -152,13 +158,19 @@ const fetchLatestRelease = async (
 	owner: string,
 	repo: string,
 ): Promise<ReleaseInfo> => {
+	const headers = githubHeaders();
 	const res = await fetch(
 		`https://api.github.com/repos/${owner}/${repo}/releases/latest`,
-		{ headers: { Accept: "application/vnd.github+json" } },
+		{ headers },
 	);
 	if (!res.ok) {
 		throw new Error(
-			`GitHub releases/latest returned ${res.status} for ${owner}/${repo}`,
+			describeGithubFailure(
+				res,
+				"releases/latest",
+				`${owner}/${repo}`,
+				headers.Authorization !== undefined,
+			),
 		);
 	}
 	return parseReleaseResponse(await res.json(), owner, repo);
@@ -169,14 +181,20 @@ const fetchReleaseForTag = async (
 	repo: string,
 	tag: string,
 ): Promise<ReleaseInfo | null> => {
+	const headers = githubHeaders();
 	const res = await fetch(
 		`https://api.github.com/repos/${owner}/${repo}/releases/tags/${encodeURIComponent(tag)}`,
-		{ headers: { Accept: "application/vnd.github+json" } },
+		{ headers },
 	);
 	if (res.status === 404) return null;
 	if (!res.ok) {
 		throw new Error(
-			`GitHub releases/tags/${tag} returned ${res.status} for ${owner}/${repo}`,
+			describeGithubFailure(
+				res,
+				`releases/tags/${tag}`,
+				`${owner}/${repo}`,
+				headers.Authorization !== undefined,
+			),
 		);
 	}
 	return parseReleaseResponse(await res.json(), owner, repo);
