@@ -155,3 +155,37 @@ describe("POST /subscribe — response is not a subscription oracle", () => {
 		expect(second).toBe(first);
 	});
 });
+
+describe("POST /subscribe — post_slug is held to the read side's alphabet", () => {
+	// The slug is stored verbatim, becomes the mail-subject fallback when the
+	// post has no title, and is rendered on the confirm/unsubscribe pages. A
+	// length cap alone let CR, LF and angle brackets through.
+	it.each([
+		["a CR/LF pair", "oracle\r\nBcc: x@y.z"],
+		["angle brackets", "<img src=x onerror=alert(1)>"],
+		["a space", "two words"],
+		["a query string", "oracle?x=1"],
+		["over 200 chars", "a".repeat(201)],
+		["empty", ""],
+	])("400s a slug with %s and writes nothing", async (_label, post_slug) => {
+		const res = await subscribe({ post_slug, email: EMAIL });
+		expect(res.status).toBe(400);
+		expect(((await res.json()) as { error: string }).error).toBe(
+			"Invalid post identifier.",
+		);
+		const rows = sqlite
+			.prepare("SELECT COUNT(*) AS n FROM subscriptions")
+			.get() as { n: number };
+		expect(rows.n).toBe(0);
+		expect(sent).toEqual([]);
+	});
+
+	it("still accepts the full slug alphabet", async () => {
+		const res = await subscribe({ post_slug: "blog/2026/Hello_World-1.html", email: EMAIL });
+		expect(res.status).toBe(200);
+		const row = sqlite
+			.prepare("SELECT post_slug FROM subscriptions WHERE email = ?")
+			.get(EMAIL) as { post_slug: string };
+		expect(row.post_slug).toBe("blog/2026/Hello_World-1.html");
+	});
+});

@@ -60,11 +60,18 @@ export const sanitizePostTitle = (
  * Separate from `sanitizePostTitle` only so the intent reads at the call site:
  * this is the second application, defending against rows written before the
  * write-path sanitizer existed.
+ *
+ * The slug goes through the same filter. Every write path now holds it to
+ * `SLUG_RE`, but a `posts` row predating that rule, or one minted by a
+ * migration this module never saw, is still a slug that ends up in a header
+ * when the title is missing. An all-control slug leaves an empty title rather
+ * than the raw bytes; the subject template still reads.
  */
 export const subjectTitle = (
 	title: string | null | undefined,
 	fallbackSlug: string,
-): string => sanitizePostTitle(title) ?? fallbackSlug;
+): string =>
+	sanitizePostTitle(title) ?? sanitizePostTitle(fallbackSlug) ?? "";
 
 /**
  * Substitute every `{title}` in a template with whatever `render` returns.

@@ -68,6 +68,7 @@ import { renderConfirmEmailHtml } from "../lib/digest";
 import { sendEmail } from "../lib/email";
 import { fillSubject, subjectTitle, substituteTitle } from "../lib/post-title";
 import { readSession } from "../lib/session";
+import { SLUG_RE } from "../lib/slug";
 import { loadNumbers } from "../lib/settings";
 import { FALLBACK_LOCALE, LOCALES, type Translator, tFor } from "../i18n";
 import { matchLocale } from "../i18n/negotiate";
@@ -153,9 +154,13 @@ subscriptions.post("/", async (c) => {
 	}>().catch(() => null);
 	if (!body) return c.json({ error: t("err.internal") }, 400);
 
+	// The same alphabet the read side accepts (SLUG_RE), not a bare length cap:
+	// this slug is stored as-is, becomes the subject-line fallback when the post
+	// has no title, and is rendered on the confirm and unsubscribe pages, so a
+	// CR, LF or angle bracket here would reach a mail header and an HTML body.
 	const post_slug = (body.post_slug ?? "").trim();
-	if (!post_slug || post_slug.length > 200) {
-		return c.json({ error: t("err.not_found") }, 400);
+	if (!SLUG_RE.test(post_slug)) {
+		return c.json({ error: t("err.post.invalid") }, 400);
 	}
 
 	// Session first, because it can supply the address. requireActiveUser,
