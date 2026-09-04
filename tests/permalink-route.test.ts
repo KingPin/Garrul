@@ -55,7 +55,14 @@ const get = (
 ) => {
 	const app = new Hono<{ Bindings: TestEnv }>();
 	app.route("/c", permalink);
-	return app.request(`/c/${id}`, {}, { DB: stubDb(comment, post) });
+	return app.request(
+		`/c/${id}`,
+		{},
+		{
+			DB: stubDb(comment, post),
+			ALLOWED_ORIGINS: "https://blog.example.com, https://other.example",
+		},
+	);
 };
 
 describe("GET /c/:id", () => {
@@ -122,4 +129,26 @@ describe("GET /c/:id", () => {
 			expect(res.status).toBe(404);
 		},
 	);
+
+	// posts.url is first-writer-wins off an unauthenticated POST, so a stored
+	// row can point anywhere a past caller chose. The redirect only follows it
+	// when its origin is one the operator lists in ALLOWED_ORIGINS.
+	it.each([
+		"https://evil.example.com/",
+		"https://blog.example.com.evil.example/",
+		"https://blog.example.com@evil.example/",
+		"http://blog.example.com/", // scheme is part of the origin
+		"https://blog.example.com:8443/",
+	])("404s rather than redirecting off-allowlist to %s", async (offsite) => {
+		const res = await get(ID, aComment(), aPost(offsite));
+		expect(res.status).toBe(404);
+	});
+
+	it("matches the allowlist on the parsed origin, not the raw string", async () => {
+		const res = await get(ID, aComment(), aPost("HTTPS://Blog.Example.com/Post/"));
+		expect(res.status).toBe(302);
+		expect(res.headers.get("location")).toBe(
+			`https://blog.example.com/Post/#${commentAnchorId(ID)}`,
+		);
+	});
 });

@@ -53,6 +53,14 @@ export const en = {
 	"ui.subscribe.unsubscribe_cta": "Yes, unsubscribe me",
 	"ui.subscribe.unsubscribe_note":
 		"Nothing has changed yet — you stay subscribed until you confirm.",
+	// The confirm link is POST-confirmed for the same reason unsubscribe is:
+	// mail scanners prefetch every URL, and a GET that wrote confirmed
+	// subscriptions nobody asked for.
+	"ui.subscribe.confirm_prompt":
+		'Turn on comment notifications for "{title}"?',
+	"ui.subscribe.confirm_cta": "Yes, notify me",
+	"ui.subscribe.confirm_note":
+		"Nothing has changed yet — you won't get notifications until you confirm.",
 	// The rest of the same page: everything else this address follows, so a
 	// reader with twenty threads doesn't have to hunt down twenty emails.
 	"ui.subscribe.manage_others":
@@ -103,6 +111,8 @@ export const en = {
 	"telegram.action_applied": "✓ {action} applied",
 	"telegram.reports_resolved": "✓ Resolved {count} report(s)",
 	"telegram.author_banned": "✓ Banned the comment author",
+	"telegram.ban_refused":
+		"Not banned: that is you, or the last admin who can still sign in.",
 	"telegram.link_ok":
 		"✅ Linked to {name}. You'll get operator notifications and can moderate from here.",
 	"telegram.link_invalid":

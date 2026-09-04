@@ -35,10 +35,15 @@
  */
 import { Marked } from "marked";
 
+// 3: inline text is always HTML-escaped. marked's default `text()` trusts the
+//    tokenizer's `escaped` flag, which it sets for everything after an inline
+//    `<code>`/`<pre>`/`<kbd>`/`<script>` opener; the raw markup in that span
+//    was emitted verbatim. A final allowlist pass also rewrites any `<` that
+//    does not open or close an allowlisted tag.
 // 2: task-list checkboxes stopped emitting `<input type="checkbox">` and the
 //    `class="language-…"` on fenced code is clamped to CODE_LANG_RE.
 // 1: initial.
-export const CURRENT_RENDERER_VERSION = 2;
+export const CURRENT_RENDERER_VERSION = 3;
 
 const URL_ALLOWLIST = /^(https?:|mailto:)/i;
 /**
@@ -62,6 +67,18 @@ const CODE_LANG_RE = /^[A-Za-z0-9+#._-]{1,32}$/;
 const escapeHtml = (s: string): string =>
 	s
 		.replace(/&/g, "&amp;")
+		.replace(/</g, "&lt;")
+		.replace(/>/g, "&gt;")
+		.replace(/"/g, "&quot;")
+		.replace(/'/g, "&#39;");
+
+// Same as escapeHtml, except an `&` that already begins a character
+// reference (`&amp;`, `&copy;`, `&#169;`, `&#xA9;`) is left alone. This is
+// what marked's own default `text()` does, so authors who type entities keep
+// getting them and existing body_html does not change on rerender.
+const escapeText = (s: string): string =>
+	s
+		.replace(/&(?!(?:#\d{1,7}|#[Xx][a-fA-F0-9]{1,6}|[A-Za-z][A-Za-z0-9]*);)/g, "&amp;")
 		.replace(/</g, "&lt;")
 		.replace(/>/g, "&gt;")
 		.replace(/"/g, "&quot;")
@@ -131,6 +148,31 @@ const makeMarked = (): Marked => {
 			hr() {
 				return "<br>";
 			},
+			// Inline text. marked's default is
+			//
+			//     text(t) { return t.escaped ? t.text : escape(t.text) }
+			//
+			// and the inline tokenizer sets `escaped: true` on every text
+			// token that follows an inline `<code>`, `<pre>`, `<kbd>` or
+			// `<script>` opener (`lexer.state.inRawBlock`), because with raw
+			// HTML enabled that span *is* raw HTML. Our `html()` drops the
+			// opener itself, but the text tokens after it kept the flag, so
+			// `<code>x <img src=x onerror=…> y</code>` rendered the `<img>`
+			// verbatim. The flag never means "already entity-encoded" for
+			// author text, so ignore it and escape unconditionally. Block-level
+			// `text` tokens carry child `tokens` and are parsed, not escaped.
+			text(token) {
+				if ("tokens" in token && token.tokens) {
+					// biome-ignore lint/suspicious/noExplicitAny: same as `heading` above — marked binds the parser to `this` but does not type it.
+					return (this as any).parser.parseInline(token.tokens);
+				}
+				return escapeText(token.text);
+			},
+			// Same shape as marked's default; pinned here so the sanitizer does
+			// not depend on the default staying that way.
+			codespan({ text }) {
+				return `<code>${escapeHtml(text)}</code>`;
+			},
 			link({ href, title, tokens }) {
 				// biome-ignore lint/suspicious/noExplicitAny: same as `heading` above — marked binds the parser to `this` but does not type it.
 				const text: string = (this as any).parser.parseInline(tokens);
@@ -149,10 +191,66 @@ const makeMarked = (): Marked => {
 
 const marked = makeMarked();
 
+// Every tag the renderer above can emit. Anything else that reaches the
+// output is a bug in the renderer or in marked, and gets neutralised rather
+// than served — see `closeAllowlist`.
+const WEB_ALLOWED_TAGS = new Set([
+	"p",
+	"br",
+	"em",
+	"strong",
+	"del",
+	"code",
+	"pre",
+	"a",
+	"blockquote",
+	"ul",
+	"ol",
+	"li",
+]);
+
+// A `<` that opens or closes an allowlisted tag: `<p>`, `</a>`, `<br>`,
+// `<a href=…>`, `<code class=…>`. The word boundary after the name means
+// `<pre>` matches but `<prefetch>` does not, and `[\s/>]` keeps `<a`+letter
+// combinations like `<abbr>` out.
+const ALLOWED_OPEN_RE = /^<\/?([a-z]+)[\s/>]/;
+
+/**
+ * Fail-closed pass over the renderer's output. Walks every `<` in the
+ * rendered HTML and turns it into `&lt;` unless it starts an allowlisted
+ * tag. The renderer is the primary control; this exists so a future marked
+ * upgrade that adds a raw-passthrough path we did not override degrades to
+ * visibly mangled text instead of a stored XSS.
+ *
+ * Attributes are deliberately not inspected here: the renderer never emits
+ * a tag with author-controlled attribute *names*, and a full attribute
+ * sanitizer is a second parser to keep correct. Tests pin the allowlist.
+ */
+const closeAllowlist = (html: string): string => {
+	let out = "";
+	let i = 0;
+	while (i < html.length) {
+		const lt = html.indexOf("<", i);
+		if (lt === -1) {
+			out += html.slice(i);
+			break;
+		}
+		out += html.slice(i, lt);
+		const m = ALLOWED_OPEN_RE.exec(html.slice(lt, lt + 16));
+		if (m && WEB_ALLOWED_TAGS.has(m[1] as string)) {
+			out += "<";
+		} else {
+			out += "&lt;";
+		}
+		i = lt + 1;
+	}
+	return out;
+};
+
 export const renderMarkdown = (src: string): string => {
 	const trimmed = (src ?? "").slice(0, MAX_BODY_CHARS);
 	const html = marked.parse(trimmed, { async: false });
-	return typeof html === "string" ? html.trim() : "";
+	return typeof html === "string" ? closeAllowlist(html).trim() : "";
 };
 
 /**

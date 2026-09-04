@@ -130,6 +130,23 @@ them. This replaces what used to happen: an empty HMAC key makes WebCrypto
 throw, so the instance served anonymous 500s with stack traces from eight
 different endpoints and nothing pointing at the cause.
 
+The same two secrets are refused a second way when `ENV` is anything other
+than `dev`: if either still holds its `.dev.vars.example` placeholder
+(`dev-jwt-secret-change-me` / `dev-ip-hash-pepper-change-me`), the Worker
+returns the same `500 {"error":"server_misconfigured"}` and logs
+
+```
+{"level":"error","msg":"config.placeholder_required_secrets","placeholder":["JWT_SECRET"]}
+```
+
+Those two strings are in this public repository, so a deployment running on
+them has a forgeable OAuth state signer and an IP-hash pepper anyone can look
+up. The check is an exact match against the two published values and nothing
+else — no length or entropy rule — and `ENV=dev` opts out because that is
+where the placeholders belong. Fix: `openssl rand -base64 32 | npx wrangler
+secret put <NAME>` (what `setup.sh` does), then redeploy or wait for the next
+request; there is no cache.
+
 Turnstile deliberately isn't in that runtime check even though the deploy-time
 block lists it. An instance that only accepts OAuth-authenticated comments
 works fine without it, and anonymous posts already fail closed — hard-failing
@@ -210,7 +227,7 @@ between the two is a build error, not a silent misclassification.
 | `SPAM_FIRST_COMMENT_MODERATE` | var | Optional. Route the first comment from any new author to `pending`. Unset = off. | `true` | `wrangler.toml` default; **Admin → Settings** overrides |
 | `CF_ACCOUNT_ID` | var | Optional. Cloudflare account ID; paired with `CF_API_TOKEN` to enable the `/admin/usage` analytics page. | `0123abcd...` | `wrangler.toml` (or `wrangler secret put` — the in-app setup guide uses the secret form; both work) |
 | `CF_API_TOKEN` | secret | Optional. Cloudflare API token for `/admin/usage`. Least-privilege scopes: Account.Analytics:Read, Account.D1:Read, Account.Workers KV Storage:Read. The page renders setup instructions when either value is unset. | `...` | `wrangler secret put` / `.dev.vars` |
-| `GITHUB_TOKEN` | secret | Optional. Raises the GitHub API rate limit for the `/admin/*` "update available" check. Unauthenticated calls allow 60 req/hr per IP and Cloudflare egress IPs are shared across colos. Read-only `public_repo` scope is sufficient. | `ghp_...` | `wrangler secret put` / `.dev.vars` |
+| `GITHUB_TOKEN` | secret | Optional. Raises the GitHub API rate limit for the `/admin/*` "update available" check. Unauthenticated calls allow 60 req/hr per IP and Cloudflare egress IPs are shared across colos. The check only reads public release metadata, so the token needs **no** scopes or permissions: a fine-grained PAT with no repository access, or a classic PAT with every scope unchecked. Do not grant `public_repo` — despite the name it is read **and write** on all your public repos. | `github_pat_...` | `wrangler secret put` / `.dev.vars` |
 | `COMMENTS_ENABLED` | var | Master switch for new comment creation. Defaults **on**; set `0`/`false`/`no`/`off` to close commenting instance-wide (existing comments stay visible read-only, the widget shows a "Comments are closed." notice, and `POST /api/v1/comments` returns 403). | `true` | `wrangler.toml` |
 | `REACTIONS_ENABLED` | var | Comment emoji reactions. Defaults **on**; same falsy-spelling semantics. Disabling hides the reaction bar and 403s `POST /api/v1/reactions`. | `true` | `wrangler.toml` |
 | `VOTING_ENABLED` | var | Comment voting (up/down buttons in the widget). Defaults **on** when unset; set `0`/`false`/`no`/`off` to disable instance-wide. | `true` | `wrangler.toml` |
@@ -700,6 +717,9 @@ Triggers (events that produce a send):
   when only the secret was missing would hide that misconfiguration
   instead of surfacing it in the logs.
 - An unsubscribe-link click opens a confirmation page and sends nothing.
+  The confirm link works the same way: the emailed GET renders a button,
+  and only the same-origin POST behind it marks the subscription confirmed,
+  so link-scanning mail gateways cannot complete a double-opt-in.
 
 Nothing sends *inline* on the request path: every notification is
 queued to D1 and flushed by the cron, so a slow or failing Resend never
@@ -967,7 +987,7 @@ responding):
 - `POST /admin/api/notes` — `{target_kind: comment|user, target_id, body}` writes an internal moderator note (mod or admin; audited `note.create` against the **target**, with only the note id in `meta`). Body caps at 4 000 characters; a target that does not exist is `404 target_not_found`.
 - `DELETE /admin/api/notes/:id` — removes one note (audited `note.delete`, again against the target, with `meta.own` recording whether the caller wrote it). Author **or** admin, deliberately looser than saved replies' owner-only rule; another mod gets `403 not_author`.
 - `POST /admin/api/posts/close` — `{slug, closed: boolean}` (per-post close/open; audited `post.close` / `post.open`; busts the cached first page)
-- `POST /admin/api/users/:id` — `{banned: boolean, reason?, from_comment?}` (one-click ban-author records the originating comment in audit meta; admin-only)
+- `POST /admin/api/users/:id` — `{banned: boolean, reason?, from_comment?}` (one-click ban-author records the originating comment in audit meta; admin-only; refuses a self-ban and a ban of the last admin who can still sign in with 400 `self` / `last_admin`, since either locks every operator out — unban is never refused)
 - `POST /admin/api/users/:id/role` — `{role: user|mod|admin, reason?}` (admin-only; refuses self-change and the last-admin demotion)
 - `POST /admin/api/users/:id/erase` — `{confirm: "ERASE", redact_bodies: boolean, reason?}` (admin-only, irreversible; see below)
 - `POST /admin/api/users/:id/revoke-sessions` — no body (admin-only; kills every session the user holds via the revocation epoch — the stolen-cookie kill switch. Targeting yourself means "sign out everywhere else": the response sets a fresh cookie so the browser doing the revoking stays signed in. Audited `user.revoke_sessions`)
@@ -1656,7 +1676,9 @@ every `ip_hash` in the database — so a name like `backup.sql` in a
 clone of this repo is one `git add -A` away from committing all of it.
 A directory prefix is fine (`../backups/garrul-backup-nightly.sql`);
 only the basename is checked. `npm run db:export` with no argument
-picks a conforming name for you.
+picks a conforming name for you. The script runs under `umask 077`, so the
+dump is created owner-read/write only (`0600`) rather than the shell's
+usual world-readable default; `chmod` it yourself if you copy it elsewhere.
 
 **KV considerations.** Don't bother backing up KV: `RATE_LIMITS` only
 holds the optional Workers-AI spam verdict cache (rate limiting itself

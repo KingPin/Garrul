@@ -250,7 +250,7 @@ crons = ["*/15 * * * *"]
 #   AKISMET_SITE_URL — public site URL registered with Akismet
 #   SPAM_FORM_TS_SECRET — HMAC key for signed form-timestamp tokens
 #   CF_API_TOKEN — Analytics-read token; scopes in AGENTS-OPERATE §5
-#   GITHUB_TOKEN — read-only public_repo token; raises the 60 req/hr cap
+#   GITHUB_TOKEN — no-permission token; raises the 60 req/hr cap
 # END:secrets-pointer
 
 # BEGIN:secrets-required

@@ -13,6 +13,7 @@
 import {
 	adminInsertAudit,
 	type CommentStatus,
+	countActiveAdmins,
 	eraseUserData,
 	getComment,
 	getUser,
@@ -118,6 +119,19 @@ export const resolveReports = async (args: {
 /**
  * Ban or unban a user. `fromComment` records the comment that triggered a
  * one-click "ban author" so the action is traceable in the audit trail.
+ *
+ * Two bans are refused regardless of who asks, because both lock the
+ * operator out of the instance they are operating: banning yourself, and
+ * banning the last admin who can still sign in. A ban revokes every session
+ * and `requireActiveUser` refuses the account from then on, so either one
+ * leaves the admin UI with nobody able to open it and the only remedy the D1
+ * CLI. The one-click "ban author" button makes both easy to reach — an admin
+ * replying on their own post is one misclick from it — which is why this
+ * lives in the shared function and not in one of its two callers. Unban is
+ * never refused. Same shape as the role route's `cannot_change_own_role` /
+ * `last_admin` guards, and like those, the count is deliberately not a
+ * transaction: two admins banning each other in the same instant is a
+ * narrow window whose worst case is a CLI recovery, not corrupt state.
  */
 export const banUser = async (args: {
 	env: Bindings;
@@ -128,11 +142,20 @@ export const banUser = async (args: {
 	reason?: string | null;
 }): Promise<
 	| { ok: true; id: string; banned: boolean }
-	| { ok: false; error: "not_found" }
+	| { ok: false; error: "not_found" | "self" | "last_admin" }
 > => {
 	const { env, userId, banned } = args;
 	const target = await getUser(env.DB, userId);
 	if (!target) return { ok: false, error: "not_found" };
+	if (banned && userId === args.adminId) return { ok: false, error: "self" };
+	if (
+		banned &&
+		target.role === "admin" &&
+		!target.is_banned &&
+		(await countActiveAdmins(env.DB)) <= 1
+	) {
+		return { ok: false, error: "last_admin" };
+	}
 	await setUserBanned(env.DB, userId, banned);
 	// A ban has to take their live sessions with it. `is_banned` alone doesn't:
 	// readSession slides the 30-day TTL, so an active banned user's cookie stays

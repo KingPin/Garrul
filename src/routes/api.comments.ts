@@ -49,6 +49,7 @@ import {
 	type TreeComment,
 	type User,
 } from "../db/queries";
+import { allowedPostUrl } from "../lib/cors";
 import { identiconSvg } from "../lib/identicon";
 import { sanitizePostTitle } from "../lib/post-title";
 import { clientIp, requireIpHash } from "../lib/ip-hash";
@@ -605,21 +606,11 @@ comments.post("/", async (c) => {
 		author = u;
 	}
 
-	// Make sure the post row exists so the FK on comments resolves.
-	// Validate the supplied post_url scheme: only http/https. Anything else
-	// (`javascript:`, `data:`, scheme-relative, garbage) is dropped to null
-	// so the permalink redirect can't be used as an open-redirect gadget.
-	let postUrl: string | null = null;
-	if (body.post_url) {
-		try {
-			const u = new URL(body.post_url);
-			if (u.protocol === "https:" || u.protocol === "http:") {
-				postUrl = body.post_url;
-			}
-		} catch {
-			// drop
-		}
-	}
+	// Validate the supplied post_url: http(s) and on an ALLOWED_ORIGINS origin,
+	// else null. Anything else (`javascript:`, `data:`, scheme-relative, an
+	// unrelated host) is dropped so the permalink redirect cannot be used as
+	// an open-redirect gadget. See allowedPostUrl for the reasoning.
+	const postUrl = allowedPostUrl(body.post_url, c.env.ALLOWED_ORIGINS);
 	// Thread acceptance gate. The global comments_enabled switch was checked at
 	// the top; this also enforces the per-post manual close and the lazy
 	// auto-close rules (sunset date / age). It runs before the parent lookup and

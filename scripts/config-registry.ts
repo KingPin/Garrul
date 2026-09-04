@@ -659,10 +659,10 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
 		kind: "secret",
 		required: false,
 		group: "Update checks",
-		hint: "read-only public_repo token; raises the 60 req/hr cap",
+		hint: "no-permission token; raises the 60 req/hr cap",
 		description:
-			'Optional. Raises the GitHub API rate limit for the `/admin/*` "update available" check. Unauthenticated calls allow 60 req/hr per IP and Cloudflare egress IPs are shared across colos. Read-only `public_repo` scope is sufficient.',
-		example: "ghp_...",
+			'Optional. Raises the GitHub API rate limit for the `/admin/*` "update available" check. Unauthenticated calls allow 60 req/hr per IP and Cloudflare egress IPs are shared across colos. The check only reads public release metadata, so the token needs **no** scopes or permissions: a fine-grained PAT with no repository access, or a classic PAT with every scope unchecked. Do not grant `public_repo` — despite the name it is read **and write** on all your public repos.',
+		example: "github_pat_...",
 		addedIn: "1.21.0",
 	},
 

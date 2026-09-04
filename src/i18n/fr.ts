@@ -57,6 +57,11 @@ export const fr = {
 	"ui.subscribe.unsubscribe_cta": "Oui, me désabonner",
 	"ui.subscribe.unsubscribe_note":
 		"Rien n'a encore changé — vous restez abonné jusqu'à confirmation.",
+	"ui.subscribe.confirm_prompt":
+		"Activer les notifications de commentaires pour « {title} » ?",
+	"ui.subscribe.confirm_cta": "Oui, me prévenir",
+	"ui.subscribe.confirm_note":
+		"Rien n'a encore changé — vous ne recevrez rien avant confirmation.",
 
 	// Transactional email
 	"email.confirm.subject": "Confirmez votre abonnement aux commentaires de {title}",

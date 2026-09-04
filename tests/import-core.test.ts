@@ -848,3 +848,104 @@ describe("requireKnownIdentifier", () => {
 		);
 	});
 });
+
+describe("re-run re-parenting", () => {
+	// A stub that already holds every row a first run would have written, and
+	// remembers what the second run does to them. Exposes the SELECT shapes the
+	// core issues; anything else misses so a genuinely new row still inserts.
+	const makeSecondRunDb = (known: Record<string, string>) => {
+		const captured: Captured[] = [];
+		const chain = (sql: string) => {
+			const stmt = {
+				_binds: [] as unknown[],
+				bind(...args: unknown[]) {
+					this._binds = args;
+					return this;
+				},
+				async first() {
+					captured.push({ sql, binds: this._binds });
+					if (sql.includes("FROM comments WHERE import_source")) {
+						const id = known[String(this._binds[1])];
+						return id ? { id } : null;
+					}
+					if (sql.includes("FROM posts WHERE slug")) return { slug: "x" };
+					if (sql.includes("FROM users WHERE provider")) return { id: "u1" };
+					return null;
+				},
+				async all() {
+					captured.push({ sql, binds: this._binds });
+					return { results: [] };
+				},
+				async run() {
+					captured.push({ sql, binds: this._binds });
+					return { meta: { changes: 1 } };
+				},
+			};
+			return stmt;
+		};
+		return { db: asD1({ prepare: chain }), captured };
+	};
+	const thread = (comments: SourceExport["comments"]): SourceExport => ({
+		threads: [{ source_id: "t1", link: "https://example.com/a", title: "A", created_at: AT }],
+		comments,
+	});
+	const c = (
+		source_id: string,
+		parent_source_id: string | null,
+	): SourceExport["comments"][number] => ({
+		source_id,
+		thread_source_id: "t1",
+		parent_source_id,
+		created_at: AT,
+		status: "approved" as const,
+		body_md: "x",
+		author: { name: "A", email: null, is_anonymous: true },
+	});
+	const updates = (captured: Captured[]) =>
+		captured.filter((x) => x.sql.startsWith("UPDATE comments"));
+
+	it("issues no UPDATE at all when every row already exists", async () => {
+		// A moderator may have re-parented or deleted around these rows since
+		// the first run; an import is not an operator and must not undo that.
+		const { db, captured } = makeSecondRunDb({ a1: "n1", a2: "n2", a3: "n3" });
+		const plan = await runImport(
+			db,
+			stubAdapter("x", thread([c("a1", null), c("a2", "a1"), c("a3", "a2")])),
+			"",
+			"s",
+		);
+		expect(plan.new_comments).toBe(0);
+		expect(updates(captured)).toHaveLength(0);
+	});
+
+	it("re-parents only the rows this run inserted, under an existing parent", async () => {
+		// a1 and a2 came in on run one. a3 is new in the export and replies to
+		// a2: it must link (to a2's existing native id) at the right depth, and
+		// a2 itself must not be touched.
+		const { db, captured } = makeSecondRunDb({ a1: "n1", a2: "n2" });
+		await runImport(
+			db,
+			stubAdapter("x", thread([c("a1", null), c("a2", "a1"), c("a3", "a2")])),
+			"",
+			"s",
+		);
+		const ups = updates(captured);
+		expect(ups).toHaveLength(1);
+		const [parent, depth, child, source, importId] = ups[0]!.binds;
+		expect(parent).toBe("n2");
+		expect(depth).toBe(3);
+		expect(source).toBe("x");
+		expect(importId).toBe("a3");
+		const inserted = captured.find(
+			(x) => x.sql.startsWith("INSERT INTO comments") && x.binds[10] === "a3",
+		);
+		expect(child).toBe(inserted?.binds[0]);
+	});
+
+	it("scopes the UPDATE to this source's unparented row in SQL as well", async () => {
+		const { db, captured } = makeSecondRunDb({});
+		await runImport(db, stubAdapter("x", thread([c("a1", null), c("a2", "a1")])), "", "s");
+		const sql = updates(captured)[0]!.sql.replace(/\s+/g, " ");
+		expect(sql).toContain("WHERE id = ? AND import_source = ? AND import_id = ? AND parent_id IS NULL");
+	});
+});

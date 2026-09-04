@@ -187,7 +187,7 @@ describe("the pages the emailed links land on", () => {
 		sqlite.prepare("UPDATE subscriptions SET locale = ? WHERE email = ?").run("zz", EMAIL);
 		const html = await (await landing(`confirm/${row().confirm_token}`)).text();
 		expect(html).toContain('<html lang="en"');
-		expect(html).toContain("confirmed for comment notifications on");
+		expect(html).toContain("Turn on comment notifications for");
 	});
 
 	it("still honours a stored regional tag the registry resolves", async () => {

@@ -1802,6 +1802,18 @@ export const countAdmins = async (db: D1Database): Promise<number> => {
 	return row?.n ?? 0;
 };
 
+// Used by banUser to refuse a ban that would leave nobody able to sign in
+// to the admin UI. Counts the admins who can still act, so an already
+// banned admin does not make a second one look expendable.
+export const countActiveAdmins = async (db: D1Database): Promise<number> => {
+	const row = await db
+		.prepare(
+			`SELECT COUNT(*) AS n FROM users WHERE role = 'admin' AND is_banned = 0`,
+		)
+		.first<{ n: number }>();
+	return row?.n ?? 0;
+};
+
 export type AdminStats = {
 	total_comments: number;
 	pending_comments: number;

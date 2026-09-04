@@ -26,6 +26,59 @@ describe("renderMarkdown — output safety", () => {
 		expect(out).not.toContain("<img");
 	});
 
+	// marked's inline tokenizer flips `inRawBlock` after an inline <code>,
+	// <pre>, <kbd> or <script> opener and stamps every following text token
+	// `escaped: true`; the default `text()` then emits it verbatim. The
+	// opener itself is dropped by `html()`, so only these follow-on tokens
+	// carried the payload. Each case is a distinct entry into that state.
+	describe("inline raw-block state never leaks markup", () => {
+		// `<img/src=…>` rather than `<img src=…>`: the slash form does not
+		// match marked's inline tag regex, so it tokenizes as *text* instead
+		// of an html token our `html()` would drop. That is the leaking path.
+		const payloads: Array<[string, string]> = [
+			["<code> opener", "hello <code>x <img/src=x onerror=alert(1)> y</code> z"],
+			["<kbd> opener", "<kbd>a <svg/onload=alert(1)> b</kbd>"],
+			// Leading text keeps these off the block-HTML path, which drops the
+			// whole line; the inline path is the one under test.
+			["<pre> opener", "a <pre>b <iframe/src=//evil.example></iframe>"],
+			["<script> opener", "a <script>x</script> <img/src=x onerror=alert(1)>"],
+			["unclosed <code>", "x <code>y <img/src=x onerror=alert(1)>"],
+			["inside a list item", "- <code>a <img/src=x onerror=alert(1)></code>"],
+			["inside link text", "[<code>a <img/src=x onerror=alert(1)></code>](https://a.b)"],
+			["inside emphasis", "*<code>a <img/src=x onerror=alert(1)></code>*"],
+			["inside blockquote", "> <code>a <img/src=x onerror=alert(1)></code>"],
+		];
+		for (const [label, src] of payloads) {
+			it(`escapes markup after a ${label}`, () => {
+				const out = renderMarkdown(src);
+				expect(out).not.toMatch(/<(img|svg|iframe|script)/i);
+				// No event handler inside any real tag.
+				expect(out).not.toMatch(/<[^>]*\bon\w+\s*=/i);
+				// The text is still there, entity-escaped, not swallowed.
+				expect(out).toMatch(/&lt;(img|svg|iframe)/i);
+			});
+		}
+	});
+
+	it("does not double-escape entities the author typed or escaped", () => {
+		expect(renderMarkdown("a & b")).toContain("a &amp; b");
+		expect(renderMarkdown("a &amp; b")).toContain("a &amp; b");
+		expect(renderMarkdown("1 < 2")).toContain("1 &lt; 2");
+		expect(renderMarkdown("\\<not a tag>")).toContain("&lt;not a tag&gt;");
+		expect(renderMarkdown("&copy; &#169; &#xA9;")).toContain("&copy; &#169; &#xA9;");
+		expect(renderMarkdown("`a < b`")).toContain("<code>a &lt; b</code>");
+	});
+
+	it("keeps every allowlisted tag through the fail-closed pass", () => {
+		const out = renderMarkdown(
+			"# H\n\n> q **b** *i* ~~d~~ `c` [l](https://a.b)\n\n- x\n\n1. y\n\n```js\nz\n```\n\n---\nline\nbreak",
+		);
+		for (const tag of ["p", "strong", "em", "del", "code", "a", "blockquote", "ul", "ol", "li", "pre"]) {
+			expect(out).toContain(`<${tag}`);
+		}
+		expect(out).toContain("<br>");
+	});
+
 	it("strips javascript: links (renders just the link text)", () => {
 		const out = renderMarkdown("[click](javascript:alert(1))");
 		expect(out).not.toMatch(/href="javascript:/i);
@@ -283,7 +336,9 @@ describe("sanitizeForEmail", () => {
 
 	it("renderer version is a positive integer", () => {
 		expect(Number.isInteger(CURRENT_RENDERER_VERSION)).toBe(true);
-		expect(CURRENT_RENDERER_VERSION).toBeGreaterThanOrEqual(1);
+		// 3 is the inline-text escape fix; stored body_html from earlier
+		// versions must be re-rendered, so this cannot silently go backwards.
+		expect(CURRENT_RENDERER_VERSION).toBeGreaterThanOrEqual(3);
 	});
 });
 

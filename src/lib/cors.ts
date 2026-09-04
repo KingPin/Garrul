@@ -53,6 +53,9 @@ const CARVE_OUT_PATHS: readonly RegExp[] = [
  */
 const SELF_ORIGIN_POST_PATHS: readonly RegExp[] = [
 	/^\/api\/v1\/subscribe\/unsubscribe\/[^/]+\/?$/,
+	// The double-opt-in confirm button, same shape and same reasoning: the
+	// emailed GET renders a form, this POST does the write.
+	/^\/api\/v1\/subscribe\/confirm\/[^/]+\/?$/,
 	// The other two buttons on that same page: unsubscribe from every thread
 	// this address follows, and unsubscribe one listed row by its id. Same form,
 	// same page, same token capability — they only need their own entries
@@ -89,7 +92,7 @@ const NO_ORIGIN_POST_PATHS: readonly RegExp[] = [
 	/^\/api\/v1\/subscribe\/unsubscribe\/[^/]+\/one-click\/?$/,
 ];
 
-const parseAllowed = (raw: string | undefined): Set<string> => {
+export const parseAllowedOrigins = (raw: string | undefined): Set<string> => {
 	if (!raw) return new Set();
 	return new Set(
 		raw
@@ -97,6 +100,39 @@ const parseAllowed = (raw: string | undefined): Set<string> => {
 			.map((s) => s.trim())
 			.filter(Boolean),
 	);
+};
+const parseAllowed = parseAllowedOrigins;
+
+/**
+ * The only form a caller-supplied page URL may take before it is stored in
+ * `posts.url` or followed by `/c/:id`: absolute, http(s), and on an origin the
+ * operator lists in ALLOWED_ORIGINS. Returns the URL serialised by the parser
+ * (so `HTTPS://Blog.Example.com` compares equal to its allowlisted form), or
+ * null for anything else.
+ *
+ * `post_url` arrives on an unauthenticated POST /api/v1/comments at the same
+ * trust level as the comment body, and the permalink route 302s a reader to
+ * it. A scheme check alone left a first-writer able to point a fresh slug's
+ * permalinks — which fan out into notification mail, the Atom feed and
+ * webhook payloads under this Worker's hostname — at any host. The embed only
+ * runs on allowlisted origins, so a legitimate `data-url` is always on one.
+ */
+export const allowedPostUrl = (
+	raw: string | null | undefined,
+	allowedOrigins: string | undefined,
+): string | null => {
+	if (typeof raw !== "string" || raw.length === 0 || raw.length > 2048) {
+		return null;
+	}
+	let u: URL;
+	try {
+		u = new URL(raw);
+	} catch {
+		return null;
+	}
+	if (u.protocol !== "https:" && u.protocol !== "http:") return null;
+	if (!parseAllowedOrigins(allowedOrigins).has(u.origin)) return null;
+	return u.toString();
 };
 
 const matches = (origin: string, allowed: Set<string>): boolean => {

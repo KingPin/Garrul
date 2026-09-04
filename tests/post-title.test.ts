@@ -98,6 +98,16 @@ describe("subjectTitle", () => {
 			"Legacy Bcc: x@y.z",
 		);
 	});
+
+	it("sanitizes the fallback slug too — it is a header value when used", () => {
+		// SLUG_RE rejects these on every current write path, but a row that
+		// predates the rule is still a slug this function may be handed.
+		expect(subjectTitle(null, `evil${CR}${LF}Bcc: x@y.z`)).toBe(
+			"evil Bcc: x@y.z",
+		);
+		expect(subjectTitle("", `a${LF}b`)).toBe("a b");
+		expect(subjectTitle(null, CR + LF)).toBe("");
+	});
 });
 
 describe("fillSubject", () => {

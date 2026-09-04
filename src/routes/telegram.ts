@@ -276,7 +276,15 @@ const runAction = async (
 			banned: true,
 			fromComment: commentId,
 		});
-		if (!res.ok) return { toast: t("telegram.comment_not_found") };
+		if (!res.ok) {
+			return {
+				toast: t(
+					res.error === "not_found"
+						? "telegram.comment_not_found"
+						: "telegram.ban_refused",
+				),
+			};
+		}
 		return { toast: t("telegram.author_banned") };
 	}
 

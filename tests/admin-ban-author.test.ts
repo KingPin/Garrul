@@ -8,7 +8,9 @@
  *     recorded in the audit row's meta (from_comment) for traceability;
  *   - a ban without from_comment still works and omits it from meta;
  *   - the action is admin-only — a mod session is rejected with 403;
- *   - banning a non-existent user returns 404 (surfaces stale UI / typos).
+ *   - banning a non-existent user returns 404 (surfaces stale UI / typos);
+ *   - a self-ban and a ban of the last active admin are refused (400), unban
+ *     never is.
  *
  * The same-origin CSRF check in the admin middleware is satisfied with an Origin
  * header matching the request URL.
@@ -19,6 +21,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { admin } from "../src/routes/admin";
+import { banUser } from "../src/lib/moderation";
 import type { Bindings } from "../src/index";
 
 const MIGRATIONS_DIR = join(__dirname, "../src/db/migrations");
@@ -210,5 +213,78 @@ describe("POST /admin/api/users/:id (one-click ban author)", () => {
 			execCtx,
 		);
 		expect(res.status).toBe(404);
+	});
+});
+
+/**
+ * Lockout guards. A ban revokes every session and the account is refused from
+ * then on, so a ban of yourself or of the last active admin leaves nobody who
+ * can open the admin UI. Both live in banUser itself so the Telegram button is
+ * covered too; this suite drives them through the HTTP route.
+ */
+describe("POST /admin/api/users/:id — lockout guards", () => {
+	const SECOND_ADMIN_ID = "01HADMIN2000000000000000AB";
+	const banId = (id: string, banned = true) =>
+		app().request(
+			`/admin/api/users/${id}`,
+			{
+				method: "POST",
+				headers: {
+					"content-type": "application/json",
+					cookie: `__Host-garrul_sess=${ADMIN_SID}`,
+					origin: "http://localhost",
+				},
+				body: JSON.stringify({ banned }),
+			},
+			env as unknown as Record<string, unknown>,
+			execCtx,
+		);
+	const seedSecondAdmin = (banned = 0) =>
+		sqlite
+			.prepare(
+				`INSERT INTO users (id, provider, provider_id, name, is_admin, role, is_banned, created_at)
+				 VALUES (?, 'github', '9', 'Op2', 1, 'admin', ?, 1_700_000_000_000)`,
+			)
+			.run(SECOND_ADMIN_ID, banned);
+
+	it("refuses to ban the acting admin (400 self)", async () => {
+		seedSecondAdmin();
+		const res = await banId(ADMIN_ID);
+		expect(res.status).toBe(400);
+		expect(await res.json()).toEqual({ error: "self" });
+		expect(isBanned(ADMIN_ID)).toBe(0);
+		expect(lastBanAudit()).toBeUndefined();
+	});
+
+	it("refuses to ban the last active admin (last_admin)", async () => {
+		// Through the route the acting admin is always a second active admin,
+		// so this guard is reached only when the caller is not one: a Telegram
+		// link whose operator row was demoted, or a future caller. Drive the
+		// shared function directly with a non-admin actor. An already-banned
+		// admin does not count toward "still able to sign in".
+		seedSecondAdmin(1);
+		const res = await banUser({
+			env,
+			adminId: MOD_ID,
+			userId: ADMIN_ID,
+			banned: true,
+		});
+		expect(res).toEqual({ ok: false, error: "last_admin" });
+		expect(isBanned(ADMIN_ID)).toBe(0);
+		expect(lastBanAudit()).toBeUndefined();
+	});
+
+	it("bans another admin while one more remains active", async () => {
+		seedSecondAdmin();
+		const res = await banId(SECOND_ADMIN_ID);
+		expect(res.status).toBe(200);
+		expect(isBanned(SECOND_ADMIN_ID)).toBe(1);
+	});
+
+	it("never refuses an unban", async () => {
+		seedSecondAdmin(1);
+		const res = await banId(SECOND_ADMIN_ID, false);
+		expect(res.status).toBe(200);
+		expect(isBanned(SECOND_ADMIN_ID)).toBe(0);
 	});
 });

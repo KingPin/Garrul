@@ -223,12 +223,17 @@ describe("POST /subscribe/unsubscribe/:token", () => {
 		expect(unsubscribedAt()).toBeNull();
 	});
 
-	it("does not extend the allowance to the confirm path", async () => {
-		// SELF_ORIGIN_POST_PATHS lists one path. A POST to a sibling email-link
-		// route must still fall through to the ALLOWED_ORIGINS gate.
+	it("does not extend the allowance to a sibling route", async () => {
+		// SELF_ORIGIN_POST_PATHS is an exact-path list. A POST to a sibling
+		// under /subscribe that is not on it must still fall through to the
+		// ALLOWED_ORIGINS gate (the widget's subscribe endpoint is one).
 		const res = await app().request(
-			`${SELF}/api/v1/subscribe/confirm/${TOKEN}`,
-			{ method: "POST", headers: { origin: SELF } },
+			`${SELF}/api/v1/subscribe`,
+			{
+				method: "POST",
+				headers: { origin: SELF, "content-type": "application/json" },
+				body: JSON.stringify({ post_slug: SLUG, email: EMAIL }),
+			},
 			env as unknown as Record<string, unknown>,
 		);
 		expect(res.status).toBe(403);

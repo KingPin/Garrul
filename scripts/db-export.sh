@@ -17,6 +17,13 @@
 
 set -euo pipefail
 
+# Same data, other exposure: the file `wrangler d1 export` writes gets the
+# shell's default mode, which on most workstations is 0644 — readable by
+# every other account on the machine, and by anything that later syncs
+# `$HOME`. Owner-only from the first byte; wrangler creates the file under
+# this umask, so there is no window where it exists more openly.
+umask 077
+
 # The binding, not `database_name` — `wrangler d1 export` takes either, and
 # the binding is identical on every install however the operator named their
 # database. Override with DB=<name> if you keep more than one around.
