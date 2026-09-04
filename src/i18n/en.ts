@@ -111,6 +111,8 @@ export const en = {
 	"telegram.action_applied": "✓ {action} applied",
 	"telegram.reports_resolved": "✓ Resolved {count} report(s)",
 	"telegram.author_banned": "✓ Banned the comment author",
+	"telegram.ban_refused":
+		"Not banned: that is you, or the last admin who can still sign in.",
 	"telegram.link_ok":
 		"✅ Linked to {name}. You'll get operator notifications and can moderate from here.",
 	"telegram.link_invalid":

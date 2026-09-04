@@ -2056,7 +2056,12 @@ admin.post("/api/users/:id", async (c) => {
 			typeof body.from_comment === "string" ? body.from_comment : null,
 		reason: body.reason ?? null,
 	});
-	if (!result.ok) return c.json({ error: result.error }, 404);
+	if (!result.ok) {
+		return c.json(
+			{ error: result.error },
+			result.error === "not_found" ? 404 : 400,
+		);
+	}
 	return c.json({ ok: true, id: result.id, banned: result.banned });
 });
 
