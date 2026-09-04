@@ -436,7 +436,7 @@ subscriptions.get("/unsubscribe/:token", async (c) => {
 		);
 	}
 
-	return c.html(confirmPageHtml(postLabel, locale, t, manage));
+	return c.html(unsubscribeConfirmPageHtml(postLabel, locale, t, manage));
 });
 
 subscriptions.post("/unsubscribe/:token", async (c) => {
@@ -873,7 +873,7 @@ const actionPageHtml = (
 </p>${manage}`,
 	);
 
-const confirmPageHtml = (
+const unsubscribeConfirmPageHtml = (
 	postLabel: string,
 	locale: string,
 	t: Translator,
