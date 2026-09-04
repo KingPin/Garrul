@@ -4,8 +4,48 @@
 
 ### `wrangler deploy` says "Authentication error"
 
-Run `wrangler login` once on this machine. The token lives in
-`~/.wrangler/config/default.toml`.
+Run `wrangler login` once on this machine. The token lives under
+wrangler's config directory (`~/.config/.wrangler/config/default.toml`
+on Linux; older installs used `~/.wrangler/config/default.toml`).
+OAuth logins expire; the fix for an expired one is the same
+`wrangler login`. In CI, or anywhere a browser login is not possible,
+export `CLOUDFLARE_API_TOKEN` with a token that has *Workers
+Scripts:Edit* and *D1:Edit* on the account instead.
+
+### `npm run upgrade` says every secret is missing and every migration is pending
+
+A plan that lists **all** required secrets as missing and **all**
+migrations (`0001_init.sql` onward) as pending on an install that has
+been running fine is not describing your deployment. It means the
+upgrade could not read it. Current versions stop in preflight with:
+
+```
+✘ Wrangler is not logged in to Cloudflare.
+
+  wrangler said: You are not authenticated. Please run `wrangler login`.
+```
+
+and prints the fix. Older versions silently treated the failed reads as
+"nothing there" and produced the brand-new-install plan above.
+
+Do **not** answer `y` to such a plan. It would re-prompt you for
+secrets that already exist and, once wrangler *is* logged in, the
+re-run of every migration is harmless (they are idempotent) but slow.
+
+Causes, in order of likelihood:
+
+1. **wrangler is logged out.** OAuth tokens expire. `npx wrangler whoami`
+   says `You are not authenticated` (and exits 0, so scripts that only
+   check the exit code miss it). Fix: `npx wrangler login`.
+2. **`CLOUDFLARE_API_TOKEN` is set but wrong or expired.** It takes
+   precedence over a saved login. Fix the variable or unset it.
+3. **`wrangler.toml` points at the wrong deployment.** A second
+   checkout with a stale `name`, `account_id` or D1 `database_id`
+   reads a Worker or database that has nothing in it. Compare the
+   values against the checkout that deploys this instance.
+
+Once fixed, `npm run upgrade -- --dry-run` should show only the drift
+the new version actually introduces.
 
 ### Migration fails on a fresh D1: "table foo already exists"
 

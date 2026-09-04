@@ -6,6 +6,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { main } from "../scripts/upgrade";
 import type * as wranglerModule from "../scripts/upgrade/wrangler";
+import {
+	SubprocessError,
+	WranglerReadError,
+	describeFailure,
+} from "../scripts/upgrade/wrangler";
 import type * as gitModule from "../scripts/upgrade/git";
 import type { Manifest } from "../scripts/upgrade/manifest";
 
@@ -67,6 +72,12 @@ const fakeTargetManifest: Manifest = {
 };
 
 const makeWranglerMock = (): typeof wranglerModule => ({
+	// Error classes and the pure formatter are the real ones: main() does an
+	// `instanceof WranglerReadError`, so a mocked class would never match.
+	SubprocessError,
+	WranglerReadError,
+	describeFailure,
+	checkAuth: vi.fn(() => ({ ok: true }) as wranglerModule.AuthStatus),
 	listSecrets: vi.fn(() => ["JWT_SECRET"]),
 	parseWranglerToml: vi.fn(() => ({
 		kvBindings: ["RATE_LIMITS"],
@@ -403,5 +414,175 @@ describe("upgrade dry-run", () => {
 				fetchTargetManifest,
 			}),
 		).rejects.toThrow(/--version requires a tag argument/);
+	});
+});
+
+/**
+ * The 2.23.0 incident: an expired `wrangler login` made every live read fail,
+ * every failure was swallowed as "nothing there", and the operator was shown
+ * a plan to re-enter four secrets and re-run all 23 migrations. These pin the
+ * three layers that now stand in the way: preflight refuses to start, a read
+ * failure during drift detection stops the run with the cause, and a plan
+ * that still comes out all-missing on a configured install carries a warning.
+ */
+describe("upgrade refuses to plan against a deployment it cannot read", () => {
+	let wranglerMock: typeof wranglerModule;
+	let gitMock: typeof gitModule;
+	let logSpy: ReturnType<typeof vi.spyOn>;
+	let errSpy: ReturnType<typeof vi.spyOn>;
+	let stdoutSpy: ReturnType<typeof vi.spyOn>;
+	let exitSpy: ReturnType<typeof vi.spyOn>;
+
+	const deps = () => ({
+		wrangler: wranglerMock,
+		git: gitMock,
+		fetchLatest,
+		fetchReleaseForTag,
+		fetchTargetManifest,
+		loadLocal,
+	});
+	const joined = (spy: ReturnType<typeof vi.spyOn>): string =>
+		spy.mock.calls.map((c: unknown[]) => c.join(" ")).join("\n");
+
+	beforeEach(() => {
+		wranglerMock = makeWranglerMock();
+		gitMock = makeGitMock();
+		fetchLatest.mockClear();
+		fetchTargetManifest.mockClear();
+		logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+		errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+		stdoutSpy = vi
+			.spyOn(process.stdout, "write")
+			.mockImplementation(() => true);
+		// main() calls process.exit(1) on a refusal; throwing here lets the
+		// test observe the refusal and prove nothing ran after it.
+		exitSpy = vi.spyOn(process, "exit").mockImplementation(((code) => {
+			throw new Error(`process.exit(${code})`);
+		}) as (code?: number | string | null) => never);
+	});
+
+	afterEach(() => {
+		logSpy.mockRestore();
+		errSpy.mockRestore();
+		stdoutSpy.mockRestore();
+		exitSpy.mockRestore();
+	});
+
+	it("stops in preflight when wrangler is not logged in, before any fetch", async () => {
+		vi.mocked(wranglerMock.checkAuth).mockReturnValue({
+			ok: false,
+			reason: "not_logged_in",
+			detail: "wrangler whoami: You are not authenticated.",
+		});
+
+		await expect(main(["--dry-run"], deps())).rejects.toThrow(
+			/process\.exit\(1\)/,
+		);
+
+		expect(fetchLatest).not.toHaveBeenCalled();
+		expect(fetchTargetManifest).not.toHaveBeenCalled();
+		expect(wranglerMock.listSecrets).not.toHaveBeenCalled();
+		expect(wranglerMock.queryAppliedMigrations).not.toHaveBeenCalled();
+
+		const err = joined(errSpy);
+		expect(err).toMatch(/Wrangler is not logged in to Cloudflare/);
+		expect(err).toMatch(/npx wrangler login/);
+		expect(err).toMatch(/CLOUDFLARE_API_TOKEN/);
+		expect(err).toMatch(/Nothing was changed/);
+		// No plan of any kind was printed.
+		expect(joined(logSpy)).not.toMatch(/Plan:/);
+	});
+
+	it("names the wrangler failure when whoami itself cannot run", async () => {
+		vi.mocked(wranglerMock.checkAuth).mockReturnValue({
+			ok: false,
+			reason: "whoami_failed",
+			detail: "getaddrinfo ENOTFOUND api.cloudflare.com",
+		});
+
+		await expect(main(["--dry-run"], deps())).rejects.toThrow(
+			/process\.exit\(1\)/,
+		);
+		const err = joined(errSpy);
+		expect(err).toMatch(/could not check who is logged in/);
+		expect(err).toMatch(/ENOTFOUND api\.cloudflare\.com/);
+	});
+
+	it("stops during drift detection when a live read fails, with wrangler's own text", async () => {
+		vi.mocked(wranglerMock.listSecrets).mockImplementation(() => {
+			throw new WranglerReadError(
+				"list the Worker's secrets",
+				new SubprocessError(
+					"npx",
+					["wrangler", "secret", "list"],
+					1,
+					"",
+					"✘ [ERROR] A request to the Cloudflare API (/accounts/x/workers/scripts/garrul/secrets) failed. workers.api.error.script_not_found [code: 10007]",
+				),
+			);
+		});
+
+		await expect(main(["--dry-run"], deps())).rejects.toThrow(
+			/process\.exit\(1\)/,
+		);
+
+		const err = joined(errSpy);
+		expect(err).toMatch(/could not list the Worker's secrets/);
+		expect(err).toMatch(/script_not_found/);
+		expect(err).toMatch(/Already logged in\?/);
+		expect(joined(logSpy)).not.toMatch(/Missing required secrets/);
+	});
+
+	it("lets a non-wrangler error out of drift detection untouched", async () => {
+		vi.mocked(wranglerMock.listSecrets).mockImplementation(() => {
+			throw new TypeError("boom");
+		});
+		await expect(main(["--dry-run"], deps())).rejects.toThrow(/boom/);
+		expect(exitSpy).not.toHaveBeenCalled();
+	});
+
+	it("does not query D1 for a binding wrangler.toml does not have yet", async () => {
+		// A first-ever run: setup.sh has not created the database, so there is
+		// nothing to read and asking wrangler about the binding would fail.
+		(wranglerMock.parseWranglerToml as ReturnType<typeof vi.fn>).mockReturnValue({
+			kvBindings: ["RATE_LIMITS"],
+			d1Bindings: [],
+			analyticsBindings: [],
+			varNames: ["ENV"],
+			vars: { ENV: "production" },
+			raw: "",
+		});
+		vi.mocked(wranglerMock.queryAppliedMigrations).mockImplementation(() => {
+			throw new Error("should not be called");
+		});
+
+		await main(["--dry-run"], deps());
+
+		expect(wranglerMock.queryAppliedMigrations).not.toHaveBeenCalled();
+		const out = joined(logSpy);
+		expect(out).toMatch(/Missing D1 databases/);
+		expect(out).toMatch(/Pending migrations: 3/);
+		// All-missing on a *fresh* install is the expected shape, not suspicious.
+		expect(out).not.toMatch(/reads like a brand-new install/);
+	});
+
+	it("warns when a configured install reads as entirely missing", async () => {
+		vi.mocked(wranglerMock.listSecrets).mockReturnValue([]);
+		vi.mocked(wranglerMock.queryAppliedMigrations).mockReturnValue([]);
+
+		await main(["--dry-run"], deps());
+
+		const out = joined(logSpy);
+		expect(out).toMatch(/reads like a brand-new install, but it is not one/);
+		expect(out).toMatch(/npx wrangler whoami/);
+		// The warning sits above the drift lists it is warning about.
+		expect(out.indexOf("brand-new install")).toBeLessThan(
+			out.indexOf("Missing required secrets"),
+		);
+	});
+
+	it("does not warn when only some drift is present", async () => {
+		await main(["--dry-run"], deps());
+		expect(joined(logSpy)).not.toMatch(/brand-new install/);
 	});
 });

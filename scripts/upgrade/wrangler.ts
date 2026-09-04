@@ -14,6 +14,24 @@ import type { TomlVars } from "./toml-vars";
 
 type RunOpts = { cwd?: string; inheritStdio?: boolean };
 
+/**
+ * A subprocess that exited non-zero. Carries both streams: `wrangler --json`
+ * commands put their error object on *stdout* and leave stderr empty, so a
+ * message built from stderr alone reads "exited with 1: " and nothing else.
+ */
+export class SubprocessError extends Error {
+	readonly stdout: string;
+	readonly stderr: string;
+	readonly status: number;
+	constructor(cmd: string, args: string[], status: number, stdout: string, stderr: string) {
+		super(`${cmd} ${args.join(" ")} exited with ${status}: ${stderr || stdout}`);
+		this.name = "SubprocessError";
+		this.stdout = stdout;
+		this.stderr = stderr;
+		this.status = status;
+	}
+}
+
 const run = (cmd: string, args: string[], opts: RunOpts = {}): string => {
 	const r = spawnSync(cmd, args, {
 		encoding: "utf8",
@@ -22,8 +40,12 @@ const run = (cmd: string, args: string[], opts: RunOpts = {}): string => {
 	});
 	if (r.error) throw r.error;
 	if (typeof r.status === "number" && r.status !== 0) {
-		throw new Error(
-			`${cmd} ${args.join(" ")} exited with ${r.status}: ${r.stderr ?? ""}`,
+		throw new SubprocessError(
+			cmd,
+			args,
+			r.status,
+			typeof r.stdout === "string" ? r.stdout : "",
+			typeof r.stderr === "string" ? r.stderr : "",
 		);
 	}
 	return typeof r.stdout === "string" ? r.stdout : "";
@@ -32,26 +54,113 @@ const run = (cmd: string, args: string[], opts: RunOpts = {}): string => {
 const wrangler = (args: string[], opts: RunOpts = {}): string =>
 	run("npx", ["wrangler", ...args], opts);
 
-export const listSecrets = (): string[] => {
-	try {
-		const out = wrangler(["secret", "list", "--format", "json"]);
-		const parsed: unknown = JSON.parse(out);
-		if (!Array.isArray(parsed)) return [];
-		return parsed
-			.map((row) => {
-				if (
-					typeof row === "object" &&
-					row !== null &&
-					typeof (row as { name?: unknown }).name === "string"
-				) {
-					return (row as { name: string }).name;
-				}
-				return null;
-			})
-			.filter((n): n is string => n !== null);
-	} catch {
-		return [];
+/** Terminal colour codes: wrangler colours its error output even when piped. */
+const ANSI_RE = /\x1b\[[0-9;]*[A-Za-z]/g;
+
+/**
+ * The one line of a failed wrangler command worth showing an operator. Prefers
+ * the `error.text` of a `--json` error object (D1), then the first non-empty
+ * stderr line with wrangler's `✘ [ERROR]` prefix and colour codes removed.
+ */
+export const describeFailure = (err: unknown): string => {
+	if (err instanceof SubprocessError) {
+		try {
+			const parsed: unknown = JSON.parse(err.stdout);
+			const text = (parsed as { error?: { text?: unknown } })?.error?.text;
+			if (typeof text === "string" && text.trim()) return text.trim();
+		} catch {
+			// stdout was not JSON; fall through to stderr
+		}
+		const line = `${err.stderr}\n${err.stdout}`
+			.replace(ANSI_RE, "")
+			.split("\n")
+			.map((l) => l.replace(/^\s*✘?\s*\[ERROR\]\s*/, "").trim())
+			.find((l) => l.length > 0);
+		if (line) return line;
+		return `exited with ${err.status}`;
 	}
+	if (err instanceof Error) return err.message;
+	return String(err);
+};
+
+/**
+ * Raised when a *read* of live Cloudflare state fails. The upgrade plan is a
+ * diff against that state, so a failed read must stop the run — an empty
+ * answer would print "everything is missing" and offer to redo the install.
+ */
+export class WranglerReadError extends Error {
+	readonly what: string;
+	readonly detail: string;
+	constructor(what: string, cause: unknown) {
+		const detail = describeFailure(cause);
+		super(`could not ${what}: ${detail}`);
+		this.name = "WranglerReadError";
+		this.what = what;
+		this.detail = detail;
+	}
+}
+
+export type AuthStatus =
+	| { ok: true }
+	| { ok: false; reason: "not_logged_in" | "whoami_failed"; detail: string };
+
+/**
+ * `wrangler whoami` exits 0 whether or not there is a login, so the verdict
+ * has to come from its output. An expired OAuth token also lands here: the
+ * refresh happens lazily and a failed refresh leaves wrangler logged out.
+ */
+export const checkAuth = (): AuthStatus => {
+	let out: string;
+	try {
+		out = wrangler(["whoami"]);
+	} catch (err) {
+		return { ok: false, reason: "whoami_failed", detail: describeFailure(err) };
+	}
+	const line = out
+		.replace(ANSI_RE, "")
+		.split("\n")
+		.map((l) => l.trim())
+		.find((l) => /not authenticated/i.test(l));
+	if (line !== undefined) {
+		return { ok: false, reason: "not_logged_in", detail: line };
+	}
+	return { ok: true };
+};
+
+const names = (rows: unknown[]): string[] =>
+	rows
+		.map((row) => {
+			if (
+				typeof row === "object" &&
+				row !== null &&
+				typeof (row as { name?: unknown }).name === "string"
+			) {
+				return (row as { name: string }).name;
+			}
+			return null;
+		})
+		.filter((n): n is string => n !== null);
+
+export const listSecrets = (): string[] => {
+	let out: string;
+	try {
+		out = wrangler(["secret", "list", "--format", "json"]);
+	} catch (err) {
+		throw new WranglerReadError("list the Worker's secrets", err);
+	}
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(out);
+	} catch (err) {
+		throw new WranglerReadError("parse `wrangler secret list` output", err);
+	}
+	if (!Array.isArray(parsed)) {
+		throw new WranglerReadError(
+			"parse `wrangler secret list` output",
+			new Error("expected a JSON array"),
+		);
+	}
+	return names(parsed);
 };
 
 export type WranglerToml = {
@@ -172,16 +281,21 @@ export const putSecret = (name: string): void => {
 /**
  * `database` is a name *or* a binding — `wrangler d1 execute` accepts
  * either. Callers pass the binding: it is the half this repo owns, while
- * `database_name` is whatever the operator typed at setup. A wrong value
- * here does not throw, it falls into the `catch` and reports zero applied
- * migrations, which makes the upgrade plan offer to re-run all of them.
+ * `database_name` is whatever the operator typed at setup.
+ *
+ * Exactly one failure means "zero applied": a database that has no
+ * `_migrations` table yet, which is what a freshly created D1 looks like.
+ * Everything else — no login, wrong database, network — throws. Until
+ * v2.24 every failure returned `[]`, and an expired wrangler login produced a
+ * plan that offered to re-run all migrations and re-enter every secret.
  */
 export const queryAppliedMigrations = (
 	database: string,
 	remote: boolean,
 ): string[] => {
+	let out: string;
 	try {
-		const out = wrangler([
+		out = wrangler([
 			"d1",
 			"execute",
 			database,
@@ -190,32 +304,31 @@ export const queryAppliedMigrations = (
 			"--command",
 			"SELECT name FROM _migrations",
 		]);
-		const parsed: unknown = JSON.parse(out);
-		if (!Array.isArray(parsed)) return [];
-		const first = parsed[0] as unknown;
-		if (
-			typeof first !== "object" ||
-			first === null ||
-			!Array.isArray((first as { results?: unknown[] }).results)
-		) {
-			return [];
-		}
-		const rows = (first as { results: unknown[] }).results;
-		return rows
-			.map((r) => {
-				if (
-					typeof r === "object" &&
-					r !== null &&
-					typeof (r as { name?: unknown }).name === "string"
-				) {
-					return (r as { name: string }).name;
-				}
-				return null;
-			})
-			.filter((n): n is string => n !== null);
-	} catch {
-		return [];
+	} catch (err) {
+		if (/no such table: _migrations/i.test(describeFailure(err))) return [];
+		throw new WranglerReadError(
+			`read applied migrations from D1 binding ${database}`,
+			err,
+		);
 	}
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(out);
+	} catch (err) {
+		throw new WranglerReadError("parse `wrangler d1 execute` output", err);
+	}
+	const first = Array.isArray(parsed) ? (parsed[0] as unknown) : undefined;
+	if (
+		typeof first !== "object" ||
+		first === null ||
+		!Array.isArray((first as { results?: unknown[] }).results)
+	) {
+		throw new WranglerReadError(
+			"parse `wrangler d1 execute` output",
+			new Error("expected [{ results: [...] }]"),
+		);
+	}
+	return names((first as { results: unknown[] }).results);
 };
 
 export const npmRun = (script: string, extraArgs: string[] = []): void => {

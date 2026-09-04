@@ -15,6 +15,7 @@ import {
 	diffRenderer,
 	hasMutations,
 	blocksAutoApply,
+	looksLikeLostInstall,
 	type Plan,
 } from "../scripts/upgrade/drift";
 import type {
@@ -472,5 +473,64 @@ describe("hasMutations + blocksAutoApply", () => {
 
 	it("blocksAutoApply empty otherwise", () => {
 		expect(blocksAutoApply(empty())).toHaveLength(0);
+	});
+});
+
+describe("looksLikeLostInstall", () => {
+	const target = {
+		secrets: [secret("A"), secret("B"), secret("OPT", false)],
+		migrations: ["0001.sql", "0002.sql"],
+	} as unknown as Manifest;
+	const base = (over: Partial<Plan> = {}): Plan =>
+		({
+			secrets: { missing: [secret("A"), secret("B")], extra: [] },
+			d1: { missing: [], extra: [] },
+			migrations: { pending: ["0001.sql", "0002.sql"], diverged: [] },
+			...over,
+		}) as unknown as Plan;
+
+	it("fires when a configured D1 shows every required secret missing and every migration pending", () => {
+		expect(looksLikeLostInstall(base(), target)).toBe(true);
+	});
+
+	it("stays quiet on a fresh install whose D1 is still to be created", () => {
+		const plan = base({
+			d1: {
+				missing: [{ binding: "DB", databaseName: "x", required: true }],
+				extra: [],
+			},
+		});
+		expect(looksLikeLostInstall(plan, target)).toBe(false);
+	});
+
+	it("stays quiet when any secret is present", () => {
+		expect(
+			looksLikeLostInstall(
+				base({ secrets: { missing: [secret("B")], extra: [] } }),
+				target,
+			),
+		).toBe(false);
+	});
+
+	it("stays quiet when any migration is applied", () => {
+		expect(
+			looksLikeLostInstall(
+				base({ migrations: { pending: ["0002.sql"], diverged: [] } }),
+				target,
+			),
+		).toBe(false);
+	});
+
+	it("needs something to compare against", () => {
+		const empty = { secrets: [], migrations: [] } as unknown as Manifest;
+		expect(
+			looksLikeLostInstall(
+				base({
+					secrets: { missing: [], extra: [] },
+					migrations: { pending: [], diverged: [] },
+				}),
+				empty,
+			),
+		).toBe(false);
 	});
 });

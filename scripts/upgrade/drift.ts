@@ -280,3 +280,24 @@ export const blocksAutoApply = (plan: Plan): string[] => {
 	}
 	return reasons;
 };
+
+/**
+ * True when the plan says the install has nothing: every required secret
+ * missing and every migration pending, on a `wrangler.toml` that already
+ * names its D1 database. A genuinely fresh install has no D1 block yet
+ * (`setup.sh` creates it), so this shape is far more likely to be a read
+ * that quietly came back empty than an operator who created a database and
+ * then did nothing else. The reads throw on failure now, so this is a second
+ * line — it costs one comparison and turns "re-run 23 migrations" into a
+ * question the operator can answer before saying yes.
+ */
+export const looksLikeLostInstall = (plan: Plan, target: Manifest): boolean => {
+	if (plan.d1.missing.length > 0) return false;
+	const requiredSecrets = target.secrets.filter((s) => s.required).length;
+	return (
+		target.migrations.length > 0 &&
+		plan.migrations.pending.length === target.migrations.length &&
+		requiredSecrets > 0 &&
+		plan.secrets.missing.length === requiredSecrets
+	);
+};
