@@ -130,6 +130,23 @@ them. This replaces what used to happen: an empty HMAC key makes WebCrypto
 throw, so the instance served anonymous 500s with stack traces from eight
 different endpoints and nothing pointing at the cause.
 
+The same two secrets are refused a second way when `ENV` is anything other
+than `dev`: if either still holds its `.dev.vars.example` placeholder
+(`dev-jwt-secret-change-me` / `dev-ip-hash-pepper-change-me`), the Worker
+returns the same `500 {"error":"server_misconfigured"}` and logs
+
+```
+{"level":"error","msg":"config.placeholder_required_secrets","placeholder":["JWT_SECRET"]}
+```
+
+Those two strings are in this public repository, so a deployment running on
+them has a forgeable OAuth state signer and an IP-hash pepper anyone can look
+up. The check is an exact match against the two published values and nothing
+else — no length or entropy rule — and `ENV=dev` opts out because that is
+where the placeholders belong. Fix: `openssl rand -base64 32 | npx wrangler
+secret put <NAME>` (what `setup.sh` does), then redeploy or wait for the next
+request; there is no cache.
+
 Turnstile deliberately isn't in that runtime check even though the deploy-time
 block lists it. An instance that only accepts OAuth-authenticated comments
 works fine without it, and anonymous posts already fail closed — hard-failing
