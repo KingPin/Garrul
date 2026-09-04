@@ -17,6 +17,7 @@
 import { Hono } from "hono";
 import type { Bindings } from "../index";
 import { getComment, getPost } from "../db/queries";
+import { allowedPostUrl } from "../lib/cors";
 // The anchor id has one source of truth, in the widget that stamps it onto each
 // thread node. Server-imports-widget is the established direction here (see
 // routes/api.reactions.ts pulling from ../widget/reactions) — the widget cannot
@@ -43,18 +44,14 @@ permalink.get("/:id", async (c) => {
 	if (!post || !post.url) return c.text("post URL not set", 404);
 
 	// Validate the stored post URL: it came from the embed widget's
-	// data-url attribute (caller-supplied), so we re-check the scheme
-	// here to avoid acting as an open redirect to `javascript:`, `data:`,
-	// or scheme-relative `//evil.example.com` targets.
-	let parsed: URL;
-	try {
-		parsed = new URL(post.url);
-	} catch {
-		return c.text("post URL invalid", 404);
-	}
-	if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
-		return c.text("post URL invalid", 404);
-	}
+	// data-url attribute (caller-supplied), so it is re-checked here — http(s)
+	// and on an origin in ALLOWED_ORIGINS — rather than trusting the write
+	// path. Rows written before the origin check existed, or after an operator
+	// drops a host from the allowlist, must not turn this route into an open
+	// redirect.
+	const safeUrl = allowedPostUrl(post.url, c.env.ALLOWED_ORIGINS);
+	if (!safeUrl) return c.text("post URL invalid", 404);
+	const parsed = new URL(safeUrl);
 
 	// Build the fragment on the parsed URL rather than by string concatenation.
 	// A stored `post.url` that already carries a fragment used to be joined with
