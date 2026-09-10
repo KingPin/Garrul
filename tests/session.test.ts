@@ -9,6 +9,8 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
+	buildShortCookie,
+	clearShortCookie,
 	destroySession,
 	issueSession,
 	readSession,
@@ -573,5 +575,82 @@ describe("revokeOtherSessions (sign out everywhere else)", () => {
 			cookieHeader: `__Host-garrul_sess=${otherSid}`,
 		});
 		expect(await readSession(replayCtx)).toBeNull();
+	});
+});
+
+/**
+ * The short-lived flow cookies (`buildShortCookie` / `clearShortCookie`).
+ *
+ * The OAuth binding cookie is what proves the browser finishing a callback is
+ * the browser that started the flow. Its signature proves only that *we* issued
+ * the state — so an unprefixed name is enough for any host under the operator's
+ * eTLD+1 to plant a state/cookie pair it minted itself, walk the victim into
+ * the callback, and land them on the attacker's session (login CSRF, RFC 6749
+ * §10.12). `__Host-` is the one attribute set a sibling cannot forge.
+ *
+ * The catch is that the prefix is all-or-nothing: a browser drops the whole
+ * Set-Cookie unless it carries Secure, `Path=/`, and no Domain. A caller-chosen
+ * `/api/v1/auth` path would silently break every production login instead of
+ * hardening it, so the builder derives those attributes from the name.
+ */
+describe("short flow cookies", () => {
+	const prod = { ENV: "prod" };
+	const dev = { ENV: "dev" };
+
+	it("forces the prefix's required attributes, overriding the caller's path", () => {
+		const sc = buildShortCookie("__Host-garrul_oauth_b_abababab", "v", 600, prod);
+		expect(sc.startsWith("__Host-garrul_oauth_b_abababab=v;")).toBe(true);
+		expect(sc).toMatch(/(^|; )Path=\/(;|$)/);
+		expect(sc).toMatch(/(^|; )Secure(;|$)/);
+		expect(sc).not.toMatch(/Domain=/);
+		expect(sc).not.toContain("/api/v1/auth");
+	});
+
+	it("ignores an explicit narrower path on a prefixed name", () => {
+		// The call sites pass no path today, but a future one must not be able to
+		// reintroduce the rejected shape by passing the old default back in.
+		const sc = buildShortCookie("__Host-x", "v", 600, prod, "/api/v1/auth");
+		expect(sc).toMatch(/(^|; )Path=\/(;|$)/);
+	});
+
+	it("keeps Secure on a prefixed cookie even in dev", () => {
+		// A prefixed name without Secure is a cookie the browser throws away, so
+		// the dev relaxation must not reach it. Dev instead picks the unprefixed
+		// name (see bindCookieName in routes/auth.ts).
+		expect(buildShortCookie("__Host-x", "v", 600, dev)).toMatch(
+			/(^|; )Secure(;|$)/,
+		);
+	});
+
+	it("leaves an unprefixed cookie scoped and dev-relaxed", () => {
+		const sc = buildShortCookie("garrul_oauth_b_abababab", "v", 600, dev);
+		expect(sc).toContain("Path=/api/v1/auth");
+		expect(sc).not.toMatch(/(^|; )Secure(;|$)/);
+	});
+
+	it("adds Secure to an unprefixed cookie outside dev", () => {
+		expect(buildShortCookie("garrul_oauth_b_x", "v", 600, prod)).toMatch(
+			/(^|; )Secure(;|$)/,
+		);
+	});
+
+	it("clears a prefixed cookie with the same attributes it was set with", () => {
+		// A Set-Cookie whose attributes don't match is a second cookie, not a
+		// deletion — the single-use flow cookie would survive its own callback.
+		const cleared = clearShortCookie("__Host-garrul_oauth_b_abababab", prod);
+		expect(cleared).toContain("__Host-garrul_oauth_b_abababab=;");
+		expect(cleared).toContain("Max-Age=0");
+		expect(cleared).toMatch(/(^|; )Path=\/(;|$)/);
+		expect(cleared).toMatch(/(^|; )Secure(;|$)/);
+	});
+
+	it("keeps every flow cookie HttpOnly and SameSite=Lax", () => {
+		for (const name of ["__Host-garrul_oauth_b_x", "garrul_oauth_b_x"]) {
+			for (const env of [prod, dev]) {
+				const sc = buildShortCookie(name, "v", 600, env);
+				expect(sc).toContain("HttpOnly");
+				expect(sc).toContain("SameSite=Lax");
+			}
+		}
 	});
 });

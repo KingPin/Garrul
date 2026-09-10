@@ -52,7 +52,14 @@ const makeD1 = (db: DatabaseSync): any => ({
 
 const SLUG = "notify-me";
 const EMAIL = "reader@example.com";
-const TOKEN = "u".repeat(64);
+// Real unsubscribe tokens are 64 lowercase hex chars (randomToken in
+// routes/api.subscriptions.ts), and getSubscriptionByToken rejects anything
+// else before it reaches D1 — so a fixture has to be hex to exercise the
+// lookup at all. "u" was not, which made every token here unrepresentative.
+const TOKEN = "e".repeat(64);
+// Well-formed but never stored. The point of the unknown-token cases is the
+// response for a token that *could* exist, not for junk.
+const UNKNOWN_TOKEN = "d".repeat(64);
 const SUB_ID = "01HSUB0000000000000000";
 const SELF = "https://comments.example.com";
 const HOST_SITE = "https://blog.example.com";
@@ -181,7 +188,7 @@ describe("GET /subscribe/unsubscribe/:token", () => {
 	});
 
 	it("reports an unknown token without confirming whether it ever existed", async () => {
-		const res = await get("z".repeat(64));
+		const res = await get(UNKNOWN_TOKEN);
 		expect(res.status).toBe(200);
 		expect(await res.text()).toContain("Link expired or already used.");
 	});
@@ -292,7 +299,7 @@ describe("POST /subscribe/unsubscribe/:token/one-click (RFC 8058)", () => {
 	it("answers 200 for an unknown token without writing", async () => {
 		// A non-2xx reads to the mail client as "unsubscribe failed" and counts
 		// against sender reputation, for a reader who cannot act on it.
-		const res = await oneClick({ method: "POST" }, "z".repeat(64));
+		const res = await oneClick({ method: "POST" }, UNKNOWN_TOKEN);
 		expect(res.status).toBe(200);
 		expect(unsubscribedAt()).toBeNull();
 	});
@@ -438,7 +445,7 @@ describe("POST /subscribe/unsubscribe/:token/all", () => {
 	});
 
 	it("reports an unknown token without writing", async () => {
-		const res = await all(SELF, "z".repeat(64));
+		const res = await all(SELF, UNKNOWN_TOKEN);
 		expect(res.status).toBe(200);
 		expect(await res.text()).toContain("Link expired or already used.");
 		expect(unsubscribedAt()).toBeNull();

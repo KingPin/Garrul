@@ -251,11 +251,42 @@ describe("upsertPost is first-writer-wins (real SQLite)", () => {
 		expect(post!.url).toBe("https://a.example/hello");
 	});
 
-	it("keeps published_at write-once alongside them", async () => {
+	it("refuses to move a stored published_at", async () => {
 		await upsertPost(db, "hello", "T", null, 1_700_000_000_000);
 		await upsertPost(db, "hello", "T", null, 1);
 		const post = await getPost(db, "hello");
 		expect(post!.published_at).toBe(1_700_000_000_000);
+	});
+
+	it("refuses to fill a NULL published_at from a later write", async () => {
+		// The hole COALESCE left open. published_at anchors age-based auto-close,
+		// and NULL is the normal state — page-engagement and admin create rows
+		// with no date, and most host pages never send `data-published`. So
+		// first-writer-wins protected almost nothing: any later commenter could
+		// stamp epoch 1 on an established thread and, with auto_close_days set,
+		// close it permanently with no repair path short of direct D1 SQL.
+		await upsertPost(db, "hello", null, null);
+		await upsertPost(db, "hello", "T", null, 1);
+		expect((await getPost(db, "hello"))!.published_at).toBeNull();
+	});
+
+	it("accepts published_at from the write that creates the row", async () => {
+		// The feature still works where it can: a slug whose first touch is the
+		// comment POST gets the host page's real publish time as its anchor.
+		await upsertPost(db, "hello", "T", null, 1_700_000_000_000);
+		expect((await getPost(db, "hello"))!.published_at).toBe(1_700_000_000_000);
+	});
+
+	it("leaves a row created without a date anchored on created_at", async () => {
+		// The accepted cost: a reaction, page vote or admin pre-close creates the
+		// row, so a later `data-published` never lands and age-based close
+		// measures from first engagement. That closes *later* than the operator
+		// asked, which is the safe direction.
+		await upsertPost(db, "hello", null, null);
+		await upsertPost(db, "hello", "T", null, 1_700_000_000_000);
+		const post = await getPost(db, "hello");
+		expect(post!.published_at).toBeNull();
+		expect(post!.created_at).toBeGreaterThan(0);
 	});
 
 	it("does not create a second row for the same slug", async () => {

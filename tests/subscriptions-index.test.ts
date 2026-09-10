@@ -1,5 +1,6 @@
 /**
- * Query-plan coverage for the email-keyed subscription lookups.
+ * Query-plan coverage for the indexed subscription lookups — email (0017) and
+ * unsubscribe token (0024).
  *
  * `countPendingSubscriptionsForEmail` runs once per unauthenticated POST
  * /api/v1/subscribe to enforce the per-email pending cap, and D1 bills rows
@@ -17,6 +18,7 @@ import { describe, it, expect, beforeAll } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { getSubscriptionByToken } from "../src/db/queries";
 
 const MIGRATIONS_DIR = join(__dirname, "../src/db/migrations");
 
@@ -84,5 +86,75 @@ describe("subscriptions email index", () => {
 		expect(() =>
 			ins.run("s2", "post-b", "dup@example.com", "t2", now),
 		).not.toThrow();
+	});
+});
+
+describe("subscriptions token index", () => {
+	it("serves the unsubscribe-token lookup from the index, not a scan", () => {
+		// Verbatim projection and predicate from getSubscriptionByToken, which
+		// backs the unauthenticated CARVE_OUT GET and the un-rate-limited RFC
+		// 8058 one-click POST. Before 0024 this was `SCAN subscriptions` for
+		// every request, including one carrying a token that does not exist.
+		const detail = plan(
+			`SELECT id, post_slug, email, token, created_at,
+			        unsubscribed_at, last_notified_at,
+			        confirm_token, confirmed_at, locale
+			   FROM subscriptions WHERE token = 'deadbeef'`,
+		);
+		expect(detail).toContain("idx_subs_token");
+		expect(detail).not.toContain("SCAN subscriptions");
+	});
+
+	it("keeps one address able to hold many tokens", () => {
+		// idx_subs_token is deliberately not UNIQUE — see the migration header.
+		const now = Date.now();
+		const ins = sqlite.prepare(
+			`INSERT INTO subscriptions (id, post_slug, email, token, created_at)
+			 VALUES (?, ?, ?, ?, ?)`,
+		);
+		ins.run("t-s1", "post-c", "many@example.com", "same-token", now);
+		expect(() =>
+			ins.run("t-s2", "post-d", "many@example.com", "same-token", now),
+		).not.toThrow();
+	});
+});
+
+describe("getSubscriptionByToken shape guard", () => {
+	// A D1 that fails the test if it is ever asked to prepare a statement. The
+	// point of the guard is that junk input costs no D1 read at all, and only a
+	// stub that refuses to be queried can prove that.
+	const refusingDb = {
+		prepare: () => {
+			throw new Error("getSubscriptionByToken queried D1 for a junk token");
+		},
+	} as unknown as D1Database;
+
+	const good = "a".repeat(64);
+
+	it.each([
+		["empty", ""],
+		["too short", "a".repeat(63)],
+		["too long", "a".repeat(65)],
+		["uppercase hex", "A".repeat(64)],
+		["non-hex", "z".repeat(64)],
+		["hex with a wildcard", `${"a".repeat(63)}%`],
+		["sql-ish", "' OR 1=1 --"],
+	])("returns null without querying: %s", async (_label, token) => {
+		await expect(getSubscriptionByToken(refusingDb, token)).resolves.toBeNull();
+	});
+
+	it("still queries for a well-formed token", async () => {
+		// The guard must not become the access control. A random 64-hex token is
+		// indistinguishable from a real one until D1 answers, which is why the
+		// index exists.
+		let asked = "";
+		const db = {
+			prepare: (sql: string) => {
+				asked = sql;
+				return { bind: () => ({ first: async () => null }) };
+			},
+		} as unknown as D1Database;
+		await expect(getSubscriptionByToken(db, good)).resolves.toBeNull();
+		expect(asked).toContain("FROM subscriptions WHERE token = ?");
 	});
 });

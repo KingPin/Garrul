@@ -285,7 +285,7 @@ Every attribute the widget reads from the `#garrul` host element
 | `data-api`   | no       | Worker origin override. Defaults to the origin of the script tag (`<script src>`). Set this explicitly when loading `embed.js` via a bundler or async import (anywhere `document.currentScript` may be null at execution time). |
 | `data-title` | no       | Post title; sent on first comment create, surfaces in admin and notification emails.        |
 | `data-url`   | no       | Canonical permalink; sent on first comment create, used in RSS and notification emails.     |
-| `data-published` | no   | Article publish time (epoch ms or ISO 8601); sent on first comment create. Anchors age-based auto-close (`AUTO_CLOSE_DAYS`). Omit and Garrul falls back to the first-comment time, which closes the thread a bit later than intended. Only relevant if the operator enabled `AUTO_CLOSE_DAYS`. |
+| `data-published` | no   | Article publish time (epoch ms or ISO 8601); sent on first comment create. Anchors age-based auto-close (`AUTO_CLOSE_DAYS`). Omit and Garrul falls back to the first-comment time, which closes the thread a bit later than intended. Only relevant if the operator enabled `AUTO_CLOSE_DAYS`. Recorded only by the request that creates the post row and immutable after that — it comes in on an unauthenticated POST and an old value closes the thread for good, so it is never accepted from a later request. If a reaction or page vote created the row first, the slug keeps the first-engagement anchor. |
 | `data-lang`  | no       | BCP-47 tag pinning the widget's interface language (see "Language" below). Unrecognized tags fall back to English rather than erroring. |
 
 The host element MUST have `id="garrul"`; the widget looks it up by ID
@@ -1066,6 +1066,16 @@ Cookies set by Garrul:
 
 - `__Host-garrul_sess` — session lookup ID. `HttpOnly; Secure;
   SameSite=None; Partitioned; Path=/`. No tracking cookies are set.
+- `__Host-garrul_oauth_b_<8 hex>` — per-flow OAuth binding cookie, set
+  only while a sign-in popup is open and cleared by the callback.
+  `HttpOnly; Secure; SameSite=Lax; Path=/`, 600-second Max-Age. It holds
+  the signed flow state (provider, return origin, PKCE verifier), no
+  identity. The `__Host-` prefix is what binds the flow to the browser
+  that started it: the signature proves Garrul issued the state, not who
+  holds it, so an unprefixed name let any sibling host under the
+  operator's eTLD+1 plant its own state/cookie pair (RFC 6749 §10.12
+  login CSRF). `ENV=dev` drops the prefix, because plain-HTTP
+  `wrangler dev` cannot satisfy `Secure`.
 
 For the operator-facing privacy posture (retention policy, deletion
 flow, Cloudflare/Resend subprocessor disclosure, GDPR/COPPA notes),

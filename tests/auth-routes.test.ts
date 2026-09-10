@@ -160,6 +160,49 @@ describe("GET /:provider/callback — state shape", () => {
 			env as unknown as Record<string, unknown>,
 		);
 		expect(res.status).toBe(400);
-		expect(res.headers.get("set-cookie")).toContain("garrul_oauth_b_abababab=");
+		// The clear must name the same cookie /start set, prefix included — a
+		// mismatched name (or path) leaves the single-use flow cookie live.
+		expect(res.headers.get("set-cookie")).toContain(
+			"__Host-garrul_oauth_b_abababab=;",
+		);
+	});
+});
+
+/**
+ * The binding cookie's name is the whole defense. Its signature proves we
+ * issued the state, not which browser holds it, so an attacker who starts a
+ * flow himself can hand the victim his own state — the only thing stopping him
+ * pairing it with the matching cookie is that `__Host-` cannot be written by a
+ * sibling host under the operator's eTLD+1. `comments.<yourdomain>` is the
+ * documented layout, so a sibling is the expected case, not an exotic one.
+ */
+describe("GET /:provider/start — binding cookie name", () => {
+	const start = async (envOverride: Record<string, string> = {}) => {
+		const res = await app().request(
+			"/github/start",
+			{},
+			{
+				...(env as unknown as Record<string, unknown>),
+				GH_CLIENT_ID: "cid",
+				GH_CLIENT_SECRET: "csecret",
+				...envOverride,
+			} as Record<string, unknown>,
+		);
+		expect(res.status).toBe(302);
+		return res.headers.get("set-cookie") ?? "";
+	};
+
+	it("prefixes the cookie in production, with the attributes the prefix needs", async () => {
+		const sc = await start();
+		expect(sc).toContain("__Host-garrul_oauth_b_");
+		expect(sc).toMatch(/(^|; )Path=\/(;|$)/);
+		expect(sc).toMatch(/(^|; )Secure(;|$)/);
+		expect(sc).not.toMatch(/Domain=/);
+	});
+
+	it("drops the prefix in dev, where plain HTTP cannot satisfy Secure", async () => {
+		const sc = await start({ ENV: "dev" });
+		expect(sc.startsWith("garrul_oauth_b_")).toBe(true);
+		expect(sc).toContain("Path=/api/v1/auth");
 	});
 });

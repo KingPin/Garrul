@@ -209,6 +209,81 @@ describe("thread closure — POST gate", () => {
 			.get("frozen3") as { published_at: number | null };
 		expect(row.published_at).toBeNull();
 	});
+
+	it("does not let a later request fill a NULL published_at anchor", async () => {
+		// The hole first-writer-wins left: COALESCE only defends a value already
+		// stored, and NULL is the normal state — the row is created by whatever
+		// touches the slug first (a reaction, a page vote, an admin pre-close, or
+		// a comment from a host page that sends no `data-published`). So any
+		// later commenter could stamp an old date on an established thread and,
+		// with auto_close_days set, close it for good.
+		await post({ slug: "unanchored", body: "first comment" });
+		const res = await post({
+			slug: "unanchored",
+			body: "second comment",
+			post_published: 1_000_000_000_000,
+		});
+		expect(res.status).toBe(201);
+		const row = sqlite
+			.prepare("SELECT published_at FROM posts WHERE slug = ?")
+			.get("unanchored") as { published_at: number | null };
+		expect(row.published_at).toBeNull();
+	});
+
+	it("closes the poisoned thread when the anchor is accepted, proving the impact", async () => {
+		// Why the anchor is worth protecting at all: with auto_close_days set, an
+		// anchor old enough puts the thread past the cutoff, and closure is
+		// evaluated lazily on every later request — so the poison needs no
+		// follow-up. Set here through the one path that legitimately can (the
+		// row-creating write) to pin the consequence rather than assume it.
+		env = { ...env, AUTO_CLOSE_DAYS: "30" } as unknown as Bindings;
+		const created = await post({
+			slug: "aged",
+			body: "first comment",
+			post_published: 1_000_000_000_000, // ~year 2001
+		});
+		expect(created.status).toBe(201);
+		const res = await post({ slug: "aged", body: "second comment" });
+		expect(res.status).toBe(403);
+		expect((await res.json()) as { error: string }).toMatchObject({
+			error: expect.stringMatching(/closed/i),
+		});
+	});
+
+	it("writes no post metadata when the parent check rejects the request", async () => {
+		// upsertPost used to run before the parent lookup, so a reply naming a
+		// nonexistent parent got its 400 *and* left the title, url and
+		// published_at it carried behind — a permanent write from a request that
+		// never passed the checks that gate a real comment, on a slug that need
+		// not have existed at all.
+		const res = await post({
+			slug: "no-such-thread",
+			parent_id: "01HU999999999999999999",
+			body: "a reply to nothing",
+			post_title: "Attacker Title",
+			post_published: 1_000_000_000_000,
+		});
+		expect(res.status).toBe(400);
+		const row = sqlite
+			.prepare("SELECT slug FROM posts WHERE slug = ?")
+			.get("no-such-thread");
+		expect(row).toBeUndefined();
+	});
+
+	it("writes no post metadata when the parent belongs to another post", async () => {
+		const first = await post({ slug: "thread-a", body: "parent comment" });
+		const parent = (await first.json()) as { comment: { id: string } };
+		const res = await post({
+			slug: "thread-b",
+			parent_id: parent.comment.id,
+			body: "cross-thread reply",
+			post_title: "Attacker Title",
+		});
+		expect(res.status).toBe(400);
+		expect(
+			sqlite.prepare("SELECT slug FROM posts WHERE slug = ?").get("thread-b"),
+		).toBeUndefined();
+	});
 });
 
 describe("thread closure — GET payload", () => {

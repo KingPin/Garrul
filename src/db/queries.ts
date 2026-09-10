@@ -136,24 +136,38 @@ export const upsertPost = async (
 	publishedAt: number | null = null,
 ): Promise<Post> => {
 	const now = Date.now();
-	// Every column here is write-once / first-writer-wins: COALESCE(existing,
-	// excluded). title and url arrive on an unauthenticated POST /api/v1/comments
-	// at the same trust level as the comment body, and this upsert runs *before*
-	// spam evaluation, so a last-writer-wins update let anyone who could post a
-	// (even quarantined) comment repoint an established thread's title and
-	// canonical URL — which fan out into mail subjects, the Atom feed and webhook
-	// payloads. published_at anchors age-based auto-close, so once set it must be
-	// immutable or a bogus date could force a thread closed. The cost is that a
-	// genuinely renamed page keeps its original title; there is no admin edit path
-	// for it yet. closed is operator-controlled and never set here.
+	// title and url are first-writer-wins: COALESCE(existing, excluded). Both
+	// arrive on an unauthenticated POST /api/v1/comments at the same trust level
+	// as the comment body, and this upsert runs *before* spam evaluation, so a
+	// last-writer-wins update let anyone who could post a comment — even one that
+	// lands quarantined — repoint an established thread's title and canonical URL,
+	// which fan out into mail subjects, the Atom feed and webhooks. The cost is that
+	// a genuinely renamed page keeps its original title; there is no admin edit
+	// path for it yet. closed is operator-controlled and never set here.
+	//
+	// published_at is stricter: INSERT-only, absent from DO UPDATE entirely. It
+	// anchors age-based auto-close, so a bogus old date forces a thread closed
+	// permanently — and unlike a repointed title there is no repair path short of
+	// direct D1 SQL. COALESCE looks like it covers that, but it only protects a
+	// value that is already *there*; a row whose published_at is NULL stayed
+	// writable by every later commenter, and NULL is the normal state (the two
+	// other callers — page-engagement and admin — pass no date at all, and most
+	// host pages never set `data-published`). So the column is fixed by whichever
+	// request creates the row and never moves again.
+	//
+	// The cost is real: a row created by a reaction, a page vote or an admin
+	// pre-close can no longer pick up a `data-published` anchor from a later
+	// comment, so age-based close on that slug measures from created_at (first
+	// engagement) instead. That is the pre-`data-published` behavior and it errs
+	// toward closing *later* than the operator asked, which is the safe
+	// direction — where the poisoned value errs toward closed forever.
 	await db
 		.prepare(
 			`INSERT INTO posts (slug, title, url, created_at, published_at)
 			 VALUES (?, ?, ?, ?, ?)
 			 ON CONFLICT(slug) DO UPDATE SET
 			   title        = COALESCE(posts.title, excluded.title),
-			   url          = COALESCE(posts.url,   excluded.url),
-			   published_at = COALESCE(posts.published_at, excluded.published_at)`,
+			   url          = COALESCE(posts.url,   excluded.url)`,
 		)
 		.bind(slug, title, url, now, publishedAt)
 		.run();
@@ -1990,10 +2004,29 @@ export const upsertSubscription = async (
 	return row;
 };
 
+// The shape `randomToken()` in routes/api.subscriptions.ts has minted since
+// subscriptions shipped: 32 bytes from crypto.getRandomValues, lowercase hex.
+// It is the only writer of this column, and no importer touches it.
+const SUB_TOKEN_RE = /^[0-9a-f]{64}$/;
+
+/**
+ * Look up a subscription by its unsubscribe token.
+ *
+ * The shape check is free and cannot change behavior: `token` is TEXT with
+ * BINARY collation, so anything failing this regex could never have equalled a
+ * stored value — the query would return null after reading the table. Rejecting
+ * it here means the two unauthenticated callers (the CARVE_OUT GET and the
+ * RFC 8058 one-click POST, neither rate-limited) stop paying for a D1 read on
+ * junk input. Same choke-point pattern as `consumeHandoff` in lib/oauth.ts.
+ *
+ * Well-formed random tokens still reach the query — that is what 0024's
+ * `idx_subs_token` is for. The guard is the cheap half of the fix, not the fix.
+ */
 export const getSubscriptionByToken = async (
 	db: D1Database,
 	token: string,
 ): Promise<Subscription | null> => {
+	if (!SUB_TOKEN_RE.test(token)) return null;
 	return await db
 		.prepare(
 			`SELECT id, post_slug, email, token, created_at,
