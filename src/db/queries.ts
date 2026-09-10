@@ -1990,10 +1990,29 @@ export const upsertSubscription = async (
 	return row;
 };
 
+// The shape `randomToken()` in routes/api.subscriptions.ts has minted since
+// subscriptions shipped: 32 bytes from crypto.getRandomValues, lowercase hex.
+// It is the only writer of this column, and no importer touches it.
+const SUB_TOKEN_RE = /^[0-9a-f]{64}$/;
+
+/**
+ * Look up a subscription by its unsubscribe token.
+ *
+ * The shape check is free and cannot change behavior: `token` is TEXT with
+ * BINARY collation, so anything failing this regex could never have equalled a
+ * stored value — the query would return null after reading the table. Rejecting
+ * it here means the two unauthenticated callers (the CARVE_OUT GET and the
+ * RFC 8058 one-click POST, neither rate-limited) stop paying for a D1 read on
+ * junk input. Same choke-point pattern as `consumeHandoff` in lib/oauth.ts.
+ *
+ * Well-formed random tokens still reach the query — that is what 0024's
+ * `idx_subs_token` is for. The guard is the cheap half of the fix, not the fix.
+ */
 export const getSubscriptionByToken = async (
 	db: D1Database,
 	token: string,
 ): Promise<Subscription | null> => {
+	if (!SUB_TOKEN_RE.test(token)) return null;
 	return await db
 		.prepare(
 			`SELECT id, post_slug, email, token, created_at,

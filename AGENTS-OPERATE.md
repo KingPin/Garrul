@@ -907,6 +907,7 @@ tracked by the `_migrations` table. Current set:
 - `0021_moderator_notifications.sql` — `moderator_notifications`, the queue behind moderator email (seeds its own `moderator:*` budget rows)
 - `0022_reaction_kind_fire.sql` — renames the `like` reaction to `fire`
 - `0023_moderator_notes.sql` — `moderator_notes`, internal moderator context on one comment or one account. Never rendered to readers, and the note *body* never reaches `audit_log`
+- `0024_subscriptions_token_index.sql` — `subscriptions(token)`; the unsubscribe-link lookup was a full table scan on two endpoints that take no session and no rate limit, so a loop of random tokens read the whole table per request
 
 Run with `npm run migrate` (local Miniflare) or
 `npm run migrate -- --remote` (production D1). Idempotent. Never edit a
