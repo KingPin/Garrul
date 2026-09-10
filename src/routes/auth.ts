@@ -45,7 +45,31 @@ import { log } from "../lib/log";
 // only the most-recently-started flow could complete; the other tab's /callback
 // would always fail with "invalid state". The full state is compared inside the
 // signed payload, so the truncated name is only a bucket, never the check.
-const OAUTH_BIND_COOKIE_PREFIX = "garrul_oauth_b_";
+//
+// **`__Host-` in production, and that prefix is the security boundary, not
+// decoration.** A signature proves the server issued the payload; it says
+// nothing about *which browser* holds it. Without the prefix, an attacker who
+// controls any sibling subdomain (`other.example.com` when the Worker is
+// `comments.example.com`) can run their own /start, take the resulting valid
+// cookie, and plant it in a victim's browser as a `Domain=example.com;
+// Path=/api/v1/auth` cookie — host-only defaults on our own write do not stop a
+// sibling from setting a *different* cookie with the same name, and the random
+// per-flow suffix means it won't even collide with a flow the victim started.
+// Navigating the victim to the callback with the attacker's unused code then
+// passes every check and signs the victim into the attacker's account
+// (RFC 6749 §10.12 login CSRF). `__Host-` is the one cookie attribute set a
+// sibling cannot forge: browsers reject a `__Host-` write that carries a Domain
+// or a path other than `/`.
+//
+// Dev keeps the bare name because `__Host-` also requires Secure, which a
+// `wrangler dev` instance over plain HTTP cannot satisfy — same split as the
+// session cookie in lib/session.ts. There is deliberately **no** fallback to
+// the old unprefixed name in production: accepting it would leave the planting
+// path open, which is the whole point of the rename. The cost is that an OAuth
+// flow started in the 600 seconds before a deploy fails once with "invalid
+// state" and has to be retried.
+const OAUTH_BIND_COOKIE_PREFIX_PROD = "__Host-garrul_oauth_b_";
+const OAUTH_BIND_COOKIE_PREFIX_DEV = "garrul_oauth_b_";
 const OAUTH_BIND_TTL_SECONDS = 600;
 
 // `state` is always 48 lowercase hex chars (randomState in lib/oauth). Check
@@ -57,8 +81,8 @@ const OAUTH_BIND_TTL_SECONDS = 600;
 // catches a wrong state, but only after it has already been interpolated.
 const STATE_RE = /^[0-9a-f]{48}$/;
 
-const bindCookieName = (state: string): string =>
-	`${OAUTH_BIND_COOKIE_PREFIX}${state.slice(0, 8)}`;
+const bindCookieName = (env: { ENV: string }, state: string): string =>
+	`${env.ENV === "dev" ? OAUTH_BIND_COOKIE_PREFIX_DEV : OAUTH_BIND_COOKIE_PREFIX_PROD}${state.slice(0, 8)}`;
 
 const auth = new Hono<{ Bindings: Bindings }>();
 
@@ -125,11 +149,12 @@ auth.get("/:provider/start", async (c) => {
 	// The flow's entire state is a signed payload in a per-flow cookie — no
 	// server-side write, which is what stops this unauthenticated route from
 	// being an account-wide KV-quota exhaustion primitive (see issueState).
-	// The cookie is also what binds the flow to THIS browser: an attacker can
-	// mint state+code in their own session but cannot plant the matching
-	// cookie in a victim's browser, so they can't trick the victim into
-	// completing the callback and landing on the attacker's session
-	// (RFC 6749 §10.12 login-CSRF).
+	// The cookie is also what binds the flow to THIS browser, and the binding
+	// rests on the `__Host-` prefix rather than on the signature: an attacker
+	// can mint a state+cookie pair from their own /start, so what has to be
+	// impossible is *planting* that pair in a victim's browser. See
+	// OAUTH_BIND_COOKIE_PREFIX_PROD above for why an unprefixed name left that
+	// open to any sibling subdomain (RFC 6749 §10.12 login CSRF).
 	const { state, token } = await issueState(c.env.JWT_SECRET, {
 		provider,
 		return_origin,
@@ -139,7 +164,7 @@ auth.get("/:provider/start", async (c) => {
 	c.header(
 		"Set-Cookie",
 		buildShortCookie(
-			bindCookieName(state),
+			bindCookieName(c.env, state),
 			token,
 			OAUTH_BIND_TTL_SECONDS,
 			c.env,
@@ -228,7 +253,7 @@ auth.get("/:provider/callback", async (c) => {
 	// time — that the payload is bound to the `state` the provider echoed
 	// back. One generic error for every failure: don't tell the attacker
 	// which check tripped.
-	const cookieName = bindCookieName(state);
+	const cookieName = bindCookieName(c.env, state);
 	const stateToken = parseCookie(c.req.header("cookie"), cookieName);
 	const payload = stateToken
 		? await verifyState(c.env.JWT_SECRET, stateToken, { provider, state })

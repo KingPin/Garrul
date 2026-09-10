@@ -1066,6 +1066,16 @@ Cookies set by Garrul:
 
 - `__Host-garrul_sess` — session lookup ID. `HttpOnly; Secure;
   SameSite=None; Partitioned; Path=/`. No tracking cookies are set.
+- `__Host-garrul_oauth_b_<8 hex>` — per-flow OAuth binding cookie, set
+  only while a sign-in popup is open and cleared by the callback.
+  `HttpOnly; Secure; SameSite=Lax; Path=/`, 600-second Max-Age. It holds
+  the signed flow state (provider, return origin, PKCE verifier), no
+  identity. The `__Host-` prefix is what binds the flow to the browser
+  that started it: the signature proves Garrul issued the state, not who
+  holds it, so an unprefixed name let any sibling host under the
+  operator's eTLD+1 plant its own state/cookie pair (RFC 6749 §10.12
+  login CSRF). `ENV=dev` drops the prefix, because plain-HTTP
+  `wrangler dev` cannot satisfy `Secure`.
 
 For the operator-facing privacy posture (retention policy, deletion
 flow, Cloudflare/Resend subprocessor disclosure, GDPR/COPPA notes),

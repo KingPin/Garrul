@@ -181,14 +181,25 @@ export const buildShortCookie = (
 	env: { ENV: string },
 	path = "/api/v1/auth",
 ): string => {
+	// A `__Host-` name is only honored by the browser when the write carries
+	// Secure, `Path=/`, and no Domain — otherwise the whole Set-Cookie is
+	// dropped, silently, and the flow it protects starts failing instead of the
+	// prefix protecting anything. So the prefix decides those attributes here
+	// rather than trusting each caller to pass a matching path: the invariant
+	// lives with the name, and a caller that asks for a narrower path on a
+	// `__Host-` cookie gets `/` regardless. Losing the /api/v1/auth scoping is
+	// the price of the prefix, and it is worth paying — the cookie is HttpOnly
+	// and lives 600 seconds, while an unprefixed name is plantable by any
+	// sibling subdomain (see OAUTH_BIND_COOKIE_PREFIX_PROD in routes/auth.ts).
+	const hostPrefixed = name.startsWith("__Host-");
 	const parts = [
 		`${name}=${value}`,
-		`Path=${path}`,
+		`Path=${hostPrefixed ? "/" : path}`,
 		`Max-Age=${maxAgeSeconds}`,
 		"HttpOnly",
 		"SameSite=Lax",
 	];
-	if (env.ENV !== "dev") {
+	if (hostPrefixed || env.ENV !== "dev") {
 		parts.push("Secure");
 	}
 	return parts.join("; ");
