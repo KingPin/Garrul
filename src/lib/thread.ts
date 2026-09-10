@@ -25,6 +25,11 @@
  * anchor is what makes day-based closing accurate. With neither a meaningful
  * anchor nor published_at, day-based close still works off created_at, just
  * measured from first-comment time.
+ *
+ * That anchor is the one moderation-relevant value here that a *caller* can
+ * set, which is why upsertPost only ever writes it on INSERT: an old enough
+ * published_at puts the thread permanently past the cutoff, this resolver
+ * re-derives that on every request, and nothing but direct D1 SQL can undo it.
  */
 import type { Post } from "../db/queries";
 import type { ResolvedFlags, ResolvedNumbers } from "./settings";

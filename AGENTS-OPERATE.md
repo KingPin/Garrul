@@ -325,7 +325,15 @@ ignores them behaves exactly as before.
   is the host page's real publish time when the embed supplies `data-published`
   (stored as `posts.published_at`); without it Garrul falls back to first-comment
   time, which is later than real publish, so set `data-published` if you rely on
-  `AUTO_CLOSE_DAYS`. A closed thread hides the composer (the widget shows a
+  `AUTO_CLOSE_DAYS`. The anchor is **set once, by whichever request first creates
+  the post row, and never changes** — `data-published` arrives on an
+  unauthenticated comment POST, and an old enough value closes the thread
+  permanently with no repair path short of direct D1 SQL, so a later request is
+  not allowed to supply or move it. The practical consequence: if a reaction, a
+  page vote or an admin pre-close created the row before the first comment, that
+  slug keeps the first-engagement anchor even once `data-published` starts
+  arriving. It closes later than you asked, never earlier. A closed thread hides
+  the composer (the widget shows a
   reason-specific notice) and the POST endpoint rejects new comments **and
   replies** with `403 err.thread_closed` — existing comments, reactions, and
   votes stay live. Per-post manual close (below) overrides nothing here; it's a

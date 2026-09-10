@@ -136,24 +136,38 @@ export const upsertPost = async (
 	publishedAt: number | null = null,
 ): Promise<Post> => {
 	const now = Date.now();
-	// Every column here is write-once / first-writer-wins: COALESCE(existing,
-	// excluded). title and url arrive on an unauthenticated POST /api/v1/comments
-	// at the same trust level as the comment body, and this upsert runs *before*
-	// spam evaluation, so a last-writer-wins update let anyone who could post a
-	// (even quarantined) comment repoint an established thread's title and
-	// canonical URL — which fan out into mail subjects, the Atom feed and webhook
-	// payloads. published_at anchors age-based auto-close, so once set it must be
-	// immutable or a bogus date could force a thread closed. The cost is that a
-	// genuinely renamed page keeps its original title; there is no admin edit path
-	// for it yet. closed is operator-controlled and never set here.
+	// title and url are first-writer-wins: COALESCE(existing, excluded). Both
+	// arrive on an unauthenticated POST /api/v1/comments at the same trust level
+	// as the comment body, and this upsert runs *before* spam evaluation, so a
+	// last-writer-wins update let anyone who could post a (even quarantined)
+	// comment repoint an established thread's title and canonical URL — which fan
+	// out into mail subjects, the Atom feed and webhook payloads. The cost is that
+	// a genuinely renamed page keeps its original title; there is no admin edit
+	// path for it yet. closed is operator-controlled and never set here.
+	//
+	// published_at is stricter: INSERT-only, absent from DO UPDATE entirely. It
+	// anchors age-based auto-close, so a bogus old date forces a thread closed
+	// permanently — and unlike a repointed title there is no repair path short of
+	// direct D1 SQL. COALESCE looks like it covers that, but it only protects a
+	// value that is already *there*; a row whose published_at is NULL stayed
+	// writable by every later commenter, and NULL is the normal state (the two
+	// other callers — page-engagement and admin — pass no date at all, and most
+	// host pages never set `data-published`). So the column is fixed by whichever
+	// request creates the row and never moves again.
+	//
+	// The cost is real: a row created by a reaction, a page vote or an admin
+	// pre-close can no longer pick up a `data-published` anchor from a later
+	// comment, so age-based close on that slug measures from created_at (first
+	// engagement) instead. That is the pre-`data-published` behavior and it errs
+	// toward closing *later* than the operator asked, which is the safe
+	// direction — where the poisoned value errs toward closed forever.
 	await db
 		.prepare(
 			`INSERT INTO posts (slug, title, url, created_at, published_at)
 			 VALUES (?, ?, ?, ?, ?)
 			 ON CONFLICT(slug) DO UPDATE SET
 			   title        = COALESCE(posts.title, excluded.title),
-			   url          = COALESCE(posts.url,   excluded.url),
-			   published_at = COALESCE(posts.published_at, excluded.published_at)`,
+			   url          = COALESCE(posts.url,   excluded.url)`,
 		)
 		.bind(slug, title, url, now, publishedAt)
 		.run();

@@ -633,24 +633,19 @@ comments.post("/", async (c) => {
 		return c.json({ error: t("err.thread_closed") }, 403);
 	}
 
-	// Make sure the post row exists so the FK on comments resolves. published_at
-	// is write-once in upsertPost (first-writer-wins), so this can establish a
-	// fresh thread's anchor but can never overwrite an established one.
-	await upsertPost(
-		c.env.DB,
-		slug,
-		// post_title is caller-supplied at the same trust level as the comment
-		// body but had no validation at all; see lib/post-title.ts for where it
-		// fans out to (mail subjects, Atom, Slack/Discord).
-		sanitizePostTitle(body.post_title),
-		postUrl,
-		parsePublishedAt(body.post_published),
-	);
-
 	// Parent must exist, live on the same post, and leave room under the
 	// nesting cap. Without the depth check an unbounded reply chain is
 	// insertable, which makes the slug's comment tree permanently
 	// un-renderable — see MAX_REPLY_DEPTH in src/lib/tree.ts.
+	//
+	// This runs BEFORE upsertPost for the same reason the thread gate above
+	// does: everything upsertPost writes is caller-supplied and permanent, so a
+	// request that is going to be rejected must not leave a trace. With the
+	// upsert first, a reply naming a nonexistent (or foreign, or too-deep)
+	// parent still got a 400 *and* stamped the post's title, url and
+	// published_at — the write survived its own rejection, which also meant an
+	// attacker could reach the upsert on any slug without ever passing the
+	// checks that gate a real comment.
 	let parent_id: string | null = null;
 	let depth = 1;
 	if (body.parent_id) {
@@ -665,6 +660,21 @@ comments.post("/", async (c) => {
 			return c.json({ error: t("err.parent.too_deep") }, 400);
 		}
 	}
+
+	// Make sure the post row exists so the FK on comments resolves. published_at
+	// is INSERT-only in upsertPost, so this can establish a fresh thread's anchor
+	// but can never move an existing row's — see the comment there for why
+	// first-writer-wins was not enough for that one column.
+	await upsertPost(
+		c.env.DB,
+		slug,
+		// post_title is caller-supplied at the same trust level as the comment
+		// body but had no validation at all; see lib/post-title.ts for where it
+		// fans out to (mail subjects, Atom, Slack/Discord).
+		sanitizePostTitle(body.post_title),
+		postUrl,
+		parsePublishedAt(body.post_published),
+	);
 
 	const userAgent = c.req.header("user-agent") ?? null;
 	const verdict = await evaluateSpam(
