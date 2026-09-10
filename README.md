@@ -8,7 +8,7 @@ Self-hosted comments for static sites and blogs. Runs on Cloudflare
 Workers + D1 + KV + Turnstile. One Worker per site, no per-comment
 billing, your data stays in your account.
 
-**[Try the live demo →](https://comments.garrul.com)**
+**[Try the live demo →](https://garrul.com/#comments)**
 
 Self-hosted, but not the hard kind: **there is no container, no VPS, and
 no database server**. Nothing to patch, no uptime to monitor, no TLS to
