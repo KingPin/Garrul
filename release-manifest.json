@@ -394,7 +394,8 @@
     "0020_subscriptions_locale.sql",
     "0021_moderator_notifications.sql",
     "0022_reaction_kind_fire.sql",
-    "0023_moderator_notes.sql"
+    "0023_moderator_notes.sql",
+    "0024_subscriptions_token_index.sql"
   ],
   "breakingChanges": [
     {
