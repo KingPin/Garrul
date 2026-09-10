@@ -139,9 +139,9 @@ export const upsertPost = async (
 	// title and url are first-writer-wins: COALESCE(existing, excluded). Both
 	// arrive on an unauthenticated POST /api/v1/comments at the same trust level
 	// as the comment body, and this upsert runs *before* spam evaluation, so a
-	// last-writer-wins update let anyone who could post a (even quarantined)
-	// comment repoint an established thread's title and canonical URL — which fan
-	// out into mail subjects, the Atom feed and webhook payloads. The cost is that
+	// last-writer-wins update let anyone who could post a comment — even one that
+	// lands quarantined — repoint an established thread's title and canonical URL,
+	// which fan out into mail subjects, the Atom feed and webhooks. The cost is that
 	// a genuinely renamed page keeps its original title; there is no admin edit
 	// path for it yet. closed is operator-controlled and never set here.
 	//
