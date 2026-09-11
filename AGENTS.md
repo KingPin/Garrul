@@ -283,8 +283,8 @@ Every attribute the widget reads from the `#garrul` host element
 | ------------ | -------- | ------------------------------------------------------------------------------------------- |
 | `data-slug`  | yes      | Stable thread identifier. Missing slug renders an error in the host element.                |
 | `data-api`   | no       | Worker origin override. Defaults to the origin of the script tag (`<script src>`). Set this explicitly when loading `embed.js` via a bundler or async import (anywhere `document.currentScript` may be null at execution time). |
-| `data-title` | no       | Post title; sent on first comment create, surfaces in admin and notification emails.        |
-| `data-url`   | no       | Canonical permalink; sent on first comment create, used in RSS and notification emails.     |
+| `data-title` | no       | Post title; sent on every comment create (top-level and reply). The first non-null value wins and later values are ignored. Surfaces in admin and notification emails. |
+| `data-url`   | no       | Canonical permalink; sent on every comment create (top-level and reply). The first non-null value wins and later values are ignored. Used in RSS and notification emails. |
 | `data-published` | no   | Article publish time (epoch ms or ISO 8601). The widget sends it as `post_published` on every comment create (top-level and reply); the server records it only on the request that creates the post row and never changes it after that — it arrives on an unauthenticated POST, and an old enough value closes the thread for good, so a later request cannot supply or move it. Anchors age-based auto-close (`AUTO_CLOSE_DAYS`). Omit it and Garrul anchors on first-engagement time, which closes a bit later than intended. If a reaction, page vote or admin action created the row before the first comment, the slug keeps that first-engagement anchor. Repair today is direct D1 SQL on `posts.published_at`; an admin edit surface is a separate backlog item. |
 | `data-lang`  | no       | BCP-47 tag pinning the widget's interface language (see "Language" below). Unrecognized tags fall back to English rather than erroring. |
 
