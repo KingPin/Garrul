@@ -198,18 +198,22 @@ that has already hit its cap — driving usage up, and recovery down,
 precisely when neither can afford it.
 
 `/api/v1/comments/form-token` is deliberately **not** folded in, which
-is why the mount is two requests and not one. Its signed timestamp
-feeds the anti-spam minimum-elapsed-time heuristic, and baking one into
-a shared payload would hand every reader the same start time. It is
-also an invocation even when that heuristic is off — the route 404s and
-the widget treats the absence as "no timing check", but a 404 still
-costs a request.
+is why the mount is two requests and not one when the timing heuristic
+is on. Its signed timestamp feeds the anti-spam minimum-elapsed-time
+heuristic, and baking one into a shared payload would hand every reader
+the same start time. When the heuristic is off (no `SPAM_FORM_TS_SECRET`
+or `SPAM_HONEYPOT_MIN_MS` is `0`) the config payload carries
+`form_token_enabled: false` and the widget skips the request entirely
+(since 2.27.0); before that the route 404'd and the 404 still cost a
+request. A widget that sees no `form_token_enabled` field at all (older
+server) keeps requesting the token.
 
 ### Lazy-loading (recommended for read-heavy hosts)
 
-The eager `<script defer>` snippet above triggers two Worker requests
-per pageview on mount (`/api/v1/bootstrap?slug=…` and
-`/api/v1/comments/form-token`) before the reader has scrolled. On a blog
+The eager `<script defer>` snippet above triggers one or two Worker
+requests per pageview on mount (`/api/v1/bootstrap?slug=…`, plus
+`/api/v1/comments/form-token` only when config reports
+`form_token_enabled: true`) before the reader has scrolled. On a blog
 or docs site where most visitors bounce above the comments section, that
 is the bulk of Cloudflare Worker usage — two requests instead of the
 pre-v2.15.0 four to six, but still two per bouncer.

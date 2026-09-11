@@ -375,8 +375,9 @@ default, server-side clamped), edited from **Settings → Moderation**.
   already running it.
 - `SPAM_HONEYPOT_MIN_MS` — clamped to `0`–`60000`; `0` (default) = off. Still
   requires `SPAM_FORM_TS_SECRET`, which stays a secret: without it the form
-  timestamp is unsigned and forgeable, so `evaluateSpam` skips the check and the
-  `/api/v1/comments/form-token` endpoint 404s. The Settings page flags this
+  timestamp is unsigned and forgeable, so `evaluateSpam` skips the check, the
+  `/api/v1/comments/form-token` endpoint 404s, and `/api/v1/config` reports
+  `form_token_enabled: false` so the widget does not request it. The Settings page flags this
   combination inline rather than letting the dial sit there doing nothing.
 
 `SPAM_PROVIDER`, `AKISMET_API_KEY`, `AKISMET_SITE_URL` and `SPAM_FORM_TS_SECRET`
@@ -1611,9 +1612,9 @@ rendered:
 - `GET /api/v1/comments/form-token` — the signed form-render timestamp
   behind the anti-spam timing heuristic, prefetched when the composer
   renders. It stays a separate call on purpose: a shared timestamp would
-  hand every reader the same start time and defeat the check. It costs a
-  request even with that heuristic off, because the route 404s rather
-  than not existing.
+  hand every reader the same start time and defeat the check. The widget
+  skips it when `/api/v1/config` reports `form_token_enabled: false`
+  (heuristic off), so on the default install a mount is one request.
 
 Before v2.15.0 it was four requests for a default install
 (`/api/v1/config`, then `/api/v1/auth/me` and `/api/v1/comments` in
