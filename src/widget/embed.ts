@@ -78,6 +78,7 @@ import {
 	type SubscriptionSection,
 	fetchBootstrap,
 	fetchConfig,
+	postMetaFromDataset,
 } from "./boot";
 // Generated from styles.css by scripts/build-styles.ts (gitignored, rebuilt by
 // build:assets). Edit styles.css, never the .gen file.
@@ -2288,8 +2289,7 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 					turnstile_token: turnstileToken,
 					website: honey.value,
 					form_ts: formTs,
-					post_title: ctx.host.dataset.title ?? null,
-					post_url: ctx.host.dataset.url ?? null,
+					...postMetaFromDataset(ctx.host.dataset),
 				}),
 			});
 			const json = (await res.json()) as {
@@ -4101,8 +4101,7 @@ const submit = async (
 				turnstile_token: turnstileToken,
 				website: honeypot,
 				form_ts: formTs,
-				post_title: host.dataset.title ?? null,
-				post_url: host.dataset.url ?? null,
+				...postMetaFromDataset(host.dataset),
 			}),
 		});
 		const json = (await res.json()) as {
