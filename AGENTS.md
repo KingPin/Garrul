@@ -158,12 +158,14 @@ needs the resolved locale) before `/api/v1/auth/me` and
 surfaces.
 
 **Count the whole mount, not just this endpoint.** A post with the
-comment box rendered costs **two** Worker requests: `/api/v1/bootstrap`
-and `/api/v1/comments/form-token`, which the widget prefetches when the
+comment box rendered costs **one** Worker request on the default install
+(`/api/v1/bootstrap`) and **two** when the anti-spam timing heuristic
+is on (`SPAM_FORM_TS_SECRET` set and `SPAM_HONEYPOT_MIN_MS` above `0`):
+the widget then also prefetches `/api/v1/comments/form-token` when the
 composer renders. The Workers free tier allows 100,000 requests/day, so
-that is roughly a **50k pageview/day** ceiling — up from ~25k at the
-four requests a default install used to make, and ~16k with page
-reactions/votes and subscriptions on.
+that is roughly a **100k** or **50k pageview/day** ceiling respectively
+— up from ~25k at the four requests a default install used to make, and
+~16k with page reactions/votes and subscriptions on.
 
 `/embed.js` is not in that count. It ships
 `Cache-Control: public, max-age=3600, s-maxage=86400`, so the
@@ -204,7 +206,7 @@ heuristic, and baking one into a shared payload would hand every reader
 the same start time. When the heuristic is off (no `SPAM_FORM_TS_SECRET`
 or `SPAM_HONEYPOT_MIN_MS` is `0`) the config payload carries
 `form_token_enabled: false` and the widget skips the request entirely
-(since 2.27.0); before that the route 404'd and the 404 still cost a
+(since v2.27.0); before that the route 404'd and the 404 still cost a
 request. A widget that sees no `form_token_enabled` field at all (older
 server) keeps requesting the token.
 

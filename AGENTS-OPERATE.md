@@ -1603,7 +1603,8 @@ cost is what sets the pageview ceiling for an install, and it is the
 one number worth knowing before you worry about anything else on this
 page.
 
-A mount now costs **two** requests on a post with the comment box
+A mount costs **one** request on the default install and **two** when
+the anti-spam timing heuristic is on, on a post with the comment box
 rendered:
 
 - `GET /api/v1/bootstrap?slug=…` — the config, the session user, the
