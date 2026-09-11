@@ -249,7 +249,9 @@ describe("listThreadRefsForPost paging (real SQLite)", () => {
 		// Fresh ULIDs ascend 1..6 but the timestamps are shuffled, the shape an
 		// import produces. Expected order is by created_at DESC, not id DESC.
 		const stamps = [5, 1, 6, 2, 4, 3];
-		stamps.forEach((t, idx) => seedThread(idx + 1, { created_at: 1_700_000_000_000 + t }));
+		for (const [idx, t] of stamps.entries()) {
+			seedThread(idx + 1, { created_at: 1_700_000_000_000 + t });
+		}
 		const seen = await walk("new", 2);
 		// created_at 6,5,4,3,2,1 → ids 3,1,5,6,4,2
 		expect(seen).toEqual([3, 1, 5, 6, 4, 2].map(threadId));
@@ -257,7 +259,9 @@ describe("listThreadRefsForPost paging (real SQLite)", () => {
 
 	it("pages 'old' by created_at when ids disagree with timestamps", async () => {
 		const stamps = [5, 1, 6, 2, 4, 3];
-		stamps.forEach((t, idx) => seedThread(idx + 1, { created_at: 1_700_000_000_000 + t }));
+		for (const [idx, t] of stamps.entries()) {
+			seedThread(idx + 1, { created_at: 1_700_000_000_000 + t });
+		}
 		const seen = await walk("old", 2);
 		// created_at 1,2,3,4,5,6 → ids 2,4,6,5,1,3
 		expect(seen).toEqual([2, 4, 6, 5, 1, 3].map(threadId));
