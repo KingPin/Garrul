@@ -19,6 +19,7 @@ import {
 	insertComment,
 	getComment,
 	listThreadRefsForPost,
+	getThreadCreatedAt,
 	softDeleteComment,
 	updateCommentStatus,
 } from "../src/db/queries";
@@ -160,10 +161,11 @@ describe("listThreadRefsForPost paging (real SQLite)", () => {
 	let db: any;
 	let sqlite: DatabaseSync;
 
-	// ULIDs are time-prefixed, so id order tracks created_at order — the
-	// invariant every cursor here leans on. Seeded ids agree with their
-	// timestamps for exactly that reason; a test that let them disagree would
-	// be testing a row shape the writer cannot produce.
+	// Ids and created_at are independent. Live writes mint time-prefixed ULIDs
+	// so the two usually agree, but imports keep the source's historical
+	// created_at under a fresh ULID, so id order says nothing about time order
+	// there. Chronological paging therefore cursors on (created_at, id), and the
+	// tests below seed both aligned and deliberately misaligned rows.
 	const threadId = (i: number) => `01J${String(i).padStart(23, "0")}`;
 
 	beforeEach(() => {
@@ -180,7 +182,12 @@ describe("listThreadRefsForPost paging (real SQLite)", () => {
 
 	const seedThread = (
 		i: number,
-		opts: { status?: string; score?: number; parent_id?: string | null } = {},
+		opts: {
+			status?: string;
+			score?: number;
+			parent_id?: string | null;
+			created_at?: number;
+		} = {},
 	) => {
 		sqlite
 			.prepare(
@@ -195,7 +202,7 @@ describe("listThreadRefsForPost paging (real SQLite)", () => {
 				opts.status ?? "approved",
 				opts.score ?? 0,
 				opts.parent_id ? 2 : 1,
-				1_700_000_000_000 + i,
+				opts.created_at ?? 1_700_000_000_000 + i,
 			);
 	};
 
@@ -205,7 +212,7 @@ describe("listThreadRefsForPost paging (real SQLite)", () => {
 	 */
 	const walk = async (sort: "new" | "top" | "old", pageSize: number) => {
 		const seen: string[] = [];
-		let cursor: { score?: number; id: string } | null = null;
+		let cursor: { score?: number; created_at?: number; id: string } | null = null;
 		for (let guard = 0; guard < 20; guard++) {
 			const refs = await listThreadRefsForPost(db, "hello", {
 				sort,
@@ -216,7 +223,10 @@ describe("listThreadRefsForPost paging (real SQLite)", () => {
 			seen.push(...page.map((r) => r.id));
 			const last = page[page.length - 1];
 			if (refs.length <= pageSize || !last) break;
-			cursor = sort === "top" ? { score: last.score, id: last.id } : { id: last.id };
+			cursor =
+				sort === "top"
+					? { score: last.score, id: last.id }
+					: { created_at: last.created_at, id: last.id };
 		}
 		return seen;
 	};
@@ -233,6 +243,45 @@ describe("listThreadRefsForPost paging (real SQLite)", () => {
 		const seen = await walk("new", 3);
 		expect(seen).toEqual([7, 6, 5, 4, 3, 2, 1].map(threadId));
 		expect(new Set(seen).size).toBe(7);
+	});
+
+	it("pages 'new' by created_at when ids disagree with timestamps (imported rows)", async () => {
+		// Fresh ULIDs ascend 1..6 but the timestamps are shuffled, the shape an
+		// import produces. Expected order is by created_at DESC, not id DESC.
+		const stamps = [5, 1, 6, 2, 4, 3];
+		stamps.forEach((t, idx) => seedThread(idx + 1, { created_at: 1_700_000_000_000 + t }));
+		const seen = await walk("new", 2);
+		// created_at 6,5,4,3,2,1 → ids 3,1,5,6,4,2
+		expect(seen).toEqual([3, 1, 5, 6, 4, 2].map(threadId));
+	});
+
+	it("pages 'old' by created_at when ids disagree with timestamps", async () => {
+		const stamps = [5, 1, 6, 2, 4, 3];
+		stamps.forEach((t, idx) => seedThread(idx + 1, { created_at: 1_700_000_000_000 + t }));
+		const seen = await walk("old", 2);
+		// created_at 1,2,3,4,5,6 → ids 2,4,6,5,1,3
+		expect(seen).toEqual([2, 4, 6, 5, 1, 3].map(threadId));
+	});
+
+	it("breaks created_at ties on id without skipping or repeating", async () => {
+		for (let i = 1; i <= 6; i++) seedThread(i, { created_at: 1_700_000_000_000 });
+		expect(await walk("new", 2)).toEqual([6, 5, 4, 3, 2, 1].map(threadId));
+		expect(await walk("old", 4)).toEqual([1, 2, 3, 4, 5, 6].map(threadId));
+	});
+
+	it("returns created_at on every ref", async () => {
+		seedThread(1, { created_at: 1_700_000_000_123 });
+		const refs = await listThreadRefsForPost(db, "hello", { sort: "new", limit: 5 });
+		expect(refs).toEqual([{ id: threadId(1), score: 0, created_at: 1_700_000_000_123 }]);
+	});
+
+	it("getThreadCreatedAt resolves a top-level thread on the slug and nothing else", async () => {
+		seedThread(1, { created_at: 1_700_000_000_001 });
+		seedThread(2, { parent_id: threadId(1), created_at: 1_700_000_000_002 });
+		expect(await getThreadCreatedAt(db, "hello", threadId(1))).toBe(1_700_000_000_001);
+		expect(await getThreadCreatedAt(db, "hello", threadId(2))).toBeNull(); // a reply
+		expect(await getThreadCreatedAt(db, "other", threadId(1))).toBeNull(); // wrong slug
+		expect(await getThreadCreatedAt(db, "hello", threadId(9))).toBeNull(); // missing
 	});
 
 	it("'old' excludes replies, spam and pending just as 'new' does", async () => {
