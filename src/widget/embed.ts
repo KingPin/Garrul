@@ -78,6 +78,7 @@ import {
 	type SubscriptionSection,
 	fetchBootstrap,
 	fetchConfig,
+	formTokenWanted,
 } from "./boot";
 // Generated from styles.css by scripts/build-styles.ts (gitignored, rebuilt by
 // build:assets). Edit styles.css, never the .gen file.
@@ -739,8 +740,17 @@ type WidgetCtx = {
  * an empty string — the server then ignores the absent `form_ts`.
  */
 let formTokenPromise: Promise<string> | null = null;
+// Set from config at mount. Default true so a mount that never reads config
+// (should not happen — mount aborts without one) keeps the legacy fetch.
+let formTokenEnabled = true;
 const prefetchFormToken = (apiBase: string): void => {
 	if (formTokenPromise) return;
+	if (!formTokenEnabled) {
+		// The server told us the route 404s on this install. Resolve to the same
+		// empty token the 404 path returns, without spending the request.
+		formTokenPromise = Promise.resolve("");
+		return;
+	}
 	formTokenPromise = (async () => {
 		try {
 			const res = await fetch(apiUrl(apiBase, "/api/v1/comments/form-token"), {
@@ -3540,6 +3550,7 @@ const loadOnce = async (
 		const cfg: ConfigResponse | null = boot
 			? (boot.config ?? null)
 			: await fetchConfig(apiBase, langExplicit, langHint);
+		formTokenEnabled = formTokenWanted(cfg);
 		if (cfg) {
 			// Install the locale before anything renders below. The table is the
 			// locale's own overrides, not a merged copy — makeS falls back to the
