@@ -385,7 +385,12 @@ and a sort selector above the list. Neither needs any host-page wiring:
   pagination. The widget omits `?sort=` on the mount request to mean "no
   preference"; the server resolves the default and **echoes the sort it
   used** back on the comments payload, which is what the control
-  displays and what `next_cursor` is a cursor into. It cannot be derived
+  displays and what `next_cursor` is a cursor into.
+  `next_cursor` is opaque to the widget. For `new`/`old` it is
+  `<created_at_ms>.<ulid>` (since v2.27.0; earlier servers emitted a
+  bare ULID, which the server still accepts by looking the row up once),
+  for `top` it is `<score>:<ulid>`.
+  It cannot be derived
   client-side: on the bootstrap path the setting arrives in the same
   response as the comments it orders. A stored `top` with voting off
   resolves to `new` rather than being rewritten, so re-enabling voting
