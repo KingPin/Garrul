@@ -4004,7 +4004,7 @@ const loadOnce = async (
 
 	form.addEventListener("submit", (e) => {
 		e.preventDefault();
-		void submit(form, root, slug, apiBase, host);
+		void submit(form, root, slug, apiBase, apiOrigin, host);
 	});
 
 	// No cancel handler: the top-level composer is the page's resting state, so
@@ -4017,6 +4017,7 @@ const submit = async (
 	root: ShadowRoot,
 	slug: string,
 	apiBase: string,
+	apiOrigin: string,
 	host: HTMLElement,
 ) => {
 	// Two things write to this box: submit failures, and Turnstile. Precedence:
@@ -4128,7 +4129,7 @@ const submit = async (
 
 		// Comment landed — drop the saved composer draft so the reload starts
 		// from a clean field.
-		clearDraft(draftKey(new URL(apiBase).origin, slug, null));
+		clearDraft(draftKey(apiOrigin, slug, null));
 
 		// Fire-and-forget subscription — failure here doesn't roll back
 		// the comment. The widget already has both inputs handy.
