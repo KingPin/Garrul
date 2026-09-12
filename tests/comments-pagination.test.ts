@@ -33,6 +33,11 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { comments } from "../src/routes/api.comments";
+import {
+	getUserVotesOnComments,
+	listReactionsForComments,
+	listUserReactionsOnComments,
+} from "../src/db/queries";
 import { treeCacheKey } from "../src/lib/tree-cache";
 import {
 	installMockCaches,
@@ -189,6 +194,12 @@ const seedReplies = (threadCount: number, perThread: number) => {
 	}
 };
 
+const seedReaction = (commentId: string, userId: string, kind = "heart") => {
+	sqlite
+		.prepare("INSERT INTO reactions (comment_id, user_id, kind, created_at) VALUES (?, ?, ?, 1)")
+		.run(commentId, userId, kind);
+};
+
 const setSetting = (key: string, value: string) => {
 	sqlite
 		.prepare("INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)")
@@ -208,6 +219,8 @@ type ListResp = {
 		id: string;
 		score_up: number;
 		score_down: number;
+		reactions: { kind: string; count: number; mine: boolean }[];
+		my_vote: -1 | 0 | 1;
 		replies: unknown[];
 	}[];
 	next_cursor: string | null;
@@ -652,5 +665,82 @@ describe("GET /comments — edge-cache hit/bypass", () => {
 				treeCacheKey(REQ_URL, SLUG, "top", 2, `8:${mkUlid(9)}`).url,
 			),
 		).toBe(true);
+	});
+});
+
+describe("engagement queries are scoped to the page", () => {
+	const reactionsQueries = () =>
+		queries.filter((q) => /FROM reactions r/.test(q.sql) && /IN \(/.test(q.sql));
+
+	it("loads reactions only for the comments on the page", async () => {
+		// Page size comes from the `comments_per_page` setting (there is no
+		// query param). With 2 per page, new-sort page 1 = threads 4,3; page 2 = 2,1.
+		seedThreads(4);
+		seedReaction(mkUlid(4), USER, "heart");
+		seedReaction(mkUlid(1), USER, "heart");
+		seedReaction(mkUlid(2), USER, "laugh");
+		setSetting("comments_per_page", "2");
+		const env = mkEnv();
+		queries.length = 0;
+		const page = await get(env, `slug=${SLUG}&sort=new`);
+
+		expect(page.threads.map((t) => t.id)).toEqual([mkUlid(4), mkUlid(3)]);
+		expect(page.threads[0]?.reactions).toEqual([{ kind: "heart", count: 1, mine: false }]);
+		expect(page.threads[1]?.reactions).toEqual([]);
+
+		const rq = reactionsQueries();
+		expect(rq.length).toBe(1);
+		// Binds are exactly the page's comment ids; nothing from page 2.
+		expect([...rq[0]!.binds].sort()).toEqual([mkUlid(3), mkUlid(4)].sort());
+		// `Recorded.rows` is the row COUNT the stub saw. Only thread 4's heart
+		// matches the page ids, so exactly one row comes back.
+		expect(rq[0]!.rows).toBe(1);
+	});
+
+	it("includes replies on the page in the id set", async () => {
+		seedThreads(1);
+		seedReplies(1, 1); // one reply under thread 1, id mkUlid(100_000)
+		const replyId = mkUlid(100_000);
+		seedReaction(replyId, USER, "heart");
+		const env = mkEnv();
+		queries.length = 0;
+		await get(env, `slug=${SLUG}&sort=new`);
+		const rq = reactionsQueries();
+		expect(rq.length).toBe(1);
+		expect(rq[0]!.binds).toContain(replyId);
+	});
+
+	it("issues no engagement query for an empty page", async () => {
+		const env = mkEnv();
+		queries.length = 0;
+		const page = await get(env, `slug=${SLUG}&sort=new`);
+		expect(page.threads).toEqual([]);
+		expect(reactionsQueries().length).toBe(0);
+	});
+});
+
+describe("engagement query batching", () => {
+	const ids = Array.from({ length: 200 }, (_, i) => mkUlid(i + 1));
+
+	it("splits 200 ids into batches of 90, 90, 20 for all three queries", async () => {
+		seedThreads(0);
+		const env = mkEnv();
+		queries.length = 0;
+		const db = env.DB;
+		await listReactionsForComments(db, ids);
+		await listUserReactionsOnComments(db, ids, USER);
+		await getUserVotesOnComments(db, ids, USER);
+		const sizes = queries.map((q) => q.binds.length);
+		// reactions: ids only; user reactions and votes: ids + user_id
+		expect(sizes).toEqual([90, 90, 20, 91, 91, 21, 91, 91, 21]);
+	});
+
+	it("returns empty results and runs no query for an empty id list", async () => {
+		const env = mkEnv();
+		queries.length = 0;
+		expect(await listReactionsForComments(env.DB, [])).toEqual([]);
+		expect(await listUserReactionsOnComments(env.DB, [], USER)).toEqual(new Set());
+		expect(await getUserVotesOnComments(env.DB, [], USER)).toEqual(new Map());
+		expect(queries.length).toBe(0);
 	});
 });

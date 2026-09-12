@@ -1608,6 +1608,9 @@ rendered:
 - `GET /api/v1/bootstrap?slug=…` — the config, the session user, the
   first page of comments, and page-level engagement and subscription
   state when those surfaces are on.
+  Reactions, the viewer's reactions and the viewer's votes are loaded for
+  the comments on the returned page only (batched `IN` lists of 90), not
+  for the whole post, so page cost does not grow with thread size.
 - `GET /api/v1/comments/form-token` — the signed form-render timestamp
   behind the anti-spam timing heuristic, prefetched when the composer
   renders. It stays a separate call on purpose: a shared timestamp would

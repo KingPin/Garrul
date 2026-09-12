@@ -29,14 +29,14 @@ import {
 	getComment,
 	getPost,
 	getUser,
-	getUserVotesOnPost,
+	getUserVotesOnComments,
 	insertComment,
 	isUserRole,
 	listActiveSubscriptionsForPost,
 	listCommentsForThreads,
-	listReactionsForPost,
+	listReactionsForComments,
 	listThreadRefsForPost,
-	listUserReactionsOnPost,
+	listUserReactionsOnComments,
 	softDeleteComment,
 	TREE_ROW_LIMIT,
 	updateCommentBody,
@@ -1075,9 +1075,13 @@ export const buildTreePage = async (
 	}
 	const authors = await loadAuthors(env.DB, rows);
 
-	const reactionRows = await listReactionsForPost(env.DB, slug);
+	// Engagement is loaded for the comments on this page only. `rows` is every
+	// comment listCommentsForThreads returned for the page's threads (top-level
+	// and replies), so ids here are exactly what buildTree will render.
+	const pageIds = rows.map((r) => r.id);
+	const reactionRows = await listReactionsForComments(env.DB, pageIds);
 	const mineSet = session
-		? await listUserReactionsOnPost(env.DB, slug, session.user_id)
+		? await listUserReactionsOnComments(env.DB, pageIds, session.user_id)
 		: new Set<string>();
 	const reactionsById = new Map<string, ReactionCount[]>();
 	for (const r of reactionRows) {
@@ -1091,7 +1095,7 @@ export const buildTreePage = async (
 	}
 
 	const myVotes = session
-		? await getUserVotesOnPost(env.DB, slug, session.user_id)
+		? await getUserVotesOnComments(env.DB, pageIds, session.user_id)
 		: new Map<string, -1 | 1>();
 
 	// When the operator opts in, keep every deleted comment as a placeholder

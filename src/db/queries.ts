@@ -12,6 +12,19 @@
 import { ulid } from "../lib/ulid";
 import { hostExpr } from "./host-expr";
 
+/**
+ * Max ids per `IN (...)` list. D1 caps bound parameters at 100; 90 leaves room
+ * for the other binds a statement carries (user_id etc.). Same figure as
+ * AUTHOR_BATCH in api.comments.ts.
+ */
+const IN_BATCH = 90;
+
+const chunk = <T>(xs: readonly T[], size: number): T[][] => {
+	const out: T[][] = [];
+	for (let i = 0; i < xs.length; i += size) out.push(xs.slice(i, i + size));
+	return out;
+};
+
 // Escape SQL LIKE wildcards so admin search inputs are matched as literals.
 // SQLite treats `%` and `_` as wildcards inside the pattern; without escaping
 // them, searching for "50%" matches "501" too, and a string of `_` chars can
@@ -975,24 +988,30 @@ export type ReactionSummary = {
 };
 
 /**
- * Aggregate reactions for every comment on a post: (comment_id, kind, count).
- * Caller pivots to per-comment buckets.
+ * Aggregate reactions for a set of comments: (comment_id, kind, count).
+ * Caller pivots to per-comment buckets. Scoped to the ids on the page rather
+ * than the whole post so a 5,000-comment thread does not pay for every
+ * reaction on every page request.
  */
-export const listReactionsForPost = async (
+export const listReactionsForComments = async (
 	db: D1Database,
-	post_slug: string,
+	comment_ids: readonly string[],
 ): Promise<ReactionSummary[]> => {
-	const result = await db
-		.prepare(
-			`SELECT r.comment_id, r.kind, COUNT(*) AS count
-			 FROM reactions r
-			 JOIN comments c ON c.id = r.comment_id
-			 WHERE c.post_slug = ?
-			 GROUP BY r.comment_id, r.kind`,
-		)
-		.bind(post_slug)
-		.all<{ comment_id: string; kind: string; count: number }>();
-	return result.results ?? [];
+	const out: ReactionSummary[] = [];
+	for (const batch of chunk(comment_ids, IN_BATCH)) {
+		const placeholders = batch.map(() => "?").join(",");
+		const result = await db
+			.prepare(
+				`SELECT r.comment_id, r.kind, COUNT(*) AS count
+				 FROM reactions r
+				 WHERE r.comment_id IN (${placeholders})
+				 GROUP BY r.comment_id, r.kind`,
+			)
+			.bind(...batch)
+			.all<ReactionSummary>();
+		out.push(...(result.results ?? []));
+	}
+	return out;
 };
 
 /**
@@ -1018,28 +1037,24 @@ export const listReactionsForComment = async (
 	return result.results ?? [];
 };
 
-/**
- * Returns the set of (comment_id, kind) pairs the given user has reacted
- * with on the given post. Returned as `comment_id|kind` strings so the
- * caller can do an O(1) presence check.
- */
-export const listUserReactionsOnPost = async (
+/** `comment_id|kind` pairs the viewer has reacted with, over a set of comments. */
+export const listUserReactionsOnComments = async (
 	db: D1Database,
-	post_slug: string,
+	comment_ids: readonly string[],
 	user_id: string,
 ): Promise<Set<string>> => {
-	const result = await db
-		.prepare(
-			`SELECT r.comment_id, r.kind
-			 FROM reactions r
-			 JOIN comments c ON c.id = r.comment_id
-			 WHERE c.post_slug = ? AND r.user_id = ?`,
-		)
-		.bind(post_slug, user_id)
-		.all<{ comment_id: string; kind: string }>();
 	const out = new Set<string>();
-	for (const row of result.results ?? []) {
-		out.add(`${row.comment_id}|${row.kind}`);
+	for (const batch of chunk(comment_ids, IN_BATCH)) {
+		const placeholders = batch.map(() => "?").join(",");
+		const result = await db
+			.prepare(
+				`SELECT r.comment_id, r.kind
+				 FROM reactions r
+				 WHERE r.comment_id IN (${placeholders}) AND r.user_id = ?`,
+			)
+			.bind(...batch, user_id)
+			.all<{ comment_id: string; kind: string }>();
+		for (const row of result.results ?? []) out.add(`${row.comment_id}|${row.kind}`);
 	}
 	return out;
 };
@@ -3795,29 +3810,26 @@ export const castVote = async (
 	return reselectScores(db, comment_id, user_id);
 };
 
-/**
- * Returns the calling user's vote on each (comment_id) for one post, as
- * a Map keyed by comment_id. Used to populate `my_vote` on the public
- * list endpoint for authenticated viewers; anonymous viewers bypass this
- * (the cached payload has no my_vote field).
- */
-export const getUserVotesOnPost = async (
+/** The viewer's vote per comment, over a set of comments. */
+export const getUserVotesOnComments = async (
 	db: D1Database,
-	post_slug: string,
+	comment_ids: readonly string[],
 	user_id: string,
 ): Promise<Map<string, -1 | 1>> => {
-	const result = await db
-		.prepare(
-			`SELECT v.comment_id, v.value
-			   FROM votes v
-			   JOIN comments c ON c.id = v.comment_id
-			  WHERE c.post_slug = ? AND v.user_id = ?`,
-		)
-		.bind(post_slug, user_id)
-		.all<{ comment_id: string; value: number }>();
 	const out = new Map<string, -1 | 1>();
-	for (const r of result.results ?? []) {
-		if (r.value === 1 || r.value === -1) out.set(r.comment_id, r.value);
+	for (const batch of chunk(comment_ids, IN_BATCH)) {
+		const placeholders = batch.map(() => "?").join(",");
+		const result = await db
+			.prepare(
+				`SELECT v.comment_id, v.value
+				   FROM votes v
+				  WHERE v.comment_id IN (${placeholders}) AND v.user_id = ?`,
+			)
+			.bind(...batch, user_id)
+			.all<{ comment_id: string; value: number }>();
+		for (const r of result.results ?? []) {
+			if (r.value === 1 || r.value === -1) out.set(r.comment_id, r.value);
+		}
 	}
 	return out;
 };
