@@ -176,6 +176,11 @@ export const buildConfigPayload = (
 		// stale against the cached score the widget already shows. 0 ratio = off.
 		community_min_votes: numbers.community_min_votes,
 		community_collapse_ratio: numbers.community_collapse_ratio,
+		// Whether `/api/v1/comments/form-token` would answer 200. Same predicate
+		// as that route (secret present AND minimum above zero) so the widget can
+		// skip the request on installs where it would only ever 404. Config is
+		// never cached, so a toggle shows up on the next mount.
+		form_token_enabled: !!env.SPAM_FORM_TS_SECRET && numbers.spam_honeypot_min_ms > 0,
 	};
 };
 

@@ -168,6 +168,13 @@ const seedThreads = (n: number, scores: number[] = []) => {
 	}
 };
 
+/** One top-level thread with an explicit id index and created_at. */
+const seedThreadAt = (idIndex: number, createdAt: number) => {
+	sqlite
+		.prepare(INSERT_COMMENT)
+		.run(mkUlid(idIndex), SLUG, null, USER, `c${idIndex}`, `<p>c${idIndex}</p>`, createdAt, 1, 0);
+};
+
 /** `perThread` replies under each of the first `threadCount` threads. */
 const seedReplies = (threadCount: number, perThread: number) => {
 	const stmt = sqlite.prepare(INSERT_COMMENT);
@@ -628,10 +635,13 @@ describe("GET /comments — edge-cache hit/bypass", () => {
 		await get(env, `slug=${SLUG}&before=${mkUlid(1)}`); // oldest id → no rows
 		expect(mockCache.store.size).toBe(0);
 
-		// Sanity: the same request shape with real rows behind it IS cached.
+		// Sanity: the same request shape with real rows behind it IS cached, and
+		// the legacy bare-ULID spelling lands under the canonical composite key.
 		await get(env, `slug=${SLUG}&before=${mkUlid(3)}`);
 		expect(
-			mockCache.store.has(treeCacheKey(REQ_URL, SLUG, "new", 25, mkUlid(3)).url),
+			mockCache.store.has(
+				treeCacheKey(REQ_URL, SLUG, "new", 25, `1002.${mkUlid(3)}`).url,
+			),
 		).toBe(true);
 	});
 
@@ -652,5 +662,109 @@ describe("GET /comments — edge-cache hit/bypass", () => {
 				treeCacheKey(REQ_URL, SLUG, "top", 2, `8:${mkUlid(9)}`).url,
 			),
 		).toBe(true);
+	});
+});
+
+describe("chronological cursor format (created_at.ulid)", () => {
+	const CHRONO = /^-?\d{1,13}\.[0-9A-HJKMNP-TV-Z]{26}$/;
+
+	// Page size is the `comments_per_page` setting (no query param), so every
+	// test here sets it to 2 before building the env, the way the existing
+	// cursor tests set it to 10.
+	it("emits <created_at>.<ulid> for new and old", async () => {
+		seedThreads(5);
+		setSetting("comments_per_page", "2");
+		const env = mkEnv();
+		const first = await get(env, `slug=${SLUG}&sort=new`);
+		expect(first.next_cursor).toMatch(CHRONO);
+		// Page 1 of `new` ends on thread index 4 (created_at 1003).
+		expect(first.next_cursor).toBe(`1003.${mkUlid(4)}`);
+		const old = await get(env, `slug=${SLUG}&sort=old`);
+		expect(old.next_cursor).toBe(`1001.${mkUlid(2)}`);
+	});
+
+	it("pages misaligned rows by created_at with no skip or repeat", async () => {
+		// ids ascend 1..6, timestamps shuffled: the shape an import produces.
+		const stamps = [5, 1, 6, 2, 4, 3];
+		stamps.forEach((t, idx) => {
+			seedThreadAt(idx + 1, 2000 + t);
+		});
+		setSetting("comments_per_page", "2");
+		const env = mkEnv();
+		const seen: string[] = [];
+		let cursor: string | null = null;
+		for (let guard = 0; guard < 10; guard++) {
+			const page = await get(
+				env,
+				`slug=${SLUG}&sort=new${cursor ? `&before=${cursor}` : ""}`,
+			);
+			seen.push(...page.threads.map((t) => t.id));
+			cursor = page.next_cursor;
+			if (!cursor) break;
+		}
+		// created_at 6,5,4,3,2,1 → id indexes 3,1,5,6,4,2
+		expect(seen).toEqual([3, 1, 5, 6, 4, 2].map(mkUlid));
+	});
+
+	it("accepts a legacy bare-ULID cursor and caches it under the composite key", async () => {
+		seedThreads(5);
+		setSetting("comments_per_page", "2");
+		const env = mkEnv();
+		const viaLegacy = await get(env, `slug=${SLUG}&sort=new&before=${mkUlid(4)}`);
+		const viaComposite = await get(mkEnv(), `slug=${SLUG}&sort=new&before=1003.${mkUlid(4)}`);
+		expect(viaLegacy.threads.map((t) => t.id)).toEqual(viaComposite.threads.map((t) => t.id));
+		expect(viaLegacy.threads.map((t) => t.id)).toEqual([mkUlid(3), mkUlid(2)]);
+		expect(
+			mockCache.store.has(treeCacheKey(REQ_URL, SLUG, "new", 2, `1003.${mkUlid(4)}`).url),
+		).toBe(true);
+		expect(mockCache.store.has(treeCacheKey(REQ_URL, SLUG, "new", 2, mkUlid(4)).url)).toBe(
+			false,
+		);
+	});
+
+	it("treats a legacy cursor that names no thread as the first page, one cache key", async () => {
+		seedThreads(3);
+		setSetting("comments_per_page", "2");
+		const env = mkEnv();
+		const first = await get(env, `slug=${SLUG}&sort=new`);
+		mockCache.store.clear();
+		const probe = await get(env, `slug=${SLUG}&sort=new&before=${mkUlid(999)}`);
+		expect(probe.threads.map((t) => t.id)).toEqual(first.threads.map((t) => t.id));
+		expect(mockCache.store.size).toBe(1);
+		expect(mockCache.store.has(treeCacheKey(REQ_URL, SLUG, "new", 2).url)).toBe(true);
+	});
+
+	it("rejects a malformed composite cursor as no cursor", async () => {
+		seedThreads(3);
+		setSetting("comments_per_page", "2");
+		const env = mkEnv();
+		const first = await get(env, `slug=${SLUG}&sort=new`);
+		const bad = await get(env, `slug=${SLUG}&sort=new&before=abc.${mkUlid(2)}`);
+		expect(bad.threads.map((t) => t.id)).toEqual(first.threads.map((t) => t.id));
+	});
+
+	it("leaves the top cursor format unchanged", async () => {
+		seedThreads(4, [3, 1, 2, 0]);
+		setSetting("comments_per_page", "2");
+		const env = mkEnv();
+		const page = await get(env, `slug=${SLUG}&sort=top`);
+		expect(page.next_cursor).toBe(`2:${mkUlid(3)}`);
+	});
+
+	it("accepts a negative created_at (pre-1970, import-only) in the before cursor", async () => {
+		seedThreadAt(1, -7200000);
+		seedThreadAt(2, -3600000);
+		seedThreadAt(3, 0);
+		setSetting("comments_per_page", "1");
+		const env = mkEnv();
+		const first = await get(env, `slug=${SLUG}&sort=old`);
+		expect(first.threads.map((t) => t.id)).toEqual([mkUlid(1)]);
+		expect(first.next_cursor).toBe(`-7200000.${mkUlid(1)}`);
+		const second = await get(
+			env,
+			`slug=${SLUG}&sort=old&before=-7200000.${mkUlid(1)}`,
+		);
+		// A regex that rejects the sign would silently fall back to page 1.
+		expect(second.threads.map((t) => t.id)).toEqual([mkUlid(2)]);
 	});
 });

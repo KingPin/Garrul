@@ -82,6 +82,7 @@ import {
 	type SubscriptionSection,
 	fetchBootstrap,
 	fetchConfig,
+	formTokenWanted,
 	postMetaFromDataset,
 } from "./boot";
 // Generated from styles.css by scripts/build-styles.ts (gitignored, rebuilt by
@@ -744,8 +745,31 @@ type WidgetCtx = {
  * an empty string — the server then ignores the absent `form_ts`.
  */
 let formTokenPromise: Promise<string> | null = null;
+// Set from config at mount via `setFormTokenEnabled`. Default true so a mount
+// that never reads config (should not happen — mount aborts without one) keeps
+// the legacy fetch.
+let formTokenEnabled = true;
+/**
+ * Apply the config's answer for this mount. `loadOnce` runs on every reload,
+ * so the flag can flip between mounts on one page. The disabled path parks a
+ * resolved empty promise in the cache and `prefetchFormToken` treats any cached
+ * promise as done, so a flip back to enabled has to drop that stub or no token
+ * is ever requested and the server's timing check holds every later post.
+ * An enabled→enabled reload keeps its cached token, which is the whole point
+ * of the cache.
+ */
+const setFormTokenEnabled = (wanted: boolean): void => {
+	if (wanted && !formTokenEnabled) formTokenPromise = null;
+	formTokenEnabled = wanted;
+};
 const prefetchFormToken = (apiBase: string): void => {
 	if (formTokenPromise) return;
+	if (!formTokenEnabled) {
+		// The server told us the route 404s on this install. Resolve to the same
+		// empty token the 404 path returns, without spending the request.
+		formTokenPromise = Promise.resolve("");
+		return;
+	}
 	formTokenPromise = (async () => {
 		try {
 			const res = await fetch(apiUrl(apiBase, "/api/v1/comments/form-token"), {
@@ -3544,6 +3568,7 @@ const loadOnce = async (
 		const cfg: ConfigResponse | null = boot
 			? (boot.config ?? null)
 			: await fetchConfig(apiBase, langExplicit, langHint);
+		setFormTokenEnabled(formTokenWanted(cfg));
 		if (cfg) {
 			// Install the locale before anything renders below. The table is the
 			// locale's own overrides, not a merged copy — makeS falls back to the
@@ -3602,6 +3627,11 @@ const loadOnce = async (
 		// server will reject anonymous POSTs in that case). Only the legacy branch
 		// can throw here — a bootstrapped mount already has its config section in
 		// hand, and fetchBootstrap's own throw was handled before this block.
+		//
+		// No config means the same answer formTokenWanted gives a null one: keep
+		// the legacy request. Set it here too, because the throw skipped the
+		// assignment above and a previous mount on this page may have disabled it.
+		setFormTokenEnabled(true);
 	}
 
 	let me: Me;
