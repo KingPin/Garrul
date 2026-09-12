@@ -117,6 +117,7 @@ Drop the widget into any page:
   data-api="https://comments.example.com"
   data-title="My post title"
   data-url="https://example.com/my-post/"
+  data-published="2026-09-11T12:00:00Z"
 ></div>
 <script src="https://comments.example.com/embed.js" defer></script>
 ```
@@ -126,7 +127,7 @@ iframe variant, plus what each attribute does:
 [`examples/README.md`](examples/README.md).
 
 Host Content-Security-Policy, the iframe fallback, `data-lang`,
-lazy-loading to cut the two mount requests bouncers cost you, and pointing
+lazy-loading to cut the mount requests bouncers cost you, and pointing
 an AI assistant at your instance:
 [`docs/embedding.md`](docs/embedding.md).
 

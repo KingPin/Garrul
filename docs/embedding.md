@@ -19,9 +19,12 @@ AI assistant.
   data-api="https://comments.example.com"
   data-title="My post title"
   data-url="https://example.com/my-post/"
+  data-published="2026-09-11T12:00:00Z"
 ></div>
 <script src="https://comments.example.com/embed.js" defer></script>
 ```
+
+`data-published` is optional. It anchors age-based auto-close (`AUTO_CLOSE_DAYS`) to the article's real publish time; without it the anchor is the first engagement on the thread. It is recorded once, by the request that creates the post row.
 
 ## Content-Security-Policy
 
@@ -54,6 +57,13 @@ entirely.
 ></iframe>
 ```
 
+The iframe has no `data-*` attributes of its own, so the post metadata
+travels as query parameters instead: `?title=`, `?url=` and
+`?published=` land on `data-title`, `data-url` and `data-published`
+inside the frame (`?published=` is omitted from the frame when empty).
+`?theme=`, `?preset=` and `?lang=` cover the presentation side. Build
+the `src` with `URLSearchParams` so the values are encoded.
+
 The iframe page posts content height to the parent via
 `postMessage({type:"garrul:height", height})`. See
 [`../examples/iframe/index.html`](../examples/iframe/index.html) for a
@@ -82,7 +92,8 @@ translated, and how timestamps render: [`i18n.md`](i18n.md).
 
 ## Lazy-loading
 
-The widget fires two Worker requests on page load, before the reader has
+The widget fires one Worker request on page load (two when the anti-spam
+timing heuristic is on), before the reader has
 scrolled. On a read-heavy blog that's most of your Cloudflare usage, spent
 on bouncers. [`../examples/lazy-load`](../examples/lazy-load/README.md) has
 two deferred-loading patterns, a scroll-into-view loader (recommended) and

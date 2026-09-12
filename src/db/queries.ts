@@ -648,7 +648,7 @@ const visiblePredicate = (
  */
 export const TREE_ROW_LIMIT = 2000;
 
-export type ThreadRef = { id: string; score: number };
+export type ThreadRef = { id: string; score: number; created_at: number };
 
 /**
  * The sort orders a comment tree can be served in.
@@ -668,22 +668,22 @@ export const COMMENT_SORTS = ["new", "top", "old"] as const;
 export type CommentSort = (typeof COMMENT_SORTS)[number];
 
 /**
- * One page of top-level thread ids in the requested sort order, plus their net
- * score (the `top` cursor needs it).
+ * One page of top-level thread ids in the requested sort order, plus the two
+ * values a keyset cursor needs: net score (for `top`) and `created_at` (for
+ * `new`/`old`).
  *
- * `limit` should be pageSize + 1: the caller uses the extra row purely to learn
- * whether another page exists, and must not fetch its subtree.
+ * Chronological sorts order and cursor on `(created_at, id)`, never on id
+ * alone. Live writes mint time-prefixed ULIDs, so id order happens to track
+ * time order for them — but imports keep the source's historical `created_at`
+ * under a fresh ULID, and a bare-id cursor skips or repeats those rows. id is
+ * the tiebreaker for equal timestamps; the pair is a total order because ids
+ * are unique.
  *
- * Every sort pages on a total order so no thread can be skipped or repeated.
- * ULIDs are time-prefixed and unique, so id order tracks created_at order and
- * breaks same-millisecond ties — which is what lets both chronological sorts
- * page on id alone:
- *   - new: (created_at DESC, id DESC), cursor `id < ?`.
- *   - old: (created_at ASC, id ASC), cursor `id > ?` — the same cursor value as
- *     `new`, read in the opposite direction. Ordering and cursor direction have
- *     to be flipped together; flipping one alone silently skips or repeats
- *     threads instead of failing.
- *   - top: (score DESC, id DESC), cursor "ranked strictly after (score, id)".
+ * `top` orders on `(score DESC, id DESC)`; unchanged.
+ *
+ * Cursor semantics: return rows strictly after the cursor position in the
+ * requested order. The caller passes `limit = pageSize + 1` to learn whether a
+ * next page exists.
  */
 export const listThreadRefsForPost = async (
 	db: D1Database,
@@ -691,20 +691,31 @@ export const listThreadRefsForPost = async (
 	opts: {
 		sort: CommentSort;
 		limit: number;
-		cursor?: { score?: number; id: string } | null;
+		cursor?: { score?: number; created_at?: number; id: string } | null;
 		viewer_id?: string | null;
 	},
 ): Promise<ThreadRef[]> => {
 	const visible = visiblePredicate(opts.viewer_id ?? null);
-	const binds: unknown[] = [post_slug, ...visible.binds];
 	let cursorSql = "";
-	if (opts.cursor && opts.sort === "top" && opts.cursor.score !== undefined) {
-		cursorSql = `AND ((score_up - score_down) < ?
-		              OR ((score_up - score_down) = ? AND id < ?))`;
-		binds.push(opts.cursor.score, opts.cursor.score, opts.cursor.id);
-	} else if (opts.cursor) {
-		cursorSql = opts.sort === "old" ? "AND id > ?" : "AND id < ?";
-		binds.push(opts.cursor.id);
+	const cursorBinds: (string | number)[] = [];
+	if (opts.cursor) {
+		if (opts.sort === "top") {
+			const score = opts.cursor.score ?? 0;
+			cursorSql =
+				"AND ((score_up - score_down) < ? OR ((score_up - score_down) = ? AND id < ?))";
+			cursorBinds.push(score, score, opts.cursor.id);
+		} else if (typeof opts.cursor.created_at === "number") {
+			const ts = opts.cursor.created_at;
+			cursorSql =
+				opts.sort === "old"
+					? "AND (created_at > ? OR (created_at = ? AND id > ?))"
+					: "AND (created_at < ? OR (created_at = ? AND id < ?))";
+			cursorBinds.push(ts, ts, opts.cursor.id);
+		}
+		// A chronological cursor without created_at is not a position we can
+		// name; the route resolves legacy bare-id cursors before calling here
+		// (see getThreadCreatedAt), so this branch only guards a programming
+		// error and pages from the start.
 	}
 	const order =
 		opts.sort === "top"
@@ -712,20 +723,37 @@ export const listThreadRefsForPost = async (
 			: opts.sort === "old"
 				? "created_at ASC, id ASC"
 				: "created_at DESC, id DESC";
-	binds.push(opts.limit);
-
 	const result = await db
 		.prepare(
-			`SELECT id, (score_up - score_down) AS score
-			 FROM comments
-			 WHERE post_slug = ? AND parent_id IS NULL AND ${visible.sql}
-			   ${cursorSql}
-			 ORDER BY ${order}
-			 LIMIT ?`,
+			`SELECT id, (score_up - score_down) AS score, created_at
+			   FROM comments
+			  WHERE post_slug = ? AND parent_id IS NULL AND ${visible.sql} ${cursorSql}
+			  ORDER BY ${order}
+			  LIMIT ?`,
 		)
-		.bind(...binds)
+		.bind(post_slug, ...visible.binds, ...cursorBinds, opts.limit)
 		.all<ThreadRef>();
 	return result.results ?? [];
+};
+
+/**
+ * `created_at` of one top-level thread on a slug, or null when the id is not a
+ * top-level thread of that post. Used once per request to upgrade a legacy
+ * bare-ULID chronological cursor to the `(created_at, id)` pair. Scoped to the
+ * slug so a cursor minted on one thread cannot probe another.
+ */
+export const getThreadCreatedAt = async (
+	db: D1Database,
+	post_slug: string,
+	id: string,
+): Promise<number | null> => {
+	const row = await db
+		.prepare(
+			"SELECT created_at FROM comments WHERE id = ? AND post_slug = ? AND parent_id IS NULL",
+		)
+		.bind(id, post_slug)
+		.first<{ created_at: number }>();
+	return row ? row.created_at : null;
 };
 
 /**

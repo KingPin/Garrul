@@ -236,6 +236,31 @@ describe("GET /embed/:slug", () => {
 		});
 	});
 
+	describe("?published=", () => {
+		it("forwards the value to data-published", async () => {
+			const res = await fetchPage(
+				`/embed/hello?published=${encodeURIComponent("2026-09-11T12:00:00Z")}`,
+			);
+			expect(await res.text()).toContain('data-published="2026-09-11T12:00:00Z"');
+		});
+
+		it("emits no attribute when the param is absent", async () => {
+			// The widget reads `ds.published ?? null`, so an empty attribute would
+			// send post_published: "" instead of omitting the field.
+			const res = await fetchPage("/embed/hello");
+			expect(await res.text()).not.toContain("data-published");
+		});
+
+		it("cannot break out of the attribute", async () => {
+			const res = await fetchPage(
+				`/embed/hello?published=${encodeURIComponent('x" onload="alert(1)')}`,
+			);
+			const body = await res.text();
+			expect(body).not.toContain('" onload="');
+			expect(body).toContain("data-published=\"x&quot; onload=&quot;alert(1)\"");
+		});
+	});
+
 	it("keeps the ?api= override gated on the allowlist", async () => {
 		// Regression guard on the pattern parent_origin was modelled after: an
 		// unlisted override would load attacker-controlled JS into the frame,

@@ -1,21 +1,23 @@
 # Garrul — lazy-loading the widget
 
 By default, the embed script runs as soon as the page parses, which
-fires two Worker requests per pageview before the reader has scrolled
-anywhere near the comments:
+fires one or two Worker requests per pageview before the reader has
+scrolled anywhere near the comments:
 
 - `/api/v1/bootstrap?slug=...` — the config, the session user and the
   first page of comments, together.
 - `/api/v1/comments/form-token` — a signed form-render timestamp for the
-  anti-spam timing check, fetched when the comment box renders.
+  anti-spam timing check, fetched when the comment box renders. Only
+  sent when the Worker reports `form_token_enabled: true` (the timing
+  heuristic is on); the default install skips it.
 
-On a busy blog where most visitors bounce without engaging, those two
-are still the bulk of your Cloudflare Worker usage — they happen on
-every pageview, engaged or not.
+On a busy blog where most visitors bounce without engaging, those
+requests are still the bulk of your Cloudflare Worker usage — they
+happen on every pageview, engaged or not.
 
 Two patterns to defer it. The first is what we recommend.
 
-> **Since v2.15.0** the mount is two requests. It used to be four
+> **Since v2.15.0** the mount is one or two requests. It used to be four
 > (`/api/v1/config`, then `/api/v1/auth/me` and
 > `/api/v1/comments?slug=...`, plus the form token), or six with page
 > reactions/votes and thread subscriptions enabled. Deferring the script
@@ -37,6 +39,7 @@ get a seamless experience. Bouncers cost you nothing.
     data-api="https://comments.example.com"
     data-title="My post title"
     data-url="https://example.com/my-post/"
+    data-published="2026-09-11T12:00:00Z"
   ></div>
 </section>
 
@@ -97,6 +100,7 @@ Render a button; mount the widget only after a click.
     data-api="https://comments.example.com"
     data-title="My post title"
     data-url="https://example.com/my-post/"
+    data-published="2026-09-11T12:00:00Z"
     hidden
   ></div>
 </section>
@@ -139,14 +143,15 @@ isn't enough.
 
 A rough sketch — your real numbers will vary:
 
-| Pattern        | Worker requests per pageview                  |
-| -------------- | --------------------------------------------- |
-| Default        | **2** (bootstrap + form token)                |
-| Scroll-in-view | **2** for engaged readers, **0** for bouncers |
-| Click-to-load  | **0** unless the reader clicks                |
+| Pattern        | Worker requests per pageview                                                      |
+| -------------- | --------------------------------------------------------------------------------- |
+| Default        | **1** (bootstrap), **2** when the timing heuristic is on (adds the form token)    |
+| Scroll-in-view | **1 or 2** for engaged readers, **0** for bouncers                                |
+| Click-to-load  | **0** unless the reader clicks                                                    |
 
-The Workers free tier allows 100,000 requests/day, so a two-request
-mount is roughly a 50k-pageview/day ceiling before any deferral —
+The Workers free tier allows 100,000 requests/day, so a one-request
+mount is roughly a 100k-pageview/day ceiling and a two-request mount
+roughly 50k before any deferral —
 `/embed.js` itself doesn't count against that, because it ships
 `s-maxage=86400` and the edge serves it. If your bounce rate at the
 comments section is high (typical for blog content), scroll-into-view

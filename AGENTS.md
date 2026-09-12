@@ -49,17 +49,19 @@ appear:
   data-api="{{INSTANCE_URL}}"
   data-title="Post title"
   data-url="https://your-site.example/post-url"
+  data-published="2026-09-11T12:00:00Z"
 ></div>
 <script src="{{INSTANCE_URL}}/embed.js" defer></script>
 ```
 
 Fill these in per page:
 
-| Attribute    | Fill with                                                   |
-| ------------ | ----------------------------------------------------------- |
-| `data-slug`  | A stable identifier for THIS post (see §4).                 |
-| `data-title` | The post's human title — used in email digests and admin.   |
-| `data-url`   | The canonical permalink — reflected in RSS and email.       |
+| Attribute        | Fill with                                                                                   |
+| ---------------- | ------------------------------------------------------------------------------------------- |
+| `data-slug`      | A stable identifier for THIS post (see §4).                                                 |
+| `data-title`     | The post's human title — used in email digests and admin.                                   |
+| `data-url`       | The canonical permalink — reflected in RSS and email.                                       |
+| `data-published` | Optional. The post's publish time (ISO 8601 or epoch ms); anchors auto-close (see §4 table). |
 
 `data-api` is the same on every page; the host element and the
 `<script src>` must agree on the Worker origin. Omitting it falls back to
@@ -99,23 +101,24 @@ releases its own reservation once real comments render.
 
 The host snippet above is the same on every stack — only the templating
 varies. One-line summary of where to put it and how to fill `data-slug`
-/ `data-title` / `data-url`:
+/ `data-title` / `data-url` / `data-published`:
 
-- **Astro** — render a `<Comments slug={entry.slug} title={entry.data.title} />`
-  component that emits the snippet; set `site:` in `astro.config.mjs`
-  so `Astro.url.href` is the prod URL.
+- **Astro** — render a `<Comments slug={entry.slug} title={entry.data.title} published={entry.data.pubDate} />`
+  component that emits the snippet (`data-published={published?.toISOString()}`);
+  set `site:` in `astro.config.mjs` so `Astro.url.href` is the prod URL.
 - **Hugo** — drop the snippet in `layouts/partials/comments.html` using
-  `{{ .File.ContentBaseName }}`, `{{ .Title }}`, `{{ .Permalink }}`;
-  invoke it from `single.html`. Front-matter `disableComments: true`
-  opts a post out.
+  `{{ .File.ContentBaseName }}`, `{{ .Title }}`, `{{ .Permalink }}`,
+  `{{ .Date.Format "2006-01-02T15:04:05Z07:00" }}`; invoke it from
+  `single.html`. Front-matter `disableComments: true` opts a post out.
 - **Jekyll** — `_includes/comments.html` using `{{ page.slug }}`,
-  `{{ page.title | xml_escape }}`, `{{ page.url | absolute_url }}`;
-  include from `_layouts/post.html`. Front-matter `comments: false`
-  opts a post out.
+  `{{ page.title | xml_escape }}`, `{{ page.url | absolute_url }}`,
+  `{{ page.date | date_to_xmlschema }}`; include from
+  `_layouts/post.html`. Front-matter `comments: false` opts a post out.
 - **WordPress** — `wp_enqueue_script` `{{INSTANCE_URL}}/embed.js` in
   `functions.php`; render the `#garrul` div in a child-theme
   `comments.php` using `get_post_field('post_name', get_the_ID())`,
-  `get_the_title()`, `get_permalink()`. Disable native WP comments
+  `get_the_title()`, `get_permalink()`, `get_post_time('c', true)`.
+  Disable native WP comments
   in Settings → Discussion so two forms don't render together.
 - **Plain HTML** — paste the snippet verbatim, replacing the slug and
   URL.
@@ -158,12 +161,14 @@ needs the resolved locale) before `/api/v1/auth/me` and
 surfaces.
 
 **Count the whole mount, not just this endpoint.** A post with the
-comment box rendered costs **two** Worker requests: `/api/v1/bootstrap`
-and `/api/v1/comments/form-token`, which the widget prefetches when the
+comment box rendered costs **one** Worker request on the default install
+(`/api/v1/bootstrap`) and **two** when the anti-spam timing heuristic
+is on (`SPAM_FORM_TS_SECRET` set and `SPAM_HONEYPOT_MIN_MS` above `0`):
+the widget then also prefetches `/api/v1/comments/form-token` when the
 composer renders. The Workers free tier allows 100,000 requests/day, so
-that is roughly a **50k pageview/day** ceiling — up from ~25k at the
-four requests a default install used to make, and ~16k with page
-reactions/votes and subscriptions on.
+that is roughly a **100k** or **50k pageview/day** ceiling respectively
+— up from ~25k at the four requests a default install used to make, and
+~16k with page reactions/votes and subscriptions on.
 
 `/embed.js` is not in that count. It ships
 `Cache-Control: public, max-age=3600, s-maxage=86400`, so the
@@ -198,21 +203,25 @@ that has already hit its cap — driving usage up, and recovery down,
 precisely when neither can afford it.
 
 `/api/v1/comments/form-token` is deliberately **not** folded in, which
-is why the mount is two requests and not one. Its signed timestamp
-feeds the anti-spam minimum-elapsed-time heuristic, and baking one into
-a shared payload would hand every reader the same start time. It is
-also an invocation even when that heuristic is off — the route 404s and
-the widget treats the absence as "no timing check", but a 404 still
-costs a request.
+is why the mount is two requests and not one when the timing heuristic
+is on. Its signed timestamp feeds the anti-spam minimum-elapsed-time
+heuristic, and baking one into a shared payload would hand every reader
+the same start time. When the heuristic is off (no `SPAM_FORM_TS_SECRET`
+or `SPAM_HONEYPOT_MIN_MS` is `0`) the config payload carries
+`form_token_enabled: false` and the widget skips the request entirely
+(since v2.27.0); before that the route 404'd and the 404 still cost a
+request. A widget that sees no `form_token_enabled` field at all (older
+server) keeps requesting the token.
 
 ### Lazy-loading (recommended for read-heavy hosts)
 
-The eager `<script defer>` snippet above triggers two Worker requests
-per pageview on mount (`/api/v1/bootstrap?slug=…` and
-`/api/v1/comments/form-token`) before the reader has scrolled. On a blog
+The eager `<script defer>` snippet above triggers one or two Worker
+requests per pageview on mount (`/api/v1/bootstrap?slug=…`, plus
+`/api/v1/comments/form-token` only when config reports
+`form_token_enabled: true`) before the reader has scrolled. On a blog
 or docs site where most visitors bounce above the comments section, that
-is the bulk of Cloudflare Worker usage — two requests instead of the
-pre-v2.15.0 four to six, but still two per bouncer.
+is the bulk of Cloudflare Worker usage — one or two requests instead of
+the pre-v2.15.0 four to six, but still at least one per bouncer.
 
 Turnstile is **not** in that list. The anti-spam iframe
 (`/embed/turnstile-frame`, which in turn pulls Cloudflare's `api.js` and
@@ -283,9 +292,9 @@ Every attribute the widget reads from the `#garrul` host element
 | ------------ | -------- | ------------------------------------------------------------------------------------------- |
 | `data-slug`  | yes      | Stable thread identifier. Missing slug renders an error in the host element.                |
 | `data-api`   | no       | Worker origin override. Defaults to the origin of the script tag (`<script src>`). Set this explicitly when loading `embed.js` via a bundler or async import (anywhere `document.currentScript` may be null at execution time). |
-| `data-title` | no       | Post title; sent on first comment create, surfaces in admin and notification emails.        |
-| `data-url`   | no       | Canonical permalink; sent on first comment create, used in RSS and notification emails.     |
-| `data-published` | no   | Article publish time (epoch ms or ISO 8601); sent on first comment create. Anchors age-based auto-close (`AUTO_CLOSE_DAYS`). Omit and Garrul falls back to the first-comment time, which closes the thread a bit later than intended. Only relevant if the operator enabled `AUTO_CLOSE_DAYS`. Recorded only by the request that creates the post row and immutable after that — it comes in on an unauthenticated POST and an old value closes the thread for good, so it is never accepted from a later request. If a reaction or page vote created the row first, the slug keeps the first-engagement anchor. |
+| `data-title` | no       | Post title; sent on every comment create (top-level and reply). The first non-null value wins and later values are ignored. Surfaces in admin and notification emails. |
+| `data-url`   | no       | Canonical permalink; sent on every comment create (top-level and reply). The first non-null value wins and later values are ignored. Used in RSS and notification emails. |
+| `data-published` | no   | Article publish time (epoch ms or ISO 8601). On the iframe variant pass it as `?published=` (§6). The widget sends it as `post_published` on every comment create (top-level and reply); the server records it only on the request that creates the post row and never changes it after that — it arrives on an unauthenticated POST, and an old enough value closes the thread for good, so a later request cannot supply or move it. Anchors age-based auto-close (`AUTO_CLOSE_DAYS`). Omit it and Garrul anchors on first-engagement time, which closes a bit later than intended. If a reaction, page vote or admin action created the row before the first comment, the slug keeps that first-engagement anchor. Repair today is direct D1 SQL on `posts.published_at`; an admin edit surface is a separate backlog item. |
 | `data-lang`  | no       | BCP-47 tag pinning the widget's interface language (see "Language" below). Unrecognized tags fall back to English rather than erroring. |
 
 The host element MUST have `id="garrul"`; the widget looks it up by ID
@@ -389,7 +398,10 @@ and a sort selector above the list. Neither needs any host-page wiring:
   client-side: on the bootstrap path the setting arrives in the same
   response as the comments it orders. A stored `top` with voting off
   resolves to `new` rather than being rewritten, so re-enabling voting
-  restores the operator's choice.
+  restores the operator's choice. `next_cursor` itself is opaque to the
+  widget: for `new`/`old` it is `<created_at_ms>.<ulid>` (since v2.27.0;
+  earlier servers emitted a bare ULID, which the server still accepts by
+  looking the row up once), for `top` it is `<score>:<ulid>`.
 
 - **Voting is instance-wide and server-controlled.** The widget reads
   `voting_enabled` / `downvotes_enabled` from `/api/v1/config` at boot;
@@ -882,6 +894,7 @@ route and listen for height messages:
     var src = new URL("{{INSTANCE_URL}}/embed/post-slug-here");
     src.searchParams.set("title", document.title);
     src.searchParams.set("url", window.location.href);
+    src.searchParams.set("published", "2026-09-11T12:00:00Z"); // optional
     src.searchParams.set("parent_origin", window.location.origin);
     f.src = src.toString();
 
@@ -905,6 +918,13 @@ Worker `postMessage`s height updates to a known target instead of `"*"`.
 `frame-ancestors` permits, so an unlisted host can't frame `/embed/*`
 either. The iframe variant gives up host-page CSS-variable theming (the
 iframe is a separate document) but inherits everything else.
+
+The frame has no `data-*` attributes of its own, so post metadata
+travels as query parameters: `?title=`, `?url=` and `?published=` land
+on `data-title`, `data-url` and `data-published` inside the frame.
+`?published=` is optional and is left off the frame entirely when empty,
+so the widget sees "absent" rather than an empty string. Build the `src`
+with `URLSearchParams` (as above) so the values are encoded.
 
 `?lang=` is the iframe's equivalent of `data-lang` — it lands on both
 the frame's `<html lang>` and the widget inside it. There is no
@@ -1191,9 +1211,17 @@ both `data-api` and the `<script src>`.
   widget reads `data-slug`, `data-api`, `data-title`, `data-url`,
   `data-published`, `data-theme`, and `data-lang` off the host element
   at runtime.
+- Don't expect `data-published` to fix an existing thread's auto-close
+  anchor. It is recorded once, by whichever request first created the
+  post row. Set it before the first engagement on a page, or repair
+  `posts.published_at` with D1 SQL.
 - Don't set `data-api` to a value without `https://`. The widget passes
   it through `new URL(...)` and uses the origin verbatim for CORS-cred
   requests; mixed-content or scheme-relative values will fail.
+- Don't assume comment drafts survive a `data-api` change. Draft
+  autosave keys are `garrul:draft:<api origin>:<slug>[:<parent>]` (since
+  v2.27.0), so a draft belongs to one Worker origin. Pre-v2.27.0 drafts
+  (`garrul:draft:<slug>`) are adopted once on the next mount.
 - Don't render two `#garrul` elements on one page; only the first is
   picked up. Multi-thread is not a supported mode in v1.
 - Don't try to style internals via host CSS. Shadow DOM blocks it on

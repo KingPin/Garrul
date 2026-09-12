@@ -7,8 +7,12 @@
  *
  * Optional data-* attributes:
  *   data-api="https://comments.example.com"  // origin of the Garrul Worker
- *   data-title="Post title"                  // sent on first comment create
+ *   data-title="Post title"                  // sent on every comment create;
+ *                                            // server keeps the first non-null
  *   data-url="https://blog/.../post-url"     // ditto
+ *   data-published="2026-09-11T12:00:00Z"    // ditto (ISO 8601 or epoch ms);
+ *                                            // anchors age-based auto-close,
+ *                                            // recorded once on post creation
  *
  * Behavior:
  *   1. Mount a Shadow DOM on DOMContentLoaded.
@@ -39,6 +43,7 @@
 import { loadErrorMessage } from "./load-error";
 import { watchForSignIn } from "./auth-recovery";
 import { autoSizeTextarea } from "./autosize";
+import { DRAFT_MAX, adoptLegacyDraft, draftKey, legacyDraftKey } from "./drafts";
 import { createTurnstileGate, type TurnstileGate } from "./turnstile-gate";
 import { makeS, type StringTable, type WidgetKey } from "./strings";
 import {
@@ -78,6 +83,8 @@ import {
 	type SubscriptionSection,
 	fetchBootstrap,
 	fetchConfig,
+	formTokenWanted,
+	postMetaFromDataset,
 } from "./boot";
 // Generated from styles.css by scripts/build-styles.ts (gitignored, rebuilt by
 // build:assets). Edit styles.css, never the .gen file.
@@ -276,16 +283,12 @@ const autoSize = (ta: HTMLTextAreaElement): void =>
 
 // ── Draft autosave ──────────────────────────────────────────────────────────
 // A long comment shouldn't vanish on an accidental reload or a failed submit.
-// Drafts live ONLY in the visitor's own browser (localStorage), keyed by slug
-// (and parent id for replies). No server state, no PII leaves the device; the
-// value is re-inserted via textarea.value (never as HTML), so no XSS surface.
-const DRAFT_PREFIX = "garrul:draft:";
-// Cap the stored size — localStorage is small and shared across the origin, and
-// the server rejects oversized bodies anyway. Generous vs. the comment limit.
-const DRAFT_MAX = 10_000;
-
-const draftKey = (slug: string, parentId: string | null): string =>
-	`${DRAFT_PREFIX}${slug}${parentId ? `:${parentId}` : ""}`;
+// Drafts live ONLY in the visitor's own browser (localStorage), keyed by the
+// Worker origin, the slug, and the parent id for replies, so two Garrul
+// installs embedded on the same host origin never read each other's drafts.
+// No server state, no PII leaves the device; the value is re-inserted via
+// textarea.value (never as HTML), so no XSS surface. Key shape and legacy
+// (slug-only) adoption live in ./drafts (DOM-free, unit-tested).
 
 const clearDraft = (key: string): void => {
 	try {
@@ -302,8 +305,12 @@ const clearDraft = (key: string): void => {
  * (Safari private mode, quota, disabled) degrades to no autosave, never breaks
  * the composer.
  */
-const attachDraft = (ta: HTMLTextAreaElement, key: string): string => {
+const attachDraft = (ta: HTMLTextAreaElement, key: string, legacyKey: string): string => {
 	try {
+		// Inside the try on purpose: the `localStorage` getter itself throws
+		// where storage is blocked, and that has to degrade like every other
+		// storage failure here rather than abort the mount.
+		adoptLegacyDraft(localStorage, key, legacyKey);
 		const saved = localStorage.getItem(key);
 		// Only restore into an empty field so we never clobber a server-provided
 		// or already-typed value.
@@ -662,6 +669,7 @@ const buildAvatar = (a: TreeAuthor): HTMLElement => {
 
 type WidgetCtx = {
 	apiBase: string;
+	apiOrigin: string;
 	slug: string;
 	host: HTMLElement;
 	root: ShadowRoot;
@@ -739,8 +747,31 @@ type WidgetCtx = {
  * an empty string — the server then ignores the absent `form_ts`.
  */
 let formTokenPromise: Promise<string> | null = null;
+// Set from config at mount via `setFormTokenEnabled`. Default true so a mount
+// that never reads config (should not happen — mount aborts without one) keeps
+// the legacy fetch.
+let formTokenEnabled = true;
+/**
+ * Apply the config's answer for this mount. `loadOnce` runs on every reload,
+ * so the flag can flip between mounts on one page. The disabled path parks a
+ * resolved empty promise in the cache and `prefetchFormToken` treats any cached
+ * promise as done, so a flip back to enabled has to drop that stub or no token
+ * is ever requested and the server's timing check holds every later post.
+ * An enabled→enabled reload keeps its cached token, which is the whole point
+ * of the cache.
+ */
+const setFormTokenEnabled = (wanted: boolean): void => {
+	if (wanted && !formTokenEnabled) formTokenPromise = null;
+	formTokenEnabled = wanted;
+};
 const prefetchFormToken = (apiBase: string): void => {
 	if (formTokenPromise) return;
+	if (!formTokenEnabled) {
+		// The server told us the route 404s on this install. Resolve to the same
+		// empty token the 404 path returns, without spending the request.
+		formTokenPromise = Promise.resolve("");
+		return;
+	}
 	formTokenPromise = (async () => {
 		try {
 			const res = await fetch(apiUrl(apiBase, "/api/v1/comments/form-token"), {
@@ -2103,7 +2134,11 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	ta.placeholder = s("w.reply_ph", { name: parent.author.name });
 	ta.setAttribute("aria-label", s("w.reply_ph", { name: parent.author.name }));
 	ta.required = true;
-	const dkey = attachDraft(ta, draftKey(ctx.slug, parent.id));
+	const dkey = attachDraft(
+		ta,
+		draftKey(ctx.apiOrigin, ctx.slug, parent.id),
+		legacyDraftKey(ctx.slug, parent.id),
+	);
 
 	let nameInput: HTMLInputElement | null = null;
 	if (!ctx.me) {
@@ -2288,8 +2323,7 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 					turnstile_token: turnstileToken,
 					website: honey.value,
 					form_ts: formTs,
-					post_title: ctx.host.dataset.title ?? null,
-					post_url: ctx.host.dataset.url ?? null,
+					...postMetaFromDataset(ctx.host.dataset),
 				}),
 			});
 			const json = (await res.json()) as {
@@ -3494,6 +3528,8 @@ const loadOnce = async (
 	host: HTMLElement,
 	sort: SortKey | null,
 ) => {
+	// The instance's identity for draft keys — see WidgetCtx.apiOrigin.
+	const apiOrigin = new URL(apiBase).origin;
 	let siteKey: string | null = null;
 	let turnstileAlways = false;
 	// Only used when /api/v1/config never answers — the server always sends a
@@ -3540,6 +3576,7 @@ const loadOnce = async (
 		const cfg: ConfigResponse | null = boot
 			? (boot.config ?? null)
 			: await fetchConfig(apiBase, langExplicit, langHint);
+		setFormTokenEnabled(formTokenWanted(cfg));
 		if (cfg) {
 			// Install the locale before anything renders below. The table is the
 			// locale's own overrides, not a merged copy — makeS falls back to the
@@ -3598,6 +3635,11 @@ const loadOnce = async (
 		// server will reject anonymous POSTs in that case). Only the legacy branch
 		// can throw here — a bootstrapped mount already has its config section in
 		// hand, and fetchBootstrap's own throw was handled before this block.
+		//
+		// No config means the same answer formTokenWanted gives a null one: keep
+		// the legacy request. Set it here too, because the throw skipped the
+		// assignment above and a previous mount on this page may have disabled it.
+		setFormTokenEnabled(true);
 	}
 
 	let me: Me;
@@ -3663,6 +3705,7 @@ const loadOnce = async (
 		});
 	const ctx: WidgetCtx = {
 		apiBase,
+		apiOrigin,
 		slug,
 		host,
 		root,
@@ -3717,7 +3760,8 @@ const loadOnce = async (
 	const composer = form.querySelector(
 		".gr-body-input",
 	) as HTMLTextAreaElement | null;
-	if (composer) attachDraft(composer, draftKey(slug, null));
+	if (composer)
+		attachDraft(composer, draftKey(apiOrigin, slug, null), legacyDraftKey(slug, null));
 	const list = el("div", "gr-list");
 	if (data.threads.length === 0) {
 		// Don't invite a comment the reader can't leave: when comments are
@@ -3999,7 +4043,7 @@ const loadOnce = async (
 
 	form.addEventListener("submit", (e) => {
 		e.preventDefault();
-		void submit(form, root, slug, apiBase, host);
+		void submit(form, root, slug, apiBase, apiOrigin, host);
 	});
 
 	// No cancel handler: the top-level composer is the page's resting state, so
@@ -4012,6 +4056,7 @@ const submit = async (
 	root: ShadowRoot,
 	slug: string,
 	apiBase: string,
+	apiOrigin: string,
 	host: HTMLElement,
 ) => {
 	// Two things write to this box: submit failures, and Turnstile. Precedence:
@@ -4101,8 +4146,7 @@ const submit = async (
 				turnstile_token: turnstileToken,
 				website: honeypot,
 				form_ts: formTs,
-				post_title: host.dataset.title ?? null,
-				post_url: host.dataset.url ?? null,
+				...postMetaFromDataset(host.dataset),
 			}),
 		});
 		const json = (await res.json()) as {
@@ -4123,7 +4167,7 @@ const submit = async (
 
 		// Comment landed — drop the saved composer draft so the reload starts
 		// from a clean field.
-		clearDraft(draftKey(slug, null));
+		clearDraft(draftKey(apiOrigin, slug, null));
 
 		// Fire-and-forget subscription — failure here doesn't roll back
 		// the comment. The widget already has both inputs handy.

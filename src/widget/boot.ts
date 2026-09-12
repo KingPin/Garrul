@@ -65,10 +65,21 @@ export type ConfigResponse = {
 	auto_collapse_depth?: number;
 	community_min_votes?: number;
 	community_collapse_ratio?: number;
+	form_token_enabled?: boolean;
 	locale?: string;
 	strings?: Record<string, string | Record<string, string>>;
 	rtl?: boolean;
 };
+
+/**
+ * Whether the mount should request `/api/v1/comments/form-token`.
+ *
+ * Only an explicit `false` skips it. A server that predates the field (or a
+ * config that failed to load) keeps the legacy request, because on those
+ * servers the route may be live and skipping would submit without a token.
+ */
+export const formTokenWanted = (cfg: ConfigResponse | null | undefined): boolean =>
+	cfg?.form_token_enabled !== false;
 
 /** `GET /api/v1/page-engagement`, and bootstrap's `engagement` section. */
 export type EngagementSection = {
@@ -272,3 +283,23 @@ export const fetchBootstrap = async (
 		return null;
 	}
 };
+
+/** Post metadata attached to every comment create, from the host's data-*. */
+export type PostMeta = {
+	post_title: string | null;
+	post_url: string | null;
+	/** Raw `data-published` (epoch ms or ISO 8601); the server parses it. */
+	post_published: string | null;
+};
+
+/**
+ * Read `data-title`, `data-url` and `data-published` off a host element's
+ * dataset. Takes the plain record rather than the element so it stays DOM-free
+ * and testable. Missing attributes become null: the server's body type is
+ * `string | null` and `upsertPost` treats null as "nothing to record".
+ */
+export const postMetaFromDataset = (ds: Record<string, string | undefined>): PostMeta => ({
+	post_title: ds.title ?? null,
+	post_url: ds.url ?? null,
+	post_published: ds.published ?? null,
+});

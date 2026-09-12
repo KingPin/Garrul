@@ -49,7 +49,7 @@ docs/             README.md is the index; THEMING, ANTISPAM, importing, webhooks
 All HTTP API routes live under `/api/v1/...`; breaking changes ship as `/api/v2`. Health is `/api/v1/health`.
 
 ### The mount payload
-`GET /api/v1/bootstrap?slug=…` carries all mount-time widget state in one call: config, session user, first comment page, page-engagement and subscription state. A real browser mount costs **two** Worker requests (this plus `/comments/form-token`), which is what sets the ~50k pageviews/day ceiling on the 100k-requests/day free tier. **New mount-time state goes in this payload, not in a new endpoint.**
+`GET /api/v1/bootstrap?slug=…` carries all mount-time widget state in one call: config, session user, first comment page, page-engagement and subscription state. A real browser mount costs **one or two** Worker requests: this, plus `/comments/form-token` only when config reports `form_token_enabled: true`. Two requests is what sets the ~50k pageviews/day ceiling on the 100k-requests/day free tier for installs that run the timing heuristic. **New mount-time state goes in this payload, not in a new endpoint.**
 
 Two load-bearing rules:
 

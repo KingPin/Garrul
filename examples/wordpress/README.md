@@ -29,9 +29,10 @@ Replace your theme's `comments.php` with:
 ```php
 <?php
 if (post_password_required()) return;
-$slug  = get_post_field('post_name', get_the_ID());
-$title = get_the_title();
-$url   = get_permalink();
+$slug      = get_post_field('post_name', get_the_ID());
+$title     = get_the_title();
+$url       = get_permalink();
+$published = get_post_time('c', true); // ISO 8601, UTC
 ?>
 <section id="comments" class="garrul-wrap">
     <h2>Comments</h2>
@@ -41,6 +42,7 @@ $url   = get_permalink();
         data-api="https://comments.yourdomain.com"
         data-title="<?php echo esc_attr($title); ?>"
         data-url="<?php echo esc_url($url); ?>"
+        data-published="<?php echo esc_attr($published); ?>"
     ></div>
 </section>
 ```
@@ -60,6 +62,7 @@ of a post (works for one-off pages or testing):
     data-api="https://comments.yourdomain.com"
     data-title="Hello world"
     data-url="https://yourblog.com/hello-world/"
+    data-published="2026-09-11T12:00:00Z"
 ></div>
 <script src="https://comments.yourdomain.com/embed.js" defer></script>
 ```
@@ -77,6 +80,12 @@ useful for a single demo page.
   `wrangler.toml` (e.g. `https://yourblog.com`).
 - The Cloudflare Worker handles all CSRF / spam protection — no
   WordPress nonce wiring needed.
+- `data-published` is optional. It anchors age-based auto-close
+  (`AUTO_CLOSE_DAYS`) on the post's publish date instead of the first
+  comment's time. `get_post_time('c', true)` returns the publish time
+  in ISO 8601 as UTC (`2026-09-11T12:00:00+00:00`). The server parses
+  either time zone, so the `true` is for consistency with the other
+  recipes rather than correctness.
 - WordPress core's comment count helpers (`comments_number`,
   `get_comments_number`) won't reflect Garrul comments. If you want the
   count badge in your post list, fetch `GET /api/v1/counts?slugs=a,b,c`
