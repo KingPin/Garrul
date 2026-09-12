@@ -1218,6 +1218,10 @@ both `data-api` and the `<script src>`.
 - Don't set `data-api` to a value without `https://`. The widget passes
   it through `new URL(...)` and uses the origin verbatim for CORS-cred
   requests; mixed-content or scheme-relative values will fail.
+- Don't assume comment drafts survive a `data-api` change. Draft
+  autosave keys are `garrul:draft:<api origin>:<slug>[:<parent>]` (since
+  v2.27.0), so a draft belongs to one Worker origin. Pre-v2.27.0 drafts
+  (`garrul:draft:<slug>`) are adopted once on the next mount.
 - Don't render two `#garrul` elements on one page; only the first is
   picked up. Multi-thread is not a supported mode in v1.
 - Don't try to style internals via host CSS. Shadow DOM blocks it on
