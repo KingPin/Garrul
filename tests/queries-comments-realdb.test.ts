@@ -297,6 +297,17 @@ describe("listThreadRefsForPost paging (real SQLite)", () => {
 		const seen = await walk("old", 10);
 		expect(seen).toEqual([threadId(1), threadId(4)]);
 	});
+
+	it("pages 'old' through negative (pre-1970) created_at without skipping or repeating", async () => {
+		// Imports can carry a pre-1970 source created_at. Paging one row at a
+		// time forces every intermediate cursor to round-trip a negative value.
+		seedThread(1, { created_at: -7200000 });
+		seedThread(2, { created_at: -3600000 });
+		seedThread(3, { created_at: 0 });
+		const seen = await walk("old", 1);
+		expect(seen).toEqual([threadId(1), threadId(2), threadId(3)]);
+		expect(new Set(seen).size).toBe(3);
+	});
 });
 
 /**

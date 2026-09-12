@@ -666,7 +666,7 @@ describe("GET /comments — edge-cache hit/bypass", () => {
 });
 
 describe("chronological cursor format (created_at.ulid)", () => {
-	const CHRONO = /^\d{1,13}\.[0-9A-HJKMNP-TV-Z]{26}$/;
+	const CHRONO = /^-?\d{1,13}\.[0-9A-HJKMNP-TV-Z]{26}$/;
 
 	// Page size is the `comments_per_page` setting (no query param), so every
 	// test here sets it to 2 before building the env, the way the existing
@@ -749,5 +749,22 @@ describe("chronological cursor format (created_at.ulid)", () => {
 		const env = mkEnv();
 		const page = await get(env, `slug=${SLUG}&sort=top`);
 		expect(page.next_cursor).toBe(`2:${mkUlid(3)}`);
+	});
+
+	it("accepts a negative created_at (pre-1970, import-only) in the before cursor", async () => {
+		seedThreadAt(1, -7200000);
+		seedThreadAt(2, -3600000);
+		seedThreadAt(3, 0);
+		setSetting("comments_per_page", "1");
+		const env = mkEnv();
+		const first = await get(env, `slug=${SLUG}&sort=old`);
+		expect(first.threads.map((t) => t.id)).toEqual([mkUlid(1)]);
+		expect(first.next_cursor).toBe(`-7200000.${mkUlid(1)}`);
+		const second = await get(
+			env,
+			`slug=${SLUG}&sort=old&before=-7200000.${mkUlid(1)}`,
+		);
+		// A regex that rejects the sign would silently fall back to page 1.
+		expect(second.threads.map((t) => t.id)).toEqual([mkUlid(2)]);
 	});
 });

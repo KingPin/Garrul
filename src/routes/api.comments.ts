@@ -869,7 +869,7 @@ const ULID_RE = /^[0-9A-HJKMNP-TV-Z]{26}$/;
  * `0001003.X` and `1003.X` name one cache entry.
  */
 type ChronoCursor = { created_at: number; id: string };
-const CHRONO_CURSOR_RE = /^(\d{1,13})\.([0-9A-HJKMNP-TV-Z]{26})$/;
+const CHRONO_CURSOR_RE = /^(-?\d{1,13})\.([0-9A-HJKMNP-TV-Z]{26})$/;
 const decodeChronoCursor = (raw: string | null): ChronoCursor | null => {
 	if (!raw) return null;
 	const m = CHRONO_CURSOR_RE.exec(raw);
