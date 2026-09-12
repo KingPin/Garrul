@@ -141,14 +141,15 @@ isn't enough.
 
 A rough sketch — your real numbers will vary:
 
-| Pattern        | Worker requests per pageview                  |
-| -------------- | --------------------------------------------- |
-| Default        | **2** (bootstrap + form token)                |
-| Scroll-in-view | **2** for engaged readers, **0** for bouncers |
-| Click-to-load  | **0** unless the reader clicks                |
+| Pattern        | Worker requests per pageview                                                      |
+| -------------- | --------------------------------------------------------------------------------- |
+| Default        | **1** (bootstrap), **2** when the timing heuristic is on (adds the form token)    |
+| Scroll-in-view | **1 or 2** for engaged readers, **0** for bouncers                                |
+| Click-to-load  | **0** unless the reader clicks                                                    |
 
-The Workers free tier allows 100,000 requests/day, so a two-request
-mount is roughly a 50k-pageview/day ceiling before any deferral —
+The Workers free tier allows 100,000 requests/day, so a one-request
+mount is roughly a 100k-pageview/day ceiling and a two-request mount
+roughly 50k before any deferral —
 `/embed.js` itself doesn't count against that, because it ships
 `s-maxage=86400` and the edge serves it. If your bounce rate at the
 comments section is high (typical for blog content), scroll-into-view
