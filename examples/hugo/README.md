@@ -29,6 +29,7 @@ override per-deployment via `HUGO_PARAMS_GARRULAPI`:
     data-api="{{ $api }}"
     data-title="{{ .Title }}"
     data-url="{{ .Permalink }}"
+    data-published="{{ .Date.Format "2006-01-02T15:04:05Z07:00" }}"
   ></div>
   <script src="{{ $api }}/embed.js" defer></script>
 </section>
@@ -51,6 +52,10 @@ override per-deployment via `HUGO_PARAMS_GARRULAPI`:
   strings.TrimPrefix "/"` so the slug is the URL path. Whichever you
   pick, **be consistent** — changing slug strings orphans the existing
   thread.
+- `data-published` is optional. It anchors age-based auto-close
+  (`AUTO_CLOSE_DAYS`) on the post's front-matter `date` instead of the
+  first comment's time. The format string is RFC 3339, which is what the
+  widget expects; `.Date.UnixMilli` works too if you prefer epoch ms.
 - To disable comments on a single page, add `disableComments: true` to
   its front-matter.
 - Add your published origin (e.g. `https://yourblog.com`) to

@@ -57,6 +57,13 @@ entirely.
 ></iframe>
 ```
 
+The iframe has no `data-*` attributes of its own, so the post metadata
+travels as query parameters instead: `?title=`, `?url=` and
+`?published=` land on `data-title`, `data-url` and `data-published`
+inside the frame (`?published=` is omitted from the frame when empty).
+`?theme=`, `?preset=` and `?lang=` cover the presentation side. Build
+the `src` with `URLSearchParams` so the values are encoded.
+
 The iframe page posts content height to the parent via
 `postMessage({type:"garrul:height", height})`. See
 [`../examples/iframe/index.html`](../examples/iframe/index.html) for a

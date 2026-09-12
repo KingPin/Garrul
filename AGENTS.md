@@ -49,17 +49,19 @@ appear:
   data-api="{{INSTANCE_URL}}"
   data-title="Post title"
   data-url="https://your-site.example/post-url"
+  data-published="2026-09-11T12:00:00Z"
 ></div>
 <script src="{{INSTANCE_URL}}/embed.js" defer></script>
 ```
 
 Fill these in per page:
 
-| Attribute    | Fill with                                                   |
-| ------------ | ----------------------------------------------------------- |
-| `data-slug`  | A stable identifier for THIS post (see §4).                 |
-| `data-title` | The post's human title — used in email digests and admin.   |
-| `data-url`   | The canonical permalink — reflected in RSS and email.       |
+| Attribute        | Fill with                                                                                   |
+| ---------------- | ------------------------------------------------------------------------------------------- |
+| `data-slug`      | A stable identifier for THIS post (see §4).                                                 |
+| `data-title`     | The post's human title — used in email digests and admin.                                   |
+| `data-url`       | The canonical permalink — reflected in RSS and email.                                       |
+| `data-published` | Optional. The post's publish time (ISO 8601 or epoch ms); anchors auto-close (see §4 table). |
 
 `data-api` is the same on every page; the host element and the
 `<script src>` must agree on the Worker origin. Omitting it falls back to
@@ -99,23 +101,24 @@ releases its own reservation once real comments render.
 
 The host snippet above is the same on every stack — only the templating
 varies. One-line summary of where to put it and how to fill `data-slug`
-/ `data-title` / `data-url`:
+/ `data-title` / `data-url` / `data-published`:
 
-- **Astro** — render a `<Comments slug={entry.slug} title={entry.data.title} />`
-  component that emits the snippet; set `site:` in `astro.config.mjs`
-  so `Astro.url.href` is the prod URL.
+- **Astro** — render a `<Comments slug={entry.slug} title={entry.data.title} published={entry.data.pubDate} />`
+  component that emits the snippet (`data-published={published?.toISOString()}`);
+  set `site:` in `astro.config.mjs` so `Astro.url.href` is the prod URL.
 - **Hugo** — drop the snippet in `layouts/partials/comments.html` using
-  `{{ .File.ContentBaseName }}`, `{{ .Title }}`, `{{ .Permalink }}`;
-  invoke it from `single.html`. Front-matter `disableComments: true`
-  opts a post out.
+  `{{ .File.ContentBaseName }}`, `{{ .Title }}`, `{{ .Permalink }}`,
+  `{{ .Date.Format "2006-01-02T15:04:05Z07:00" }}`; invoke it from
+  `single.html`. Front-matter `disableComments: true` opts a post out.
 - **Jekyll** — `_includes/comments.html` using `{{ page.slug }}`,
-  `{{ page.title | xml_escape }}`, `{{ page.url | absolute_url }}`;
-  include from `_layouts/post.html`. Front-matter `comments: false`
-  opts a post out.
+  `{{ page.title | xml_escape }}`, `{{ page.url | absolute_url }}`,
+  `{{ page.date | date_to_xmlschema }}`; include from
+  `_layouts/post.html`. Front-matter `comments: false` opts a post out.
 - **WordPress** — `wp_enqueue_script` `{{INSTANCE_URL}}/embed.js` in
   `functions.php`; render the `#garrul` div in a child-theme
   `comments.php` using `get_post_field('post_name', get_the_ID())`,
-  `get_the_title()`, `get_permalink()`. Disable native WP comments
+  `get_the_title()`, `get_permalink()`, `get_post_time('c', true)`.
+  Disable native WP comments
   in Settings → Discussion so two forms don't render together.
 - **Plain HTML** — paste the snippet verbatim, replacing the slug and
   URL.
@@ -285,7 +288,7 @@ Every attribute the widget reads from the `#garrul` host element
 | `data-api`   | no       | Worker origin override. Defaults to the origin of the script tag (`<script src>`). Set this explicitly when loading `embed.js` via a bundler or async import (anywhere `document.currentScript` may be null at execution time). |
 | `data-title` | no       | Post title; sent on every comment create (top-level and reply). The first non-null value wins and later values are ignored. Surfaces in admin and notification emails. |
 | `data-url`   | no       | Canonical permalink; sent on every comment create (top-level and reply). The first non-null value wins and later values are ignored. Used in RSS and notification emails. |
-| `data-published` | no   | Article publish time (epoch ms or ISO 8601). The widget sends it as `post_published` on every comment create (top-level and reply); the server records it only on the request that creates the post row and never changes it after that — it arrives on an unauthenticated POST, and an old enough value closes the thread for good, so a later request cannot supply or move it. Anchors age-based auto-close (`AUTO_CLOSE_DAYS`). Omit it and Garrul anchors on first-engagement time, which closes a bit later than intended. If a reaction, page vote or admin action created the row before the first comment, the slug keeps that first-engagement anchor. Repair today is direct D1 SQL on `posts.published_at`; an admin edit surface is a separate backlog item. |
+| `data-published` | no   | Article publish time (epoch ms or ISO 8601). On the iframe variant pass it as `?published=` (§6). The widget sends it as `post_published` on every comment create (top-level and reply); the server records it only on the request that creates the post row and never changes it after that — it arrives on an unauthenticated POST, and an old enough value closes the thread for good, so a later request cannot supply or move it. Anchors age-based auto-close (`AUTO_CLOSE_DAYS`). Omit it and Garrul anchors on first-engagement time, which closes a bit later than intended. If a reaction, page vote or admin action created the row before the first comment, the slug keeps that first-engagement anchor. Repair today is direct D1 SQL on `posts.published_at`; an admin edit surface is a separate backlog item. |
 | `data-lang`  | no       | BCP-47 tag pinning the widget's interface language (see "Language" below). Unrecognized tags fall back to English rather than erroring. |
 
 The host element MUST have `id="garrul"`; the widget looks it up by ID
@@ -882,6 +885,7 @@ route and listen for height messages:
     var src = new URL("{{INSTANCE_URL}}/embed/post-slug-here");
     src.searchParams.set("title", document.title);
     src.searchParams.set("url", window.location.href);
+    src.searchParams.set("published", "2026-09-11T12:00:00Z"); // optional
     src.searchParams.set("parent_origin", window.location.origin);
     f.src = src.toString();
 
@@ -905,6 +909,13 @@ Worker `postMessage`s height updates to a known target instead of `"*"`.
 `frame-ancestors` permits, so an unlisted host can't frame `/embed/*`
 either. The iframe variant gives up host-page CSS-variable theming (the
 iframe is a separate document) but inherits everything else.
+
+The frame has no `data-*` attributes of its own, so post metadata
+travels as query parameters: `?title=`, `?url=` and `?published=` land
+on `data-title`, `data-url` and `data-published` inside the frame.
+`?published=` is optional and is left off the frame entirely when empty,
+so the widget sees "absent" rather than an empty string. Build the `src`
+with `URLSearchParams` (as above) so the values are encoded.
 
 `?lang=` is the iframe's equivalent of `data-lang` — it lands on both
 the frame's `<html lang>` and the widget inside it. There is no

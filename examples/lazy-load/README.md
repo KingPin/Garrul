@@ -37,6 +37,7 @@ get a seamless experience. Bouncers cost you nothing.
     data-api="https://comments.example.com"
     data-title="My post title"
     data-url="https://example.com/my-post/"
+    data-published="2026-09-11T12:00:00Z"
   ></div>
 </section>
 
@@ -97,6 +98,7 @@ Render a button; mount the widget only after a click.
     data-api="https://comments.example.com"
     data-title="My post title"
     data-url="https://example.com/my-post/"
+    data-published="2026-09-11T12:00:00Z"
     hidden
   ></div>
 </section>

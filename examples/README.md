@@ -22,7 +22,7 @@ configured in `wrangler.toml` (`[[routes]]` for a custom domain, or the
 | [`lazy-load/`](./lazy-load/)       | Scroll-into-view and click-to-load deferred loaders            | You want to cut the two mount requests bouncers cost you, at high traffic |
 
 The framework recipes are deliberately near-identical at the HTML level —
-the only thing that varies is how each platform renders the four `data-*`
+the only thing that varies is how each platform renders the five `data-*`
 attributes from its post metadata.
 
 ## The embed contract
@@ -36,16 +36,18 @@ Every recipe boils down to a mount element plus the `embed.js` script:
   data-api="https://comments.yourdomain.com"
   data-title="My post title"
   data-url="https://example.com/my-post/"
+  data-published="2026-09-11T12:00:00Z"
 ></div>
 <script src="https://comments.yourdomain.com/embed.js" defer></script>
 ```
 
-| Attribute    | What it does                                                                                                                         |
-| ------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `data-slug`  | Stable identifier for the comment thread. Changing it orphans existing comments — pick something tied to the post's identity, not its URL. |
-| `data-api`   | Origin of your Worker. Must match an entry in `ALLOWED_ORIGINS`.                                                                     |
-| `data-title` | Human-readable title shown in email digests and the per-post RSS feed.                                                                |
-| `data-url`   | Canonical permalink for the post. Reflected back in email digests and used to build per-comment permalinks (`/c/:id`).               |
+| Attribute        | What it does                                                                                                                         |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `data-slug`      | Stable identifier for the comment thread. Changing it orphans existing comments — pick something tied to the post's identity, not its URL. |
+| `data-api`       | Origin of your Worker. Must match an entry in `ALLOWED_ORIGINS`.                                                                     |
+| `data-title`     | Human-readable title shown in email digests and the per-post RSS feed.                                                                |
+| `data-url`       | Canonical permalink for the post. Reflected back in email digests and used to build per-comment permalinks (`/c/:id`).               |
+| `data-published` | Optional. The post's publish time (ISO 8601 or epoch ms). Anchors age-based auto-close (`AUTO_CLOSE_DAYS`); recorded once, on the request that creates the post row. Omit it and the anchor is first-engagement time. |
 
 The widget mounts inside a Shadow DOM, so host CSS does not leak in. The
 `plain-html/` example includes a "host-bleed-check" block you can use to
