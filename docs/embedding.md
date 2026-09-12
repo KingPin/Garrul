@@ -19,9 +19,12 @@ AI assistant.
   data-api="https://comments.example.com"
   data-title="My post title"
   data-url="https://example.com/my-post/"
+  data-published="2026-09-11T12:00:00Z"
 ></div>
 <script src="https://comments.example.com/embed.js" defer></script>
 ```
+
+`data-published` is optional. It anchors age-based auto-close (`AUTO_CLOSE_DAYS`) to the article's real publish time; without it the anchor is the first engagement on the thread. It is recorded once, by the request that creates the post row.
 
 ## Content-Security-Policy
 
@@ -53,6 +56,13 @@ entirely.
   style="width:100%;border:0;min-height:400px"
 ></iframe>
 ```
+
+The iframe has no `data-*` attributes of its own, so the post metadata
+travels as query parameters instead: `?title=`, `?url=` and
+`?published=` land on `data-title`, `data-url` and `data-published`
+inside the frame (`?published=` is omitted from the frame when empty).
+`?theme=`, `?preset=` and `?lang=` cover the presentation side. Build
+the `src` with `URLSearchParams` so the values are encoded.
 
 The iframe page posts content height to the parent via
 `postMessage({type:"garrul:height", height})`. See

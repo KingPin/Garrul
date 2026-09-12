@@ -117,6 +117,7 @@ Drop the widget into any page:
   data-api="https://comments.example.com"
   data-title="My post title"
   data-url="https://example.com/my-post/"
+  data-published="2026-09-11T12:00:00Z"
 ></div>
 <script src="https://comments.example.com/embed.js" defer></script>
 ```

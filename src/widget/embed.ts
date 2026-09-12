@@ -7,8 +7,12 @@
  *
  * Optional data-* attributes:
  *   data-api="https://comments.example.com"  // origin of the Garrul Worker
- *   data-title="Post title"                  // sent on first comment create
+ *   data-title="Post title"                  // sent on every comment create;
+ *                                            // server keeps the first non-null
  *   data-url="https://blog/.../post-url"     // ditto
+ *   data-published="2026-09-11T12:00:00Z"    // ditto (ISO 8601 or epoch ms);
+ *                                            // anchors age-based auto-close,
+ *                                            // recorded once on post creation
  *
  * Behavior:
  *   1. Mount a Shadow DOM on DOMContentLoaded.
@@ -79,6 +83,7 @@ import {
 	fetchBootstrap,
 	fetchConfig,
 	formTokenWanted,
+	postMetaFromDataset,
 } from "./boot";
 // Generated from styles.css by scripts/build-styles.ts (gitignored, rebuilt by
 // build:assets). Edit styles.css, never the .gen file.
@@ -2312,8 +2317,7 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 					turnstile_token: turnstileToken,
 					website: honey.value,
 					form_ts: formTs,
-					post_title: ctx.host.dataset.title ?? null,
-					post_url: ctx.host.dataset.url ?? null,
+					...postMetaFromDataset(ctx.host.dataset),
 				}),
 			});
 			const json = (await res.json()) as {
@@ -4131,8 +4135,7 @@ const submit = async (
 				turnstile_token: turnstileToken,
 				website: honeypot,
 				form_ts: formTs,
-				post_title: host.dataset.title ?? null,
-				post_url: host.dataset.url ?? null,
+				...postMetaFromDataset(host.dataset),
 			}),
 		});
 		const json = (await res.json()) as {

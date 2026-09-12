@@ -26,6 +26,7 @@ const { entry } = Astro.props;
     data-api="https://comments.yourdomain.com"
     data-title={entry.data.title}
     data-url={Astro.url.href}
+    data-published={entry.data.pubDate.toISOString()}
   ></div>
   <script src="https://comments.yourdomain.com/embed.js" defer></script>
 </section>
@@ -37,8 +38,8 @@ const { entry } = Astro.props;
 
 ```astro
 ---
-interface Props { slug: string; title: string; }
-const { slug, title } = Astro.props;
+interface Props { slug: string; title: string; published?: Date; }
+const { slug, title, published } = Astro.props;
 const url = Astro.url.href;
 const apiOrigin = "https://comments.yourdomain.com";
 ---
@@ -50,6 +51,7 @@ const apiOrigin = "https://comments.yourdomain.com";
     data-api={apiOrigin}
     data-title={title}
     data-url={url}
+    data-published={published?.toISOString()}
   ></div>
   <script src={`${apiOrigin}/embed.js`} defer></script>
 </section>
@@ -62,7 +64,7 @@ Use it from any post layout:
 import Comments from "../components/Comments.astro";
 const { entry } = Astro.props;
 ---
-<Comments slug={entry.slug} title={entry.data.title} />
+<Comments slug={entry.slug} title={entry.data.title} published={entry.data.pubDate} />
 ```
 
 ## Notes
@@ -75,6 +77,12 @@ const { entry } = Astro.props;
   `Astro.url.href` does the right thing on prod, but in `astro dev`
   it'll be `localhost:4321/...` — set a `site:` in `astro.config.mjs`
   so prod builds use the real URL).
+- `data-published` is optional. It anchors age-based auto-close
+  (`AUTO_CLOSE_DAYS`) on the post's real publish date instead of the
+  first comment's. `pubDate` here is whatever your content collection
+  schema calls the date field (`z.coerce.date()` gives you a `Date`);
+  Astro drops the attribute when the value is `undefined`, so a
+  collection without a date needs no special casing.
 - For Cloudflare Pages hosting, add your Pages domain (e.g.
   `https://yoursite.pages.dev` and your custom domain) to
   `ALLOWED_ORIGINS` in `wrangler.toml`. The Worker's CORS middleware

@@ -323,13 +323,15 @@ ignores them behaves exactly as before.
   **lazily** at read/write time — there is no cron and nothing is persisted, so a
   thread "becomes" closed the moment a request observes the rule. The age anchor
   is the host page's real publish time when the embed supplies `data-published`
-  (stored as `posts.published_at`); without it Garrul falls back to first-comment
-  time, which is later than real publish, so set `data-published` if you rely on
-  `AUTO_CLOSE_DAYS`. The anchor is **set once, by whichever request first creates
+  (the widget sends it as `post_published` on every comment create since
+  v2.27.0; stored as `posts.published_at`); without it Garrul falls back to
+  first-engagement time, which is later than real publish, so set
+  `data-published` if you rely on `AUTO_CLOSE_DAYS`. The anchor is **set once, by whichever request first creates
   the post row, and never changes** — `data-published` arrives on an
   unauthenticated comment POST, and an old enough value closes the thread
-  permanently with no repair path short of direct D1 SQL, so a later request is
-  not allowed to supply or move it. The practical consequence: if a reaction, a
+  permanently, so a later request is not allowed to supply or move it. The only
+  repair path today is direct D1 SQL on `posts.published_at`; an admin edit
+  surface for the anchor is a separate backlog item. The practical consequence: if a reaction, a
   page vote or an admin pre-close created the row before the first comment, that
   slug keeps the first-engagement anchor even once `data-published` starts
   arriving. It closes later than you asked, never earlier. A closed thread hides

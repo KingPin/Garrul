@@ -48,6 +48,7 @@
 			var src = new URL("http://localhost:8787/embed/welcome");
 			src.searchParams.set("title", "Iframe demo");
 			src.searchParams.set("url", window.location.href);
+			src.searchParams.set("published", "2026-09-11T12:00:00Z");
 			src.searchParams.set("parent_origin", window.location.origin);
 			f.src = src.toString();
 

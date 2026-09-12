@@ -19,6 +19,9 @@
  *     same origin as this route, which is the common case)
  *   ?title=...                        — passed through to data-title
  *   ?url=...                          — passed through to data-url
+ *   ?published=...                    — passed through to data-published
+ *     (epoch ms or ISO 8601); omitted when empty so the widget's
+ *     dataset check sees "absent", not ""
  *   ?theme=light|dark|auto            — host-page theme hint
  *   ?preset=minimal|soft|contrast     — named palette (docs/THEMING.md). The
  *     iframe path can't set CSS variables on the widget — the host page is a
@@ -373,6 +376,10 @@ iframe.get("/:slug", (c) => {
 
 	const title = c.req.query("title") ?? "";
 	const pageUrl = c.req.query("url") ?? "";
+	// Passed through, not validated: the widget forwards it as post_published
+	// and the server parses it there, so the same unparseable value fails the
+	// same way on both embed paths.
+	const published = c.req.query("published") ?? "";
 	// Validated against the vocabulary, not merely escaped: it reaches a CSS
 	// declaration below, where escapeAttr buys nothing. Same three values the
 	// Turnstile route accepts; anything else is "auto" (follow the OS).
@@ -439,7 +446,7 @@ iframe.get("/:slug", (c) => {
   data-slug="${escapeAttr(slug)}"
   data-api="${escapeAttr(apiBase)}"
   data-title="${escapeAttr(title)}"
-  data-url="${escapeAttr(pageUrl)}"
+  data-url="${escapeAttr(pageUrl)}"${published ? `\n  data-published="${escapeAttr(published)}"` : ""}
   data-theme="${escapeAttr(theme)}"${preset ? `\n  data-preset="${escapeAttr(preset)}"` : ""}
   data-lang="${escapeAttr(lang)}"
 ></div>
