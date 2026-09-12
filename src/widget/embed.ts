@@ -277,10 +277,12 @@ const autoSize = (ta: HTMLTextAreaElement): void =>
 
 // ── Draft autosave ──────────────────────────────────────────────────────────
 // A long comment shouldn't vanish on an accidental reload or a failed submit.
-// Drafts live ONLY in the visitor's own browser (localStorage), keyed by slug
-// (and parent id for replies). No server state, no PII leaves the device; the
-// value is re-inserted via textarea.value (never as HTML), so no XSS surface.
-// Key shape and legacy adoption live in ./drafts (DOM-free, unit-tested).
+// Drafts live ONLY in the visitor's own browser (localStorage), keyed by the
+// Worker origin, the slug, and the parent id for replies, so two Garrul
+// installs embedded on the same host origin never read each other's drafts.
+// No server state, no PII leaves the device; the value is re-inserted via
+// textarea.value (never as HTML), so no XSS surface. Key shape and legacy
+// (slug-only) adoption live in ./drafts (DOM-free, unit-tested).
 
 const clearDraft = (key: string): void => {
 	try {
@@ -298,8 +300,11 @@ const clearDraft = (key: string): void => {
  * the composer.
  */
 const attachDraft = (ta: HTMLTextAreaElement, key: string, legacyKey: string): string => {
-	adoptLegacyDraft(localStorage, key, legacyKey);
 	try {
+		// Inside the try on purpose: the `localStorage` getter itself throws
+		// where storage is blocked, and that has to degrade like every other
+		// storage failure here rather than abort the mount.
+		adoptLegacyDraft(localStorage, key, legacyKey);
 		const saved = localStorage.getItem(key);
 		// Only restore into an empty field so we never clobber a server-provided
 		// or already-typed value.
