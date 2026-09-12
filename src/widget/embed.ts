@@ -39,6 +39,7 @@
 import { loadErrorMessage } from "./load-error";
 import { watchForSignIn } from "./auth-recovery";
 import { autoSizeTextarea } from "./autosize";
+import { DRAFT_MAX, adoptLegacyDraft, draftKey, legacyDraftKey } from "./drafts";
 import { createTurnstileGate, type TurnstileGate } from "./turnstile-gate";
 import { makeS, type StringTable, type WidgetKey } from "./strings";
 import {
@@ -279,13 +280,7 @@ const autoSize = (ta: HTMLTextAreaElement): void =>
 // Drafts live ONLY in the visitor's own browser (localStorage), keyed by slug
 // (and parent id for replies). No server state, no PII leaves the device; the
 // value is re-inserted via textarea.value (never as HTML), so no XSS surface.
-const DRAFT_PREFIX = "garrul:draft:";
-// Cap the stored size — localStorage is small and shared across the origin, and
-// the server rejects oversized bodies anyway. Generous vs. the comment limit.
-const DRAFT_MAX = 10_000;
-
-const draftKey = (slug: string, parentId: string | null): string =>
-	`${DRAFT_PREFIX}${slug}${parentId ? `:${parentId}` : ""}`;
+// Key shape and legacy adoption live in ./drafts (DOM-free, unit-tested).
 
 const clearDraft = (key: string): void => {
 	try {
@@ -302,7 +297,8 @@ const clearDraft = (key: string): void => {
  * (Safari private mode, quota, disabled) degrades to no autosave, never breaks
  * the composer.
  */
-const attachDraft = (ta: HTMLTextAreaElement, key: string): string => {
+const attachDraft = (ta: HTMLTextAreaElement, key: string, legacyKey: string): string => {
+	adoptLegacyDraft(localStorage, key, legacyKey);
 	try {
 		const saved = localStorage.getItem(key);
 		// Only restore into an empty field so we never clobber a server-provided
@@ -662,6 +658,7 @@ const buildAvatar = (a: TreeAuthor): HTMLElement => {
 
 type WidgetCtx = {
 	apiBase: string;
+	apiOrigin: string;
 	slug: string;
 	host: HTMLElement;
 	root: ShadowRoot;
@@ -2103,7 +2100,11 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	ta.placeholder = s("w.reply_ph", { name: parent.author.name });
 	ta.setAttribute("aria-label", s("w.reply_ph", { name: parent.author.name }));
 	ta.required = true;
-	const dkey = attachDraft(ta, draftKey(ctx.slug, parent.id));
+	const dkey = attachDraft(
+		ta,
+		draftKey(ctx.apiOrigin, ctx.slug, parent.id),
+		legacyDraftKey(ctx.slug, parent.id),
+	);
 
 	let nameInput: HTMLInputElement | null = null;
 	if (!ctx.me) {
@@ -3494,6 +3495,8 @@ const loadOnce = async (
 	host: HTMLElement,
 	sort: SortKey | null,
 ) => {
+	// The instance's identity for draft keys — see WidgetCtx.apiOrigin.
+	const apiOrigin = new URL(apiBase).origin;
 	let siteKey: string | null = null;
 	let turnstileAlways = false;
 	// Only used when /api/v1/config never answers — the server always sends a
@@ -3663,6 +3666,7 @@ const loadOnce = async (
 		});
 	const ctx: WidgetCtx = {
 		apiBase,
+		apiOrigin,
 		slug,
 		host,
 		root,
@@ -3717,7 +3721,8 @@ const loadOnce = async (
 	const composer = form.querySelector(
 		".gr-body-input",
 	) as HTMLTextAreaElement | null;
-	if (composer) attachDraft(composer, draftKey(slug, null));
+	if (composer)
+		attachDraft(composer, draftKey(apiOrigin, slug, null), legacyDraftKey(slug, null));
 	const list = el("div", "gr-list");
 	if (data.threads.length === 0) {
 		// Don't invite a comment the reader can't leave: when comments are
@@ -4123,7 +4128,7 @@ const submit = async (
 
 		// Comment landed — drop the saved composer draft so the reload starts
 		// from a clean field.
-		clearDraft(draftKey(slug, null));
+		clearDraft(draftKey(new URL(apiBase).origin, slug, null));
 
 		// Fire-and-forget subscription — failure here doesn't roll back
 		// the comment. The widget already has both inputs handy.
