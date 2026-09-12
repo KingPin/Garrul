@@ -997,20 +997,22 @@ export const listReactionsForComments = async (
 	db: D1Database,
 	comment_ids: readonly string[],
 ): Promise<ReactionSummary[]> => {
-	const out: ReactionSummary[] = [];
-	for (const batch of chunk(comment_ids, IN_BATCH)) {
+	const chunks = chunk(comment_ids, IN_BATCH);
+	if (chunks.length === 0) return [];
+	const stmts = chunks.map((batch) => {
 		const placeholders = batch.map(() => "?").join(",");
-		const result = await db
+		return db
 			.prepare(
 				`SELECT r.comment_id, r.kind, COUNT(*) AS count
 				 FROM reactions r
 				 WHERE r.comment_id IN (${placeholders})
 				 GROUP BY r.comment_id, r.kind`,
 			)
-			.bind(...batch)
-			.all<ReactionSummary>();
-		out.push(...(result.results ?? []));
-	}
+			.bind(...batch);
+	});
+	const results = await db.batch<ReactionSummary>(stmts);
+	const out: ReactionSummary[] = [];
+	for (const result of results) out.push(...(result.results ?? []));
 	return out;
 };
 
@@ -1043,17 +1045,21 @@ export const listUserReactionsOnComments = async (
 	comment_ids: readonly string[],
 	user_id: string,
 ): Promise<Set<string>> => {
-	const out = new Set<string>();
-	for (const batch of chunk(comment_ids, IN_BATCH)) {
+	const chunks = chunk(comment_ids, IN_BATCH);
+	if (chunks.length === 0) return new Set<string>();
+	const stmts = chunks.map((batch) => {
 		const placeholders = batch.map(() => "?").join(",");
-		const result = await db
+		return db
 			.prepare(
 				`SELECT r.comment_id, r.kind
 				 FROM reactions r
 				 WHERE r.comment_id IN (${placeholders}) AND r.user_id = ?`,
 			)
-			.bind(...batch, user_id)
-			.all<{ comment_id: string; kind: string }>();
+			.bind(...batch, user_id);
+	});
+	const results = await db.batch<{ comment_id: string; kind: string }>(stmts);
+	const out = new Set<string>();
+	for (const result of results) {
 		for (const row of result.results ?? []) out.add(`${row.comment_id}|${row.kind}`);
 	}
 	return out;
@@ -3816,17 +3822,21 @@ export const getUserVotesOnComments = async (
 	comment_ids: readonly string[],
 	user_id: string,
 ): Promise<Map<string, -1 | 1>> => {
-	const out = new Map<string, -1 | 1>();
-	for (const batch of chunk(comment_ids, IN_BATCH)) {
+	const chunks = chunk(comment_ids, IN_BATCH);
+	if (chunks.length === 0) return new Map<string, -1 | 1>();
+	const stmts = chunks.map((batch) => {
 		const placeholders = batch.map(() => "?").join(",");
-		const result = await db
+		return db
 			.prepare(
 				`SELECT v.comment_id, v.value
 				   FROM votes v
 				  WHERE v.comment_id IN (${placeholders}) AND v.user_id = ?`,
 			)
-			.bind(...batch, user_id)
-			.all<{ comment_id: string; value: number }>();
+			.bind(...batch, user_id);
+	});
+	const results = await db.batch<{ comment_id: string; value: number }>(stmts);
+	const out = new Map<string, -1 | 1>();
+	for (const result of results) {
 		for (const r of result.results ?? []) {
 			if (r.value === 1 || r.value === -1) out.set(r.comment_id, r.value);
 		}

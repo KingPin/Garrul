@@ -98,6 +98,12 @@ const makeD1 = (db: DatabaseSync): any => ({
 			},
 		};
 	},
+	// D1's real `batch` issues every statement over one round trip; this stub
+	// only needs to preserve per-statement recording so the pagination/batching
+	// assertions above still see one `queries` entry per chunk.
+	async batch(stmts: { all: () => Promise<{ results: unknown[] }> }[]) {
+		return Promise.all(stmts.map((s) => s.all()));
+	},
 });
 
 const makeKv = () => {

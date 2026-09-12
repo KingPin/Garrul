@@ -1610,7 +1610,9 @@ rendered:
   state when those surfaces are on.
   Reactions, the viewer's reactions and the viewer's votes are loaded for
   the comments on the returned page only (batched `IN` lists of 90), not
-  for the whole post, so page cost does not grow with thread size.
+  for the whole post, so page cost does not grow with thread size. Every
+  chunk goes out in one `db.batch` call per query, so the round-trip count
+  stays constant per query regardless of how many chunks a page needs.
 - `GET /api/v1/comments/form-token` — the signed form-render timestamp
   behind the anti-spam timing heuristic, prefetched when the composer
   renders. It stays a separate call on purpose: a shared timestamp would
