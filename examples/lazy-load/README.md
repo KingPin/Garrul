@@ -1,21 +1,23 @@
 # Garrul — lazy-loading the widget
 
 By default, the embed script runs as soon as the page parses, which
-fires two Worker requests per pageview before the reader has scrolled
-anywhere near the comments:
+fires one or two Worker requests per pageview before the reader has
+scrolled anywhere near the comments:
 
 - `/api/v1/bootstrap?slug=...` — the config, the session user and the
   first page of comments, together.
 - `/api/v1/comments/form-token` — a signed form-render timestamp for the
-  anti-spam timing check, fetched when the comment box renders.
+  anti-spam timing check, fetched when the comment box renders. Only
+  sent when the Worker reports `form_token_enabled: true` (the timing
+  heuristic is on); the default install skips it.
 
-On a busy blog where most visitors bounce without engaging, those two
-are still the bulk of your Cloudflare Worker usage — they happen on
-every pageview, engaged or not.
+On a busy blog where most visitors bounce without engaging, those
+requests are still the bulk of your Cloudflare Worker usage — they
+happen on every pageview, engaged or not.
 
 Two patterns to defer it. The first is what we recommend.
 
-> **Since v2.15.0** the mount is two requests. It used to be four
+> **Since v2.15.0** the mount is one or two requests. It used to be four
 > (`/api/v1/config`, then `/api/v1/auth/me` and
 > `/api/v1/comments?slug=...`, plus the form token), or six with page
 > reactions/votes and thread subscriptions enabled. Deferring the script

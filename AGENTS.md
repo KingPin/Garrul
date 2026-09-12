@@ -217,8 +217,8 @@ requests per pageview on mount (`/api/v1/bootstrap?slug=…`, plus
 `/api/v1/comments/form-token` only when config reports
 `form_token_enabled: true`) before the reader has scrolled. On a blog
 or docs site where most visitors bounce above the comments section, that
-is the bulk of Cloudflare Worker usage — two requests instead of the
-pre-v2.15.0 four to six, but still two per bouncer.
+is the bulk of Cloudflare Worker usage — one or two requests instead of
+the pre-v2.15.0 four to six, but still at least one per bouncer.
 
 Turnstile is **not** in that list. The anti-spam iframe
 (`/embed/turnstile-frame`, which in turn pulls Cloudflare's `api.js` and

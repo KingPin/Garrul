@@ -1635,7 +1635,7 @@ Two consequences worth planning around:
 - **Lazy-loading matters less than it used to.** Deferring `embed.js`
   until the comments section scrolls into view still takes a bouncer
   to zero, so it is still worth doing on a high-traffic blog — but the
-  saving is 2 requests per bounce, not 4 to 6.
+  saving is 1 or 2 requests per bounce, not 4 to 6.
 - **Posting a comment normally costs one request, not two** (since
   v2.20.0). The widget renders the new comment from the `201` echo
   instead of re-fetching the thread's first page. That also fixed the
