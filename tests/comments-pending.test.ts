@@ -123,7 +123,12 @@ const makeDb = (approved: Row[], pending: Row[]) => {
 			},
 		};
 	};
-	return { prepare: (sql: string) => chain(sql) };
+	return {
+		prepare: (sql: string) => chain(sql),
+		async batch(stmts: { all: () => Promise<{ results: unknown[] }> }[]) {
+			return Promise.all(stmts.map((s) => s.all()));
+		},
+	};
 };
 
 const makeKv = () => {

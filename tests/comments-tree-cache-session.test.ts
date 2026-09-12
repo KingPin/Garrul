@@ -51,6 +51,9 @@ const makeD1 = (db: DatabaseSync): any => ({
 			},
 		};
 	},
+	async batch(stmts: { all: () => Promise<{ results: unknown[] }> }[]) {
+		return Promise.all(stmts.map((s) => s.all()));
+	},
 });
 
 const SID = "a".repeat(64);

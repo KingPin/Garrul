@@ -1612,6 +1612,15 @@ rendered:
 - `GET /api/v1/bootstrap?slug=…` — the config, the session user, the
   first page of comments, and page-level engagement and subscription
   state when those surfaces are on.
+  Reactions, the viewer's reactions and the viewer's votes are loaded for
+  the comments on the returned page only (batched `IN` lists of 90), not
+  for the whole post. Page cost is bounded by the rows the page returns
+  (at most `TREE_ROW_LIMIT`), not by the post's total comment count; a
+  page that selects one very large thread still pays for that thread's
+  full subtree, because `listCommentsForThreads` returns whole subtrees.
+  Every chunk goes out in one `db.batch` call per query, so the
+  round-trip count stays constant per query regardless of how many
+  chunks a page needs.
 - `GET /api/v1/comments/form-token` — the signed form-render timestamp
   behind the anti-spam timing heuristic, prefetched when the composer
   renders. It stays a separate call on purpose: a shared timestamp would
