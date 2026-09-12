@@ -395,7 +395,10 @@ and a sort selector above the list. Neither needs any host-page wiring:
   client-side: on the bootstrap path the setting arrives in the same
   response as the comments it orders. A stored `top` with voting off
   resolves to `new` rather than being rewritten, so re-enabling voting
-  restores the operator's choice.
+  restores the operator's choice. `next_cursor` itself is opaque to the
+  widget: for `new`/`old` it is `<created_at_ms>.<ulid>` (since v2.27.0;
+  earlier servers emitted a bare ULID, which the server still accepts by
+  looking the row up once), for `top` it is `<score>:<ulid>`.
 
 - **Voting is instance-wide and server-controlled.** The widget reads
   `voting_enabled` / `downvotes_enabled` from `/api/v1/config` at boot;

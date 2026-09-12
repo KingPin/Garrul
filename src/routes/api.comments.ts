@@ -28,6 +28,7 @@ import {
 	getOrCreateGhost,
 	getComment,
 	getPost,
+	getThreadCreatedAt,
 	getUser,
 	getUserVotesOnPost,
 	insertComment,
@@ -855,16 +856,36 @@ export type ListPayload = {
 const ULID_RE = /^[0-9A-HJKMNP-TV-Z]{26}$/;
 
 /**
- * Chronological-sort cursor: just the ULID of the last top-level thread on the
- * current page. The ULID (lexicographically-comparable, time-prefixed)
- * sidesteps the timestamp-collision edge case.
+ * Chronological-sort cursor: `<created_at_ms>.<ulid>` of the last top-level
+ * thread on the current page. The pair is the position; id alone is not,
+ * because imported threads carry a fresh ULID over a historical created_at,
+ * so id order and time order disagree for them (see listThreadRefsForPost).
  *
  * Shared by `new` and `old`, which differ only in which direction the query
- * reads it — `id < cursor` for DESC, `id > cursor` for ASC (see
- * listThreadRefsForPost). The encoding is identical because the position it
- * names is identical; only the sort decides which way "next" runs.
+ * reads it. The separator is `.` so it cannot be confused with the `top`
+ * cursor's `:`.
+ *
+ * Re-encoded from the decoded value before use (page cursor and cache key), so
+ * `0001003.X` and `1003.X` name one cache entry.
  */
-const decodeCursor = (raw: string | null): string | null => {
+type ChronoCursor = { created_at: number; id: string };
+const CHRONO_CURSOR_RE = /^(-?\d{1,13})\.([0-9A-HJKMNP-TV-Z]{26})$/;
+const decodeChronoCursor = (raw: string | null): ChronoCursor | null => {
+	if (!raw) return null;
+	const m = CHRONO_CURSOR_RE.exec(raw);
+	if (!m || m[1] === undefined || m[2] === undefined) return null;
+	const created_at = Number.parseInt(m[1], 10);
+	if (!Number.isSafeInteger(created_at)) return null;
+	return { created_at, id: m[2] };
+};
+const encodeChronoCursor = (c: ChronoCursor): string => `${c.created_at}.${c.id}`;
+
+/**
+ * Pre-2.27.0 chronological cursor: a bare ULID. Widgets loaded before the
+ * server upgraded may still hold one. The route resolves it to the pair with
+ * one PK lookup (getThreadCreatedAt) before touching the cache.
+ */
+const decodeLegacyCursor = (raw: string | null): string | null => {
 	if (!raw) return null;
 	return ULID_RE.test(raw) ? raw : null;
 };
@@ -996,12 +1017,26 @@ export const buildTreePage = async (
 ): Promise<TreePageResult> => {
 	const { slug, sort, beforeRaw, session, flags, numbers } = opts;
 
-	// Two cursor encodings, not three: the chronological sorts (`new`, `old`)
-	// both page by bare ULID, while `top` pages by a composite score:id (see
-	// decodeTopCursor). A cursor from the wrong family decodes to null → treated
-	// as the first page.
-	const cursor = sort === "top" ? null : decodeCursor(beforeRaw);
 	const topCursor = sort === "top" ? decodeTopCursor(beforeRaw) : null;
+	// Chronological cursor: composite first; else a legacy bare ULID upgraded
+	// with one PK lookup. This runs before the cache key is built so the key is
+	// always the canonical composite spelling — a legacy spelling must not mint
+	// a second entry for the same page. The lookup filters on slug and
+	// top-level only, not status: a soft-deleted thread keeps its row, so its
+	// id still resolves and the reader keeps their place. An unresolvable id
+	// (wrong slug, a reply id, random probe) falls through to the first page,
+	// which is one fixed key rather than one key per probe.
+	let chrono: ChronoCursor | null = null;
+	if (sort !== "top" && beforeRaw) {
+		chrono = decodeChronoCursor(beforeRaw);
+		if (!chrono) {
+			const legacyId = decodeLegacyCursor(beforeRaw);
+			if (legacyId) {
+				const createdAt = await getThreadCreatedAt(env.DB, slug, legacyId);
+				if (createdAt !== null) chrono = { created_at: createdAt, id: legacyId };
+			}
+		}
+	}
 
 	// Top-level threads per page, operator-tunable (DB > env > default 25),
 	// clamped to [1,200] in the settings layer. `numbers` is also used below to
@@ -1018,7 +1053,7 @@ export const buildTreePage = async (
 	// high on the public reader path, which dominates traffic.
 	//
 	// The cursor is part of the key rather than a reason to skip caching. It
-	// used to be the latter, and because `decodeCursor` only checked ULID
+	// used to be the latter, and because the old decoder only checked ULID
 	// *shape*, ANY well-formed ULID in `?before=` disabled the cache and sent
 	// the request to D1 — an unauthenticated, cache-bypassing read amplifier in
 	// front of an unbounded query. Only the canonically re-encoded cursor goes
@@ -1026,7 +1061,9 @@ export const buildTreePage = async (
 	// key of its own.
 	const cursorKey = topCursor
 		? `${topCursor.score}:${topCursor.id}`
-		: (cursor ?? null);
+		: chrono
+			? encodeChronoCursor(chrono)
+			: null;
 	const cacheReq = treeCacheKey(reqUrl, slug, sort, pageSize, cursorKey);
 	const cacheable = !session;
 	if (cacheable && !opts.skipCache) {
@@ -1054,7 +1091,7 @@ export const buildTreePage = async (
 		// One extra row, purely to learn whether a further page exists. Its
 		// subtree is deliberately NOT fetched.
 		limit: pageSize + 1,
-		cursor: topCursor ?? (cursor ? { id: cursor } : null),
+		cursor: topCursor ?? chrono,
 		viewer_id: viewerId,
 	});
 	const pageRefs = refs.slice(0, pageSize);
@@ -1119,7 +1156,7 @@ export const buildTreePage = async (
 	const next_cursor = more && lastRef
 		? sort === "top"
 			? `${lastRef.score}:${lastRef.id}`
-			: lastRef.id
+			: encodeChronoCursor({ created_at: lastRef.created_at, id: lastRef.id })
 		: null;
 
 	// Whether new comments are accepted, so the widget can show the composer or a
@@ -1142,11 +1179,14 @@ export const buildTreePage = async (
 		closed_reason: threadState.reason ?? null,
 	};
 
-	// An empty cursor page is deliberately NOT stored. A cursor is unvalidated
-	// against the data — any well-formed ULID decodes fine and simply matches no
-	// thread — so caching those would let one client mint unlimited distinct
-	// cache entries from a random-ULID loop. Real pages are bounded by the
-	// thread count.
+	// An empty cursor page is deliberately NOT stored. A well-formed composite
+	// cursor (or a legacy ULID that resolves to one) is unvalidated against the
+	// data and can simply match no thread, so caching those would let one
+	// client mint unlimited distinct cache entries from a random-cursor loop.
+	// An unresolvable legacy ULID never reaches this branch as a cursor page at
+	// all: it fell through to `chrono === null` above, so `cursorKey` is null
+	// and it is treated (and cached) as the first page instead. Real cursor
+	// pages are bounded by the thread count.
 	const storable = cacheable && (cursorKey === null || page.length > 0);
 	return { payload, store: storable ? cacheReq : null };
 };
