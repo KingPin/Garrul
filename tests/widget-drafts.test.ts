@@ -1,8 +1,8 @@
 /**
- * Draft keys carry the Worker origin so two Garrul instances embedded on one
- * host page (e.g. staging and production during a migration) cannot restore
- * each other's text. Legacy keys (no origin) are adopted once so an upgrade
- * does not lose a half-typed comment.
+ * Draft keys carry the Worker origin so two pages on the same host origin
+ * that point at different Workers (staging and production during a
+ * migration, say) cannot restore each other's text. Legacy keys (no origin)
+ * are adopted once so an upgrade does not lose a half-typed comment.
  */
 import { describe, it, expect } from "vitest";
 import { draftKey, legacyDraftKey, adoptLegacyDraft } from "../src/widget/drafts";

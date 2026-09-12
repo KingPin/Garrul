@@ -5,10 +5,12 @@
  * the textarea wiring; this module owns what the key looks like and how a
  * pre-2.27.0 draft (no origin in the key) is carried over.
  *
- * Why the origin: localStorage is per host-page origin, so two Garrul
- * instances embedded on one page (different `data-api`) shared a key for the
- * same slug and restored each other's text. The API origin is the identity of
- * the instance the draft belongs to.
+ * Why the origin: localStorage is scoped to the host page's origin, not to
+ * the Worker a page talks to. Two pages on the same host origin that point at
+ * different Workers (a staging site and production during a migration, say)
+ * share that storage, so a key without the Worker's origin let one Worker's
+ * draft appear under the other. The API origin is the identity of the Worker
+ * the draft belongs to.
  */
 
 const DRAFT_PREFIX = "garrul:draft:";
