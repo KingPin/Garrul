@@ -1021,9 +1021,11 @@ export const buildTreePage = async (
 	// Chronological cursor: composite first; else a legacy bare ULID upgraded
 	// with one PK lookup. This runs before the cache key is built so the key is
 	// always the canonical composite spelling — a legacy spelling must not mint
-	// a second entry for the same page. An unresolvable legacy id (deleted
-	// thread, wrong slug, random probe) falls through to the first page, which
-	// is one fixed key rather than one key per probe.
+	// a second entry for the same page. The lookup filters on slug and
+	// top-level only, not status: a soft-deleted thread keeps its row, so its
+	// id still resolves and the reader keeps their place. An unresolvable id
+	// (wrong slug, a reply id, random probe) falls through to the first page,
+	// which is one fixed key rather than one key per probe.
 	let chrono: ChronoCursor | null = null;
 	if (sort !== "top" && beforeRaw) {
 		chrono = decodeChronoCursor(beforeRaw);
