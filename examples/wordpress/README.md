@@ -82,9 +82,10 @@ useful for a single demo page.
   WordPress nonce wiring needed.
 - `data-published` is optional. It anchors age-based auto-close
   (`AUTO_CLOSE_DAYS`) on the post's publish date instead of the first
-  comment's time. `get_post_time('c', true)` returns the GMT publish
-  time in ISO 8601; the second argument matters, because the local-time
-  variant carries the site's offset instead of `Z`.
+  comment's time. `get_post_time('c', true)` returns the publish time
+  in ISO 8601 as UTC (`2026-09-11T12:00:00+00:00`). The server parses
+  either time zone, so the `true` is for consistency with the other
+  recipes rather than correctness.
 - WordPress core's comment count helpers (`comments_number`,
   `get_comments_number`) won't reflect Garrul comments. If you want the
   count badge in your post list, fetch `GET /api/v1/counts?slugs=a,b,c`
