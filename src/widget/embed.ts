@@ -7,8 +7,12 @@
  *
  * Optional data-* attributes:
  *   data-api="https://comments.example.com"  // origin of the Garrul Worker
- *   data-title="Post title"                  // sent on first comment create
+ *   data-title="Post title"                  // sent on every comment create;
+ *                                            // server keeps the first non-null
  *   data-url="https://blog/.../post-url"     // ditto
+ *   data-published="2026-09-11T12:00:00Z"    // ditto (ISO 8601 or epoch ms);
+ *                                            // anchors age-based auto-close,
+ *                                            // recorded once on post creation
  *
  * Behavior:
  *   1. Mount a Shadow DOM on DOMContentLoaded.
