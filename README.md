@@ -126,7 +126,7 @@ iframe variant, plus what each attribute does:
 [`examples/README.md`](examples/README.md).
 
 Host Content-Security-Policy, the iframe fallback, `data-lang`,
-lazy-loading to cut the two mount requests bouncers cost you, and pointing
+lazy-loading to cut the mount requests bouncers cost you, and pointing
 an AI assistant at your instance:
 [`docs/embedding.md`](docs/embedding.md).
 

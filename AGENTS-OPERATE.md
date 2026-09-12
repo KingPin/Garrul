@@ -375,8 +375,9 @@ default, server-side clamped), edited from **Settings → Moderation**.
   already running it.
 - `SPAM_HONEYPOT_MIN_MS` — clamped to `0`–`60000`; `0` (default) = off. Still
   requires `SPAM_FORM_TS_SECRET`, which stays a secret: without it the form
-  timestamp is unsigned and forgeable, so `evaluateSpam` skips the check and the
-  `/api/v1/comments/form-token` endpoint 404s. The Settings page flags this
+  timestamp is unsigned and forgeable, so `evaluateSpam` skips the check, the
+  `/api/v1/comments/form-token` endpoint 404s, and `/api/v1/config` reports
+  `form_token_enabled: false` so the widget does not request it. The Settings page flags this
   combination inline rather than letting the dial sit there doing nothing.
 
 `SPAM_PROVIDER`, `AKISMET_API_KEY`, `AKISMET_SITE_URL` and `SPAM_FORM_TS_SECRET`
@@ -1602,7 +1603,8 @@ cost is what sets the pageview ceiling for an install, and it is the
 one number worth knowing before you worry about anything else on this
 page.
 
-A mount now costs **two** requests on a post with the comment box
+A mount costs **one** request on the default install and **two** when
+the anti-spam timing heuristic is on, on a post with the comment box
 rendered:
 
 - `GET /api/v1/bootstrap?slug=…` — the config, the session user, the
@@ -1611,9 +1613,9 @@ rendered:
 - `GET /api/v1/comments/form-token` — the signed form-render timestamp
   behind the anti-spam timing heuristic, prefetched when the composer
   renders. It stays a separate call on purpose: a shared timestamp would
-  hand every reader the same start time and defeat the check. It costs a
-  request even with that heuristic off, because the route 404s rather
-  than not existing.
+  hand every reader the same start time and defeat the check. The widget
+  skips it when `/api/v1/config` reports `form_token_enabled: false`
+  (heuristic off), so on the default install a mount is one request.
 
 Before v2.15.0 it was four requests for a default install
 (`/api/v1/config`, then `/api/v1/auth/me` and `/api/v1/comments` in
@@ -1633,7 +1635,7 @@ Two consequences worth planning around:
 - **Lazy-loading matters less than it used to.** Deferring `embed.js`
   until the comments section scrolls into view still takes a bouncer
   to zero, so it is still worth doing on a high-traffic blog — but the
-  saving is 2 requests per bounce, not 4 to 6.
+  saving is 1 or 2 requests per bounce, not 4 to 6.
 - **Posting a comment normally costs one request, not two** (since
   v2.20.0). The widget renders the new comment from the `201` echo
   instead of re-fetching the thread's first page. That also fixed the

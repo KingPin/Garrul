@@ -65,10 +65,21 @@ export type ConfigResponse = {
 	auto_collapse_depth?: number;
 	community_min_votes?: number;
 	community_collapse_ratio?: number;
+	form_token_enabled?: boolean;
 	locale?: string;
 	strings?: Record<string, string | Record<string, string>>;
 	rtl?: boolean;
 };
+
+/**
+ * Whether the mount should request `/api/v1/comments/form-token`.
+ *
+ * Only an explicit `false` skips it. A server that predates the field (or a
+ * config that failed to load) keeps the legacy request, because on those
+ * servers the route may be live and skipping would submit without a token.
+ */
+export const formTokenWanted = (cfg: ConfigResponse | null | undefined): boolean =>
+	cfg?.form_token_enabled !== false;
 
 /** `GET /api/v1/page-engagement`, and bootstrap's `engagement` section. */
 export type EngagementSection = {
