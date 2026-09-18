@@ -32,6 +32,14 @@ describe("matchLocale", () => {
 		expect(matchLocale("EN-us")).toBe("en");
 	});
 
+	it("routes the Norwegian macrolanguage tag to Bokmål", () => {
+		// `no` and `nb` are sibling primary subtags, so the region-to-primary
+		// hop above can't reach `nb` from `no`; the alias table has to.
+		expect(matchLocale("no")).toBe("nb");
+		expect(matchLocale("no-NO")).toBe("nb");
+		expect(matchLocale("nb-NO")).toBe("nb");
+	});
+
 	it("returns undefined for anything unregistered", () => {
 		expect(matchLocale("zz")).toBeUndefined();
 		expect(matchLocale("klingon")).toBeUndefined();

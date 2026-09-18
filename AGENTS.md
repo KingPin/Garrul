@@ -355,6 +355,14 @@ reads the language.
 Regional tags match their base language (`de-AT` → `de`), and anything
 unrecognized falls back to English rather than failing the mount.
 
+Shipped tags: `en` (source) plus `de`, `es`, `fr`, `it`, `ja`, `nb`, `nl`,
+`pl` and `pt`. `nb` and `pl` are reviewed and therefore auto-selectable
+from `<html lang>`; the other seven are machine-seeded and opt-in per the
+paragraph above. `pt` is the bare primary subtag and serves `pt-BR` and
+`pt-PT` alike; there is no `pt-BR` entry to match. `nb` is Bokmål, and the
+macrolanguage tag `no` is aliased onto it, so `no`, `no-NO` and `nb-NO` all
+match. The current list with endonyms is `docs/i18n.md`.
+
 Notes for integrators:
 
 - **English costs nothing on the wire.** The English table is compiled

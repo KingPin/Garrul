@@ -107,8 +107,10 @@ it looks for a change in the set of variable *names*.
 This is the easiest useful PR in the repo, and the one we most need
 from people who aren't us.
 
-Garrul ships German, Spanish and French. **All three are
-machine-seeded: LLM output that no native speaker has checked.** What
+Garrul ships German, Spanish, French, Italian, Japanese, Norwegian
+Bokmål, Dutch, Polish and Portuguese. Norwegian Bokmål and Polish have been
+reviewed by native speakers. **The other seven are machine-seeded: LLM
+output that no native speaker has checked.** What
 that fails at is register and consistency — "Post" as a noun where it
 should be an imperative, formal address where the rest of the file is
 informal — not comprehensibility. Those are exactly the mistakes a
@@ -119,8 +121,10 @@ Because they're unreviewed, machine-seeded locales are **opt-in only**:
 they never get picked up automatically from a host page's
 `<html lang>`. The only person who sees one is an operator who typed
 `data-lang="de"`, and therefore reads German. A locale is promoted to
-`reviewed` — and becomes auto-selectable — when a native speaker puts
-their handle on it.
+`reviewed` — and becomes auto-selectable — once a native speaker has
+checked it. That speaker does not have to sign up to maintain it: an
+unmaintained locale degrades to English per key as strings are added, and
+CI still catches a renamed placeholder.
 
 ### Adding or fixing a locale
 
@@ -136,13 +140,14 @@ and `src/i18n/index.ts`, and add an entry to `LOCALES` in
 `src/i18n/index.ts`:
 
 ```ts
-it: { label: "Italian", endonym: "Italiano", rtl: false, status: "machine-seeded" },
+sv: { label: "Swedish", endonym: "Svenska", rtl: false, status: "machine-seeded" },
 ```
 
 `endonym` is the language's name *in that language* — it's what an
 operator picking a locale in the admin UI reads. Use `status:
-"reviewed"` plus `maintainer: "@yourhandle"` instead if you actually
-speak it and are willing to be asked about it later.
+"reviewed"` if you actually speak it, and add `maintainer: "@yourhandle"`
+if you are also willing to be asked about it later — the two are
+separate, and the second is optional.
 
 Rules:
 
