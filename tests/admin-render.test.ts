@@ -614,7 +614,10 @@ describe("renderDashboard", () => {
 		expect(html).toContain("/admin/comments/01HOLDEST");
 		// the comments-per-day bar chart renders a <rect> bar per day
 		expect(html).toContain("<rect");
-		expect(html).toContain("Comments per day bar chart");
+		expect(html).toContain('aria-label="Comments per day,');
+		// axis labels, not just bars: the chart is readable without hovering
+		expect(html).toContain('class="chart-y"');
+		expect(html).toContain('class="chart-x"');
 	});
 
 	it("renders an empty-state message when there is no timeline", () => {

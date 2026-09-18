@@ -384,6 +384,13 @@ kbd { background: var(--surface-2); border: 1px solid var(--border);
 .tab:hover { color: var(--text); border-color: transparent; }
 .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
 .chart { display: block; width: 100%; }
+.chart-wrap { display: flex; gap: 0.4rem; align-items: flex-start; }
+.chart-y { position: relative; flex: 0 0 2.2rem; }
+.chart-y span { position: absolute; right: 0; transform: translateY(-50%);
+                font-size: 0.7rem; line-height: 1; color: var(--muted); }
+.chart-plot { flex: 1 1 auto; min-width: 0; }
+.chart-x { display: flex; justify-content: space-between; margin-top: 0.3rem;
+           font-size: 0.7rem; color: var(--muted); }
 .settings-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 1rem; }
 /* Usage page bars (Cloudflare dashboard) and the queue audit strip. */
 .usage-row { margin: 0.75rem 0; }
