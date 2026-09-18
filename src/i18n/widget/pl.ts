@@ -1,5 +1,6 @@
 /**
- * Polish widget strings. **Machine-seeded — not reviewed by a native speaker.**
+ * Polish widget strings. **Reviewed by @mhajduczek, a native speaker, in PR #125; no maintainer,
+ * so corrections are welcome from anyone who reads it.**
  *
  * Register conventions this file commits to, so a reviewer can check them at a
  * glance and a future contributor doesn't undo them:

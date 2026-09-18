@@ -54,6 +54,16 @@ const canonical = (tag: string): string | undefined => {
 const MAX_TAG_LENGTH = 35;
 
 /**
+ * Macrolanguage → the shipped table that serves it. `no` and `nb` are sibling
+ * primary subtags, so the primary-subtag hop below can't bridge them the way it
+ * bridges `pt-BR` → `pt`; without this a host page tagged `<html lang="no">`
+ * gets English. Only the primary subtag is aliased, so `no-NO` lands here too.
+ * If Nynorsk ever ships as `nn`, `no` stays on Bokmål — that is what the
+ * macrolanguage tag means in practice on the web.
+ */
+const MACROLANGUAGE_ALIASES: Record<string, string> = { no: "nb" };
+
+/**
  * Match a raw tag against the registry: exact first, then the primary subtag,
  * so `de-DE` and `de-AT` both land on `de`.
  *
@@ -67,7 +77,7 @@ export const matchLocale = (raw: string | null | undefined): string | undefined 
 	const exact = canonical(tag);
 	if (exact) return exact;
 	const primary = tag.split("-")[0];
-	return primary ? canonical(primary) : undefined;
+	return primary ? canonical(MACROLANGUAGE_ALIASES[primary] ?? primary) : undefined;
 };
 
 export interface LocaleSources {

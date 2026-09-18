@@ -1,5 +1,6 @@
 /**
- * Polish server strings. **Machine-seeded — not reviewed by a native speaker.**
+ * Polish server strings. **Reviewed by @mhajduczek, a native speaker, in PR #125; no maintainer,
+ * so corrections are welcome from anyone who reads it.**
  *
  * Covers the surfaces a reader sees: API error bodies (the widget renders them
  * verbatim), the subscription notices, email copy and the Atom feed.

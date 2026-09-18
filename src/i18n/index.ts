@@ -43,12 +43,16 @@ export interface LocaleMeta {
 	 */
 	readonly status: LocaleStatus;
 	/**
-	 * GitHub handle of whoever vouches for this translation.
+	 * GitHub handle of whoever is willing to be asked about this translation.
 	 *
-	 * Absent on machine-seeded locales, because nobody does yet — that is the
-	 * honest state, and filling it in is what promotes a locale to `reviewed`.
-	 * Unowned locale files are how comparable projects ended up with thirty of
-	 * them, half untouched since 2019.
+	 * Independent of `status`. `reviewed` records that a native speaker checked
+	 * the strings that shipped; `maintainer` records that someone will answer
+	 * for them later. A locale can honestly be the first without the second —
+	 * `pl` and `nb` are — because an unmaintained locale degrades to English
+	 * per key as strings are added, never to broken text, and the parity test
+	 * still catches a renamed placeholder. Unowned locale files are how
+	 * comparable projects ended up with thirty of them, half untouched since
+	 * 2019, so a handle here is worth asking for; it is not a precondition.
 	 */
 	readonly maintainer?: string;
 }
@@ -68,8 +72,8 @@ export const FALLBACK_LOCALE = "en";
 /**
  * Every locale Garrul knows about.
  *
- * Everything but English is machine-seeded: LLM output that no native speaker
- * has checked. They ship because the alternative — holding translations until a
+ * Most non-English locales are machine-seeded: LLM output that no native
+ * speaker has checked. They ship because the alternative — holding translations until a
  * volunteer appears — is how a project ends up with none, and because the
  * `machine-seeded` status confines them to operators who explicitly asked for
  * the language. What fails in machine translation of ~90 short UI strings is
@@ -89,20 +93,20 @@ export const LOCALES: Record<string, LocaleMeta> = {
 	ja: { label: "Japanese", endonym: "日本語", rtl: false, status: "machine-seeded" },
 	// `nb`, not `no`: the table is Bokmål specifically, and calling it `no` would
 	// claim the macrolanguage — including Nynorsk, which this is not and which
-	// can still arrive as its own `nn` entry. The cost is that a host page with
-	// `<html lang="no">` never matches, because `no` and `nb` are sibling primary
+	// can still arrive as its own `nn` entry. `no` and `nb` are sibling primary
 	// subtags rather than tag-and-variant, so matchLocale's primary-subtag hop
-	// can't bridge them the way it bridges `pt-BR` → `pt`. That costs nothing
-	// while this is machine-seeded (never selected from `<html lang>` at all) and
-	// becomes worth revisiting if a native speaker ever promotes it to reviewed.
+	// can't bridge them the way it bridges `pt-BR` → `pt`; a host page tagged
+	// `<html lang="no">` reaches this table through the macrolanguage alias in
+	// negotiate.ts instead. Reviewed by Stine, a native speaker, in PR #125.
 	nb: {
 		label: "Norwegian Bokmål",
 		endonym: "Norsk bokmål",
 		rtl: false,
-		status: "machine-seeded",
+		status: "reviewed",
 	},
 	nl: { label: "Dutch", endonym: "Nederlands", rtl: false, status: "machine-seeded" },
-	pl: { label: "Polish", endonym: "Polski", rtl: false, status: "machine-seeded" },
+	// Reviewed by @mhajduczek, a native speaker, in PR #125, plural forms included.
+	pl: { label: "Polish", endonym: "Polski", rtl: false, status: "reviewed" },
 	// Bare `pt`, not `pt-BR`: matchLocale tries the exact tag and then the primary
 	// subtag, so a `pt-BR` key would never match a host page's `<html lang="pt">`.
 	// One table serves both variants — see the variant policy in src/i18n/pt.ts.

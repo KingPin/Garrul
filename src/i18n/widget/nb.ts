@@ -1,6 +1,6 @@
 /**
- * Norwegian Bokmål widget strings. **Machine-seeded — not reviewed by a native
- * speaker.**
+ * Norwegian Bokmål widget strings. **Reviewed by Stine, a native speaker, in PR #125; no maintainer, so
+ * corrections are welcome from anyone who reads it.**
  *
  * Register conventions this file commits to, so a reviewer can check them at a
  * glance and a future contributor doesn't undo them:
