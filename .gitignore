@@ -92,3 +92,5 @@ SECURITY-AUDIT-*.md
 # Lockfiles from package managers we don't use
 yarn.lock
 pnpm-lock.yaml
+# Added by code-review-graph
+.code-review-graph/
