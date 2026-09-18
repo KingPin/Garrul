@@ -173,7 +173,8 @@ export const renderDashboard = (
 ${embedCard(env)}
 
 <div class="card">
-  <h3>Comments per day (30d)</h3>
+  <h3>Comments per day (last 30 days)</h3>
+  <p class="muted" style="margin:-0.4rem 0 0.6rem;font-size:0.8rem">Comments received each day. Hover a bar for the exact date and count.</p>
   ${barChartSvg(timeline)}
 </div>
 

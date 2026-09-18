@@ -36,11 +36,27 @@ export const sparklineSvg = (points: TimelinePoint[]): string => {
 </div>`;
 };
 
+/** `2026-01-05` → `Jan 5`. Falls back to the raw (escaped) string. */
+const tickLabel = (day: string): string => {
+	const d = new Date(`${day}T00:00:00Z`);
+	return Number.isNaN(d.getTime())
+		? escapeHtml(day)
+		: d.toLocaleDateString("en-US", {
+				month: "short",
+				day: "numeric",
+				timeZone: "UTC",
+			});
+};
+
+const axisValue = (v: number): string =>
+	Number.isInteger(v) ? String(v) : v.toFixed(1);
+
 /**
  * A responsive bar chart of comments per day. The SVG fills its container
  * width (`preserveAspectRatio="none"`); each bar carries a `<title>` for a
- * native hover tooltip. Axis labels live in the HTML caption below, not inside
- * the stretched SVG, so text never distorts.
+ * native hover tooltip. Axis labels live in HTML around the SVG, not inside
+ * the stretched SVG, so text never distorts — the y labels are positioned at
+ * the same pixel offsets as the baseline, midline and peak they annotate.
  */
 export const barChartSvg = (points: TimelinePoint[]): string => {
 	if (points.length === 0)
@@ -65,13 +81,25 @@ export const barChartSvg = (points: TimelinePoint[]): string => {
 	const midY = pad + innerH / 2;
 	const first = points[0];
 	const last = points[points.length - 1];
+	// Start, middle and end only: more ticks collide once the card narrows.
+	const tickIdx = n === 1 ? [0] : n < 5 ? [0, n - 1] : [0, (n - 1) >> 1, n - 1];
+	const xTicks = tickIdx
+		.map((i) => `<span>${tickLabel(points[i]?.day ?? "")}</span>`)
+		.join("");
 	return `
-<svg class="chart" viewBox="0 0 ${w} ${h}" width="100%" height="${h}" preserveAspectRatio="none" role="img" aria-label="Comments per day bar chart">
-  <line x1="0" y1="${midY}" x2="${w}" y2="${midY}" stroke="var(--border)" stroke-width="1" stroke-dasharray="3 3"/>
-  <line x1="0" y1="${h - pad}" x2="${w}" y2="${h - pad}" stroke="var(--border)" stroke-width="1"/>
-  ${bars}
-</svg>
-<div class="muted" style="font-size:0.75rem;margin-top:0.35rem">
-  ${escapeHtml(first?.day ?? "")} → ${escapeHtml(last?.day ?? "")} · peak ${max}/day
+<div class="chart-wrap">
+  <div class="chart-y" style="height:${h}px">
+    <span style="top:${pad}px">${axisValue(max)}</span>
+    <span style="top:${midY}px">${axisValue(max / 2)}</span>
+    <span style="top:${h - pad}px">0</span>
+  </div>
+  <div class="chart-plot">
+    <svg class="chart" viewBox="0 0 ${w} ${h}" width="100%" height="${h}" preserveAspectRatio="none" role="img" aria-label="Comments per day, ${escapeHtml(first?.day ?? "")} to ${escapeHtml(last?.day ?? "")}, peak ${max} per day">
+      <line x1="0" y1="${midY}" x2="${w}" y2="${midY}" stroke="var(--border)" stroke-width="1" stroke-dasharray="3 3"/>
+      <line x1="0" y1="${h - pad}" x2="${w}" y2="${h - pad}" stroke="var(--border)" stroke-width="1"/>
+      ${bars}
+    </svg>
+    <div class="chart-x">${xTicks}</div>
+  </div>
 </div>`;
 };

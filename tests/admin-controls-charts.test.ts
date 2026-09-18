@@ -131,7 +131,30 @@ describe("barChartSvg", () => {
 		]);
 		expect(html).toContain("<svg");
 		expect((html.match(/<rect /g) ?? []).length).toBe(2);
-		expect(html).toContain("peak 5/day");
+		expect(html).toContain("peak 5 per day");
+	});
+
+	it("labels both axes: peak, midpoint, zero and the date range", () => {
+		const html = barChartSvg([
+			{ day: "2026-01-01", count: 0 },
+			{ day: "2026-01-02", count: 2 },
+			{ day: "2026-01-03", count: 4 },
+			{ day: "2026-01-04", count: 1 },
+			{ day: "2026-01-05", count: 3 },
+		]);
+		// y axis: peak / half / baseline, positioned on the lines they annotate.
+		expect(html).toContain(">4</span>");
+		expect(html).toContain(">2</span>");
+		expect(html).toContain(">0</span>");
+		// x axis: first, middle, last.
+		expect(html).toContain("<span>Jan 1</span>");
+		expect(html).toContain("<span>Jan 3</span>");
+		expect(html).toContain("<span>Jan 5</span>");
+	});
+
+	it("renders a fractional midpoint rather than rounding it away", () => {
+		const html = barChartSvg([{ day: "2026-01-01", count: 5 }]);
+		expect(html).toContain(">2.5</span>");
 	});
 
 	it("escapes hostile day strings in the bar <title>", () => {
