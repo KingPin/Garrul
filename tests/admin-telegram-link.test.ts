@@ -34,7 +34,7 @@ describe("admin telegram link", () => {
 	});
 
 	it("toggles the digest and unlinks only an existing link", async () => {
-		const { request, env, audits } = setup();
+		const { request, env, sqlite, audits } = setup();
 		const digest = (body: unknown) => request("/admin/api/telegram/digest", { method: "POST", body });
 
 		expect((await digest({ digest: true })).status).toBe(404);
@@ -47,6 +47,13 @@ describe("admin telegram link", () => {
 		await upsertTelegramLink(env.DB, { tg_user_id: "42", tg_chat_id: "555", user_id: ADMIN_ID });
 		expect((await digest({ digest: "yes" })).status).toBe(400);
 		expect(await (await digest({ digest: true })).json()).toEqual({ ok: true, digest: true });
+		expect(sqlite.prepare("SELECT digest FROM telegram_links WHERE user_id = ?").get(ADMIN_ID)).toEqual({
+			digest: 1,
+		});
+		expect(await (await digest({ digest: false })).json()).toEqual({ ok: true, digest: false });
+		expect(sqlite.prepare("SELECT digest FROM telegram_links WHERE user_id = ?").get(ADMIN_ID)).toEqual({
+			digest: 0,
+		});
 		expect(await (await request("/admin/api/telegram/link", { method: "DELETE" })).json()).toEqual({
 			ok: true,
 			removed: true,
