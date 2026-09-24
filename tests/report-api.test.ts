@@ -291,3 +291,51 @@ describe("POST /api/v1/comments/:id/report", () => {
 		expect(row.reason.length).toBe(300);
 	});
 });
+
+describe("POST /api/v1/comments/:id/report — signed-in bans and moderator email", () => {
+	it("refuses a signed-in reporter whose account is banned", async () => {
+		const id = await seedComment();
+		sqlite
+			.prepare(
+				"INSERT INTO users (id, provider, provider_id, name, is_banned, created_at) VALUES (?, 'github', '7', 'Banned', 1, ?)",
+			)
+			.run("01HBANNED000000000000000BN", 1_700_000_000_000);
+		const env = {
+			...(mkEnv() as unknown as Record<string, unknown>),
+			SESSIONS: {
+				async get(key: string) {
+					return key === `sess:${"a".repeat(64)}`
+						? JSON.stringify({ user_id: "01HBANNED000000000000000BN", expires_at: 4_102_444_800_000 })
+						: null;
+				},
+				async put() {},
+				async delete() {},
+			},
+		};
+		const res = await app().request(
+			`/${id}/report`,
+			{
+				method: "POST",
+				headers: {
+					"content-type": "application/json",
+					"cf-connecting-ip": REPORTER_IP,
+					cookie: `garrul_sess=${"a".repeat(64)}`,
+				},
+				body: "{}",
+			},
+			env,
+			execCtx,
+		);
+		expect(res.status).toBe(403);
+		expect(reportRowCount(id)).toBe(0);
+	});
+
+	it("queues one moderator email for a new report when moderator email is on", async () => {
+		const id = await seedComment();
+		const env = { ...(mkEnv() as unknown as Record<string, unknown>), MODERATOR_EMAIL_ENABLED: "true" };
+		expect((await report(env as unknown as Bindings, id)).status).toBe(200);
+		expect(sqlite.prepare("SELECT comment_id, reason FROM moderator_notifications").all()).toEqual([
+			{ comment_id: id, reason: "reported" },
+		]);
+	});
+});
