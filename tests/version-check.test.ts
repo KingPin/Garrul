@@ -4,10 +4,13 @@
  * exported pure functions directly with a KV stub and a mocked fetch.
  */
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
+import { Hono } from "hono";
 import {
 	getCachedLatestVersion,
 	getCachedRecentReleases,
 	peekCachedLatestVersion,
+	peekCachedRecentReleases,
+	versionCheckMiddleware,
 } from "../src/lib/version-check";
 
 vi.mock("../src/lib/version.gen", () => ({
@@ -194,5 +197,85 @@ describe("getCachedRecentReleases", () => {
 		expect(await getCachedRecentReleases(env)).toBeNull();
 		expect(await getCachedRecentReleases(env)).toBeNull();
 		expect(fetchMock).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe("version-check — token, corrupt cache, peek and middleware", () => {
+	const originalFetch = globalThis.fetch;
+	afterEach(() => {
+		globalThis.fetch = originalFetch;
+	});
+	// Answers the latest-release URL and the releases-list URL separately.
+	const serve = () => {
+		const fetchMock = vi.fn(async (url: string) =>
+			url.endsWith("/releases/latest")
+				? okResponse({ tag_name: "v0.0.2" })
+				: okResponse([{ tag_name: "v0.0.2" }]),
+		);
+		globalThis.fetch = fetchMock as unknown as typeof fetch;
+		return fetchMock;
+	};
+
+	it("sends GITHUB_TOKEN as a bearer on both requests and builds a missing release URL", async () => {
+		const fetchMock = serve();
+		const env = { ...makeEnv(), GITHUB_TOKEN: "ghp_test" };
+		const info = await getCachedLatestVersion(env);
+		await getCachedRecentReleases(env);
+		expect(info?.url).toBe("https://github.com/kingpin/garrul/releases/tag/v0.0.2");
+		for (const call of fetchMock.mock.calls as unknown as Array<[string, RequestInit]>) {
+			expect((call[1].headers as Record<string, string>).Authorization).toBe("Bearer ghp_test");
+		}
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+	});
+
+	it("logs a thrown latest-release fetch and returns null", async () => {
+		warnSpy.mockClear();
+		globalThis.fetch = vi.fn(async () => {
+			throw new Error("offline");
+		}) as unknown as typeof fetch;
+		expect(await getCachedLatestVersion(makeEnv())).toBeNull();
+		expect(warnSpy).toHaveBeenCalledWith("version_check.failed", { error: "offline" });
+	});
+
+	it.each([
+		["unparseable JSON", "{not json"],
+		["a non-object", "42"],
+	])("ignores a cache entry holding %s and refetches", async (_label, raw) => {
+		const fetchMock = serve();
+		const env = makeEnv();
+		const kv = env.TREE_CACHE as unknown as StubKV;
+		kv.store.set("meta:latest-release", raw);
+		kv.store.set("meta:recent-releases", raw);
+		expect((await getCachedLatestVersion(env))?.latest).toBe("v0.0.2");
+		expect((await getCachedRecentReleases(env))?.map((r) => r.tag)).toEqual(["v0.0.2"]);
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+	});
+
+	it("peeks the releases cache without fetching", async () => {
+		const env = makeEnv();
+		globalThis.fetch = vi.fn() as unknown as typeof fetch;
+		expect(await peekCachedRecentReleases(env)).toBeNull();
+		expect(globalThis.fetch).not.toHaveBeenCalled();
+		serve();
+		await getCachedRecentReleases(env);
+		expect((await peekCachedRecentReleases(env))?.map((r) => r.tag)).toEqual(["v0.0.2"]);
+	});
+
+	it("middleware refreshes in waitUntil and warns when the install is behind", async () => {
+		warnSpy.mockClear();
+		serve();
+		const pending: Promise<unknown>[] = [];
+		const ctx = { waitUntil: (p: Promise<unknown>) => pending.push(p), passThroughOnException() {} };
+		const app = new Hono<{ Bindings: ReturnType<typeof makeEnv> }>()
+			.use(versionCheckMiddleware())
+			.get("/", (c) => c.text("ok"));
+		const res = await app.request("/", {}, makeEnv(), ctx as unknown as ExecutionContext);
+		expect(await res.text()).toBe("ok");
+		await Promise.all(pending);
+		expect(warnSpy).toHaveBeenCalledWith("version_check.behind", {
+			current: "0.0.1",
+			latest: "v0.0.2",
+			url: "https://github.com/kingpin/garrul/releases/tag/v0.0.2",
+		});
 	});
 });
