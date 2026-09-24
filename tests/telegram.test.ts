@@ -783,3 +783,55 @@ describe("POST /telegram/webhook — refusals that still answer the operator", (
 		}
 	});
 });
+
+describe("POST /telegram/webhook — ban, flagged posts and callback floods", () => {
+	const MOD = "01HMOD0000000000000000000B";
+	const tap = (data: string) =>
+		post(
+			{ ...mkEnv(), SESSIONS: openKv() } as unknown as Bindings,
+			{ update_id: 10, callback_query: { id: "cbq4", from: { id: 42 }, data } }, SECRET);
+	const toasts = () => tgCalls.filter((c) => c.method === "answerCallbackQuery").map((c) => String(c.body.text));
+
+	it("bans a comment author from the ban button", async () => {
+		seedUser(MOD, "admin");
+		await linkOperator("42", MOD);
+		const id = await seedComment("approved");
+		await tap(encodeCallback("ban", id));
+		expect(toasts()).toEqual(["✓ Banned the comment author"]);
+		expect(sqlite.prepare("SELECT is_banned FROM users WHERE id = '01HAUTHOR000000000000000AB'").get()).toEqual({
+			is_banned: 1,
+		});
+	});
+
+	it("names the most-flagged post in /queue", async () => {
+		seedUser(MOD, "mod");
+		await linkOperator("42", MOD);
+		const id = await seedComment("approved");
+		sqlite
+			.prepare(
+				`INSERT INTO reports (id, comment_id, reporter_user_id, reason, status, created_at)
+				 VALUES ('r1', ?, NULL, 'spam', 'open', 1)`,
+			)
+			.run(id);
+		await post(
+			mkEnv(),
+			{ update_id: 11, message: { message_id: 15, chat: { id: 555 }, from: { id: 42 }, text: "/queue" } },
+			SECRET,
+		);
+		const text = tgCalls.find((c) => c.method === "sendMessage")?.body.text;
+		expect(String(text)).toContain("Most flagged: <code>hello</code> (1)");
+	});
+
+	it("answers a flood of button taps with a toast, not silence", async () => {
+		installMockCaches();
+		try {
+			seedUser(MOD, "mod");
+			await linkOperator("42", MOD);
+			const id = await seedComment("pending");
+			for (let i = 0; i < 11; i++) await tap(encodeCallback("approve", id));
+			expect(toasts().at(-1)).toBe("Slow down a moment and try again.");
+		} finally {
+			uninstallMockCaches();
+		}
+	});
+});
