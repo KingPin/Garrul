@@ -229,6 +229,7 @@ import { insertComment } from "../src/db/queries";
 import type { CommentStatus } from "../src/db/queries";
 import type { Bindings } from "../src/index";
 import { issueTelegramLinkToken, telegram } from "../src/routes/telegram";
+import { installMockCaches, uninstallMockCaches } from "./helpers/mock-caches";
 
 const MIGRATIONS_DIR = join(__dirname, "../src/db/migrations");
 
@@ -723,5 +724,62 @@ describe("POST /telegram/webhook — command readouts and edge replies", () => {
 		const res = await post(env, { update_id: 7, message: { chat: { id: 1 }, text: "/queue" } }, SECRET);
 		expect(await res.json()).toEqual({ ok: true });
 		expect(tgCalls).toEqual([]);
+	});
+});
+
+describe("POST /telegram/webhook — refusals that still answer the operator", () => {
+	const ADMIN = "01HADMIN00000000000000000A";
+	const say = (tgUserId: string, text: string) =>
+		post(
+			mkEnv(),
+			{ update_id: 8, message: { message_id: 14, chat: { id: 555 }, from: { id: Number(tgUserId) }, text } },
+			SECRET,
+		);
+	const replies = () => tgCalls.filter((c) => c.method === "sendMessage").map((c) => String(c.body.text));
+	const toasts = () => tgCalls.filter((c) => c.method === "answerCallbackQuery").map((c) => String(c.body.text));
+
+	it("tells a linked account that lost its mod role it has no access", async () => {
+		seedUser(ADMIN, "user");
+		await linkOperator("42", ADMIN);
+		await say("42", "/queue");
+		expect(replies()).toEqual(["Your account doesn't have moderation access."]);
+	});
+
+	it("names an invalid code and an operator deleted before redeeming", async () => {
+		await say("42", `/start ${"deadbeef".repeat(6)}`);
+		const code = await issueTelegramLinkToken(oauthKv as unknown as KVNamespace, "01HGONE0000000000000000000");
+		await say("42", `/start ${code}`);
+		expect(replies()).toEqual([
+			"That link code is invalid or expired. Generate a fresh one in the admin panel.",
+			"Linking failed: that operator account no longer exists.",
+		]);
+		expect(sqlite.prepare("SELECT COUNT(*) AS n FROM telegram_links").get()).toEqual({ n: 0 });
+	});
+
+	it("refuses to ban the operator's own comment", async () => {
+		seedUser(ADMIN, "admin");
+		await linkOperator("42", ADMIN);
+		const id = await seedComment("approved");
+		sqlite.prepare("UPDATE comments SET user_id = ? WHERE id = ?").run(ADMIN, id);
+		await post(
+			mkEnv(),
+			{ update_id: 9, callback_query: { id: "cbq3", from: { id: 42 }, data: encodeCallback("ban", id) } },
+			SECRET,
+		);
+		expect(toasts()).toEqual(["Not banned: that is you, or the last admin who can still sign in."]);
+		expect(sqlite.prepare("SELECT is_banned FROM users WHERE id = ?").get(ADMIN)).toEqual({ is_banned: 0 });
+	});
+
+	it("throttles a flood from one Telegram user with a reply, not silence", async () => {
+		installMockCaches();
+		try {
+			seedUser(ADMIN, "mod");
+			await linkOperator("42", ADMIN);
+			for (let i = 0; i < 11; i++) await say("42", "/queue");
+			expect(replies().at(-1)).toBe("Slow down a moment and try again.");
+			expect(replies().filter((r) => r.includes("Moderation queue"))).toHaveLength(10);
+		} finally {
+			uninstallMockCaches();
+		}
 	});
 });
