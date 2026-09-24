@@ -36,14 +36,30 @@ afterEach(() => {
 describe("fetchUsageSnapshot", () => {
 	it("sums each panel and serves the cached snapshot on the next call", async () => {
 		const fetchMock = serve({
-			workers: [200, account({ today: [{ sum: { requests: 5 } }, { sum: {} }], last30d: [{ sum: { requests: 90 } }] })],
-			d1: [200, account({ d1AnalyticsAdaptiveGroups: [{ sum: { readQueries: 7, writeQueries: 2 } }] })],
+			workers: [
+				200,
+				account({
+					today: [{ sum: { requests: 5 } }, { sum: { requests: 4 } }],
+					last30d: [{ sum: { requests: 90 } }, { sum: { requests: 8 } }],
+				}),
+			],
+			d1: [
+				200,
+				account({
+					d1AnalyticsAdaptiveGroups: [
+						{ sum: { readQueries: 7, writeQueries: 2 } },
+						{ sum: { readQueries: 3, writeQueries: 5 } },
+					],
+				}),
+			],
 			kv: [
 				200,
 				account({
 					kvOperationsAdaptiveGroups: [
 						{ sum: { requests: 11 }, dimensions: { actionType: "read" } },
+						{ sum: { requests: 4 }, dimensions: { actionType: "read" } },
 						{ sum: { requests: 3 }, dimensions: { actionType: "write" } },
+						{ sum: { requests: 1 }, dimensions: { actionType: "write" } },
 						{ sum: { requests: 99 }, dimensions: { actionType: "delete" } },
 					],
 				}),
@@ -51,9 +67,9 @@ describe("fetchUsageSnapshot", () => {
 		});
 		const env = { CF_API_TOKEN: "tok", CF_ACCOUNT_ID: ACCOUNT, TREE_CACHE: makeKv() as unknown as KVNamespace };
 		const snap = await fetchUsageSnapshot(env);
-		expect(snap.workers).toEqual({ ok: true, data: { today: 5, last30d: 90 } });
-		expect(snap.d1).toEqual({ ok: true, data: { reads_today: 7, writes_today: 2, storage_bytes: null } });
-		expect(snap.kv).toEqual({ ok: true, data: { reads_today: 11, writes_today: 3, storage_bytes: null } });
+		expect(snap.workers).toEqual({ ok: true, data: { today: 9, last30d: 98 } });
+		expect(snap.d1).toEqual({ ok: true, data: { reads_today: 10, writes_today: 7, storage_bytes: null } });
+		expect(snap.kv).toEqual({ ok: true, data: { reads_today: 15, writes_today: 4, storage_bytes: null } });
 
 		expect(await fetchUsageSnapshot(env)).toEqual(snap);
 		expect(fetchMock).toHaveBeenCalledTimes(3);
@@ -72,6 +88,19 @@ describe("fetchUsageSnapshot", () => {
 		expect(snap.workers).toEqual({ ok: false, error: "http_403" });
 		expect(snap.d1).toEqual({ ok: false, error: "bad scope; x" });
 		expect(snap.kv).toEqual({ ok: false, error: "invalid_json" });
+	});
+
+	it("keeps a healthy panel's data next to two broken ones", async () => {
+		serve({
+			workers: [403, {}],
+			d1: [200, { errors: [{ message: "bad scope" }] }],
+			kv: [200, account({ kvOperationsAdaptiveGroups: [{ sum: { requests: 20 }, dimensions: { actionType: "read" } }] })],
+		});
+		const env = { CF_API_TOKEN: "tok", CF_ACCOUNT_ID: ACCOUNT, TREE_CACHE: makeKv() as unknown as KVNamespace };
+		const snap = await fetchUsageSnapshot(env);
+		expect(snap.workers).toEqual({ ok: false, error: "http_403" });
+		expect(snap.d1).toEqual({ ok: false, error: "bad scope" });
+		expect(snap.kv).toEqual({ ok: true, data: { reads_today: 20, writes_today: 0, storage_bytes: null } });
 	});
 
 	it("names a missing account, empty data and a network error", async () => {
