@@ -285,3 +285,56 @@ describe("GET /config — turnstile_always", () => {
 		).toBe(false);
 	});
 });
+
+describe("POST /comments — anonymous authors", () => {
+	const postAnon = (body: Record<string, unknown>) =>
+		new Hono<{ Bindings: Bindings }>().route("/", comments).request(
+			"/",
+			{
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ slug: SLUG, body: "hello", name: "Guest", ...body }),
+			},
+			makeEnv() as unknown as Record<string, unknown>,
+			execCtx,
+		);
+
+	it("verifies the token, creates a ghost author and anchors a new post's published date", async () => {
+		const res = await postAnon({
+			turnstile_token: "solved",
+			slug: "fresh",
+			post_published: " 2026-01-02T00:00:00Z ",
+		});
+		expect(res.status).toBe(201);
+		expect(siteverify).toHaveBeenCalledOnce();
+		expect(sqlite.prepare("SELECT provider, name FROM users WHERE id <> ?").all(USER_ID)).toEqual([
+			{ provider: "anon", name: "Guest" },
+		]);
+		expect(sqlite.prepare("SELECT published_at FROM posts WHERE slug = 'fresh'").get()).toEqual({
+			published_at: Date.UTC(2026, 0, 2),
+		});
+	});
+
+	it("spends the write budget before siteverify, so a flood never reaches Cloudflare", async () => {
+		expect((await postAnon({ turnstile_token: "solved" })).status).toBe(201);
+		const second = await postAnon({ turnstile_token: "solved" });
+		expect(second.status).toBe(429);
+		expect(siteverify).toHaveBeenCalledOnce();
+	});
+
+	it("refuses a rejected token and a banned ghost without writing a comment", async () => {
+		stubSiteverify(false);
+		expect((await postAnon({ turnstile_token: "forged" })).status).toBe(400);
+		expect(countComments()).toBe(0);
+
+		stubSiteverify(true);
+		uninstallMockCaches();
+		installMockCaches();
+		expect((await postAnon({ turnstile_token: "solved" })).status).toBe(201);
+		sqlite.prepare("UPDATE users SET is_banned = 1 WHERE provider = 'anon'").run();
+		uninstallMockCaches();
+		installMockCaches();
+		expect((await postAnon({ turnstile_token: "solved" })).status).toBe(403);
+		expect(countComments()).toBe(1);
+	});
+});
