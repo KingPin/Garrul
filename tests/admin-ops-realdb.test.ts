@@ -35,7 +35,7 @@ const audits = (h: ReturnType<typeof adminHarness>) =>
 describe("POST /admin/api/ops/rerender", () => {
 	it("re-renders stale rows a page at a time and audits each working batch", async () => {
 		const h = adminHarness();
-		seed(h, 3);
+		seed(h, 5);
 		const first = await h.request("/admin/api/ops/rerender", { method: "POST", body: { batch: 2 } });
 		const page1 = (await first.json()) as { processed: number; next_cursor: unknown };
 		expect(page1.processed).toBe(2);
@@ -45,7 +45,16 @@ describe("POST /admin/api/ops/rerender", () => {
 			method: "POST",
 			body: { batch: 2, cursor: page1.next_cursor },
 		});
-		expect(((await second.json()) as { processed: number }).processed).toBe(1);
+		expect(((await second.json()) as { processed: number }).processed).toBe(2);
+
+		// One stale row remains. A junk batch/cursor must fall back to sane
+		// defaults (default batch size, cursor ignored) and still find it.
+		const junk = await h.request("/admin/api/ops/rerender", {
+			method: "POST",
+			body: { batch: "lots", cursor: { created_at: "x", id: 1 } },
+		});
+		expect(((await junk.json()) as { processed: number }).processed).toBe(1);
+
 		const rows = h.sqlite.prepare("SELECT body_html, renderer_version FROM comments").all() as Array<{
 			body_html: string;
 			renderer_version: number;
@@ -53,15 +62,13 @@ describe("POST /admin/api/ops/rerender", () => {
 		expect(rows.every((r) => r.renderer_version === CURRENT_RENDERER_VERSION)).toBe(true);
 		expect(rows[0]?.body_html).toContain("<strong>hi</strong>");
 
-		// Nothing left: no audit row for an empty batch; junk batch/cursor fall back.
-		const empty = await h.request("/admin/api/ops/rerender", {
-			method: "POST",
-			body: { batch: "lots", cursor: { created_at: "x", id: 1 } },
-		});
+		// Nothing left now: an empty batch never audits.
+		const empty = await h.request("/admin/api/ops/rerender", { method: "POST", body: { batch: 2 } });
 		expect(((await empty.json()) as { processed: number }).processed).toBe(0);
 		expect(audits(h).map((a) => [a.action, a.meta.batch_size, a.meta.processed])).toEqual([
 			["rerender", 2, 2],
-			["rerender", 2, 1],
+			["rerender", 2, 2],
+			["rerender", 50, 1],
 		]);
 	});
 
