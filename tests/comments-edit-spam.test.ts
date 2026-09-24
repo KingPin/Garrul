@@ -249,3 +249,20 @@ describe("PATCH /comments/:id — spam re-evaluation", () => {
 		expect(bodyOf(id)).toBe("harmless");
 	});
 });
+
+describe("PATCH /comments/:id — refusals before the spam pass", () => {
+	it("refuses an edit after the window closes, keeping the old body", async () => {
+		const id = seed();
+		sqlite.prepare("UPDATE comments SET created_at = ? WHERE id = ?").run(Date.now() - 16 * 60_000, id);
+		expect((await patch(id, "too late to change")).status).toBe(403);
+		expect(bodyOf(id)).toBe("harmless");
+	});
+
+	it("refuses an empty or oversized body", async () => {
+		const id = seed();
+		expect((await patch(id, "")).status).toBe(400);
+		expect((await patch(id, "x".repeat(100_000))).status).toBe(400);
+		expect(bodyOf(id)).toBe("harmless");
+		expect(verdictsFor(id)).toEqual([]);
+	});
+});
