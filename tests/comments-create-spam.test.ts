@@ -13,56 +13,10 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { comments } from "../src/routes/api.comments";
 import { installMockCaches, uninstallMockCaches } from "./helpers/mock-caches";
+import { makeD1, makeKv } from "./helpers/admin-sqlite";
 import type { Bindings } from "../src/index";
 
 const MIGRATIONS_DIR = join(__dirname, "../src/db/migrations");
-
-const makeD1 = (db: DatabaseSync): any => ({
-	prepare(sql: string) {
-		const stmt = db.prepare(sql);
-		let bound: unknown[] = [];
-		return {
-			bind(...args: unknown[]) {
-				bound = args;
-				return this;
-			},
-			async run() {
-				const r = stmt.run(...(bound as never[]));
-				return { success: true, meta: { changes: r.changes } };
-			},
-			async first() {
-				return stmt.get(...(bound as never[])) ?? null;
-			},
-			async all() {
-				return { results: stmt.all(...(bound as never[])) };
-			},
-		};
-	},
-});
-
-const makeKv = () => {
-	const store = new Map<string, string>();
-	return {
-		async get(key: string, type?: "json") {
-			const raw = store.get(key);
-			if (raw == null) return null;
-			return type === "json" ? JSON.parse(raw) : raw;
-		},
-		async put(key: string, value: string) {
-			store.set(key, value);
-		},
-		async delete(key: string) {
-			store.delete(key);
-		},
-		async list({ prefix }: { prefix: string }) {
-			return {
-				keys: [...store.keys()]
-					.filter((k) => k.startsWith(prefix))
-					.map((name) => ({ name })),
-			};
-		},
-	};
-};
 
 const SID = "a".repeat(64);
 const USER = "01HU000000000000000000";

@@ -13,52 +13,13 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { admin } from "../src/routes/admin";
 import type { Bindings } from "../src/index";
+import { makeD1, makeKv } from "./helpers/admin-sqlite";
 
 const MIGRATIONS_DIR = join(__dirname, "../src/db/migrations");
-
-const makeD1 = (db: DatabaseSync): any => ({
-	prepare(sql: string) {
-		const stmt = db.prepare(sql);
-		let bound: unknown[] = [];
-		return {
-			bind(...args: unknown[]) {
-				bound = args;
-				return this;
-			},
-			async run() {
-				const r = stmt.run(...(bound as never[]));
-				return { success: true, meta: { changes: r.changes } };
-			},
-			async first() {
-				return stmt.get(...(bound as never[])) ?? null;
-			},
-			async all() {
-				return { results: stmt.all(...(bound as never[])) };
-			},
-		};
-	},
-});
 
 const MOD_SID = "b".repeat(64);
 const MOD_ID = "01HMOD00000000000000000MOD";
 const SLUG = "hello";
-
-const makeKv = (entries: Array<[string, string]>) => {
-	const store = new Map(entries);
-	return {
-		async get(key: string, type?: "json") {
-			const raw = store.get(key);
-			if (raw == null) return null;
-			return type === "json" ? JSON.parse(raw) : raw;
-		},
-		async put(key: string, value: string) {
-			store.set(key, value);
-		},
-		async delete(key: string) {
-			store.delete(key);
-		},
-	};
-};
 
 const execCtx = {
 	waitUntil() {},

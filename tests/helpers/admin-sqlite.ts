@@ -19,7 +19,7 @@ export const MOD_ID = "01HMOD00000000000000000MOD";
 export const ADMIN_SID = "a".repeat(64);
 export const MOD_SID = "b".repeat(64);
 
-const makeD1 = (db: DatabaseSync): any => ({
+export const makeD1 = (db: DatabaseSync): any => ({
 	prepare(sql: string) {
 		const stmt = db.prepare(sql);
 		let bound: unknown[] = [];
