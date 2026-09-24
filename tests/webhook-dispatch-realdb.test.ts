@@ -10,6 +10,7 @@
 import { afterEach, describe, it, expect, vi } from "vitest";
 import { enqueueWebhookDelivery } from "../src/db/queries";
 import { fireWebhook, runWebhookRetries } from "../src/lib/webhook";
+import { verifyWebhookSignature } from "../src/lib/webhook-sig";
 import { adminHarness } from "./helpers/admin-sqlite";
 
 afterEach(() => {
@@ -46,11 +47,11 @@ const breaking = (db: D1Database, pattern: RegExp): D1Database =>
 	}) as unknown as D1Database;
 
 const stubFetch = () => {
-	const calls: Array<{ url: string; headers: Record<string, string> }> = [];
+	const calls: Array<{ url: string; headers: Record<string, string>; body: string }> = [];
 	vi.stubGlobal(
 		"fetch",
 		vi.fn(async (url: string, init: RequestInit) => {
-			calls.push({ url, headers: init.headers as Record<string, string> });
+			calls.push({ url, headers: init.headers as Record<string, string>, body: String(init.body) });
 			return new Response("ok", { status: 200 });
 		}),
 	);
@@ -60,19 +61,23 @@ const stubFetch = () => {
 describe("fireWebhook", () => {
 	it("signs a first-attempt delivery and clears the endpoint's stale fail count", async () => {
 		const { env, sqlite } = adminHarness();
+		const secret = "s".repeat(32);
 		sqlite
 			.prepare(
 				`INSERT INTO webhook_endpoints (id, url, secret, adapter, enabled, fail_count, created_at, updated_at)
 				 VALUES ('w1', 'https://hooks.example.com/h', ?, 'generic', 1, 4, 1, 1)`,
 			)
-			.run("s".repeat(32));
+			.run(secret);
 		const calls = stubFetch();
 		const pending: Promise<unknown>[] = [];
 		fireWebhook(env, { waitUntil: (p) => pending.push(p) }, PAYLOAD);
 		await Promise.all(pending);
 
 		expect(calls.map((c) => c.url)).toEqual(["https://hooks.example.com/h"]);
-		expect(calls[0]?.headers["x-garrul-signature"]).toMatch(/^t=\d+,v1=[0-9a-f]{64}$/);
+		const header = calls[0]?.headers["x-garrul-signature"] ?? "";
+		expect(header).toMatch(/^t=\d+,v1=[0-9a-f]{64}$/);
+		expect(await verifyWebhookSignature(secret, calls[0]?.body ?? "", header)).toBe(true);
+		expect(await verifyWebhookSignature("wrong-secret".padEnd(32, "x"), calls[0]?.body ?? "", header)).toBe(false);
 		expect(sqlite.prepare("SELECT fail_count FROM webhook_endpoints").get()).toEqual({ fail_count: 0 });
 	});
 
@@ -97,7 +102,7 @@ describe("fireWebhook", () => {
 });
 
 describe("runWebhookRetries failure isolation", () => {
-	it("survives a crashing retry and a failing prune", async () => {
+	it("survives a crashing retry and a failing prune, without blocking a healthy delivery", async () => {
 		const { env, sqlite } = adminHarness();
 		sqlite
 			.prepare(
@@ -105,12 +110,32 @@ describe("runWebhookRetries failure isolation", () => {
 				 VALUES ('w1', 'https://hooks.example.com/h', 'generic', 1, 1, 1)`,
 			)
 			.run();
+		sqlite
+			.prepare(
+				`INSERT INTO webhook_endpoints (id, url, adapter, enabled, created_at, updated_at)
+				 VALUES ('w2', 'https://hooks.example.com/healthy', 'generic', 1, 1, 1)`,
+			)
+			.run();
 		await enqueueWebhookDelivery(env.DB, "w1", "comment.posted", "{}", 1);
+		await enqueueWebhookDelivery(env.DB, "w2", "comment.posted", "{}", 1);
 		const calls = stubFetch();
 		const events = loggedEvents();
-		const db = breaking(env.DB, /FROM webhook_endpoints WHERE id|DELETE FROM webhook_deliveries/);
+		// The DB stub only sees SQL text, not bound args, so isolate the crash to
+		// the batch's *first* endpoint lookup (w1's) rather than trying to target
+		// it by id: prune breaks every time (it isn't per-row).
+		let brokeOnce = false;
+		const db = {
+			prepare(sql: string) {
+				if (/FROM webhook_endpoints WHERE id/.test(sql) && !brokeOnce) {
+					brokeOnce = true;
+					throw new Error("d1 unavailable");
+				}
+				if (/DELETE FROM webhook_deliveries/.test(sql)) throw new Error("d1 unavailable");
+				return env.DB.prepare(sql);
+			},
+		} as unknown as D1Database;
 		await expect(runWebhookRetries({ ...env, DB: db })).resolves.toBeUndefined();
-		expect(calls).toEqual([]);
+		expect(calls.map((c) => c.url)).toEqual(["https://hooks.example.com/healthy"]);
 		expect(events).toEqual(["webhook.retry_crash", "webhook.prune_failed"]);
 	});
 });
