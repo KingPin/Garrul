@@ -536,7 +536,7 @@ describe("POST /telegram/webhook — callback moderation + role gate", () => {
 		const id = await seedComment("approved");
 
 		await post(
-			mkEnv(),
+			{ ...mkEnv(), SESSIONS: openKv() } as unknown as Bindings,
 			callbackUpdate("99", encodeCallback("ban", id)),
 			SECRET,
 		);
@@ -549,6 +549,8 @@ describe("POST /telegram/webhook — callback moderation + role gate", () => {
 				.get() as { is_banned: number }
 		).is_banned;
 		expect(banned).toBe(1);
+		const toasts = tgCalls.filter((c) => c.method === "answerCallbackQuery").map((c) => String(c.body.text));
+		expect(toasts).toEqual(["✓ Banned the comment author"]);
 	});
 
 	it("rejects a callback from an unlinked Telegram user (no action)", async () => {
@@ -791,17 +793,6 @@ describe("POST /telegram/webhook — ban, flagged posts and callback floods", ()
 			{ ...mkEnv(), SESSIONS: openKv() } as unknown as Bindings,
 			{ update_id: 10, callback_query: { id: "cbq4", from: { id: 42 }, data } }, SECRET);
 	const toasts = () => tgCalls.filter((c) => c.method === "answerCallbackQuery").map((c) => String(c.body.text));
-
-	it("bans a comment author from the ban button", async () => {
-		seedUser(MOD, "admin");
-		await linkOperator("42", MOD);
-		const id = await seedComment("approved");
-		await tap(encodeCallback("ban", id));
-		expect(toasts()).toEqual(["✓ Banned the comment author"]);
-		expect(sqlite.prepare("SELECT is_banned FROM users WHERE id = '01HAUTHOR000000000000000AB'").get()).toEqual({
-			is_banned: 1,
-		});
-	});
 
 	it("names the most-flagged post in /queue", async () => {
 		seedUser(MOD, "mod");
