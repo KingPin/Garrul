@@ -23,7 +23,9 @@ const seeded = () => {
 	);
 	for (let i = 1; i <= N; i++) {
 		const n = pad(i);
-		const ts = 1_000 + i;
+		// Rows 25 and 26 share a created_at (a genuine tie, away from the
+		// page-boundary), forcing the id-DESC secondary sort to actually run.
+		const ts = 1_000 + (i === 26 ? 25 : i);
 		run(
 			`INSERT INTO users (id, provider, provider_id, name, is_admin, role, created_at)
 			 VALUES (?, 'anon', NULL, ?, 0, 'user', ?)`,
@@ -68,18 +70,27 @@ const LISTS: Array<[string, string]> = [
 	["/admin/audit", "pager-target-"],
 ];
 
+const markersIn = (html: string, prefix: string) =>
+	new Set([...html.matchAll(new RegExp(`${prefix}(\\d\\d)`, "g"))].map((m) => m[1]));
+
 describe("admin list pagination", () => {
 	it.each(LISTS)("%s pages to older rows via its before cursor", async (path, prefix) => {
 		const h = seeded();
 		const first = await (await h.request(path)).text();
-		expect(first).toContain(`${prefix}55`);
-		expect(first).not.toContain(`${prefix}01<`);
 		const href = first.match(/href="([^"]*before=[^"]+)"/)?.[1];
 		expect(href).toBeDefined();
-
 		const second = await (await h.request((href as string).replace(/&amp;/g, "&"))).text();
-		expect(second).toContain(`${prefix}01`);
-		expect(second).not.toContain(`${prefix}55`);
+
+		const firstMarkers = markersIn(first, prefix);
+		const secondMarkers = markersIn(second, prefix);
+		expect(firstMarkers.has("55")).toBe(true);
+		expect(secondMarkers.has("01")).toBe(true);
+		// No row appears on both pages...
+		for (const m of firstMarkers) expect(secondMarkers.has(m)).toBe(false);
+		// ...and none go missing, including the two tied at row 25/26.
+		expect(new Set([...firstMarkers, ...secondMarkers])).toEqual(
+			new Set(Array.from({ length: N }, (_, i) => pad(i + 1))),
+		);
 	});
 
 	it.each(LISTS)("%s ignores a malformed cursor", async (path, prefix) => {
