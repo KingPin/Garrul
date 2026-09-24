@@ -67,9 +67,12 @@ describe("migration runner", () => {
 		expect(calls.every((c) => c.args[3] === "--remote")).toBe(true);
 	});
 
-	it("treats unreadable wrangler output as nothing applied", async () => {
+	it("aborts without applying anything when migration history is unreadable", async () => {
+		const exit = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
+		vi.spyOn(console, "error").mockImplementation(() => {});
 		const { appliedFiles } = await run([], "garbage");
-		expect(appliedFiles).toEqual(FILES);
+		expect(appliedFiles).toEqual([]);
+		expect(exit).toHaveBeenCalledWith(1);
 	});
 
 	it("exits 1 when wrangler fails", async () => {
