@@ -643,3 +643,85 @@ describe("POST /telegram/webhook — slash commands are read-only", () => {
 		expect(audits).toBe(0);
 	});
 });
+
+describe("POST /telegram/webhook — command readouts and edge replies", () => {
+	const MOD = "01HMOD0000000000000000000A";
+	const say = (text: string) =>
+		post(
+			mkEnv(),
+			{ update_id: 5, message: { message_id: 13, chat: { id: 555 }, from: { id: 42 }, text } },
+			SECRET,
+		);
+	// Text of the last sendMessage the bot sent.
+	const lastReply = () =>
+		String(tgCalls.filter((c) => c.method === "sendMessage").at(-1)?.body.text);
+
+	beforeEach(async () => {
+		seedUser(MOD, "mod");
+		await linkOperator("42", MOD);
+	});
+
+	it("/stats, /comment and /user render read-only readouts", async () => {
+		const id = await seedComment("pending");
+		await say("/stats@GarrulBot");
+		expect(lastReply()).toContain("Spam rate (7d): <b>0%</b>");
+		await say(`/comment ${id}`);
+		expect(lastReply()).toContain("Status: <b>pending</b>");
+		expect(lastReply()).toContain("Author: Author");
+		expect(lastReply()).toContain(`https://comments.example.com/admin/comments/${id}`);
+		await say(`/user ${MOD}`);
+		expect(lastReply()).toContain("Role: <b>mod</b>");
+		expect(auditCount("approve")).toBe(0);
+	});
+
+	it("answers usage, not-found and help for bad arguments and unknown commands", async () => {
+		await say("/comment");
+		expect(lastReply()).toBe("Usage: /comment &lt;id&gt;");
+		await say("/user");
+		expect(lastReply()).toBe("Usage: /user &lt;id&gt;");
+		await say("/user 01HNOPE");
+		expect(lastReply()).toBe("No such user.");
+		await say("/frobnicate");
+		expect(lastReply()).toContain("<b>Garrul operator bot</b>");
+		const before = tgCalls.length;
+		await say("hello bot");
+		await say("/start");
+		expect(tgCalls.length).toBe(before + 2);
+	});
+
+	it("resolves reports and acks an unknown callback without acting", async () => {
+		const id = await seedComment("approved");
+		sqlite
+			.prepare(
+				`INSERT INTO reports (id, comment_id, reporter_user_id, reason, created_at)
+				 VALUES ('r1', ?, '01HAUTHOR000000000000000AB', 'spam', 1)`,
+			)
+			.run(id);
+		const tap = (data: string) =>
+			post(
+				mkEnv(),
+				{ update_id: 6, callback_query: { id: "cbq2", from: { id: 42 }, data } },
+				SECRET,
+			);
+		await tap(encodeCallback("resolve", id));
+		const open = sqlite
+			.prepare("SELECT COUNT(*) AS n FROM reports WHERE status = 'open'")
+			.get() as { n: number };
+		expect(open.n).toBe(0);
+		await tap("not-a-garrul-callback");
+		await tap(encodeCallback("delete", "01HNOPE"));
+		const toasts = tgCalls
+			.filter((c) => c.method === "answerCallbackQuery")
+			.map((c) => c.body.text);
+		expect(toasts).toHaveLength(3);
+		// No message on the tap, so nothing to edit.
+		expect(tgCalls.some((c) => c.method === "editMessageText")).toBe(false);
+	});
+
+	it("acks without calling the Bot API when the token is missing", async () => {
+		const env = { ...mkEnv(), TELEGRAM_BOT_TOKEN: undefined } as unknown as Bindings;
+		const res = await post(env, { update_id: 7, message: { chat: { id: 1 }, text: "/queue" } }, SECRET);
+		expect(await res.json()).toEqual({ ok: true });
+		expect(tgCalls).toEqual([]);
+	});
+});
