@@ -6,6 +6,7 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import {
 	getCachedLatestVersion,
+	getCachedRecentReleases,
 	peekCachedLatestVersion,
 } from "../src/lib/version-check";
 
@@ -149,5 +150,49 @@ describe("version-check", () => {
 		const info = await getCachedLatestVersion(env);
 		expect(info).toBeNull();
 		expect(warnSpy).toHaveBeenCalledWith("version_check.malformed");
+	});
+});
+
+describe("getCachedRecentReleases", () => {
+	const originalFetch = globalThis.fetch;
+	afterEach(() => {
+		globalThis.fetch = originalFetch;
+	});
+	const serve = (res: () => Response | Promise<Response>) => {
+		const fetchMock = vi.fn(async () => res());
+		globalThis.fetch = fetchMock as unknown as typeof fetch;
+		return fetchMock;
+	};
+
+	it("keeps published releases, filling a missing name and URL, and caches them", async () => {
+		const env = makeEnv();
+		const fetchMock = serve(() =>
+			okResponse([
+				{ tag_name: "v2.0.0", name: "v2.0.0 — big", html_url: "https://x.example/v2", published_at: "2026-09-01", body: "**new**" },
+				{ tag_name: "v1.9.0" },
+				{ tag_name: "v2.1.0-rc", draft: true },
+				{ name: "no tag" },
+				null,
+			]),
+		);
+		const releases = await getCachedRecentReleases(env);
+		expect(releases).toEqual([
+			{ tag: "v2.0.0", name: "v2.0.0 — big", url: "https://x.example/v2", publishedAt: "2026-09-01", bodyHtml: "<p><strong>new</strong></p>" },
+			{ tag: "v1.9.0", name: "v1.9.0", url: "https://github.com/kingpin/garrul/releases/tag/v1.9.0", publishedAt: "", bodyHtml: "" },
+		]);
+		expect(await getCachedRecentReleases(env)).toEqual(releases);
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+	});
+
+	it.each([
+		["a non-2xx answer", () => errResponse(403)],
+		["a non-array body", () => okResponse({ message: "rate limited" })],
+		["a network error", () => Promise.reject(new Error("offline"))],
+	])("caches a null entry after %s and stops asking", async (_label, res) => {
+		const env = makeEnv();
+		const fetchMock = serve(res);
+		expect(await getCachedRecentReleases(env)).toBeNull();
+		expect(await getCachedRecentReleases(env)).toBeNull();
+		expect(fetchMock).toHaveBeenCalledTimes(1);
 	});
 });
