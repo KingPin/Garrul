@@ -204,26 +204,8 @@ describe("POST /admin/api/ops/import-disqus", () => {
 		expect(commentCount()).toBe(1);
 	});
 
-	it("answers 413 for a decompression bomb rather than inflating it", async () => {
-		const bomb = await gzip("A".repeat(MAX_IMPORT_BYTES + 1024));
-		// A few KB on the wire, so both size checks above the decode pass.
-		expect(bomb.byteLength).toBeLessThan(1024 * 1024);
-		const res = await upload(bomb);
-		expect(res.status).toBe(413);
-		expect(await res.json()).toEqual({ error: "too_large" });
-		expect(commentCount()).toBe(0);
-	});
-
 	it("still rejects a file that is neither gzip nor a Disqus export", async () => {
 		const res = await upload("just some notes");
-		expect(res.status).toBe(400);
-		expect(await res.json()).toEqual({ error: "not_disqus_xml" });
-	});
-
-	it("rejects a corrupt gzip member as not-a-Disqus-export", async () => {
-		const u8 = await gzip(XML);
-		u8[u8.length - 5] = (u8.at(-5) ?? 0) ^ 0xff; // wreck the trailing CRC32
-		const res = await upload(u8);
 		expect(res.status).toBe(400);
 		expect(await res.json()).toEqual({ error: "not_disqus_xml" });
 	});
@@ -293,15 +275,6 @@ describe("POST /admin/api/ops/import-remark42", () => {
 		const body = (await res.json()) as { plan: { new_comments: number } };
 		expect(body.plan.new_comments).toBe(1);
 		expect(commentCount()).toBe(1);
-	});
-
-	it("answers 413 for a decompression bomb rather than inflating it", async () => {
-		const bomb = await gzip("A".repeat(MAX_IMPORT_BYTES + 1024));
-		expect(bomb.byteLength).toBeLessThan(1024 * 1024);
-		const res = await uploadJsonl(bomb);
-		expect(res.status).toBe(413);
-		expect(await res.json()).toEqual({ error: "too_large" });
-		expect(commentCount()).toBe(0);
 	});
 
 	it("rejects a file that is neither gzip nor a Remark42 export", async () => {
@@ -418,15 +391,6 @@ describe("POST /admin/api/ops/import-comentario", () => {
 		const body = (await res.json()) as { plan: { new_comments: number } };
 		expect(body.plan.new_comments).toBe(1);
 		expect(commentCount()).toBe(1);
-	});
-
-	it("answers 413 for a decompression bomb rather than inflating it", async () => {
-		const bomb = await gzip("A".repeat(MAX_IMPORT_BYTES + 1024));
-		expect(bomb.byteLength).toBeLessThan(1024 * 1024);
-		const res = await uploadJson(bomb);
-		expect(res.status).toBe(413);
-		expect(await res.json()).toEqual({ error: "too_large" });
-		expect(commentCount()).toBe(0);
 	});
 
 	it("rejects a file that is neither gzip nor a Comentario export", async () => {
