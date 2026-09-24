@@ -31,6 +31,11 @@ describe("/admin/api/saved-replies", () => {
 			sid: MOD_SID,
 		});
 		expect(await updated.json()).toEqual({ ok: true, id });
+		expect(sqlite.prepare("SELECT title, body_md, scope FROM saved_replies WHERE id = ?").get(id)).toEqual({
+			title: "Thank you",
+			body_md: "Thanks!",
+			scope: "shared",
+		});
 
 		const deleted = await request(`/admin/api/saved-replies/${id}`, {
 			method: "DELETE",
