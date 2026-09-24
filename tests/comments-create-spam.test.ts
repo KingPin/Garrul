@@ -193,3 +193,47 @@ describe("POST /comments — anti-spam on create", () => {
 		expect(stored()).toEqual([]);
 	});
 });
+
+describe("POST /comments — who hears about a new comment", () => {
+	const settle = () => new Promise((r) => setTimeout(r, 0));
+	const subscribe = (id: string, email: string, confirmed: number | null) =>
+		sqlite
+			.prepare(
+				`INSERT INTO subscriptions (id, post_slug, email, token, created_at, confirmed_at)
+				 VALUES (?, ?, ?, ?, 1, ?)`,
+			)
+			.run(id, SLUG, email, `tok-${id}`, confirmed);
+
+	it("queues confirmed subscribers of an approved comment, never the author", async () => {
+		sqlite.prepare("UPDATE users SET email = 'me@example.com' WHERE id = ?").run(USER);
+		subscribe("s-other", "other@example.com", 1);
+		subscribe("s-self", "me@example.com", 1);
+		subscribe("s-unconfirmed", "later@example.com", null);
+		const res = await post({ body: "hello subscribers" });
+		expect(res.status).toBe(201);
+		await settle();
+		const queued = sqlite.prepare("SELECT subscription_id FROM notifications").all();
+		expect(queued).toEqual([{ subscription_id: "s-other" }]);
+		expect(sqlite.prepare("SELECT COUNT(*) AS n FROM moderator_notifications").get()).toEqual({ n: 0 });
+	});
+
+	it("tells moderators, not subscribers, about a held comment when moderator email is on", async () => {
+		subscribe("s-other", "other@example.com", 1);
+		const res = await post(
+			{ body: "cheap pills here" },
+			{ ...aiSaying("SPAM"), MODERATOR_EMAIL_ENABLED: "true" },
+		);
+		expect(res.status).toBe(201);
+		await settle();
+		expect(sqlite.prepare("SELECT reason FROM moderator_notifications").all()).toEqual([
+			{ reason: "pending" },
+		]);
+		expect(sqlite.prepare("SELECT COUNT(*) AS n FROM notifications").get()).toEqual({ n: 0 });
+	});
+
+	it("writes no moderator row for a held comment when moderator email is off", async () => {
+		await post({ body: "cheap pills here" }, aiSaying("SPAM"));
+		await settle();
+		expect(sqlite.prepare("SELECT COUNT(*) AS n FROM moderator_notifications").get()).toEqual({ n: 0 });
+	});
+});
