@@ -97,8 +97,8 @@ beforeEach(() => {
 	env = {
 		DB: makeD1(sqlite),
 		TREE_CACHE: makeKv([
-			["meta:latest-release", JSON.stringify({ kind: "null", fetchedAt: 1 })],
-			["meta:recent-releases", JSON.stringify({ kind: "null", fetchedAt: 1 })],
+			["meta:latest-release", JSON.stringify({ kind: "null", fetchedAt: Date.now() })],
+			["meta:recent-releases", JSON.stringify({ kind: "null", fetchedAt: Date.now() })],
 		]),
 		SESSIONS: makeKv([
 			[

@@ -98,11 +98,12 @@ export const adminHarness = (extraEnv: Record<string, unknown> = {}) => {
 	addUser.run(ADMIN_ID, "1", "Op", 1, "admin", Date.now());
 	addUser.run(MOD_ID, "2", "Mod", 0, "mod", Date.now());
 
+	// A fresh version-check entry, so no request reaches api.github.com.
 	const env = {
 		DB: makeD1(sqlite),
 		TREE_CACHE: makeKv([
-			["meta:latest-release", JSON.stringify({ kind: "null", fetchedAt: 1 })],
-			["meta:recent-releases", JSON.stringify({ kind: "null", fetchedAt: 1 })],
+			["meta:latest-release", JSON.stringify({ kind: "null", fetchedAt: Date.now() })],
+			["meta:recent-releases", JSON.stringify({ kind: "null", fetchedAt: Date.now() })],
 		]),
 		SESSIONS: makeKv([
 			[`sess:${ADMIN_SID}`, session(ADMIN_ID)],
