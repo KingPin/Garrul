@@ -68,11 +68,15 @@ beforeEach(() => {
 		.prepare("INSERT INTO posts (slug, title, url, created_at) VALUES (?, ?, ?, ?)")
 		.run(SLUG, "Edited", "https://blog.example/edited", 1_700_000_000_000);
 	env = baseEnv() as unknown as Bindings;
+	pending = [];
 });
 afterEach(() => uninstallMockCaches());
 
+let pending: Promise<unknown>[];
 const execCtx = {
-	waitUntil() {},
+	waitUntil(p: Promise<unknown>) {
+		pending.push(p);
+	},
 	passThroughOnException() {},
 } as unknown as ExecutionContext;
 
@@ -149,7 +153,6 @@ describe("POST /comments — anti-spam on create", () => {
 });
 
 describe("POST /comments — who hears about a new comment", () => {
-	const settle = () => new Promise((r) => setTimeout(r, 0));
 	const subscribe = (id: string, email: string, confirmed: number | null) =>
 		sqlite
 			.prepare(
@@ -165,7 +168,7 @@ describe("POST /comments — who hears about a new comment", () => {
 		subscribe("s-unconfirmed", "later@example.com", null);
 		const res = await post({ body: "hello subscribers" });
 		expect(res.status).toBe(201);
-		await settle();
+		await Promise.all(pending);
 		const queued = sqlite.prepare("SELECT subscription_id FROM notifications").all();
 		expect(queued).toEqual([{ subscription_id: "s-other" }]);
 		expect(sqlite.prepare("SELECT COUNT(*) AS n FROM moderator_notifications").get()).toEqual({ n: 0 });
@@ -178,7 +181,7 @@ describe("POST /comments — who hears about a new comment", () => {
 			{ ...aiSaying("SPAM"), MODERATOR_EMAIL_ENABLED: "true" },
 		);
 		expect(res.status).toBe(201);
-		await settle();
+		await Promise.all(pending);
 		expect(sqlite.prepare("SELECT reason FROM moderator_notifications").all()).toEqual([
 			{ reason: "pending" },
 		]);
@@ -187,7 +190,7 @@ describe("POST /comments — who hears about a new comment", () => {
 
 	it("writes no moderator row for a held comment when moderator email is off", async () => {
 		await post({ body: "cheap pills here" }, aiSaying("SPAM"));
-		await settle();
+		await Promise.all(pending);
 		expect(sqlite.prepare("SELECT COUNT(*) AS n FROM moderator_notifications").get()).toEqual({ n: 0 });
 	});
 });
