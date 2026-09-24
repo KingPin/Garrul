@@ -51,8 +51,8 @@ describe("POST/DELETE /admin/api/webhooks", () => {
 			.prepare("SELECT action, meta FROM audit_log ORDER BY rowid")
 			.all() as Array<{ action: string; meta: string }>;
 		expect(audits.map((a) => a.action)).toEqual(["webhook.create", "webhook.delete"]);
-		expect(audits[0].meta).not.toContain(secret);
-		expect(JSON.parse(audits[0].meta)).toMatchObject({ has_secret: true, enabled: true });
+		expect(audits[0]?.meta).not.toContain(secret);
+		expect(JSON.parse(String(audits[0]?.meta))).toMatchObject({ has_secret: true, enabled: true });
 		expect((await h.request(`/admin/api/webhooks/${id}`, { method: "DELETE" })).status).toBe(404);
 	});
 

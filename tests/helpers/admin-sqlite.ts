@@ -116,7 +116,7 @@ export const adminHarness = (extraEnv: Record<string, unknown> = {}) => {
 
 	const request = (
 		path: string,
-		opts: { method?: string; body?: unknown; sid?: string } = {},
+		opts: { method?: string; body?: unknown; sid?: string | undefined } = {},
 	) => {
 		const { method = "GET", body, sid = ADMIN_SID } = opts;
 		const headers: Record<string, string> = {
@@ -129,7 +129,7 @@ export const adminHarness = (extraEnv: Record<string, unknown> = {}) => {
 			{
 				method,
 				headers,
-				body: body === undefined ? undefined : JSON.stringify(body),
+				...(body === undefined ? {} : { body: JSON.stringify(body) }),
 			},
 			env as unknown as Record<string, unknown>,
 			execCtx,

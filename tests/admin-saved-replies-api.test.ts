@@ -47,7 +47,7 @@ describe("/admin/api/saved-replies", () => {
 			"saved_reply.update",
 			"saved_reply.delete",
 		]);
-		expect(JSON.parse(audits[1].meta)).toMatchObject({ scope: "shared", scope_changed: true });
+		expect(JSON.parse(String(audits[1]?.meta))).toMatchObject({ scope: "shared", scope_changed: true });
 	});
 
 	it("shows a shared reply to a peer but refuses their edit and delete", async () => {

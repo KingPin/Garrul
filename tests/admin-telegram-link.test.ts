@@ -26,7 +26,7 @@ describe("admin telegram link", () => {
 		const res = await request("/admin/api/telegram/link", { method: "POST" });
 		const { code } = (await res.json()) as { code: string };
 		expect(code).toMatch(/^[0-9a-f]{48}$/);
-		const [[key, value]] = [...kv.store];
+		const [key, value] = [...kv.store][0] ?? ["", "{}"];
 		expect(key).toContain(code);
 		expect(JSON.parse(value)).toMatchObject({ user_id: ADMIN_ID });
 		expect(audits().map((a) => a.action)).toEqual(["telegram.link_code"]);

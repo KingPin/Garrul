@@ -182,8 +182,8 @@ describe("POST /comments — anti-spam on create", () => {
 		expect(res.status).toBe(201);
 		expect(stored().map((c) => c.status)).toEqual(["pending"]);
 		const [heuristics] = verdicts();
-		expect(heuristics.source).toBe("heuristics");
-		expect(JSON.parse(heuristics.raw)).toMatchObject({ first_comment: { is_first: true } });
+		expect(heuristics?.source).toBe("heuristics");
+		expect(JSON.parse(String(heuristics?.raw))).toMatchObject({ first_comment: { is_first: true } });
 		expect(aiCalls).toBe(0);
 	});
 

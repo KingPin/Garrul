@@ -42,7 +42,8 @@ describe("runTelegramDigest", () => {
 	it("waits without stamping the clock while nobody has opted in", async () => {
 		const { env, sent, lastSent } = setup();
 		await runTelegramDigest(env, NOW);
-		await runTelegramDigest({ ...env, TELEGRAM_BOT_TOKEN: undefined }, NOW);
+		const { TELEGRAM_BOT_TOKEN: _token, ...noToken } = env;
+		await runTelegramDigest(noToken, NOW);
 		expect(sent).toEqual([]);
 		expect(lastSent()).toBeUndefined();
 	});
