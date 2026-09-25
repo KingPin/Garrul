@@ -52,13 +52,13 @@ const ensureMigrationsTable = () => {
 
 const appliedSet = (): Set<string> => {
 	const out = d1Exec("SELECT name FROM _migrations");
-	try {
-		const parsed = JSON.parse(out);
-		const rows: { name: string }[] = parsed[0]?.results ?? [];
-		return new Set(rows.map((r) => r.name));
-	} catch {
-		return new Set();
-	}
+	// Unreadable output means we don't actually know what's applied — treating
+	// that as "nothing applied" would replay every file, including the
+	// non-repeatable `ALTER TABLE ... ADD COLUMN` migrations. Let it throw so
+	// main()'s try/catch aborts before any file is touched.
+	const parsed = JSON.parse(out);
+	const rows: { name: string }[] = parsed[0]?.results ?? [];
+	return new Set(rows.map((r) => r.name));
 };
 
 const recordApplied = (name: string) => {

@@ -206,3 +206,39 @@ describe("GET /:provider/start — binding cookie name", () => {
 		expect(sc).toContain("Path=/api/v1/auth");
 	});
 });
+
+describe("auth routes — refusals and sign-out", () => {
+	const post = (path: string, body: string, cookie?: string) =>
+		app().request(
+			path,
+			{
+				method: "POST",
+				headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) },
+				body,
+			},
+			env as unknown as Record<string, unknown>,
+		);
+
+	it("answers 503 for a provider with no client credentials", async () => {
+		const res = await app().request("/github/start", {}, env as unknown as Record<string, unknown>);
+		expect(res.status).toBe(503);
+		expect(await res.json()).toEqual({ error: "provider_not_configured" });
+	});
+
+	it.each([
+		["non-JSON", "{nope"],
+		["no token", "{}"],
+		["an empty token", '{"token":""}'],
+	])("refuses an exchange body with %s", async (_label, body) => {
+		const res = await post("/session/exchange", body);
+		expect(res.status).toBe(400);
+		expect(await res.json()).toEqual({ error: "err.token.bad" });
+	});
+
+	it("signs out by deleting the session behind the cookie", async () => {
+		const sid = await seedSession();
+		const res = await post("/signout", "", `__Host-garrul_sess=${sid}`);
+		expect(await res.json()).toEqual({ ok: true });
+		expect(sessions.store.has(`sess:${sid}`)).toBe(false);
+	});
+});

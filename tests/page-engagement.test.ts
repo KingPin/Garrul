@@ -16,6 +16,7 @@ import { describe, it, expect } from "vitest";
 import { Hono } from "hono";
 import type { TestApp, } from "./helpers/app";
 import { pageEngagement } from "../src/routes/api.page-engagement";
+import { installMockCaches, uninstallMockCaches } from "./helpers/mock-caches";
 
 type Reaction = { post_slug: string; user_id: string; kind: string };
 type Vote = { post_slug: string; user_id: string; value: number };
@@ -361,5 +362,36 @@ describe("page-engagement GET — initial state", () => {
 		const body = (await res.json()) as Record<string, unknown>;
 		expect(body).toHaveProperty("reactions");
 		expect(body).not.toHaveProperty("votes");
+	});
+});
+
+describe("page engagement — string votes and the per-IP budget", () => {
+	it("accepts the string spellings of a vote from a form post", async () => {
+		const { app, env } = mkApp({ page_votes_enabled: true });
+		const up = (await (await post(app, env, "/votes", { slug: "p", value: "1" }, "10.0.0.1")).json()) as {
+			my_vote: number;
+		};
+		expect(up.my_vote).toBe(1);
+		const down = (await (await post(app, env, "/votes", { slug: "p", value: "-1" }, "10.0.0.2")).json()) as {
+			my_vote: number;
+		};
+		expect(down.my_vote).toBe(-1);
+		const clear = (await (await post(app, env, "/votes", { slug: "p", value: "0" }, "10.0.0.3")).json()) as {
+			my_vote: number;
+		};
+		expect(clear.my_vote).toBe(0);
+	});
+
+	it("429s a second reaction and a second vote from one address inside the window", async () => {
+		installMockCaches();
+		try {
+			const { app, env } = mkApp({ page_reactions_enabled: true, page_votes_enabled: true });
+			expect((await post(app, env, "/reactions", { slug: "p", kind: "fire" })).status).toBe(200);
+			expect((await post(app, env, "/reactions", { slug: "p", kind: "fire" })).status).toBe(429);
+			expect((await post(app, env, "/votes", { slug: "p", value: 1 })).status).toBe(200);
+			expect((await post(app, env, "/votes", { slug: "p", value: 1 })).status).toBe(429);
+		} finally {
+			uninstallMockCaches();
+		}
 	});
 });

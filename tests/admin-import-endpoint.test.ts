@@ -204,26 +204,8 @@ describe("POST /admin/api/ops/import-disqus", () => {
 		expect(commentCount()).toBe(1);
 	});
 
-	it("answers 413 for a decompression bomb rather than inflating it", async () => {
-		const bomb = await gzip("A".repeat(MAX_IMPORT_BYTES + 1024));
-		// A few KB on the wire, so both size checks above the decode pass.
-		expect(bomb.byteLength).toBeLessThan(1024 * 1024);
-		const res = await upload(bomb);
-		expect(res.status).toBe(413);
-		expect(await res.json()).toEqual({ error: "too_large" });
-		expect(commentCount()).toBe(0);
-	});
-
 	it("still rejects a file that is neither gzip nor a Disqus export", async () => {
 		const res = await upload("just some notes");
-		expect(res.status).toBe(400);
-		expect(await res.json()).toEqual({ error: "not_disqus_xml" });
-	});
-
-	it("rejects a corrupt gzip member as not-a-Disqus-export", async () => {
-		const u8 = await gzip(XML);
-		u8[u8.length - 5] = (u8.at(-5) ?? 0) ^ 0xff; // wreck the trailing CRC32
-		const res = await upload(u8);
 		expect(res.status).toBe(400);
 		expect(await res.json()).toEqual({ error: "not_disqus_xml" });
 	});
@@ -293,15 +275,6 @@ describe("POST /admin/api/ops/import-remark42", () => {
 		const body = (await res.json()) as { plan: { new_comments: number } };
 		expect(body.plan.new_comments).toBe(1);
 		expect(commentCount()).toBe(1);
-	});
-
-	it("answers 413 for a decompression bomb rather than inflating it", async () => {
-		const bomb = await gzip("A".repeat(MAX_IMPORT_BYTES + 1024));
-		expect(bomb.byteLength).toBeLessThan(1024 * 1024);
-		const res = await uploadJsonl(bomb);
-		expect(res.status).toBe(413);
-		expect(await res.json()).toEqual({ error: "too_large" });
-		expect(commentCount()).toBe(0);
 	});
 
 	it("rejects a file that is neither gzip nor a Remark42 export", async () => {
@@ -418,15 +391,6 @@ describe("POST /admin/api/ops/import-comentario", () => {
 		const body = (await res.json()) as { plan: { new_comments: number } };
 		expect(body.plan.new_comments).toBe(1);
 		expect(commentCount()).toBe(1);
-	});
-
-	it("answers 413 for a decompression bomb rather than inflating it", async () => {
-		const bomb = await gzip("A".repeat(MAX_IMPORT_BYTES + 1024));
-		expect(bomb.byteLength).toBeLessThan(1024 * 1024);
-		const res = await uploadJson(bomb);
-		expect(res.status).toBe(413);
-		expect(await res.json()).toEqual({ error: "too_large" });
-		expect(commentCount()).toBe(0);
 	});
 
 	it("rejects a file that is neither gzip nor a Comentario export", async () => {
@@ -1019,5 +983,35 @@ describe("POST /admin/api/ops/import-cusdis", () => {
 			.prepare("SELECT action FROM audit_log WHERE action = 'import.cusdis'")
 			.get() as { action: string } | undefined;
 		expect(row?.action).toBe("import.cusdis");
+	});
+});
+
+describe("every import endpoint refuses oversize and corrupt uploads", () => {
+	const ENDPOINTS: Array<[string, ReturnType<typeof uploadTo>, string]> = [
+		["disqus", upload, "not_disqus_xml"],
+		["remark42", uploadJsonl, "not_remark42_export"],
+		["comentario", uploadJson, "not_comentario_export"],
+		["isso", uploadIssoJson, "not_isso_dump"],
+		["cusdis", uploadCusdisJson, "not_cusdis_dump"],
+	];
+
+	it.each(ENDPOINTS)("%s: 413 on a declared, a measured and an inflated oversize body", async (_s, send) => {
+		const declared = await send("x", { "content-length": String(MAX_IMPORT_BYTES + 1) });
+		expect(declared.status).toBe(413);
+		// No content-length header, so only the byte count catches it.
+		const measured = await send(new Uint8Array(MAX_IMPORT_BYTES + 1));
+		expect(measured.status).toBe(413);
+		const bomb = await send(await gzip("A".repeat(MAX_IMPORT_BYTES + 1024)));
+		expect(bomb.status).toBe(413);
+		expect(await bomb.json()).toEqual({ error: "too_large" });
+		expect(commentCount()).toBe(0);
+	});
+
+	it.each(ENDPOINTS)("%s: a corrupt gzip member is the wrong-file error", async (_s, send, error) => {
+		const u8 = await gzip("{}");
+		u8[u8.length - 5] = (u8.at(-5) ?? 0) ^ 0xff; // wreck the trailing CRC32
+		const res = await send(u8);
+		expect(res.status).toBe(400);
+		expect(await res.json()).toEqual({ error });
 	});
 });

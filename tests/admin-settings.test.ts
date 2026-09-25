@@ -150,6 +150,29 @@ const settingWrites = (runs: { sql: string; binds: unknown[] }[]) =>
 		.filter((r) => r.sql.includes("INSERT INTO settings"))
 		.map((r) => [r.binds[0], r.binds[1]] as [string, string]);
 
+describe("POST /admin/settings — flag writes", () => {
+	it("stores known boolean flags as text, ignores unknown keys and busts the cache", async () => {
+		const { env, kv, runs } = mkEnv();
+		const res = await postSettings(env, {
+			flags: { comments_enabled: false, page_votes_enabled: true, bogus_flag: true },
+		});
+		expect(res.status).toBe(200);
+		expect(settingWrites(runs)).toEqual([
+			["comments_enabled", "false"],
+			["page_votes_enabled", "true"],
+		]);
+		expect(kv.deletedKeys).toContain("settings:resolved");
+	});
+
+	it("rejects a non-boolean flag with 400 invalid_flag:<key> and writes nothing", async () => {
+		const { env, runs } = mkEnv();
+		const res = await postSettings(env, { flags: { comments_enabled: "false" } });
+		expect(res.status).toBe(400);
+		expect(await res.json()).toEqual({ error: "invalid_flag:comments_enabled" });
+		expect(settingWrites(runs)).toEqual([]);
+	});
+});
+
 describe("POST /admin/settings — numeric writes", () => {
 	it("stores an in-range number as text and busts the settings cache", async () => {
 		const { env, kv, runs } = mkEnv();

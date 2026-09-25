@@ -229,6 +229,7 @@ import { insertComment } from "../src/db/queries";
 import type { CommentStatus } from "../src/db/queries";
 import type { Bindings } from "../src/index";
 import { issueTelegramLinkToken, telegram } from "../src/routes/telegram";
+import { installMockCaches, uninstallMockCaches } from "./helpers/mock-caches";
 
 const MIGRATIONS_DIR = join(__dirname, "../src/db/migrations");
 
@@ -535,7 +536,7 @@ describe("POST /telegram/webhook — callback moderation + role gate", () => {
 		const id = await seedComment("approved");
 
 		await post(
-			mkEnv(),
+			{ ...mkEnv(), SESSIONS: openKv() } as unknown as Bindings,
 			callbackUpdate("99", encodeCallback("ban", id)),
 			SECRET,
 		);
@@ -548,6 +549,8 @@ describe("POST /telegram/webhook — callback moderation + role gate", () => {
 				.get() as { is_banned: number }
 		).is_banned;
 		expect(banned).toBe(1);
+		const toasts = tgCalls.filter((c) => c.method === "answerCallbackQuery").map((c) => String(c.body.text));
+		expect(toasts).toEqual(["✓ Banned the comment author"]);
 	});
 
 	it("rejects a callback from an unlinked Telegram user (no action)", async () => {
@@ -641,5 +644,185 @@ describe("POST /telegram/webhook — slash commands are read-only", () => {
 			}
 		).n;
 		expect(audits).toBe(0);
+	});
+});
+
+describe("POST /telegram/webhook — command readouts and edge replies", () => {
+	const MOD = "01HMOD0000000000000000000A";
+	const say = (text: string) =>
+		post(
+			mkEnv(),
+			{ update_id: 5, message: { message_id: 13, chat: { id: 555 }, from: { id: 42 }, text } },
+			SECRET,
+		);
+	// Text of the last sendMessage the bot sent.
+	const lastReply = () =>
+		String(tgCalls.filter((c) => c.method === "sendMessage").at(-1)?.body.text);
+
+	beforeEach(async () => {
+		seedUser(MOD, "mod");
+		await linkOperator("42", MOD);
+	});
+
+	it("/stats, /comment and /user render read-only readouts", async () => {
+		const id = await seedComment("pending");
+		await say("/stats@GarrulBot");
+		expect(lastReply()).toContain("Spam rate (7d): <b>0%</b>");
+		await say(`/comment ${id}`);
+		expect(lastReply()).toContain("Status: <b>pending</b>");
+		expect(lastReply()).toContain("Author: Author");
+		expect(lastReply()).toContain(`https://comments.example.com/admin/comments/${id}`);
+		await say(`/user ${MOD}`);
+		expect(lastReply()).toContain("Role: <b>mod</b>");
+		expect(auditCount("approve")).toBe(0);
+	});
+
+	it("answers usage, not-found and help for bad arguments and unknown commands", async () => {
+		await say("/comment");
+		expect(lastReply()).toBe("Usage: /comment &lt;id&gt;");
+		await say("/user");
+		expect(lastReply()).toBe("Usage: /user &lt;id&gt;");
+		await say("/user 01HNOPE");
+		expect(lastReply()).toBe("No such user.");
+		await say("/frobnicate");
+		expect(lastReply()).toContain("<b>Garrul operator bot</b>");
+		const before = tgCalls.length;
+		await say("hello bot");
+		await say("/start");
+		expect(tgCalls.length).toBe(before + 2);
+	});
+
+	it("resolves reports and acks an unknown callback without acting", async () => {
+		const id = await seedComment("approved");
+		sqlite
+			.prepare(
+				`INSERT INTO reports (id, comment_id, reporter_user_id, reason, created_at)
+				 VALUES ('r1', ?, '01HAUTHOR000000000000000AB', 'spam', 1)`,
+			)
+			.run(id);
+		const tap = (data: string) =>
+			post(
+				mkEnv(),
+				{ update_id: 6, callback_query: { id: "cbq2", from: { id: 42 }, data } },
+				SECRET,
+			);
+		await tap(encodeCallback("resolve", id));
+		const open = sqlite
+			.prepare("SELECT COUNT(*) AS n FROM reports WHERE status = 'open'")
+			.get() as { n: number };
+		expect(open.n).toBe(0);
+		await tap("not-a-garrul-callback");
+		await tap(encodeCallback("delete", "01HNOPE"));
+		const toasts = tgCalls
+			.filter((c) => c.method === "answerCallbackQuery")
+			.map((c) => c.body.text);
+		expect(toasts).toHaveLength(3);
+		// No message on the tap, so nothing to edit.
+		expect(tgCalls.some((c) => c.method === "editMessageText")).toBe(false);
+	});
+
+	it("acks without calling the Bot API when the token is missing", async () => {
+		const env = { ...mkEnv(), TELEGRAM_BOT_TOKEN: undefined } as unknown as Bindings;
+		const res = await post(env, { update_id: 7, message: { chat: { id: 1 }, text: "/queue" } }, SECRET);
+		expect(await res.json()).toEqual({ ok: true });
+		expect(tgCalls).toEqual([]);
+	});
+});
+
+describe("POST /telegram/webhook — refusals that still answer the operator", () => {
+	const ADMIN = "01HADMIN00000000000000000A";
+	const say = (tgUserId: string, text: string) =>
+		post(
+			mkEnv(),
+			{ update_id: 8, message: { message_id: 14, chat: { id: 555 }, from: { id: Number(tgUserId) }, text } },
+			SECRET,
+		);
+	const replies = () => tgCalls.filter((c) => c.method === "sendMessage").map((c) => String(c.body.text));
+	const toasts = () => tgCalls.filter((c) => c.method === "answerCallbackQuery").map((c) => String(c.body.text));
+
+	it("tells a linked account that lost its mod role it has no access", async () => {
+		seedUser(ADMIN, "user");
+		await linkOperator("42", ADMIN);
+		await say("42", "/queue");
+		expect(replies()).toEqual(["Your account doesn't have moderation access."]);
+	});
+
+	it("names an invalid code and an operator deleted before redeeming", async () => {
+		await say("42", `/start ${"deadbeef".repeat(6)}`);
+		const code = await issueTelegramLinkToken(oauthKv as unknown as KVNamespace, "01HGONE0000000000000000000");
+		await say("42", `/start ${code}`);
+		expect(replies()).toEqual([
+			"That link code is invalid or expired. Generate a fresh one in the admin panel.",
+			"Linking failed: that operator account no longer exists.",
+		]);
+		expect(sqlite.prepare("SELECT COUNT(*) AS n FROM telegram_links").get()).toEqual({ n: 0 });
+	});
+
+	it("refuses to ban the operator's own comment", async () => {
+		seedUser(ADMIN, "admin");
+		await linkOperator("42", ADMIN);
+		const id = await seedComment("approved");
+		sqlite.prepare("UPDATE comments SET user_id = ? WHERE id = ?").run(ADMIN, id);
+		await post(
+			mkEnv(),
+			{ update_id: 9, callback_query: { id: "cbq3", from: { id: 42 }, data: encodeCallback("ban", id) } },
+			SECRET,
+		);
+		expect(toasts()).toEqual(["Not banned: that is you, or the last admin who can still sign in."]);
+		expect(sqlite.prepare("SELECT is_banned FROM users WHERE id = ?").get(ADMIN)).toEqual({ is_banned: 0 });
+	});
+
+	it("throttles a flood from one Telegram user with a reply, not silence", async () => {
+		installMockCaches();
+		try {
+			seedUser(ADMIN, "mod");
+			await linkOperator("42", ADMIN);
+			for (let i = 0; i < 11; i++) await say("42", "/queue");
+			expect(replies().at(-1)).toBe("Slow down a moment and try again.");
+			expect(replies().filter((r) => r.includes("Moderation queue"))).toHaveLength(10);
+		} finally {
+			uninstallMockCaches();
+		}
+	});
+});
+
+describe("POST /telegram/webhook — ban, flagged posts and callback floods", () => {
+	const MOD = "01HMOD0000000000000000000B";
+	const tap = (data: string) =>
+		post(
+			{ ...mkEnv(), SESSIONS: openKv() } as unknown as Bindings,
+			{ update_id: 10, callback_query: { id: "cbq4", from: { id: 42 }, data } }, SECRET);
+	const toasts = () => tgCalls.filter((c) => c.method === "answerCallbackQuery").map((c) => String(c.body.text));
+
+	it("names the most-flagged post in /queue", async () => {
+		seedUser(MOD, "mod");
+		await linkOperator("42", MOD);
+		const id = await seedComment("approved");
+		sqlite
+			.prepare(
+				`INSERT INTO reports (id, comment_id, reporter_user_id, reason, status, created_at)
+				 VALUES ('r1', ?, NULL, 'spam', 'open', 1)`,
+			)
+			.run(id);
+		await post(
+			mkEnv(),
+			{ update_id: 11, message: { message_id: 15, chat: { id: 555 }, from: { id: 42 }, text: "/queue" } },
+			SECRET,
+		);
+		const text = tgCalls.find((c) => c.method === "sendMessage")?.body.text;
+		expect(String(text)).toContain("Most flagged: <code>hello</code> (1)");
+	});
+
+	it("answers a flood of button taps with a toast, not silence", async () => {
+		installMockCaches();
+		try {
+			seedUser(MOD, "mod");
+			await linkOperator("42", MOD);
+			const id = await seedComment("pending");
+			for (let i = 0; i < 11; i++) await tap(encodeCallback("approve", id));
+			expect(toasts().at(-1)).toBe("Slow down a moment and try again.");
+		} finally {
+			uninstallMockCaches();
+		}
 	});
 });

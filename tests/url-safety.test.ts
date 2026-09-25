@@ -94,6 +94,28 @@ describe("checkOutboundUrl SSRF blocklist", () => {
 		expect(reject("https://172.16.0.0/")).toBe("private_ipv4");
 		expect(reject("https://172.31.0.0/")).toBe("private_ipv4");
 	});
+
+	it("blocks the documentation and benchmarking ranges, not their neighbors", () => {
+		// Each blocked address is paired with one that differs in a single
+		// octet, so every octet test in the range check has to hold its weight.
+		const pairs: Array<[string, string]> = [
+			["192.0.2.1", "192.0.3.1"], // TEST-NET-1, c
+			["192.0.2.1", "192.1.2.1"], // TEST-NET-1, b
+			["192.0.2.1", "193.0.2.1"], // TEST-NET-1, a
+			["198.18.0.1", "198.17.0.1"], // 198.18/15, low edge
+			["198.19.255.1", "198.20.0.1"], // 198.18/15, high edge
+			["198.18.0.1", "199.18.0.1"], // 198.18/15, a
+			["198.51.100.1", "198.51.101.1"], // TEST-NET-2, c
+			["198.51.100.1", "198.52.100.1"], // TEST-NET-2, b
+			["203.0.113.1", "203.0.114.1"], // TEST-NET-3, c
+			["203.0.113.1", "203.1.113.1"], // TEST-NET-3, b
+			["203.0.113.1", "204.0.113.1"], // TEST-NET-3, a
+		];
+		for (const [blocked, allowed] of pairs) {
+			expect(reject(`https://${blocked}/`)).toBe("private_ipv4");
+			expect(checkOutboundUrl(`https://${allowed}/`).ok).toBe(true);
+		}
+	});
 });
 
 describe("checkOutboundUrl — IPv4-in-IPv6 bypasses", () => {

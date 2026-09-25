@@ -189,3 +189,60 @@ describe("POST /subscribe — post_slug is held to the read side's alphabet", ()
 		expect(row.post_slug).toBe("blog/2026/Hello_World-1.html");
 	});
 });
+
+describe("POST /subscribe — refusals before a row is written", () => {
+	const count = () =>
+		(sqlite.prepare("SELECT COUNT(*) AS n FROM subscriptions").get() as { n: number }).n;
+
+	it("429s a second request from the same address inside the bucket window", async () => {
+		expect((await subscribe({ post_slug: SLUG, email: EMAIL }, "203.0.113.9")).status).toBe(200);
+		const res = await subscribe({ post_slug: SLUG, email: "other@example.com" }, "203.0.113.9");
+		expect(res.status).toBe(429);
+		expect(count()).toBe(1);
+	});
+
+	it("400s a body that is not JSON", async () => {
+		const res = await new Hono<{ Bindings: Bindings }>().route("/", subscriptions).request(
+			"/",
+			{
+				method: "POST",
+				headers: { "content-type": "application/json", "cf-connecting-ip": "203.0.113.10" },
+				body: "{not json",
+			},
+			env as unknown as Record<string, unknown>,
+		);
+		expect(res.status).toBe(400);
+		expect(count()).toBe(0);
+	});
+
+	it("caps never-confirmed rows per address so the confirm mail can't be a mailbomb", async () => {
+		const pending = sqlite.prepare(
+			`INSERT INTO subscriptions (id, post_slug, email, token, created_at, confirmed_at)
+			 VALUES (?, ?, ?, ?, 1, NULL)`,
+		);
+		for (let i = 0; i < 5; i++) pending.run(`p${i}`, `other-${i}`, EMAIL, `tok-${i}`);
+		const res = await subscribe({ post_slug: SLUG, email: EMAIL }, "203.0.113.11");
+		expect(res.status).toBe(429);
+		expect(((await res.json()) as { reason: string }).reason).toBe("pending_limit_exceeded");
+		expect(count()).toBe(5);
+		expect(sent).toEqual([]);
+	});
+
+	it("503s instead of storing an unconfirmable row when outbound email isn't set up", async () => {
+		const { EMAIL_FROM: _from, ...rest } = env as unknown as Record<string, unknown>;
+		env = rest as unknown as Bindings;
+		const res = await subscribe({ post_slug: SLUG, email: EMAIL }, "203.0.113.12");
+		expect(res.status).toBe(503);
+		expect(count()).toBe(0);
+	});
+});
+
+describe("POST /unsubscribe with an unknown token", () => {
+	it.each(["/unsubscribe/nope", "/unsubscribe/nope/row/x"])("%s answers the expired-link page", async (path) => {
+		const res = await new Hono<{ Bindings: Bindings }>()
+			.route("/", subscriptions)
+			.request(path, { method: "POST" }, env as unknown as Record<string, unknown>);
+		expect(res.headers.get("content-type")).toContain("text/html");
+		expect(await res.text()).toContain("Link expired or already used.");
+	});
+});
