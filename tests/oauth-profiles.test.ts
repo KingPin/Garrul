@@ -25,7 +25,7 @@ afterEach(() => {
 });
 
 describe("GitHub profile", () => {
-	const user: [number, unknown] = [200, { id: 7, login: "octo", name: "  ", avatar_url: "https://a.example/o.png" }];
+	const user: [number, unknown] = [200, { id: 7, login: "testocto", name: "  ", avatar_url: "https://a.example/o.png" }];
 
 	it("prefers the primary verified email and falls back to the login for a blank name", async () => {
 		serve({
@@ -41,7 +41,7 @@ describe("GitHub profile", () => {
 		expect(await PROVIDERS.github.fetch_profile("tok")).toEqual({
 			provider_id: "7",
 			email: "main@example.com",
-			name: "octo",
+			name: "testocto",
 			avatar_url: "https://a.example/o.png",
 		});
 	});
@@ -76,12 +76,12 @@ describe("Facebook, X and Discord profiles", () => {
 
 	it("never returns an email for X and upsizes its avatar", async () => {
 		serve({
-			"api.twitter.com": [200, { data: { id: "x1", username: "xuser", profile_image_url: "https://p.example/a_normal.jpg" } }],
+			"api.twitter.com": [200, { data: { id: "x1", username: "testxuser", profile_image_url: "https://p.example/a_normal.jpg" } }],
 		});
 		expect(await PROVIDERS.twitter.fetch_profile("tok")).toEqual({
 			provider_id: "x1",
 			email: null,
-			name: "xuser",
+			name: "testxuser",
 			avatar_url: "https://p.example/a.jpg",
 		});
 		serve({ "api.twitter.com": [200, {}] });
@@ -92,7 +92,7 @@ describe("Facebook, X and Discord profiles", () => {
 
 	it("returns Discord's email only when verified and builds the CDN avatar", async () => {
 		serve({
-			"discord.com": [200, { id: "d1", username: "duser", global_name: "Dee", email: "d@example.com", verified: true, avatar: "abc" }],
+			"discord.com": [200, { id: "d1", username: "testduser", global_name: "Dee", email: "d@example.com", verified: true, avatar: "abc" }],
 		});
 		expect(await PROVIDERS.discord.fetch_profile("tok")).toEqual({
 			provider_id: "d1",
@@ -100,8 +100,8 @@ describe("Facebook, X and Discord profiles", () => {
 			name: "Dee",
 			avatar_url: "https://cdn.discordapp.com/avatars/d1/abc.png",
 		});
-		serve({ "discord.com": [200, { id: "d2", username: "duser", email: "d@example.com", verified: false, avatar: null }] });
-		expect(await PROVIDERS.discord.fetch_profile("tok")).toMatchObject({ email: null, name: "duser", avatar_url: null });
+		serve({ "discord.com": [200, { id: "d2", username: "testduser", email: "d@example.com", verified: false, avatar: null }] });
+		expect(await PROVIDERS.discord.fetch_profile("tok")).toMatchObject({ email: null, name: "testduser", avatar_url: null });
 		serve({ "discord.com": [401, {}] });
 		await expect(PROVIDERS.discord.fetch_profile("tok")).rejects.toThrow("discord me 401");
 	});
