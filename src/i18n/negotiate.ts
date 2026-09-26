@@ -63,6 +63,9 @@ const MAX_TAG_LENGTH = 35;
  */
 const MACROLANGUAGE_ALIASES: Record<string, string> = { no: "nb" };
 
+/** Chinese tags that explicitly denote Traditional Chinese. */
+const TRADITIONAL_CHINESE_TAGS = new Set(["hant", "tw", "hk", "mo"]);
+
 /**
  * Match a raw tag against the registry: exact first, then the primary subtag,
  * so `de-DE` and `de-AT` both land on `de`.
@@ -76,6 +79,13 @@ export const matchLocale = (raw: string | null | undefined): string | undefined 
 	if (!tag || tag.length > MAX_TAG_LENGTH) return undefined;
 	const exact = canonical(tag);
 	if (exact) return exact;
+	const subtags = tag.split("-");
+	if (
+		subtags[0] === "zh" &&
+		subtags.slice(1).some((subtag) => TRADITIONAL_CHINESE_TAGS.has(subtag))
+	) {
+		return canonical("zh-hant");
+	}
 	const primary = tag.split("-")[0];
 	return primary ? canonical(MACROLANGUAGE_ALIASES[primary] ?? primary) : undefined;
 };

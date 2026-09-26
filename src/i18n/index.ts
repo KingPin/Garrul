@@ -8,6 +8,7 @@ import { nb } from "./nb";
 import { nl } from "./nl";
 import { pl } from "./pl";
 import { pt } from "./pt";
+import { zhHant } from "./zh-Hant";
 
 export type { StringKey };
 
@@ -111,6 +112,12 @@ export const LOCALES: Record<string, LocaleMeta> = {
 	// subtag, so a `pt-BR` key would never match a host page's `<html lang="pt">`.
 	// One table serves both variants — see the variant policy in src/i18n/pt.ts.
 	pt: { label: "Portuguese", endonym: "Português", rtl: false, status: "machine-seeded" },
+	"zh-Hant": {
+		label: "Traditional Chinese",
+		endonym: "繁體中文",
+		rtl: false,
+		status: "machine-seeded",
+	},
 };
 
 export type LocaleTable = Partial<Record<StringKey, Message>>;
@@ -134,6 +141,7 @@ export const TABLES: Record<string, LocaleTable> = {
 	nl,
 	pl,
 	pt,
+	"zh-Hant": zhHant,
 };
 
 /**

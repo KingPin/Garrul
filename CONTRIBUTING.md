@@ -149,6 +149,11 @@ operator picking a locale in the admin UI reads. Use `status:
 if you are also willing to be asked about it later — the two are
 separate, and the second is optional.
 
+Some locales can intentionally leave selected server keys untranslated.
+For example, `zh-Hant` omits `err.*` so API error messages remain English;
+the normal per-key fallback supplies those English values. Keep that policy
+documented in the locale file and `docs/i18n.md`.
+
 Rules:
 
 - **Keep `{placeholders}` verbatim.** `{n}`, `{count}`, `{title}`,
