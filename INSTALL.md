@@ -59,7 +59,8 @@ export CLOUDFLARE_API_TOKEN=...
 
 ## 2. Register OAuth apps (optional)
 
-Skip this step if you only want anonymous commenting.
+Skip this step if you only want anonymous commenting. You can add any
+provider later (see "Add keys later" in step 5).
 
 Decide your worker's public URL first — typically
 `https://comments.<yourdomain>`. On `*.workers.dev` you only learn the
@@ -149,6 +150,20 @@ namespaces that already exist in your account. In order, it:
 
 If you skip a step, setup prints it at the end as a command to run.
 Steps 5–7 below say what each stage does and how to do it by hand.
+
+### Add keys later
+
+You do not need every key at install time. Skip any prompt you cannot
+answer yet: Google, Discord, Resend, Telegram, Turnstile, anything. To
+add one later, get the key, then either:
+
+- run `wrangler secret put NAME` for each value, or
+- run `npm run setup` again. It keeps the secrets, vars and resources
+  already in place and only asks about what is missing.
+
+A new secret takes effect as soon as it is stored; no redeploy is
+needed. A new OAuth provider appears in the widget once both its
+client ID and client secret are set.
 
 ### Bulk or one at a time
 
