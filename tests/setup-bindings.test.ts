@@ -18,6 +18,7 @@ const FNS = [
 	"set_kv_id",
 	"set_d1_id",
 	"remote_id",
+	"block_field",
 	"apply_id",
 	"create_d1",
 	"create_kv",
@@ -52,14 +53,25 @@ beforeEach(() => {
 /** `listed` is the fake account's contents; `created` what a create returns. */
 const run = (
 	body: string,
-	opts: { d1?: string; kv?: string; accounts?: string; input?: string } = {},
+	opts: {
+		d1?: string;
+		kv?: string;
+		d1Rows?: string;
+		kvRows?: string;
+		accounts?: string;
+		input?: string;
+	} = {},
 ) => {
-	const d1List = opts.d1
-		? `[{"uuid":"${opts.d1}","name":"garrul-db"}]`
-		: "[]";
-	const kvList = opts.kv
-		? `[{"id":"${opts.kv}","title":"RATE_LIMITS"}]`
-		: "[]";
+	const d1List =
+		opts.d1Rows ??
+		(opts.d1
+			? `[{"uuid":"${opts.d1}","name":"garrul-db"}]`
+			: "[]");
+	const kvList =
+		opts.kvRows ??
+		(opts.kv
+			? `[{"id":"${opts.kv}","title":"RATE_LIMITS"}]`
+			: "[]");
 	const stub = `wrangler() {
 	echo "wrangler $*" >> calls.log
 	case "$1 $2" in
@@ -117,6 +129,61 @@ describe("create_d1", () => {
 		expect(read("wrangler.toml")).toBe(before);
 		expect(read("calls.log")).not.toContain("d1 create");
 	});
+	// Review of #168: a valid configured id must outrank the default-name lookup.
+	it("keeps a valid custom database and does not retarget it to garrul-db", () => {
+		const custom = "aaaaaaaa-1111-4222-8333-444444444444";
+		writeFileSync(
+			join(dir, "wrangler.toml"),
+			toml(custom, ACCOUNT_KV).replace('"garrul-db"', '"custom-db"'),
+		);
+		const before = read("wrangler.toml");
+		const r = run("create_d1 DB garrul-db", {
+			d1Rows: `[{"uuid":"${custom}","name":"custom-db"},{"uuid":"${ACCOUNT_DB}","name":"garrul-db"}]`,
+		});
+		expect(r.status, r.stderr).toBe(0);
+		expect(read("wrangler.toml")).toBe(before);
+		expect(read("calls.log")).not.toContain("d1 create");
+	});
+
+	it("repairs a stale id from the configured database_name, not the default", () => {
+		const custom = "aaaaaaaa-1111-4222-8333-444444444444";
+		writeFileSync(
+			join(dir, "wrangler.toml"),
+			toml(STALE_DB, ACCOUNT_KV).replace('"garrul-db"', '"custom-db"'),
+		);
+		const r = run("create_d1 DB garrul-db", {
+			d1Rows: `[{"uuid":"${custom}","name":"custom-db"},{"uuid":"${ACCOUNT_DB}","name":"garrul-db"}]`,
+		});
+		expect(r.status, r.stderr).toBe(0);
+		expect(read("wrangler.toml")).toContain(`database_id = "${custom}"`);
+		expect(read("wrangler.toml")).not.toContain(ACCOUNT_DB);
+	});
+
+	it("leaves environment overrides byte-identical when repairing the default", () => {
+		const staging = `
+[[env.staging.d1_databases]]
+binding = "DB"
+database_name = "staging-db"
+database_id = "bbbbbbbb-1111-4222-8333-444444444444"
+`;
+		writeFileSync(join(dir, "wrangler.toml"), toml(STALE_DB, ACCOUNT_KV) + staging);
+		const r = run("create_d1 DB garrul-db", { d1: ACCOUNT_DB });
+		expect(r.status, r.stderr).toBe(0);
+		const out = read("wrangler.toml");
+		expect(out).toContain(`database_id = "${ACCOUNT_DB}"`);
+		expect(out.endsWith(staging)).toBe(true);
+	});
+
+	it("writes the id when it appears only outside the target binding", () => {
+		writeFileSync(
+			join(dir, "wrangler.toml"),
+			`# previous database_id = "${ACCOUNT_DB}"\n${toml("PASTE_FROM_WRANGLER_D1_CREATE", ACCOUNT_KV)}`,
+		);
+		const r = run("create_d1 DB garrul-db", { d1: ACCOUNT_DB });
+		expect(r.status, r.stderr).toBe(0);
+		expect(read("wrangler.toml")).toContain(`database_id = "${ACCOUNT_DB}"`);
+		expect(read("wrangler.toml")).not.toContain("PASTE_FROM");
+	});
 });
 
 describe("create_kv", () => {
@@ -137,6 +204,16 @@ describe("create_kv", () => {
 		expect(r.status, r.stderr).toBe(0);
 		expect(read("calls.log")).toContain("kv namespace create RATE_LIMITS");
 		expect(read("wrangler.toml")).toContain(`id = "${ACCOUNT_KV}"`);
+	});
+	it("keeps a valid id whose namespace title is not the binding name", () => {
+		writeFileSync(join(dir, "wrangler.toml"), toml(ACCOUNT_DB, ACCOUNT_KV));
+		const before = read("wrangler.toml");
+		const r = run("create_kv RATE_LIMITS", {
+			kvRows: `[{"id":"${ACCOUNT_KV}","title":"my-renamed-ns"},{"id":"ffffffffffffffffffffffffffffffff","title":"RATE_LIMITS"}]`,
+		});
+		expect(r.status, r.stderr).toBe(0);
+		expect(read("wrangler.toml")).toBe(before);
+		expect(read("calls.log")).not.toContain("namespace create");
 	});
 });
 
