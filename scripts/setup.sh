@@ -755,7 +755,7 @@ fi
 # The workers.dev hostname can't be known before the first deploy, so this is
 # the first point where setup can fill PUBLIC_BASE_URL for someone who chose it.
 deploy_worker() {
-	local log rc url no_ae=0
+	local log rc url no_ae=0 no_sub=0
 	log=$(mktemp)
 	set +e
 	npm run deploy 2>&1 | tee "$log"
@@ -763,9 +763,16 @@ deploy_worker() {
 	set -e
 	url=$(grep -Eo 'https://[A-Za-z0-9.-]+\.workers\.dev' "$log" | head -1 || true)
 	if grep -q 'code: 10089' "$log"; then no_ae=1; fi
+	if grep -q 'register a workers.dev subdomain' "$log"; then no_sub=1; fi
 	rm -f "$log"
 	if [ "$rc" -ne 0 ]; then
 		echo "error: npm run deploy failed (exit $rc). Fix the above and re-run." >&2
+		if [ "${no_sub:-0}" = 1 ]; then
+			echo "  The account has no workers.dev subdomain yet, and wrangler.toml has no" >&2
+			echo "  [[routes]]. Register a subdomain (free) in the dashboard under Workers &" >&2
+			echo "  Pages → Overview (the link in the error above), or uncomment [[routes]]" >&2
+			echo "  for a custom domain. Then re-run setup. It keeps what is already set." >&2
+		fi
 		if [ "${no_ae:-0}" = 1 ]; then
 			echo "  \"enable Analytics Engine [code: 10089]\" means the account has not turned it" >&2
 			echo "  on yet. Enable it (free) in the dashboard under Workers & Pages →" >&2
