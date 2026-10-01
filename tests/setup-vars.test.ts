@@ -123,6 +123,10 @@ describe("var validation", () => {
 		["https://a.test/", "trailing slash"],
 		["https://a.test/blog", "path"],
 		["https://a.test, b.test", "second entry bare"],
+		["https://a.test?x=1", "query"],
+		["https://a.test#frag", "fragment"],
+		["https://user@a.test", "userinfo"],
+		["https://a.test:443", "default port"],
 	])("rejects origin %s (%s)", (val) => {
 		const r = sh(`var_problem ALLOWED_ORIGINS "${val}"`);
 		expect(r.stdout).toContain("is not an origin");

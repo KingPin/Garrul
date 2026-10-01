@@ -716,6 +716,10 @@ set_var() {
 var_problem() {
 	local name="$1" val="$2" item items
 	local origin_re='^https?://[^/[:space:]]+$' url_re='^https?://[^[:space:]]+$'
+	# Regexes catch the common slips; node's URL parser (the same rules a
+	# browser applies) catches the rest: ?query, #fragment, user@, :443.
+	local js='const [m,v]=process.argv.slice(1);try{const u=new URL(v);
+		process.exit(/^https?:$/.test(u.protocol)&&u.hostname&&(m==="origin"?u.origin===v:!u.search&&!u.hash&&!u.username)?0:1)}catch{process.exit(1)}'
 	case "$name" in
 		ALLOWED_ORIGINS)
 			IFS=, read -ra items <<< "$val"
@@ -723,7 +727,7 @@ var_problem() {
 				item="${item#"${item%%[![:space:]]*}"}"
 				item="${item%"${item##*[![:space:]]}"}"
 				[ -z "$item" ] && continue
-				if ! [[ "$item" =~ $origin_re ]]; then
+				if ! [[ "$item" =~ $origin_re ]] || ! node -e "$js" origin "$item"; then
 					echo "\"$item\" is not an origin — use https://host with no path or trailing slash"
 					return
 				fi
