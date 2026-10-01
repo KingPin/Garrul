@@ -45,6 +45,7 @@
     "import-comentario": "tsx scripts/import-comentario.ts",
     "import-isso": "tsx scripts/import-isso.ts",
     "import-cusdis": "tsx scripts/import-cusdis.ts",
+    "owner-link": "tsx scripts/owner-link.ts",
     "dump-isso": "tsx scripts/dump-isso.ts",
     "dump-cusdis": "tsx scripts/dump-cusdis.ts",
     "db:export": "bash scripts/db-export.sh",
