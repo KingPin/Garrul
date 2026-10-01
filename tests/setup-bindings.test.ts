@@ -13,6 +13,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 const SETUP = join(dirname(fileURLToPath(import.meta.url)), "..", "scripts", "setup.sh");
 const FNS = [
+	"select_account",
 	"set_binding_id",
 	"set_kv_id",
 	"set_d1_id",
@@ -49,7 +50,10 @@ beforeEach(() => {
 });
 
 /** `listed` is the fake account's contents; `created` what a create returns. */
-const run = (body: string, opts: { d1?: string; kv?: string } = {}) => {
+const run = (
+	body: string,
+	opts: { d1?: string; kv?: string; accounts?: string; input?: string } = {},
+) => {
 	const d1List = opts.d1
 		? `[{"uuid":"${opts.d1}","name":"garrul-db"}]`
 		: "[]";
@@ -59,6 +63,7 @@ const run = (body: string, opts: { d1?: string; kv?: string } = {}) => {
 	const stub = `wrangler() {
 	echo "wrangler $*" >> calls.log
 	case "$1 $2" in
+		"whoami --json") echo '✔ banner' ; echo '{"loggedIn":true,"accounts":${opts.accounts ?? "[]"}}' ;;
 		"d1 list") echo '${d1List}' ;;
 		"kv namespace") [ "$3" = list ] && echo '${kvList}' || printf 'id = "${ACCOUNT_KV}"\\n' ;;
 		"d1 create") printf 'database_id = "${ACCOUNT_DB}"\\n' ;;
@@ -67,7 +72,12 @@ const run = (body: string, opts: { d1?: string; kv?: string } = {}) => {
 	return spawnSync(
 		"bash",
 		["-c", `set -euo pipefail\neval "$(sed -n '${EXTRACT}' "$SETUP")"\n${stub}\n${body}`],
-		{ cwd: dir, encoding: "utf8", env: { ...process.env, SETUP } },
+		{
+			cwd: dir,
+			encoding: "utf8",
+			input: opts.input ?? "",
+			env: { ...process.env, SETUP, CLOUDFLARE_ACCOUNT_ID: "" },
+		},
 	);
 };
 const read = (f: string) => {
@@ -127,5 +137,38 @@ describe("create_kv", () => {
 		expect(r.status, r.stderr).toBe(0);
 		expect(read("calls.log")).toContain("kv namespace create RATE_LIMITS");
 		expect(read("wrangler.toml")).toContain(`id = "${ACCOUNT_KV}"`);
+	});
+});
+
+describe("select_account", () => {
+	const TWO = '[{"id":"aaa","name":"Personal"},{"id":"bbb","name":"Work"}]';
+	const ONE = '[{"id":"aaa","name":"Personal"}]';
+	const show = 'select_account; echo "acct=${CLOUDFLARE_ACCOUNT_ID:-}"';
+
+	beforeEach(() => writeFileSync(join(dir, "wrangler.toml"), 'name = "garrul"\n'));
+
+	it("exports the only account without asking", () => {
+		const r = run(show, { accounts: ONE });
+		expect(r.stdout).toContain("acct=aaa");
+		expect(r.stdout).not.toContain("Choose");
+	});
+
+	it("asks once when the login has several, and re-asks on junk", () => {
+		const r = run(show, { accounts: TWO, input: "x\n9\n2\n" });
+		expect(r.stdout).toContain("1) Personal");
+		expect(r.stdout).toContain("acct=bbb");
+	});
+
+	it("does nothing when an account is already pinned", () => {
+		writeFileSync(join(dir, "wrangler.toml"), 'account_id = "pinned"\n');
+		const r = run(show, { accounts: TWO });
+		expect(r.stdout).toContain("acct=\n");
+		expect(read("calls.log")).toBe("");
+	});
+
+	it("carries on, with a warning, when whoami fails", () => {
+		const r = run(`wrangler() { return 1; }\n${show}`);
+		expect(r.status, r.stderr).toBe(0);
+		expect(r.stderr).toContain("could not read your Cloudflare login");
 	});
 });

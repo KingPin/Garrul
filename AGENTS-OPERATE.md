@@ -65,7 +65,8 @@ end-to-end before improvising. Operator-side shape:
 
 1. `npm install` (installs `wrangler` as a dev dep).
 2. `npx wrangler login` — browser OAuth, one-time per machine.
-3. Run `npm run setup`. It copies `wrangler.example.toml` →
+3. Run `npm run setup`. If the login can use several Cloudflare accounts it
+   asks which one once and exports `CLOUDFLARE_ACCOUNT_ID` for the run. It copies `wrangler.example.toml` →
    `wrangler.toml` (an existing one is kept), creates the D1 database
    (`garrul-db`) and the four KV namespaces (`RATE_LIMITS`, `OAUTH_STATE`,
    `SESSIONS`, `TREE_CACHE`), pastes their IDs into `wrangler.toml`

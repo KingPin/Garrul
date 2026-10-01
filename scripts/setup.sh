@@ -86,6 +86,59 @@ confirm_route() {
 }
 confirm_route
 
+# A login that can see several Cloudflare accounts makes every wrangler call
+# below stop and ask "Select an account" — a dozen times, and invisibly inside
+# the id lookups that capture wrangler's output. Ask once, up front, and hand
+# the answer to every call through CLOUDFLARE_ACCOUNT_ID. Skipped when the
+# caller or wrangler.toml already pins an account.
+select_account() {
+	local json rows n i choice id name
+	[ -n "${CLOUDFLARE_ACCOUNT_ID:-}" ] && return 0
+	grep -qE '^[[:space:]]*account_id[[:space:]]*=' wrangler.toml && return 0
+	if ! json=$(wrangler whoami --json 2>/dev/null); then
+		echo
+		echo "warning: could not read your Cloudflare login. If the next step fails, run: npx wrangler login" >&2
+		return 0
+	fi
+	rows=$(printf '%s' "$json" | node -e '
+		let s = "";
+		process.stdin.on("data", (d) => { s += d; }).on("end", () => {
+			try {
+				for (const a of JSON.parse(s.slice(s.search(/^\{/m))).accounts ?? [])
+					console.log(`${a.id}\t${a.name}`);
+			} catch {}
+		});
+	' || true)
+	n=$(printf '%s' "$rows" | grep -c . || true)
+	[ "$n" -gt 0 ] || return 0
+	if [ "$n" = 1 ]; then
+		IFS=$'\t' read -r id name <<< "$rows"
+		echo
+		echo "✓ Cloudflare account: $name"
+		export CLOUDFLARE_ACCOUNT_ID="$id"
+		return 0
+	fi
+	echo
+	echo "Your Cloudflare login can use $n accounts. Which one gets Garrul?"
+	i=0
+	while IFS=$'\t' read -r id name; do
+		i=$((i + 1))
+		echo "  $i) $name"
+	done <<< "$rows"
+	while :; do
+		read -r -p "Choose [1-$n]: " choice
+		case "$choice" in
+			*[!0-9]*|"") ;;
+			*) [ "$choice" -ge 1 ] && [ "$choice" -le "$n" ] && break ;;
+		esac
+		echo "  enter a number from 1 to $n"
+	done
+	IFS=$'\t' read -r id name <<< "$(printf '%s\n' "$rows" | sed -n "${choice}p")"
+	echo "✓ using $name"
+	export CLOUDFLARE_ACCOUNT_ID="$id"
+}
+select_account
+
 # Write an id into the wrangler.toml block that declares this binding — not
 # into the first remaining placeholder in the file.
 #
@@ -214,12 +267,13 @@ remote_id() {
 		kv) json=$(wrangler kv namespace list 2>/dev/null) || return 0 ;;
 		*) return 0 ;;
 	esac
-	# Slice from the first [ so a banner line ahead of the JSON is harmless.
+	# Slice from the first line that starts with [ — wrangler prints a banner or an
+	# account-picker line ahead of the JSON.
 	printf '%s' "$json" | node -e '
 		let s = "";
 		process.stdin.on("data", (d) => { s += d; }).on("end", () => {
 			try {
-				const rows = JSON.parse(s.slice(s.indexOf("[")));
+				const rows = JSON.parse(s.slice(s.search(/^\[/m)));
 				const hit = rows.find((r) => (r.name ?? r.title) === process.argv[1]);
 				if (hit) console.log(hit.uuid ?? hit.id);
 			} catch {}

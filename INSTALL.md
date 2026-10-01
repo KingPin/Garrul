@@ -109,6 +109,8 @@ namespaces that already exist in your account. In order, it:
 1. copies `wrangler.example.toml` to `wrangler.toml` (an existing
    `wrangler.toml` is kept),
 2. asks where the Worker answers requests (step 5 explains the choice),
+   and, if your Cloudflare login can use several accounts, which one to use
+   (asked once, so wrangler does not stop to ask on every call),
 3. creates the D1 database (`garrul-db`) and four KV namespaces and
    writes their IDs into `wrangler.toml`. A resource of that name that
    already exists in your account is reused, and an ID in `wrangler.toml`
