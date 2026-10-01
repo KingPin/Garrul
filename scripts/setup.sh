@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # Garrul setup — prompt-driven install, from a fresh clone to a live Worker.
-# Creates D1 + KV namespaces, writes their IDs into wrangler.toml (matched by
-# binding name, so a reordered or hand-edited file is safe), sets production
+# Creates D1 + KV namespaces (reusing any of that name already in the account),
+# writes their IDs into wrangler.toml (matched by binding name, so a reordered
+# or hand-edited file is safe; a stale id from another account is replaced), sets production
 # secrets (bulk from secrets.env or one prompt at a time), writes the
 # placeholder [vars], then offers to migrate the remote D1, deploy, and check
 # /api/v1/health. Every step after the secrets asks first; re-runs keep
-# existing ids and vars.
+# existing vars.
 #
 # Every config list below is generated between BEGIN/END markers — the secret
 # prompts and the next-steps vars from scripts/config-registry.ts, the create_d1
@@ -189,55 +190,104 @@ set_binding_id() {
 	rm -f "$tmp"
 }
 
+# Any quoted value, so set_binding_id overwrites a stale id as well as a
+# placeholder. The ids in wrangler.toml are only as good as the account they
+# came from: an existing file copied from another account carries ids that do
+# not exist here, and the migrate step then fails with API error 7404.
+ANY_VALUE='[^"'"'"']*'
+
 set_kv_id() {
-	set_binding_id kv_namespaces "$1" id PASTE_FROM_WRANGLER_KV_CREATE "$2"
+	set_binding_id kv_namespaces "$1" id "$ANY_VALUE" "$2"
 }
 
 set_d1_id() {
-	set_binding_id d1_databases "$1" database_id PASTE_FROM_WRANGLER_D1_CREATE "$2"
+	set_binding_id d1_databases "$1" database_id "$ANY_VALUE" "$2"
+}
+
+# remote_id <d1|kv> <name> — id of the resource with that name in the logged-in
+# account. Empty when there is none or the lookup failed; the caller then
+# creates it, and wrangler reports a real auth error there.
+remote_id() {
+	local json
+	case "$1" in
+		d1) json=$(wrangler d1 list --json 2>/dev/null) || return 0 ;;
+		kv) json=$(wrangler kv namespace list 2>/dev/null) || return 0 ;;
+		*) return 0 ;;
+	esac
+	# Slice from the first [ so a banner line ahead of the JSON is harmless.
+	printf '%s' "$json" | node -e '
+		let s = "";
+		process.stdin.on("data", (d) => { s += d; }).on("end", () => {
+			try {
+				const rows = JSON.parse(s.slice(s.indexOf("[")));
+				const hit = rows.find((r) => (r.name ?? r.title) === process.argv[1]);
+				if (hit) console.log(hit.uuid ?? hit.id);
+			} catch {}
+		});
+	' "$2" || true
+}
+
+# Write the id unless wrangler.toml already carries exactly it.
+apply_id() {
+	local setter="$1" binding="$2" id="$3"
+	if grep -qF "\"$id\"" wrangler.toml; then
+		echo "✓ $binding already points at $id"
+		return
+	fi
+	"$setter" "$binding" "$id"
 }
 
 # create_d1 <binding> <database_name>
 create_d1() {
-	local binding="$1" name="$2"
+	local binding="$1" name="$2" id
 	echo
-	echo "Creating D1 database '$name'..."
-	set +e
-	out=$(wrangler d1 create "$name" 2>&1)
-	rc=$?
-	set -e
-	echo "$out"
-	if [ $rc -ne 0 ] && ! echo "$out" | grep -qE 'already exists|D1_ERROR.*name'; then
-		echo "error: wrangler d1 create failed (exit $rc). Fix the above and re-run." >&2
-		exit $rc
+	id=$(remote_id d1 "$name")
+	if [ -n "$id" ]; then
+		echo "✓ D1 database '$name' already exists in this account — reusing it"
+	else
+		echo "Creating D1 database '$name'..."
+		set +e
+		out=$(wrangler d1 create "$name" 2>&1)
+		rc=$?
+		set -e
+		echo "$out"
+		if [ $rc -ne 0 ] && ! echo "$out" | grep -qE 'already exists|D1_ERROR.*name'; then
+			echo "error: wrangler d1 create failed (exit $rc). Fix the above and re-run." >&2
+			exit $rc
+		fi
+		id=$(echo "$out" | grep -Eo 'database_id = "[a-f0-9-]+"' | head -1 | sed 's/database_id = "//;s/"//')
 	fi
-	id=$(echo "$out" | grep -Eo 'database_id = "[a-f0-9-]+"' | head -1 | sed 's/database_id = "//;s/"//')
 	if [ -z "$id" ]; then
 		echo "warning: could not auto-extract database_id for $binding; copy it into wrangler.toml manually." >&2
 		return
 	fi
-	set_d1_id "$binding" "$id"
+	apply_id set_d1_id "$binding" "$id"
 }
 
 create_kv() {
-	local binding="$1"
+	local binding="$1" id
 	echo
-	echo "Creating KV namespace '$binding'..."
-	set +e
-	out=$(wrangler kv namespace create "$binding" 2>&1)
-	rc=$?
-	set -e
-	echo "$out"
-	if [ $rc -ne 0 ] && ! echo "$out" | grep -q 'already exists'; then
-		echo "error: wrangler kv namespace create $binding failed (exit $rc). Fix the above and re-run." >&2
-		exit $rc
+	id=$(remote_id kv "$binding")
+	if [ -n "$id" ]; then
+		echo "✓ KV namespace '$binding' already exists in this account — reusing it"
+	else
+		echo "Creating KV namespace '$binding'..."
+		set +e
+		out=$(wrangler kv namespace create "$binding" 2>&1)
+		rc=$?
+		set -e
+		echo "$out"
+		if [ $rc -ne 0 ] && ! echo "$out" | grep -q 'already exists'; then
+			echo "error: wrangler kv namespace create $binding failed (exit $rc). Fix the above and re-run." >&2
+			exit $rc
+		fi
+		id=$(echo "$out" | grep -Eo 'id = "[a-f0-9]+"' | head -1 | sed 's/id = "//;s/"//')
 	fi
-	id=$(echo "$out" | grep -Eo 'id = "[a-f0-9]+"' | head -1 | sed 's/id = "//;s/"//')
 	if [ -z "$id" ]; then
 		echo "warning: could not auto-extract id for $binding; copy manually." >&2
 		return
 	fi
-	set_kv_id "$binding" "$id"
+	apply_id set_kv_id "$binding" "$id"
 }
 
 # BEGIN:d1-bindings
