@@ -28,6 +28,11 @@ migration. Every step below works on both paths; only
   zone to be on Cloudflare. Skip it and you deploy to `*.workers.dev`
   instead — see [step 5](#5-configure-wranglertoml) for what that
   costs you.
+- **Workers Analytics Engine enabled** on the account. It is free, but a
+  new account must turn it on once, or `wrangler deploy` fails with
+  `You need to enable Analytics Engine [code: 10089]`. Open
+  `https://dash.cloudflare.com/<account-id>/workers/analytics-engine`
+  (or Workers & Pages → Analytics Engine) and enable it.
 - A few external credentials, gathered as you go:
   - OAuth apps for whichever sign-in providers you want (all
     optional): GitHub, Google, Facebook, X, Discord
