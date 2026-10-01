@@ -52,7 +52,9 @@ Before running a single command, the user needs:
 - **Node.js >= 24** and `npm`. The repo's `.nvmrc` pins the version.
   Node 22 fails at `npm ci` — see the `node-24-minimum` entry in
   `release-manifest.json`.
-- A clone of the repo: `git clone https://github.com/KingPin/Garrul.git`.
+- A clone of the repo, on the latest release tag rather than `main`:
+  `git clone https://github.com/KingPin/Garrul.git && cd Garrul &&
+  git checkout "$(git describe --tags --abbrev=0)"`.
 - `wrangler` (installed via `npm install` as a dev dep; no global needed).
 - **Optional credentials**: GitHub OAuth app (GitHub sign-in), Google
   OAuth app (Google sign-in), Cloudflare Turnstile site + secret keys
@@ -65,30 +67,34 @@ end-to-end before improvising. Operator-side shape:
 
 1. `npm install` (installs `wrangler` as a dev dep).
 2. `npx wrangler login` — browser OAuth, one-time per machine.
-3. Run `npm run setup`. It copies `wrangler.example.toml` →
-   `wrangler.toml` (an existing one is kept), creates the D1 database
-   (`garrul-db`) and the four KV namespaces (`RATE_LIMITS`, `OAUTH_STATE`,
-   `SESSIONS`, `TREE_CACHE`), pastes their IDs into `wrangler.toml`,
-   generates `JWT_SECRET` + `IP_HASH_SECRET` straight into Cloudflare
-   (never written to disk), then offers two ways to set the rest: **bulk**
-   (fill in a copy of `secrets.example.env`, upload with
-   `wrangler secret bulk`) or **one prompt per secret**. Skip anything
-   you don't have yet — `wrangler secret put NAME` works later.
-4. Setup prompts for the four placeholder `[vars]` (`ALLOWED_ORIGINS`,
-   `ADMIN_EMAILS`, `PUBLIC_BASE_URL`, `OAUTH_CALLBACK_BASE`; section 5
-   has the full table). A value already set is the default.
-   `OAUTH_CALLBACK_BASE` defaults to `PUBLIC_BASE_URL`.
-5. Setup applies migrations to **remote** D1: `npm run migrate -- --remote`.
-   Without `--remote` only the local Miniflare DB is migrated and the
-   deployed Worker will 500.
-6. Setup runs `npm run deploy`. That uploads the Worker and provisions
-   the custom domain. On `*.workers.dev` it offers to write the printed
-   URL into `PUBLIC_BASE_URL` / `OAUTH_CALLBACK_BASE` and redeploy.
-7. Setup smoke-tests `curl -fsS https://comments.yourdomain.com/api/v1/health`
-   → `{"status":"ok","service":"garrul","time":"..."}`.
+3. Run `npm run setup`. It asks two things: `ALLOWED_ORIGINS` (the site
+   that embeds the widget; `https://host`, no path or trailing slash,
+   matched by exact string) and the Turnstile keys. Everything else is
+   automatic, in this order: copy `wrangler.example.toml` → `wrangler.toml`
+   (an existing one is kept); pick the Cloudflare account (asked once if
+   the login reaches several); create the D1 database (`garrul-db`) and
+   the four KV namespaces (`RATE_LIMITS`, `OAUTH_STATE`, `SESSIONS`,
+   `TREE_CACHE`), looked up by name first so existing ones are reused;
+   generate `JWT_SECRET` + `IP_HASH_SECRET` straight into Cloudflare
+   (never written to disk, never replaced if already set); resolve the
+   hostname (`scripts/cf-subdomain.ts` reads or registers the account's
+   workers.dev subdomain; `--domain HOST` uses a custom domain) and set
+   `PUBLIC_BASE_URL` / `OAUTH_CALLBACK_BASE`; take the Turnstile keys;
+   migrate **remote** D1 (`npm run migrate -- --remote`; without
+   `--remote` the deployed Worker would 500); `npm run deploy`; smoke-test
+   `/api/v1/health` → `{"status":"ok","service":"garrul","time":"..."}`.
+4. Setup ends with the embed snippet and a single-use owner sign-in link
+   (`npm run owner-link`; see the owner access subsection). The
+   `ANALYTICS` binding is opt-in: shipped commented out in
+   `wrangler.example.toml` because a new account must enable Analytics
+   Engine before a deploy that binds it succeeds (code 10089).
+5. Optional integrations are not part of the first run:
+   `npm run setup -- --secrets` (bulk file of `secrets.example.env`, or one
+   prompt per secret; sign-in providers, email, spam services) and
+   `npm run setup -- --vars` (admin emails, URLs). `wrangler secret put
+   NAME` works for one value.
 
-Steps 4–7 each ask first. A skipped step is printed as a manual command
-at the end, and re-running `npm run setup` is idempotent. For local dev
+Re-running `npm run setup` is idempotent. For local dev
 only: `cp .dev.vars.example .dev.vars`.
 
 The most common deploy failures are "forgot to set a secret" (step 3)
@@ -193,7 +199,7 @@ between the two is a build error, not a silent misclassification.
 |---|---|---|---|---|
 | `ENV` | var | Switches dev affordances (CORS open, cookies `SameSite=Lax`). Production must be `production`. | `production` | `wrangler.toml` |
 | `ALLOWED_ORIGINS` | var | Comma-separated origins allowed to embed + call `/api/*`. Doubles as the CSRF `Origin` allowlist. See section 6. | `https://yourblog.example.com` | `wrangler.toml` — **replace the shipped placeholder before deploying** |
-| `ADMIN_EMAILS` | var | Comma-separated emails. OAuth signups matching get auto-admin. | `you@example.com` | `wrangler.toml` — **replace the shipped placeholder before deploying** |
+| `ADMIN_EMAILS` | var | Comma-separated emails. OAuth signups matching get auto-admin. | `you@example.com` | `wrangler.toml` |
 | `EDIT_WINDOW_MINUTES` | var | Minutes a commenter can edit their own post. Default 15; `0` disables editing. | `15` | `wrangler.toml` default; **Admin → Settings** overrides |
 | `PUBLIC_BASE_URL` | var | Public URL of the Worker; used in permalinks + email bodies. | `https://comments.example.com` | `wrangler.toml` — **replace the shipped placeholder before deploying** |
 | `CANONICAL_URL` | var | Optional. Override for the public URL used by the `/AGENTS.md` route when the inbound `Host` differs from the canonical address. | `https://comments.example.com` | `wrangler.toml` |
@@ -672,6 +678,26 @@ the other three vary. Provider policies on plain-HTTP redirects differ
 and change over time —
 if a provider rejects the localhost URI, register a separate dev app or
 front local dev with an HTTPS tunnel.
+
+### Owner access without OAuth or `ADMIN_EMAILS`
+
+A fresh install with no provider and no `ADMIN_EMAILS` still has an admin:
+the owner. Run `npm run owner-link` on a machine logged in to Cloudflare with
+wrangler (add `-- --local` for `wrangler dev`). It prints one link,
+`https://<host>/admin/owner#t=<token>`, valid 10 minutes and single use.
+Open it and click **Sign in as owner**. Only the token's SHA-256 is stored
+(migration 0029). The token sits in the URL fragment, so it never reaches a
+server log, and the page clears it before anything else runs.
+
+- Output contract: stdout is only the link; all other messages go to stderr.
+  It needs `PUBLIC_BASE_URL` set (not the placeholder), or `-- --base-url <url>`.
+- There is exactly one owner row (`provider='owner'`, `provider_id='primary'`,
+  `role='admin'`). Issuing a new link revokes older unused ones.
+- Recovery is deliberate: if the owner is banned, demoted or erased,
+  `owner-link` refuses and says why, and a link issued earlier stops working.
+  Restore the row by hand in D1 (`is_banned=0`, `role='admin'`, `is_admin=1`),
+  then run `owner-link` again.
+- Details: `docs/owner-access.md`.
 
 ## 9. Email
 

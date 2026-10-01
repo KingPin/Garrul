@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import { beforeEach, describe, expect, it } from "vitest";
 
 const SETUP = join(dirname(fileURLToPath(import.meta.url)), "..", "scripts", "setup.sh");
-const FNS = ["get_var", "set_var", "var_is_placeholder", "prompt_var"];
+const FNS = ["get_var", "set_var", "var_is_placeholder", "var_problem", "prompt_var"];
 const EXTRACT = FNS.map((f) => `/^${f}() {/,/^}/p`).join(";");
 
 const EXAMPLE = `[vars]
@@ -110,17 +110,70 @@ describe("setup.sh [vars] helpers", () => {
 	});
 });
 
+describe("var validation", () => {
+	// ALLOWED_ORIGINS is an exact-string match against the Origin header, so a
+	// bare host was accepted by setup and then never matched anything.
+	it("re-asks on an origin without a scheme, then takes a good one", () => {
+		const r = sh('prompt_var ALLOWED_ORIGINS "hint"', "test.example.com\nhttps://test.example.com\n");
+		expect(r.stdout).toContain('"test.example.com" is not an origin');
+		expect(toml()).toContain('ALLOWED_ORIGINS = "https://test.example.com"');
+	});
+
+	it.each([
+		["https://a.test/", "trailing slash"],
+		["https://a.test/blog", "path"],
+		["https://a.test, b.test", "second entry bare"],
+		["https://a.test?x=1", "query"],
+		["https://a.test#frag", "fragment"],
+		["https://user@a.test", "userinfo"],
+		["https://a.test:443", "default port"],
+	])("rejects origin %s (%s)", (val) => {
+		const r = sh(`var_problem ALLOWED_ORIGINS "${val}"`);
+		expect(r.stdout).toContain("is not an origin");
+	});
+
+	it("accepts a comma list with spaces and an http localhost origin", () => {
+		const r = sh('var_problem ALLOWED_ORIGINS "https://a.test, http://localhost:4321"');
+		expect(r.stdout).toBe("");
+	});
+
+	it("rejects a base URL with no scheme", () => {
+		expect(sh('var_problem PUBLIC_BASE_URL "comments.example.com"').stdout).toContain("is not a URL");
+		expect(sh('var_problem PUBLIC_BASE_URL "https://c.example.com"').stdout).toBe("");
+	});
+
+	it.each(["https://?", "https://#fragment", "https:///", "https://c.test?x=1"])(
+		"rejects unusable base URL %s",
+		(val) => {
+			expect(sh(`var_problem OAUTH_CALLBACK_BASE "${val}"`).stdout).toContain("is not a URL");
+		},
+	);
+
+	it("keeps a trailing-path base URL valid", () => {
+		expect(sh('var_problem PUBLIC_BASE_URL "https://c.example.com/garrul"').stdout).toBe("");
+	});
+
+	it("rejects an admin entry that is not an email", () => {
+		expect(sh('var_problem ADMIN_EMAILS "a@b.test, nope"').stdout).toContain('"nope" is not an email');
+		expect(sh('var_problem ADMIN_EMAILS "a@b.test, c@d.test"').stdout).toBe("");
+	});
+});
+
 describe("setup.sh end-to-end steps", () => {
-	it("migrates, deploys and verifies after the secrets, in that order", () => {
+	it("runs provision, secrets, hostname, origin, turnstile, then migrate, deploy and verify", () => {
 		const s = readFileSync(SETUP, "utf8");
+		const main = s.slice(s.indexOf("main_full() {"));
 		const at = [
-			'echo "=== Production secrets ==="',
-			"\tconfigure_vars\n",
-			"\tnpm run migrate -- --remote\n",
+			"\tprovision_resources\n",
+			"\tgenerate_secrets\n",
+			"\tsetup_hostname\n",
+			"\task_origin\n",
+			"\tsetup_turnstile\n",
+			"\trun_migrate\n",
 			"\tdeploy_worker\n",
-			"\t\tverify_health\n",
-			'echo "=== Next steps ==="',
-		].map((needle) => s.indexOf(needle));
+			"\tverify_health\n",
+			"\tfinish\n",
+		].map((needle) => main.indexOf(needle));
 		for (const i of at) expect(i).toBeGreaterThan(-1);
 		expect(at).toEqual([...at].sort((a, b) => a - b));
 	});

@@ -7,9 +7,9 @@ import {
 	buildDevVars,
 	buildSecretsRequired,
 	buildSecretsPointer,
+	buildMustEditBanner,
 	buildSetupPrompts,
 	buildSetupGenerated,
-	buildSetupNextSteps,
 	buildSetupVarPrompts,
 	buildKvNamespaceBlocks,
 	buildSetupKvCreates,
@@ -230,8 +230,22 @@ describe("setup.sh prompt lists", () => {
 	it("collapses a declared pair into a single prompt", () => {
 		const prompts = buildSetupPrompts();
 		expect(prompts).toContain('put_secret_pair "GitHub OAuth" ');
-		expect(prompts).toMatch(/GH_CLIENT_ID GH_CLIENT_SECRET$/m);
+		expect(prompts).toMatch(
+			/GH_CLIENT_ID "Client ID" GH_CLIENT_SECRET "Client secret"$/m,
+		);
 		expect(prompts).toMatch(/^\tput_secret AKISMET_API_KEY /m);
+	});
+
+	// wrangler's own prompt never names the field, so setup.sh has to. An
+	// unlabelled half would fall back to the bare env name, which a reader
+	// cannot map to the provider's dashboard.
+	it("labels both halves of every pair", () => {
+		for (const e of SECRETS) {
+			if (!e.pairWith) continue;
+			const partner = SECRETS.find((p) => p.name === e.pairWith);
+			expect(e.field, e.name).toBeTruthy();
+			expect(partner?.field, e.pairWith).toBeTruthy();
+		}
 	});
 
 	// Group size used to stand in for `pairWith`, which got Telegram wrong:
@@ -297,16 +311,13 @@ describe("setup.sh prompt lists", () => {
 	});
 });
 
-describe("setup.sh next-steps block", () => {
+describe("mustEdit vars in the template banner", () => {
 	// This list was hardcoded ("ALLOWED_ORIGINS, ADMIN_EMAILS, route pattern")
 	// with no flag to generate it from, so a newly added placeholder var would
 	// go unmentioned with config:check green — the drift #42 set out to close.
 	it("names every mustEdit var with its hint, in registry order", () => {
-		const steps = buildSetupNextSteps();
-		const width = Math.max(...MUST_EDIT_VARS.map((e) => e.name.length));
-		const order = MUST_EDIT_VARS.map((e) =>
-			steps.indexOf(`${e.name.padEnd(width)} — ${e.hint}`),
-		);
+		const banner = buildMustEditBanner();
+		const order = MUST_EDIT_VARS.map((e) => banner.indexOf(e.name));
 		for (const [i, at] of order.entries()) {
 			expect(at, MUST_EDIT_VARS[i]?.name).toBeGreaterThan(-1);
 		}
@@ -314,30 +325,10 @@ describe("setup.sh next-steps block", () => {
 	});
 
 	it("mentions no var that isn't flagged mustEdit", () => {
-		const steps = buildSetupNextSteps();
+		const banner = buildMustEditBanner();
 		for (const e of VARS) {
 			if (e.mustEdit) continue;
-			expect(steps, e.name).not.toMatch(new RegExp(`\\b${e.name}\\b`));
-		}
-	});
-
-	// The region sits at column 0 in a `set -euo pipefail` script, so anything
-	// other than a comment or an echo is executed on every install.
-	it("emits nothing executable but echo", () => {
-		const offenders = buildSetupNextSteps()
-			.split("\n")
-			.filter((line) => !/^(#|echo ")/.test(line));
-		expect(offenders).toEqual([]);
-	});
-
-	it("is the state the committed script is in", () => {
-		expect(read("scripts/setup.sh")).toContain(buildSetupNextSteps());
-	});
-
-	it("keeps the step numbering contiguous", () => {
-		const setup = read("scripts/setup.sh");
-		for (const n of [1, 2, 3, 4]) {
-			expect(setup, `step ${n}`).toMatch(new RegExp(`^echo "${n}\\. `, "m"));
+			expect(banner, e.name).not.toMatch(new RegExp(`\\b${e.name}\\b`));
 		}
 	});
 
@@ -539,15 +530,24 @@ describe("D1 and Analytics binding lists", () => {
 		}
 	});
 
-	it("emits one TOML block per Analytics binding, with its dataset", () => {
+	it("emits one commented-out block per Analytics binding, with its dataset", () => {
 		const toml = buildAnalyticsBlocks(analytics);
 		expect(
-			(toml.match(/^\[\[analytics_engine_datasets\]\]$/gm) ?? []).length,
+			(toml.match(/^# \[\[analytics_engine_datasets\]\]$/gm) ?? []).length,
 		).toBe(analytics.length);
 		for (const e of analytics) {
-			expect(toml, e.binding).toContain(`binding = "${e.binding}"`);
-			expect(toml, e.binding).toContain(`dataset = "${e.dataset}"`);
+			expect(toml, e.binding).toContain(`# binding = "${e.binding}"`);
+			expect(toml, e.binding).toContain(`# dataset = "${e.dataset}"`);
 		}
+	});
+
+	// Opt-in: a live block makes a fresh account's first deploy fail with 10089.
+	it("ships the analytics blocks commented out", () => {
+		expect(
+			buildAnalyticsBlocks(analytics)
+				.split("\n")
+				.filter((l) => l.startsWith("[[")),
+		).toEqual([]);
 	});
 
 	// A dataset is created implicitly on first write, so there is nothing for
@@ -557,11 +557,8 @@ describe("D1 and Analytics binding lists", () => {
 		expect(buildAnalyticsBlocks(analytics)).not.toContain("PASTE_FROM");
 	});
 
-	it("emits the blocks as live TOML, not commented out", () => {
-		for (const line of [
-			...buildD1Blocks(d1).split("\n"),
-			...buildAnalyticsBlocks(analytics).split("\n"),
-		]) {
+	it("emits the D1 blocks as live TOML, not commented out", () => {
+		for (const line of buildD1Blocks(d1).split("\n")) {
 			if (line === "" || line.startsWith("#")) continue;
 			expect(line).toMatch(
 				/^(\[\[d1_databases\]\]|\[\[analytics_engine_datasets\]\]|binding = |database_name = |database_id = |dataset = )/,

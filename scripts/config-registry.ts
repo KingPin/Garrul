@@ -84,6 +84,12 @@ export type ConfigEntry = {
 	pairWith?: string;
 	/** One-line "where do I get this" shown above the template line. */
 	hint: string;
+	/**
+	 * What the provider's dashboard calls this value ("Site Key", "Client ID").
+	 * Paired secrets only: setup.sh prints it before each `wrangler secret put`,
+	 * whose own prompt is just "Enter a secret value" and never names the field.
+	 */
+	field?: string;
 	/** Prose for the AGENTS-OPERATE §5 table. */
 	description: string;
 	/** Example value for the §5 table. */
@@ -170,7 +176,6 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
 		name: "ADMIN_EMAILS",
 		kind: "var",
 		required: false,
-		mustEdit: true,
 		group: "Core",
 		hint: "comma-separated emails that get auto-admin on OAuth signup",
 		description:
@@ -283,6 +288,7 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
 		group: "Turnstile",
 		pairWith: "TURNSTILE_SECRET",
 		hint: "from dash.cloudflare.com → Turnstile",
+		field: "Site Key (public)",
 		description:
 			"Cloudflare Turnstile site key. Required for anonymous commenting. Note this value is *public* — it ships in the widget HTML. It is stored as a secret for historical reasons and because doing so is harmless.",
 		example: "0x4AAAAAAA...",
@@ -297,6 +303,7 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
 		required: true,
 		group: "Turnstile",
 		hint: "from dash.cloudflare.com → Turnstile",
+		field: "Secret Key (private)",
 		description: "Turnstile secret. Server-side token verification.",
 		example: "0x4AAAAAAA...",
 		devPlaceholder: "1x0000000000000000000000000000000AA",
@@ -323,6 +330,7 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
 		group: "GitHub OAuth",
 		pairWith: "GH_CLIENT_SECRET",
 		hint: "from github.com/settings/developers",
+		field: "Client ID",
 		description: "GitHub OAuth client ID. Required for GitHub sign-in.",
 		example: "Iv1.abcdef...",
 		addedIn: "1.0.0",
@@ -333,6 +341,7 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
 		required: false,
 		group: "GitHub OAuth",
 		hint: "from github.com/settings/developers",
+		field: "Client secret",
 		description: "GitHub OAuth client secret.",
 		example: "ghp_...",
 		addedIn: "1.0.0",
@@ -344,6 +353,7 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
 		group: "Google OAuth",
 		pairWith: "GOOGLE_CLIENT_SECRET",
 		hint: "from console.cloud.google.com → OAuth credentials",
+		field: "Client ID",
 		description: "Google OAuth client ID. Required for Google sign-in.",
 		example: "1234.apps.googleusercontent.com",
 		addedIn: "1.0.0",
@@ -354,6 +364,7 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
 		required: false,
 		group: "Google OAuth",
 		hint: "from console.cloud.google.com → OAuth credentials",
+		field: "Client secret",
 		description: "Google OAuth client secret.",
 		example: "GOCSPX-...",
 		addedIn: "1.0.0",
@@ -365,6 +376,7 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
 		group: "Facebook OAuth",
 		pairWith: "FACEBOOK_CLIENT_SECRET",
 		hint: "from developers.facebook.com → Facebook Login",
+		field: "App ID",
 		description:
 			"Optional. Facebook OAuth client ID from developers.facebook.com. Required for Facebook sign-in. Added v1.13.0.",
 		example: "1234567890123456",
@@ -376,6 +388,7 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
 		required: false,
 		group: "Facebook OAuth",
 		hint: "from developers.facebook.com → Facebook Login",
+		field: "App Secret",
 		description: "Optional. Facebook OAuth client secret.",
 		example: "...",
 		addedIn: "1.13.0",
@@ -387,6 +400,7 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
 		group: "X/Twitter OAuth",
 		pairWith: "TWITTER_CLIENT_SECRET",
 		hint: "from developer.x.com → OAuth 2.0 (returns no email)",
+		field: "OAuth 2.0 Client ID",
 		description:
 			"Optional. X (Twitter) OAuth 2.0 client ID from developer.x.com. Required for X sign-in; the provider slug stays `twitter`. Added v1.13.0.",
 		example: "...",
@@ -398,6 +412,7 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
 		required: false,
 		group: "X/Twitter OAuth",
 		hint: "from developer.x.com → OAuth 2.0",
+		field: "OAuth 2.0 Client Secret",
 		description:
 			"Optional. X (Twitter) OAuth 2.0 client secret. Note X returns no email — those users get a null email and no digest notifications.",
 		example: "...",
@@ -410,6 +425,7 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
 		group: "Discord OAuth",
 		pairWith: "DISCORD_CLIENT_SECRET",
 		hint: "from discord.com/developers → OAuth2",
+		field: "Client ID",
 		description:
 			"Optional. Discord OAuth client ID from discord.com/developers → OAuth2. Required for Discord sign-in. Added v1.13.0.",
 		example: "...",
@@ -421,6 +437,7 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
 		required: false,
 		group: "Discord OAuth",
 		hint: "from discord.com/developers → OAuth2",
+		field: "Client Secret",
 		description: "Optional. Discord OAuth client secret.",
 		example: "...",
 		addedIn: "1.13.0",

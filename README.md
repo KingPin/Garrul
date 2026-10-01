@@ -65,8 +65,8 @@ dashboard page); every other integration is optional.
   reaction/vote bar, in one request
 - **Full-site export** — admins download every post, comment and user as
   JSON, or comments as CSV
-- **One-command install** — `npm run setup` creates resources, sets
-  secrets and vars, migrates, deploys and checks health
+- **One-command install** — `npm run setup` asks two questions, then creates
+  resources, secrets and the hostname, migrates, deploys and checks health
 
 Every doc in the repo, grouped by task:
 [`docs/README.md`](docs/README.md).
@@ -109,8 +109,8 @@ custom domain, remote migrations, deploy and smoke test:
 zero credentials:
 
 ```bash
-git clone https://github.com/KingPin/Garrul.git comments
-cd comments
+git clone https://github.com/KingPin/Garrul.git
+cd Garrul
 npm install
 cp wrangler.example.toml wrangler.toml
 cp .dev.vars.example .dev.vars
@@ -153,7 +153,7 @@ an AI assistant at your instance:
   `ADMIN_EMAILS`.
 - **Logs**: `wrangler tail`. Every request emits a JSON line with a
   request id. No PII (names, emails, comment bodies) is logged.
-- **Metrics**: Workers Analytics Engine writes `comment.posted`,
+- **Metrics** (optional; uncomment the `ANALYTICS` block in `wrangler.toml`): Workers Analytics Engine writes `comment.posted`,
   `oauth.complete`, `ratelimit.hit` and friends; read them in the
   Cloudflare dashboard under your Worker.
 - **Backups**: `npm run db:export` writes a `.sql` dump for your local archive.

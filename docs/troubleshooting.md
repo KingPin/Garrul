@@ -12,6 +12,25 @@ OAuth logins expire; the fix for an expired one is the same
 export `CLOUDFLARE_API_TOKEN` with a token that has *Workers
 Scripts:Edit* and *D1:Edit* on the account instead.
 
+### `wrangler deploy` says "You need to enable Analytics Engine" (code 10089)
+
+Metrics are optional and off in a fresh `wrangler.toml`. This error means
+your `wrangler.toml` has the `[[analytics_engine_datasets]]` block
+uncommented (older installs did), and a new Cloudflare account has to
+enable the product once. Either comment the block out again, or open
+`https://dash.cloudflare.com/<account-id>/workers/analytics-engine`,
+enable it (free), then re-run `npm run deploy`, or `npm run setup`,
+which keeps everything already configured.
+
+### `wrangler deploy` says "You can either deploy your worker to one or more routes… or register a workers.dev subdomain"
+
+A new Cloudflare account has no `*.workers.dev` subdomain until you pick
+one, and `wrangler.toml` has no `[[routes]]` to fall back on. Open
+`https://dash.cloudflare.com/<account-id>/workers/onboarding`, register a
+subdomain (free), then re-run `npm run deploy`, or `npm run setup`, which
+keeps everything already configured. For a custom domain, uncomment
+`[[routes]]` instead.
+
 ### `npm run upgrade` says every secret is missing and every migration is pending
 
 A plan that lists **all** required secrets as missing and **all**

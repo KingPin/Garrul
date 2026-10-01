@@ -45,6 +45,7 @@
     "import-comentario": "tsx scripts/import-comentario.ts",
     "import-isso": "tsx scripts/import-isso.ts",
     "import-cusdis": "tsx scripts/import-cusdis.ts",
+    "owner-link": "tsx scripts/owner-link.ts",
     "dump-isso": "tsx scripts/dump-isso.ts",
     "dump-cusdis": "tsx scripts/dump-cusdis.ts",
     "db:export": "bash scripts/db-export.sh",
@@ -68,6 +69,6 @@
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vitest": "^5.0.1",
-    "wrangler": "^4.138.0"
+    "wrangler": "^4.146.0"
   }
 }
