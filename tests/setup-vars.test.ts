@@ -142,6 +142,17 @@ describe("var validation", () => {
 		expect(sh('var_problem PUBLIC_BASE_URL "https://c.example.com"').stdout).toBe("");
 	});
 
+	it.each(["https://?", "https://#fragment", "https:///", "https://c.test?x=1"])(
+		"rejects unusable base URL %s",
+		(val) => {
+			expect(sh(`var_problem OAUTH_CALLBACK_BASE "${val}"`).stdout).toContain("is not a URL");
+		},
+	);
+
+	it("keeps a trailing-path base URL valid", () => {
+		expect(sh('var_problem PUBLIC_BASE_URL "https://c.example.com/garrul"').stdout).toBe("");
+	});
+
 	it("rejects an admin entry that is not an email", () => {
 		expect(sh('var_problem ADMIN_EMAILS "a@b.test, nope"').stdout).toContain('"nope" is not an email');
 		expect(sh('var_problem ADMIN_EMAILS "a@b.test, c@d.test"').stdout).toBe("");

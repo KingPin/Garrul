@@ -733,7 +733,7 @@ var_problem() {
 				fi
 			done ;;
 		PUBLIC_BASE_URL|OAUTH_CALLBACK_BASE)
-			[[ "$val" =~ $url_re ]] || echo "\"$val\" is not a URL — start it with https://" ;;
+			{ [[ "$val" =~ $url_re ]] && node -e "$js" url "$val"; } || echo "\"$val\" is not a URL — start it with https://" ;;
 		ADMIN_EMAILS)
 			IFS=, read -ra items <<< "$val"
 			for item in "${items[@]}"; do
