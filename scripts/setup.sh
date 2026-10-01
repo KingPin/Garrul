@@ -539,11 +539,46 @@ set_var() {
 	rm -f "$tmp"
 }
 
+# var_problem <name> <value> — one-line reason the value can't work, or nothing.
+# ALLOWED_ORIGINS is matched against the Origin header by exact string
+# (src/lib/cors.ts), so a bare host or a trailing slash never matches and
+# every embed call is then rejected with no hint why.
+var_problem() {
+	local name="$1" val="$2" item items
+	local origin_re='^https?://[^/[:space:]]+$' url_re='^https?://[^[:space:]]+$'
+	case "$name" in
+		ALLOWED_ORIGINS)
+			IFS=, read -ra items <<< "$val"
+			for item in "${items[@]}"; do
+				item="${item#"${item%%[![:space:]]*}"}"
+				item="${item%"${item##*[![:space:]]}"}"
+				[ -z "$item" ] && continue
+				if ! [[ "$item" =~ $origin_re ]]; then
+					echo "\"$item\" is not an origin — use https://host with no path or trailing slash"
+					return
+				fi
+			done ;;
+		PUBLIC_BASE_URL|OAUTH_CALLBACK_BASE)
+			[[ "$val" =~ $url_re ]] || echo "\"$val\" is not a URL — start it with https://" ;;
+		ADMIN_EMAILS)
+			IFS=, read -ra items <<< "$val"
+			for item in "${items[@]}"; do
+				item="${item#"${item%%[![:space:]]*}"}"
+				item="${item%"${item##*[![:space:]]}"}"
+				[ -z "$item" ] && continue
+				case "$item" in
+					*@*.*) ;;
+					*) echo "\"$item\" is not an email address"; return ;;
+				esac
+			done ;;
+	esac
+}
+
 # prompt_var <name> <hint> — the default is the current value unless that is
 # still the template placeholder. An empty answer leaves the placeholder and
 # sets VARS_PENDING.
 prompt_var() {
-	local name="$1" hint="$2" cur ph def val
+	local name="$1" hint="$2" cur ph def val msg
 	cur=$(get_var "$name" wrangler.toml)
 	ph=$(get_var "$name" wrangler.example.toml)
 	def=""
@@ -560,7 +595,12 @@ prompt_var() {
 		val="${val:-$def}"
 		case "$val" in
 			*'"'*|*\\*) echo "  no \" or \\ allowed — try again" ;;
-			*) break ;;
+			*)
+				# An empty answer is the skip path, so it is never validated.
+				msg=""
+				[ -z "$val" ] || msg=$(var_problem "$name" "$val")
+				[ -z "$msg" ] && break
+				echo "  $msg (try again)" ;;
 		esac
 	done
 	if [ -z "$val" ]; then

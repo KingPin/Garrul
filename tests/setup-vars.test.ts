@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import { beforeEach, describe, expect, it } from "vitest";
 
 const SETUP = join(dirname(fileURLToPath(import.meta.url)), "..", "scripts", "setup.sh");
-const FNS = ["get_var", "set_var", "var_is_placeholder", "prompt_var"];
+const FNS = ["get_var", "set_var", "var_is_placeholder", "var_problem", "prompt_var"];
 const EXTRACT = FNS.map((f) => `/^${f}() {/,/^}/p`).join(";");
 
 const EXAMPLE = `[vars]
@@ -107,6 +107,40 @@ describe("setup.sh [vars] helpers", () => {
 	it("re-asks on a value a TOML basic string can't hold as-is", () => {
 		sh('prompt_var ALLOWED_ORIGINS "hint"', 'a"b\nhttps://ok.test\n');
 		expect(toml()).toContain('ALLOWED_ORIGINS = "https://ok.test"');
+	});
+});
+
+describe("var validation", () => {
+	// ALLOWED_ORIGINS is an exact-string match against the Origin header, so a
+	// bare host was accepted by setup and then never matched anything.
+	it("re-asks on an origin without a scheme, then takes a good one", () => {
+		const r = sh('prompt_var ALLOWED_ORIGINS "hint"', "test.example.com\nhttps://test.example.com\n");
+		expect(r.stdout).toContain('"test.example.com" is not an origin');
+		expect(toml()).toContain('ALLOWED_ORIGINS = "https://test.example.com"');
+	});
+
+	it.each([
+		["https://a.test/", "trailing slash"],
+		["https://a.test/blog", "path"],
+		["https://a.test, b.test", "second entry bare"],
+	])("rejects origin %s (%s)", (val) => {
+		const r = sh(`var_problem ALLOWED_ORIGINS "${val}"`);
+		expect(r.stdout).toContain("is not an origin");
+	});
+
+	it("accepts a comma list with spaces and an http localhost origin", () => {
+		const r = sh('var_problem ALLOWED_ORIGINS "https://a.test, http://localhost:4321"');
+		expect(r.stdout).toBe("");
+	});
+
+	it("rejects a base URL with no scheme", () => {
+		expect(sh('var_problem PUBLIC_BASE_URL "comments.example.com"').stdout).toContain("is not a URL");
+		expect(sh('var_problem PUBLIC_BASE_URL "https://c.example.com"').stdout).toBe("");
+	});
+
+	it("rejects an admin entry that is not an email", () => {
+		expect(sh('var_problem ADMIN_EMAILS "a@b.test, nope"').stdout).toContain('"nope" is not an email');
+		expect(sh('var_problem ADMIN_EMAILS "a@b.test, c@d.test"').stdout).toBe("");
 	});
 });
 
