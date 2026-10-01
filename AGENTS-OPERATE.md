@@ -52,7 +52,9 @@ Before running a single command, the user needs:
 - **Node.js >= 24** and `npm`. The repo's `.nvmrc` pins the version.
   Node 22 fails at `npm ci` — see the `node-24-minimum` entry in
   `release-manifest.json`.
-- A clone of the repo: `git clone https://github.com/KingPin/Garrul.git`.
+- A clone of the repo, on the latest release tag rather than `main`:
+  `git clone https://github.com/KingPin/Garrul.git && cd Garrul &&
+  git checkout "$(git describe --tags --abbrev=0)"`.
 - `wrangler` (installed via `npm install` as a dev dep; no global needed).
 - **Optional credentials**: GitHub OAuth app (GitHub sign-in), Google
   OAuth app (Google sign-in), Cloudflare Turnstile site + secret keys

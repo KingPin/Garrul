@@ -97,9 +97,16 @@ signed-in commenters too"**) if you want them challenged as well.
 ```bash
 git clone https://github.com/KingPin/Garrul.git comments
 cd comments
+git checkout "$(git describe --tags --abbrev=0)"   # latest release, not main
 npm install
 npm run setup
 ```
+
+The `git checkout` line puts you on the latest tagged release.
+`main` can carry changes that have not shipped yet, and a release is
+what `npm run upgrade` expects to start from. Git warns about a
+"detached HEAD"; that is expected, and `npm run upgrade` leaves you in
+the same state.
 
 `npm run setup` takes a fresh clone to a live Worker. Every step after
 the secrets asks first and can be skipped. Re-running it keeps the
