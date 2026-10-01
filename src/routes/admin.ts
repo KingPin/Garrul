@@ -138,6 +138,7 @@ import { renderOperator } from "../admin-ui/pages/operator";
 import { renderTelegram } from "../admin-ui/pages/telegram";
 import { issueTelegramLinkToken } from "./telegram";
 import { renderSettings } from "../admin-ui/pages/settings";
+import { ownerLogin } from "./admin-owner";
 import {
 	bustSettingsCache,
 	canonicalReactionKinds,
@@ -306,6 +307,10 @@ admin.use("*", async (c, next) => {
 });
 
 admin.use("*", versionCheckMiddleware());
+
+// Unauthenticated by design: the single-use owner token is the credential.
+// Mounted after the guards above so Origin/CSP/no-store apply.
+admin.route("/owner", ownerLogin);
 
 admin.get("/", async (c) => {
 	const user = await requireMod(c);
