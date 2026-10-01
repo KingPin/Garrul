@@ -447,10 +447,12 @@ const buildD1Blocks = (d1: DerivedBindings["d1"]): string =>
 	].join("\n");
 
 /**
- * The `[[analytics_engine_datasets]]` blocks. No setup.sh counterpart — a
- * dataset is created implicitly on first write, so there is nothing to create
- * and no id to paste. Generated anyway so adding an `AnalyticsEngineDataset`
- * field cannot leave the template silently short a binding.
+ * The `[[analytics_engine_datasets]]` blocks, shipped commented out. A new
+ * account must enable Analytics Engine before a deploy that binds it succeeds
+ * (code 10089), and the code no-ops without the binding, so it is opt-in.
+ * No setup.sh counterpart — a dataset is created implicitly on first write.
+ * Generated anyway so adding an `AnalyticsEngineDataset` field cannot leave
+ * the template silently short a binding.
  */
 const buildAnalyticsBlocks = (
 	analytics: DerivedBindings["analytics"],
@@ -459,9 +461,9 @@ const buildAnalyticsBlocks = (
 		...bindingsHeader("", false),
 		...analytics.flatMap(({ binding, dataset }) => [
 			"",
-			"[[analytics_engine_datasets]]",
-			`binding = "${binding}"`,
-			`dataset = "${dataset}"`,
+			"# [[analytics_engine_datasets]]",
+			`# binding = "${binding}"`,
+			`# dataset = "${dataset}"`,
 		]),
 	].join("\n");
 

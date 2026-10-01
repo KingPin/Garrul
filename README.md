@@ -153,7 +153,7 @@ an AI assistant at your instance:
   `ADMIN_EMAILS`.
 - **Logs**: `wrangler tail`. Every request emits a JSON line with a
   request id. No PII (names, emails, comment bodies) is logged.
-- **Metrics**: Workers Analytics Engine writes `comment.posted`,
+- **Metrics** (optional; uncomment the `ANALYTICS` block in `wrangler.toml`): Workers Analytics Engine writes `comment.posted`,
   `oauth.complete`, `ratelimit.hit` and friends; read them in the
   Cloudflare dashboard under your Worker.
 - **Backups**: `npm run db:export` writes a `.sql` dump for your local archive.

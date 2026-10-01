@@ -14,8 +14,10 @@ Scripts:Edit* and *D1:Edit* on the account instead.
 
 ### `wrangler deploy` says "You need to enable Analytics Engine" (code 10089)
 
-Garrul writes metrics to a Workers Analytics Engine dataset, and a new
-Cloudflare account has to enable the product once. Open
+Metrics are optional and off in a fresh `wrangler.toml`. This error means
+your `wrangler.toml` has the `[[analytics_engine_datasets]]` block
+uncommented (older installs did), and a new Cloudflare account has to
+enable the product once. Either comment the block out again, or open
 `https://dash.cloudflare.com/<account-id>/workers/analytics-engine`,
 enable it (free), then re-run `npm run deploy`, or `npm run setup`,
 which keeps everything already configured.

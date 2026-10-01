@@ -530,15 +530,24 @@ describe("D1 and Analytics binding lists", () => {
 		}
 	});
 
-	it("emits one TOML block per Analytics binding, with its dataset", () => {
+	it("emits one commented-out block per Analytics binding, with its dataset", () => {
 		const toml = buildAnalyticsBlocks(analytics);
 		expect(
-			(toml.match(/^\[\[analytics_engine_datasets\]\]$/gm) ?? []).length,
+			(toml.match(/^# \[\[analytics_engine_datasets\]\]$/gm) ?? []).length,
 		).toBe(analytics.length);
 		for (const e of analytics) {
-			expect(toml, e.binding).toContain(`binding = "${e.binding}"`);
-			expect(toml, e.binding).toContain(`dataset = "${e.dataset}"`);
+			expect(toml, e.binding).toContain(`# binding = "${e.binding}"`);
+			expect(toml, e.binding).toContain(`# dataset = "${e.dataset}"`);
 		}
+	});
+
+	// Opt-in: a live block makes a fresh account's first deploy fail with 10089.
+	it("ships the analytics blocks commented out", () => {
+		expect(
+			buildAnalyticsBlocks(analytics)
+				.split("\n")
+				.filter((l) => l.startsWith("[[")),
+		).toEqual([]);
 	});
 
 	// A dataset is created implicitly on first write, so there is nothing for
@@ -548,11 +557,8 @@ describe("D1 and Analytics binding lists", () => {
 		expect(buildAnalyticsBlocks(analytics)).not.toContain("PASTE_FROM");
 	});
 
-	it("emits the blocks as live TOML, not commented out", () => {
-		for (const line of [
-			...buildD1Blocks(d1).split("\n"),
-			...buildAnalyticsBlocks(analytics).split("\n"),
-		]) {
+	it("emits the D1 blocks as live TOML, not commented out", () => {
+		for (const line of buildD1Blocks(d1).split("\n")) {
 			if (line === "" || line.startsWith("#")) continue;
 			expect(line).toMatch(
 				/^(\[\[d1_databases\]\]|\[\[analytics_engine_datasets\]\]|binding = |database_name = |database_id = |dataset = )/,

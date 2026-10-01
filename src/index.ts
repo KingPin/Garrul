@@ -44,7 +44,7 @@ export type Bindings = {
 	OAUTH_STATE: KVNamespace;
 	SESSIONS: KVNamespace;
 	TREE_CACHE: KVNamespace;
-	ANALYTICS: AnalyticsEngineDataset;
+	ANALYTICS?: AnalyticsEngineDataset;
 	ENV: string;
 	ALLOWED_ORIGINS: string;
 	ADMIN_EMAILS: string;
