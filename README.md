@@ -65,8 +65,8 @@ dashboard page); every other integration is optional.
   reaction/vote bar, in one request
 - **Full-site export** — admins download every post, comment and user as
   JSON, or comments as CSV
-- **One-command install** — `npm run setup` creates resources, sets
-  secrets and vars, migrates, deploys and checks health
+- **One-command install** — `npm run setup` asks two questions, then creates
+  resources, secrets and the hostname, migrates, deploys and checks health
 
 Every doc in the repo, grouped by task:
 [`docs/README.md`](docs/README.md).

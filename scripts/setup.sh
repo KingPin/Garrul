@@ -1,18 +1,22 @@
 #!/usr/bin/env bash
-# Garrul setup — prompt-driven install, from a fresh clone to a live Worker.
-# Creates D1 + KV namespaces (reusing any of that name already in the account),
-# writes their IDs into wrangler.toml (matched by binding name, so a reordered
-# or hand-edited file is safe; a stale id from another account is replaced), sets production
-# secrets (bulk from secrets.env or one prompt at a time), writes the
-# placeholder [vars], then offers to migrate the remote D1, deploy, and check
-# /api/v1/health. Every step after the secrets asks first; re-runs keep
-# existing vars.
+# Garrul setup — a fresh clone to a live Worker, asking only what it cannot
+# work out: the embedding origin and the Turnstile keys.
+#
+# Full run, in order: create D1 + KV (reusing any of that name already in the
+# account, matched by binding name), generate JWT_SECRET and IP_HASH_SECRET
+# (kept if already set), resolve the hostname (workers.dev subdomain looked up
+# or registered via scripts/cf-subdomain.ts, or --domain), set the URL vars,
+# ask for ALLOWED_ORIGINS and the Turnstile keys, migrate remote D1, deploy,
+# check /api/v1/health, then print the embed snippet and an owner sign-in link.
+# Every step is idempotent, so a re-run (or a run after a failure) is safe.
+#
+# Optional integrations are not part of the first run: --secrets adds sign-in
+# providers, email and spam services; --vars edits the [vars].
 #
 # Every config list below is generated between BEGIN/END markers — the secret
-# prompts and the next-steps vars from scripts/config-registry.ts, the create_d1
-# and create_kv calls from the Bindings type in src/index.ts. Run
-# `npm run config:build` after editing either; `npm run config:check` fails CI
-# when they drift.
+# prompts from scripts/config-registry.ts, the create_d1 and create_kv calls
+# from the Bindings type in src/index.ts. Run `npm run config:build` after
+# editing either; `npm run config:check` fails CI when they drift.
 #
 # Run from repo root:  ./scripts/setup.sh
 

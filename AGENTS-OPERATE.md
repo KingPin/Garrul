@@ -67,35 +67,34 @@ end-to-end before improvising. Operator-side shape:
 
 1. `npm install` (installs `wrangler` as a dev dep).
 2. `npx wrangler login` — browser OAuth, one-time per machine.
-3. Run `npm run setup`. If the login can use several Cloudflare accounts it
-   asks which one once and exports `CLOUDFLARE_ACCOUNT_ID` for the run. It copies `wrangler.example.toml` →
-   `wrangler.toml` (an existing one is kept), creates the D1 database
-   (`garrul-db`) and the four KV namespaces (`RATE_LIMITS`, `OAUTH_STATE`,
-   `SESSIONS`, `TREE_CACHE`), pastes their IDs into `wrangler.toml`
-   (it looks each name up in the account first: an existing resource is
-   reused and a stale ID from another account is overwritten),
-   generates `JWT_SECRET` + `IP_HASH_SECRET` straight into Cloudflare
-   (never written to disk), then offers two ways to set the rest: **bulk**
-   (fill in a copy of `secrets.example.env`, upload with
-   `wrangler secret bulk`) or **one prompt per secret**. Skip anything
-   you don't have yet — `wrangler secret put NAME` works later.
-4. Setup prompts for the four placeholder `[vars]` (`ALLOWED_ORIGINS`,
-   `ADMIN_EMAILS`, `PUBLIC_BASE_URL`, `OAUTH_CALLBACK_BASE`; section 5
-   has the full table). A value already set is the default.
-   `OAUTH_CALLBACK_BASE` defaults to `PUBLIC_BASE_URL`. `ALLOWED_ORIGINS`
-   entries must be `https://host` with no path or trailing slash (matched
-   by exact string); setup re-asks otherwise.
-5. Setup applies migrations to **remote** D1: `npm run migrate -- --remote`.
-   Without `--remote` only the local Miniflare DB is migrated and the
-   deployed Worker will 500.
-6. Setup runs `npm run deploy`. That uploads the Worker and provisions
-   the custom domain. On `*.workers.dev` it offers to write the printed
-   URL into `PUBLIC_BASE_URL` / `OAUTH_CALLBACK_BASE` and redeploy.
-7. Setup smoke-tests `curl -fsS https://comments.yourdomain.com/api/v1/health`
-   → `{"status":"ok","service":"garrul","time":"..."}`.
+3. Run `npm run setup`. It asks two things: `ALLOWED_ORIGINS` (the site
+   that embeds the widget; `https://host`, no path or trailing slash,
+   matched by exact string) and the Turnstile keys. Everything else is
+   automatic, in this order: copy `wrangler.example.toml` → `wrangler.toml`
+   (an existing one is kept); pick the Cloudflare account (asked once if
+   the login reaches several); create the D1 database (`garrul-db`) and
+   the four KV namespaces (`RATE_LIMITS`, `OAUTH_STATE`, `SESSIONS`,
+   `TREE_CACHE`), looked up by name first so existing ones are reused;
+   generate `JWT_SECRET` + `IP_HASH_SECRET` straight into Cloudflare
+   (never written to disk, never replaced if already set); resolve the
+   hostname (`scripts/cf-subdomain.ts` reads or registers the account's
+   workers.dev subdomain; `--domain HOST` uses a custom domain) and set
+   `PUBLIC_BASE_URL` / `OAUTH_CALLBACK_BASE`; take the Turnstile keys;
+   migrate **remote** D1 (`npm run migrate -- --remote`; without
+   `--remote` the deployed Worker would 500); `npm run deploy`; smoke-test
+   `/api/v1/health` → `{"status":"ok","service":"garrul","time":"..."}`.
+4. Setup ends with the embed snippet and a single-use owner sign-in link
+   (`npm run owner-link`; see the owner access subsection). The
+   `ANALYTICS` binding is opt-in: shipped commented out in
+   `wrangler.example.toml` because a new account must enable Analytics
+   Engine before a deploy that binds it succeeds (code 10089).
+5. Optional integrations are not part of the first run:
+   `npm run setup -- --secrets` (bulk file of `secrets.example.env`, or one
+   prompt per secret; sign-in providers, email, spam services) and
+   `npm run setup -- --vars` (admin emails, URLs). `wrangler secret put
+   NAME` works for one value.
 
-Steps 4–7 each ask first. A skipped step is printed as a manual command
-at the end, and re-running `npm run setup` is idempotent. For local dev
+Re-running `npm run setup` is idempotent. For local dev
 only: `cp .dev.vars.example .dev.vars`.
 
 The most common deploy failures are "forgot to set a secret" (step 3)

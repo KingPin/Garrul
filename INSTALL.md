@@ -57,7 +57,7 @@ KV and D1, and export it before running setup:
 export CLOUDFLARE_API_TOKEN=...
 ```
 
-## 2. Register OAuth apps (optional)
+## 2. Register OAuth apps (optional, after install)
 
 Skip this step if you only want anonymous commenting. You can add any
 provider later (see "Add keys later" in step 5).
@@ -103,8 +103,9 @@ signed-in commenters too"**) if you want them challenged as well.
 1. Open <https://dash.cloudflare.com/?to=/:account/turnstile>.
 2. Add a site. Hostname is your **blog**'s domain (the page that
    embeds the widget), not the worker.
-3. Copy the **Site Key** and **Secret Key** — you'll set them in
-   step 4.
+3. Copy the **Site Key** and **Secret Key**. Setup asks for them in
+   step 4, after it prints the hostname to enter here, so you can also
+   run setup first and create the widget when it asks.
 
 ## 4. Clone, install, run setup
 
@@ -122,53 +123,52 @@ what `npm run upgrade` expects to start from. Git warns about a
 "detached HEAD"; that is expected, and `npm run upgrade` leaves you in
 the same state.
 
-`npm run setup` takes a fresh clone to a live Worker. Every step after
-the secrets asks first and can be skipped. Re-running it keeps the
-secrets and vars already in place and reuses the D1 database and KV
-namespaces that already exist in your account. In order, it:
+`npm run setup` takes a fresh clone to a live Worker. It asks for two
+things: the site that embeds the widget, and (once the Worker has a
+hostname) your Turnstile keys. Everything else is automatic. Re-running
+it is safe: it keeps the secrets, vars and resources already in place. In
+order, it:
 
 1. copies `wrangler.example.toml` to `wrangler.toml` (an existing
-   `wrangler.toml` is kept),
-2. asks where the Worker answers requests (step 5 explains the choice),
-   and, if your Cloudflare login can use several accounts, which one to use
-   (asked once, so wrangler does not stop to ask on every call),
-3. creates the D1 database (`garrul-db`) and four KV namespaces and
+   `wrangler.toml` is kept), and asks which Cloudflare account to use if
+   your login can reach several,
+2. creates the D1 database (`garrul-db`) and four KV namespaces and
    writes their IDs into `wrangler.toml`. A resource of that name that
-   already exists in your account is reused, and an ID in `wrangler.toml`
-   that belongs to another account is replaced,
-4. generates `JWT_SECRET` and `IP_HASH_SECRET` and streams them
-   straight into Cloudflare — the values are never written to disk,
-5. offers two ways to set the remaining secrets (below),
-6. asks for the four `[vars]` that ship as placeholders
-   (`ALLOWED_ORIGINS`, `ADMIN_EMAILS`, `PUBLIC_BASE_URL`,
-   `OAUTH_CALLBACK_BASE`). A value you already set is the default, and
-   Enter keeps it. `OAUTH_CALLBACK_BASE` defaults to `PUBLIC_BASE_URL`.
-   Setup asks again if an origin has no `https://` or ends in a slash,
-7. applies migrations to the production D1 (step 6),
-8. deploys (step 7),
-9. checks `/api/v1/health` (step 8).
+   already exists is reused,
+3. generates `JWT_SECRET` and `IP_HASH_SECRET` and streams them
+   straight into Cloudflare. The values are never written to disk, and
+   a secret that is already set is never replaced,
+4. finds your `*.workers.dev` subdomain, or registers the one you name
+   if the account has none, and sets `PUBLIC_BASE_URL` and
+   `OAUTH_CALLBACK_BASE` from it (pass `--domain comments.example.com`
+   to use a custom domain instead),
+5. asks for `ALLOWED_ORIGINS`, the site that embeds the widget,
+6. prints the hostname to give Turnstile, then takes the two keys,
+7. applies migrations to the production D1, deploys, and checks
+   `/api/v1/health`,
+8. prints the embed snippet and a single-use owner sign-in link.
 
-If you skip a step, setup prints it at the end as a command to run.
-Steps 5–7 below say what each stage does and how to do it by hand.
+### Optional integrations
 
-### Add keys later
+Sign-in providers (GitHub, Google, Facebook, X, Discord), email,
+Telegram and spam services are not part of the first run. Commenting
+works without them. Add them when you want them:
 
-You do not need every key at install time. Skip any prompt you cannot
-answer yet: Google, Discord, Resend, Telegram, Turnstile, anything. To
-add one later, get the key, then either:
+```bash
+npm run setup -- --secrets    # bulk file or one prompt per key
+npm run setup -- --vars       # admin emails, URLs and the other [vars]
+```
 
-- run `wrangler secret put NAME` for each value, or
-- run `npm run setup` again. It keeps the secrets, vars and resources
-  already in place and only asks about what is missing.
-
-A new secret takes effect as soon as it is stored; no redeploy is
-needed. A new OAuth provider appears in the widget once both its
-client ID and client secret are set.
+or run `wrangler secret put NAME` for a single value. A new secret takes
+effect as soon as it is stored; no redeploy is needed. A new OAuth
+provider appears in the widget once both its client ID and client secret
+are set.
 
 ### Bulk or one at a time
 
-Nothing is lost by picking either; you can re-run `npm run setup`, or set
-any secret later with `wrangler secret put NAME`.
+`npm run setup -- --secrets` offers both. Nothing is lost by picking
+either; you can re-run it, or set any secret later with
+`wrangler secret put NAME`.
 
 **Bulk** (fewer keystrokes — one file, one upload):
 
@@ -190,7 +190,7 @@ feature, with a one-line note on where each value comes from.
 `secrets.env` holds plaintext credentials. It is gitignored; delete it
 once the upload succeeds.
 
-**One at a time**: `setup.sh` asks about each secret in turn and runs
+**One at a time**: `npm run setup -- --secrets` asks about each secret in turn and runs
 `wrangler secret put` for the ones you say yes to. Skip anything you
 don't have yet. For Turnstile and each OAuth provider it names the
 two values in order (for Turnstile, Site Key then Secret Key) before
@@ -219,8 +219,9 @@ the value off disk and out of your shell history.
 
 ## 5. Configure `wrangler.toml`
 
-Setup asks for the four placeholder vars in step 4. To change them
-later, or to set the optional ones, edit `[vars]` in `wrangler.toml`:
+Setup fills `PUBLIC_BASE_URL`, `OAUTH_CALLBACK_BASE` and
+`ALLOWED_ORIGINS` for you. To change them later, or to set the optional
+ones, run `npm run setup -- --vars` or edit `[vars]` in `wrangler.toml`:
 
 ```toml
 [vars]
@@ -238,9 +239,9 @@ deployments on the same free tier; the only difference is sign-in.
 **Trying it out — `*.workers.dev`.** Leave the `routes` block
 commented out and deploy. Cloudflare hands you a
 `garrul.<your-subdomain>.workers.dev` URL, which `wrangler deploy`
-prints in step 7. Leave `PUBLIC_BASE_URL` and `OAUTH_CALLBACK_BASE`
-empty at the setup prompt. After the deploy, setup offers to fill both
-from that URL and redeploy. `ALLOWED_ORIGINS` is still the site that
+prints in step 7. Setup looks up your workers.dev subdomain (and registers one if the
+account has none) and fills `PUBLIC_BASE_URL` and `OAUTH_CALLBACK_BASE`
+before the deploy. `ALLOWED_ORIGINS` is still the site that
 embeds the widget.
 
 **Running it for real — a custom subdomain.** Uncomment the `routes`
@@ -268,7 +269,7 @@ stay exactly where they are.
 
 ## 6. Apply migrations to the production D1
 
-Setup runs this when you answer yes. To run it by hand:
+Setup runs this for you. To run it by hand:
 
 ```bash
 npm run migrate -- --remote
@@ -279,7 +280,7 @@ DB only — your deployed worker would 500 on the first request.
 
 ## 7. Deploy
 
-Setup runs this when you answer yes. To run it by hand:
+Setup runs this for you. To run it by hand:
 
 ```bash
 npm run deploy
@@ -289,11 +290,10 @@ Wrangler uploads the worker, builds the embed bundle, and (if a
 custom domain is configured) provisions the DNS record. The first
 deploy can take ~30 seconds while the certificate is issued.
 
-Wrangler prints the live URL when it finishes. On the `*.workers.dev`
-path, setup offers to write that URL into `PUBLIC_BASE_URL` and
-`OAUTH_CALLBACK_BASE` and redeploy. By hand: put the URL into both vars
-and run `npm run deploy` once more. (`ALLOWED_ORIGINS` is unaffected:
-it lists the sites that embed the widget, not the Worker itself.)
+Wrangler prints the live URL when it finishes. By hand, put the URL
+into `PUBLIC_BASE_URL` and `OAUTH_CALLBACK_BASE` before deploying.
+(`ALLOWED_ORIGINS` is unaffected: it lists the sites that embed the
+widget, not the Worker itself.)
 
 ## 8. Verify
 
@@ -312,8 +312,11 @@ Tail logs while you exercise it:
 npm run tail
 ```
 
-Open `https://comments.example.com/admin` and sign in with an
-address listed in `ADMIN_EMAILS` to confirm OAuth + admin work.
+Open the owner sign-in link setup printed to reach
+`https://comments.example.com/admin`. It is single use and expires in
+10 minutes; `npm run owner-link` issues a new one (see
+[docs/owner-access.md](docs/owner-access.md)). Admins can also sign in
+with OAuth using an address listed in `ADMIN_EMAILS`.
 
 Drop the widget into a page on your blog:
 
