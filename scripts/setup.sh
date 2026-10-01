@@ -892,7 +892,15 @@ setup_hostname() {
 				read -r -p "  subdomain: " name
 				[ -n "$name" ] || { echo "  a subdomain is required to deploy without a custom domain"; continue; }
 				rc=0
-				sub=$(npx --no-install tsx scripts/cf-subdomain.ts put "$name") && break
+				sub=$(npx --no-install tsx scripts/cf-subdomain.ts put "$name") || rc=$?
+				[ "$rc" -eq 0 ] && break
+				# 3: re-read confirmed the account still has none. Anything else
+				# (the re-read failed too): a retry could rename a subdomain that
+				# the lost PUT already created.
+				if [ "$rc" -ne 3 ]; then
+					echo "error: could not confirm the subdomain. Re-run setup to check it." >&2
+					exit 1
+				fi
 				echo "  try another name"
 			done
 			echo "  ✓ registered $sub.workers.dev"

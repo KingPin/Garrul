@@ -83,6 +83,31 @@ export const putSubdomain = async (
 	}
 };
 
+export type Register =
+	| { kind: "registered" | "adopted"; subdomain: string }
+	| { kind: "rejected"; error: string }
+	| { kind: "unknown"; error: string };
+
+/**
+ * PUT, and on any failure re-read before reporting it. A lost response can hide
+ * a PUT that landed; another PUT would then rename the subdomain. "rejected"
+ * means the account verifiably still has none, so a retry is safe. "unknown"
+ * means the re-read failed too: stop, do not retry.
+ */
+export const registerSubdomain = async (
+	account: string,
+	token: string,
+	name: string,
+	fetchFn: Fetch = fetch,
+): Promise<Register> => {
+	const put = await putSubdomain(account, token, name, fetchFn);
+	if (put.ok) return { kind: "registered", subdomain: put.subdomain as string };
+	const now = await getSubdomain(account, token, fetchFn);
+	if (!now.ok) return { kind: "unknown", error: now.error };
+	if (now.subdomain) return { kind: "adopted", subdomain: now.subdomain };
+	return { kind: "rejected", error: put.error };
+};
+
 const accountId = (): string | null => {
 	const env = process.env.CLOUDFLARE_ACCOUNT_ID;
 	if (env) return env;
@@ -124,10 +149,17 @@ const main = async (): Promise<number> => {
 		return 0;
 	}
 	if (cmd === "put" && name) {
-		const r = await putSubdomain(account, token, name);
-		if (!r.ok) {
+		const r = await registerSubdomain(account, token, name);
+		if (r.kind === "unknown") {
+			console.error(`error: could not confirm the workers.dev subdomain: ${r.error}`);
+			return 2;
+		}
+		if (r.kind === "rejected") {
 			console.error(`error: could not register "${name}": ${r.error}`);
 			return 3;
+		}
+		if (r.kind === "adopted") {
+			console.error(`note: the account already has the subdomain "${r.subdomain}"; keeping it`);
 		}
 		console.log(r.subdomain);
 		return 0;
