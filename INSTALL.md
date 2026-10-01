@@ -102,21 +102,25 @@ npm run setup
 ```
 
 `npm run setup` takes a fresh clone to a live Worker. Every step after
-the secrets asks first and can be skipped. Re-running it keeps the IDs,
-secrets and vars already in place. In order, it:
+the secrets asks first and can be skipped. Re-running it keeps the
+secrets and vars already in place and reuses the D1 database and KV
+namespaces that already exist in your account. In order, it:
 
 1. copies `wrangler.example.toml` to `wrangler.toml` (an existing
    `wrangler.toml` is kept),
 2. asks where the Worker answers requests (step 5 explains the choice),
 3. creates the D1 database (`garrul-db`) and four KV namespaces and
-   writes their IDs into `wrangler.toml`,
+   writes their IDs into `wrangler.toml`. A resource of that name that
+   already exists in your account is reused, and an ID in `wrangler.toml`
+   that belongs to another account is replaced,
 4. generates `JWT_SECRET` and `IP_HASH_SECRET` and streams them
    straight into Cloudflare — the values are never written to disk,
 5. offers two ways to set the remaining secrets (below),
 6. asks for the four `[vars]` that ship as placeholders
    (`ALLOWED_ORIGINS`, `ADMIN_EMAILS`, `PUBLIC_BASE_URL`,
    `OAUTH_CALLBACK_BASE`). A value you already set is the default, and
-   Enter keeps it. `OAUTH_CALLBACK_BASE` defaults to `PUBLIC_BASE_URL`,
+   Enter keeps it. `OAUTH_CALLBACK_BASE` defaults to `PUBLIC_BASE_URL`.
+   Setup asks again if an origin has no `https://` or ends in a slash,
 7. applies migrations to the production D1 (step 6),
 8. deploys (step 7),
 9. checks `/api/v1/health` (step 8).
@@ -151,7 +155,9 @@ once the upload succeeds.
 
 **One at a time**: `setup.sh` asks about each secret in turn and runs
 `wrangler secret put` for the ones you say yes to. Skip anything you
-don't have yet.
+don't have yet. For Turnstile and each OAuth provider it names the
+two values in order (for Turnstile, Site Key then Secret Key) before
+each paste, because wrangler's own prompt does not.
 
 Have these handy either way:
 

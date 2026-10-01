@@ -68,7 +68,9 @@ end-to-end before improvising. Operator-side shape:
 3. Run `npm run setup`. It copies `wrangler.example.toml` →
    `wrangler.toml` (an existing one is kept), creates the D1 database
    (`garrul-db`) and the four KV namespaces (`RATE_LIMITS`, `OAUTH_STATE`,
-   `SESSIONS`, `TREE_CACHE`), pastes their IDs into `wrangler.toml`,
+   `SESSIONS`, `TREE_CACHE`), pastes their IDs into `wrangler.toml`
+   (it looks each name up in the account first: an existing resource is
+   reused and a stale ID from another account is overwritten),
    generates `JWT_SECRET` + `IP_HASH_SECRET` straight into Cloudflare
    (never written to disk), then offers two ways to set the rest: **bulk**
    (fill in a copy of `secrets.example.env`, upload with
@@ -77,7 +79,9 @@ end-to-end before improvising. Operator-side shape:
 4. Setup prompts for the four placeholder `[vars]` (`ALLOWED_ORIGINS`,
    `ADMIN_EMAILS`, `PUBLIC_BASE_URL`, `OAUTH_CALLBACK_BASE`; section 5
    has the full table). A value already set is the default.
-   `OAUTH_CALLBACK_BASE` defaults to `PUBLIC_BASE_URL`.
+   `OAUTH_CALLBACK_BASE` defaults to `PUBLIC_BASE_URL`. `ALLOWED_ORIGINS`
+   entries must be `https://host` with no path or trailing slash (matched
+   by exact string); setup re-asks otherwise.
 5. Setup applies migrations to **remote** D1: `npm run migrate -- --remote`.
    Without `--remote` only the local Miniflare DB is migrated and the
    deployed Worker will 500.
