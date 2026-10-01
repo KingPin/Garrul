@@ -143,7 +143,7 @@ describe("create_kv", () => {
 describe("select_account", () => {
 	const TWO = '[{"id":"aaa","name":"Personal"},{"id":"bbb","name":"Work"}]';
 	const ONE = '[{"id":"aaa","name":"Personal"}]';
-	const show = 'select_account; echo "acct=${CLOUDFLARE_ACCOUNT_ID:-}"';
+	const show = 'select_account; echo "acct=$(printenv CLOUDFLARE_ACCOUNT_ID || true)"';
 
 	beforeEach(() => writeFileSync(join(dir, "wrangler.toml"), 'name = "garrul"\n'));
 
