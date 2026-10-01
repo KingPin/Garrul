@@ -680,6 +680,26 @@ and change over time —
 if a provider rejects the localhost URI, register a separate dev app or
 front local dev with an HTTPS tunnel.
 
+### Owner access without OAuth or `ADMIN_EMAILS`
+
+A fresh install with no provider and no `ADMIN_EMAILS` still has an admin:
+the owner. Run `npm run owner-link` on a machine logged in to Cloudflare with
+wrangler (add `-- --local` for `wrangler dev`). It prints one link,
+`https://<host>/admin/owner#t=<token>`, valid 10 minutes and single use.
+Open it and click **Sign in as owner**. Only the token's SHA-256 is stored
+(migration 0029). The token sits in the URL fragment, so it never reaches a
+server log, and the page clears it before anything else runs.
+
+- Output contract: stdout is only the link; all other messages go to stderr.
+  It needs `PUBLIC_BASE_URL` set (not the placeholder), or `-- --base-url <url>`.
+- There is exactly one owner row (`provider='owner'`, `provider_id='primary'`,
+  `role='admin'`). Issuing a new link revokes older unused ones.
+- Recovery is deliberate: if the owner is banned, demoted or erased,
+  `owner-link` refuses and says why, and a link issued earlier stops working.
+  Restore the row by hand in D1 (`is_banned=0`, `role='admin'`, `is_admin=1`),
+  then run `owner-link` again.
+- Details: `docs/owner-access.md`.
+
 ## 9. Email
 
 Garrul ships a Resend adapter as the default (`src/lib/email.ts`). The
