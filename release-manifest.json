@@ -399,7 +399,8 @@
     "0025_comment_pins.sql",
     "0026_staff_badge.sql",
     "0027_oauth_email_names.sql",
-    "0028_user_name_key.sql"
+    "0028_user_name_key.sql",
+    "0029_owner_login.sql"
   ],
   "breakingChanges": [
     {

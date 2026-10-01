@@ -1072,6 +1072,11 @@ for an identity that may not act, because `/api/v1/subscribe/mine`
 answers those callers a 403 and there is no 403 to return inside a 200
 envelope.
 
+**Owner access (operators).** An install with no OAuth provider and no
+`ADMIN_EMAILS` signs its operator in with `npm run owner-link`, which prints a
+10-minute single-use link to `{{INSTANCE_URL}}/admin/owner`. Embedders do not
+need it. See `docs/owner-access.md` in the repo.
+
 ## 8. Anonymous comments
 
 Garrul lets visitors comment **without signing in**. From the embed
