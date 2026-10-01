@@ -20,6 +20,36 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+usage() {
+	cat <<-'EOS'
+		usage: npm run setup [-- OPTION]
+
+		  (none)          first install, or a safe re-run: provision, deploy, verify
+		  --domain HOST   serve from a custom domain (comments.example.com) instead
+		                  of *.workers.dev; the domain must be on Cloudflare DNS
+		  --secrets       add or change optional secrets only (sign-in providers,
+		                  email, spam services); nothing else is touched
+		  --vars          edit the [vars] in wrangler.toml (admin emails, URLs)
+	EOS
+}
+
+MODE=full
+DOMAIN=""
+while [ $# -gt 0 ]; do
+	case "$1" in
+		--secrets) MODE=secrets ;;
+		--vars) MODE=vars ;;
+		--domain)
+			DOMAIN="${2:-}"
+			[[ "$DOMAIN" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]] || { echo "error: --domain needs a hostname like comments.example.com" >&2; exit 64; }
+			shift ;;
+		-h|--help) usage; exit 0 ;;
+		*) echo "error: unknown option $1" >&2; usage >&2; exit 64 ;;
+	esac
+	shift
+done
+PENDING=0
+
 if [ ! -f wrangler.example.toml ]; then
 	echo "error: wrangler.example.toml missing — run from repo root." >&2
 	exit 1
@@ -38,53 +68,45 @@ else
 	echo "✓ copied wrangler.example.toml → wrangler.toml"
 fi
 
-confirm_route() {
-	# If the [[routes]] block is no longer fully commented out, assume the
-	# user has configured (or deliberately removed) it and skip the prompt.
-	if ! grep -qE '^[[:space:]]*#[[:space:]]*routes[[:space:]]*=' wrangler.toml; then
-		echo
-		echo "✓ routes section appears configured — skipping prompt"
-		return
-	fi
-	# Never exits. D1, KV and the secret prompts below are identical either way,
-	# so ejecting here only meant the operator hand-edited a 261-line TOML and
-	# then re-ran everything — a rejection as the first thing the tool does.
-	cat <<-'EOS'
-
-		Where should this Worker answer requests?
-
-		  1) *.workers.dev — free, live in minutes, no DNS to move. Good for
-		     trying Garrul out. Not a production answer: the cross-site cookie
-		     the embed needs gets blocked for some Safari/Firefox readers, so
-		     sign-in breaks for them. Anonymous commenting still works.
-
-		  2) A custom subdomain (comments.yourdomain.com) — the production
-		     answer. Needs the domain on Cloudflare, and one edit to the
-		     [[routes]] block in wrangler.toml.
-
-		Either way the rest of this setup is the same, and moving from 1 to 2
-		later is a config edit and a redeploy — no data migration.
-
-	EOS
-	read -r -p "Choose [1/2] (default 1): " resp
-	case "$resp" in
-		2)
-			echo
-			echo "→ Uncomment the [[routes]] block in wrangler.toml and set your"
-			echo "  pattern, e.g. { pattern = \"comments.yourdomain.com\", custom_domain = true }"
-			echo "  Do it before your first deploy; setup continues either way."
-			;;
-		*)
-			echo
-			echo "✓ staying on *.workers.dev — leave [[routes]] commented out."
-			echo "  Leave PUBLIC_BASE_URL and OAUTH_CALLBACK_BASE empty at the vars"
-			echo "  prompt; after the deploy, setup offers to fill them from the"
-			echo "  workers.dev URL wrangler prints."
-			echo "  ALLOWED_ORIGINS stays the site that embeds the widget."
-			;;
-	esac
+# worker_name — the Worker's `name` from wrangler.toml.
+worker_name() {
+	awk -F'"' '/^name[[:space:]]*=/ { print $2; exit }' wrangler.toml
 }
-confirm_route
+
+# route_host — the hostname of the first uncommented [[routes]] pattern, or
+# nothing when the Worker is on workers.dev.
+route_host() {
+	awk -F'"' '/^[[:space:]]*routes[[:space:]]*=/ { on = 1 } on && /pattern[[:space:]]*=/ { print $2; exit }' wrangler.toml
+}
+
+# apply_domain — --domain HOST activates the commented [[routes]] example for
+# that host and points the URL vars at it. Without the flag nothing changes:
+# a re-run keeps whatever routing the operator already has. A routes block that
+# is already active is never rewritten.
+apply_domain() {
+	[ -n "$DOMAIN" ] || return 0
+	if [ -n "$(route_host)" ]; then
+		echo "✓ routes already configured for $(route_host) — leaving them (ignoring --domain)"
+		return 0
+	fi
+	local tmp
+	tmp=$(mktemp ./wrangler.toml.new.XXXXXX)
+	awk -v host="$DOMAIN" '
+		skip > 0 { skip--; next }
+		/^[[:space:]]*#[[:space:]]*routes[[:space:]]*=[[:space:]]*\[/ && !done {
+			print "routes = ["
+			print "  { pattern = \"" host "\", custom_domain = true }"
+			print "]"
+			skip = 2; done = 1; next
+		}
+		{ print }
+		END { exit done ? 0 : 4 }
+	' wrangler.toml > "$tmp" || { rm -f "$tmp"; echo "error: could not find the commented [[routes]] example in wrangler.toml; add the route by hand." >&2; exit 1; }
+	mv "$tmp" wrangler.toml
+	echo "✓ routes: $DOMAIN (custom domain — it must be on Cloudflare DNS)"
+	set_var PUBLIC_BASE_URL "https://$DOMAIN"
+	set_var OAUTH_CALLBACK_BASE "https://$DOMAIN"
+}
 
 # A login that can see several Cloudflare accounts makes every wrangler call
 # below stop and ask "Select an account" — a dozen times, and invisibly inside
@@ -137,8 +159,6 @@ select_account() {
 	echo "✓ using $name"
 	export CLOUDFLARE_ACCOUNT_ID="$id"
 }
-select_account
-
 # Write an id into the wrangler.toml block that declares this binding — not
 # into the first remaining placeholder in the file.
 #
@@ -397,6 +417,7 @@ create_kv() {
 	apply_id set_kv_id "$binding" "$id" "$current"
 }
 
+provision_resources() {
 # BEGIN:d1-bindings
 # Generated by `npm run config:build` from the Bindings type in src/index.ts. Do not edit by hand.
 create_d1 DB garrul-db
@@ -408,6 +429,7 @@ create_kv OAUTH_STATE
 create_kv SESSIONS
 create_kv TREE_CACHE
 # END:kv-bindings
+}
 
 put_secret() {
 	local name="$1"
@@ -473,30 +495,31 @@ secret_exists() {
 	' "$1"
 }
 
+# have_secret <name> — 0 when set, 1 when not. A failed lookup stops setup.
+have_secret() {
+	local rc=0
+	secret_exists "$1" || rc=$?
+	case "$rc" in
+		0|1) return "$rc" ;;
+		*) echo "error: could not check whether $1 is set. Fix the above and re-run." >&2; exit 1 ;;
+	esac
+}
+
 # Auto-generate a 32-byte base64 random secret and stream it to wrangler.
 # Falls back to interactive entry if openssl is unavailable.
 put_random_secret() {
 	local name="$1"
-	local hint="$2" rc=0
-	secret_exists "$name" || rc=$?
-	case "$rc" in
-		0) echo "  ✓ $name already set — kept (regenerating would invalidate existing data)"; return ;;
-		1) ;;
-		*) echo "error: could not check whether $name is set. Fix the above and re-run." >&2; exit 1 ;;
-	esac
+	local hint="$2"
+	if have_secret "$name"; then
+		echo "  ✓ $name already set — kept (regenerating would invalidate existing data)"
+		return
+	fi
 	if ! command -v openssl >/dev/null 2>&1; then
 		put_secret "$name" "$hint"
 		return
 	fi
-	echo
-	read -r -p "Auto-generate $name? ($hint) [Y/n] " resp
-	case "$resp" in
-		n|N|no|NO) echo "  skipped — set later with: wrangler secret put $name" ;;
-		*)
-			openssl rand -base64 32 | wrangler secret put "$name"
-			echo "  ✓ generated and stored (never written to disk)"
-			;;
-	esac
+	openssl rand -base64 32 | wrangler secret put "$name"
+	echo "  ✓ $name generated and stored (never written to disk)"
 }
 
 # One prompt per secret — the original path. The call list is generated from
@@ -584,31 +607,15 @@ bulk_secrets() {
 	esac
 }
 
-echo
-echo "=== Production secrets ==="
-echo
-echo "JWT_SECRET and IP_HASH_SECRET are generated here and streamed straight"
-echo "into wrangler — the values never touch disk."
-
+# JWT_SECRET and IP_HASH_SECRET are generated and streamed straight into
+# wrangler — the values never touch disk. Existing ones are kept.
+generate_secrets() {
 # BEGIN:generated-secrets
 # Generated by `npm run config:build` from scripts/config-registry.ts. Do not edit by hand.
 put_random_secret JWT_SECRET "auto-generated 32-byte HMAC key for signed OAuth state"
 put_random_secret IP_HASH_SECRET "auto-generated HMAC pepper — generate once and keep it"
 # END:generated-secrets
-
-echo
-echo "Skip any key you do not have yet (Google, Discord, Resend, ...). Add it"
-echo "later with wrangler secret put NAME, or re-run npm run setup."
-echo
-echo "The remaining secrets can be set two ways:"
-echo "  b) bulk   — fill in one file, upload them all in a single call"
-echo "  p) prompt — answer one question per secret"
-echo
-read -r -p "Which? [b/P] " mode
-case "$mode" in
-	b|B|bulk|BULK) bulk_secrets ;;
-	*) interactive_secrets ;;
-esac
+}
 
 confirm_yes() {
 	local resp
@@ -765,23 +772,6 @@ configure_vars() {
 	if [ "$VARS_PENDING" = 1 ]; then PENDING=1; fi
 }
 
-PENDING=0
-
-echo
-echo "=== Worker vars ==="
-echo
-echo "wrangler.toml ships four [vars] as placeholders. Enter keeps the value in"
-echo "[brackets]; an empty answer leaves the placeholder for later. On"
-echo "*.workers.dev, leave PUBLIC_BASE_URL and OAUTH_CALLBACK_BASE empty — the"
-echo "deploy step offers to fill them from the URL wrangler prints."
-echo
-if confirm_yes "Set them now?"; then
-	configure_vars
-else
-	echo "  skipped — edit [vars] in wrangler.toml by hand"
-	PENDING=1
-fi
-
 # The workers.dev hostname can't be known before the first deploy, so this is
 # the first point where setup can fill PUBLIC_BASE_URL for someone who chose it.
 deploy_worker() {
@@ -858,11 +848,9 @@ verify_health() {
 	PENDING=1
 }
 
-echo
-echo "=== Migrate, deploy, verify ==="
 
-echo
-if confirm_yes "Apply the schema to production D1 (npm run migrate -- --remote)?"; then
+run_migrate() {
+	local rc
 	set +e
 	npm run migrate -- --remote
 	rc=$?
@@ -874,44 +862,162 @@ if confirm_yes "Apply the schema to production D1 (npm run migrate -- --remote)?
 		echo "  Re-running setup replaces it with the account's own." >&2
 		exit $rc
 	fi
-else
-	echo "  skipped — run later with: npm run migrate -- --remote"
-	PENDING=1
-fi
+}
 
-echo
-if confirm_yes "Deploy the Worker (npm run deploy)?"; then
-	deploy_worker
+
+# The hostname the Worker will answer on, before any deploy: the first
+# [[routes]] pattern when one is configured, else <name>.<subdomain>.workers.dev.
+# Turnstile and the blog's embed snippet both need it up front, and the
+# workers.dev half only exists once the account has a subdomain.
+WORKER_HOST=""
+setup_hostname() {
+	local sub name rc=0
+	WORKER_HOST=$(route_host)
+	if [ -z "$WORKER_HOST" ]; then
+		sub=$(npx --no-install tsx scripts/cf-subdomain.ts get) || rc=$?
+		if [ "$rc" -ne 0 ]; then
+			echo "error: could not read this account's workers.dev subdomain. Fix the above and re-run." >&2
+			exit 1
+		fi
+		if [ -z "$sub" ]; then
+			echo
+			echo "This account has no workers.dev subdomain yet. It is account-wide: every"
+			echo "Worker here is served from <worker>.<subdomain>.workers.dev, and renaming"
+			echo "it later changes all of those URLs. Pick one (letters, digits, hyphens)."
+			while :; do
+				read -r -p "  subdomain: " name
+				[ -n "$name" ] || { echo "  a subdomain is required to deploy without a custom domain"; continue; }
+				rc=0
+				sub=$(npx --no-install tsx scripts/cf-subdomain.ts put "$name") && break
+				echo "  try another name"
+			done
+			echo "  ✓ registered $sub.workers.dev"
+		fi
+		WORKER_HOST="$(worker_name).$sub.workers.dev"
+	fi
 	echo
-	if confirm_yes "Smoke-test /api/v1/health?"; then
-		verify_health
+	echo "✓ this Worker will answer at https://$WORKER_HOST"
+	if var_is_placeholder PUBLIC_BASE_URL; then set_var PUBLIC_BASE_URL "https://$WORKER_HOST"; fi
+	if var_is_placeholder OAUTH_CALLBACK_BASE; then set_var OAUTH_CALLBACK_BASE "https://$WORKER_HOST"; fi
+}
+
+# The one Worker var with no usable default: it is matched against the Origin
+# header, so a blank or wrong value rejects every embed call.
+ask_origin() {
+	echo
+	echo "=== Your site ==="
+	while var_is_placeholder ALLOWED_ORIGINS; do
+		prompt_var ALLOWED_ORIGINS "the site that shows comments, e.g. https://yourblog.example.com"
+		if var_is_placeholder ALLOWED_ORIGINS; then echo "  required — comments are rejected from any other origin"; fi
+	done
+	if ! var_is_placeholder ALLOWED_ORIGINS; then echo "  ✓ ALLOWED_ORIGINS set"; fi
+}
+
+setup_turnstile() {
+	echo
+	echo "=== Turnstile (anti-spam for guest comments) ==="
+	if have_secret TURNSTILE_SITE_KEY && have_secret TURNSTILE_SECRET; then
+		echo "  ✓ Turnstile keys already set — kept"
+		return
+	fi
+	echo
+	echo "  1. Open dash.cloudflare.com → Turnstile → Add widget."
+	echo "  2. Hostname: $WORKER_HOST   (the widget runs in a frame served from the Worker)"
+	echo "  3. Widget mode: Managed. Create it, then copy the two keys."
+	echo
+	if confirm_yes "Paste the two keys now?"; then
+		echo
+		echo "  1 of 2: Site Key (public)  (stored as TURNSTILE_SITE_KEY)"
+		wrangler secret put TURNSTILE_SITE_KEY
+		echo
+		echo "  2 of 2: Secret Key (private)  (stored as TURNSTILE_SECRET)"
+		wrangler secret put TURNSTILE_SECRET
 	else
+		echo "  skipped — guests cannot comment until both are set:"
+		echo "    wrangler secret put TURNSTILE_SITE_KEY"
+		echo "    wrangler secret put TURNSTILE_SECRET"
 		PENDING=1
 	fi
-else
-	echo "  skipped — run later with: npm run deploy"
-	PENDING=1
-fi
+}
 
-if [ "$PENDING" = 0 ]; then
+# The page-ready embed snippet comes first: it is what the reader came for.
+finish() {
+	local link
 	echo
-	echo "=== Done ==="
-	echo "Skipped a key? Add it later with wrangler secret put NAME or re-run npm run setup."
+	echo "=== Garrul is live ==="
+	echo
+	echo "Paste this where comments should appear (change data-slug per post):"
+	echo
+	echo "  <div id=\"garrul\" data-slug=\"hello-world\" data-api=\"https://$WORKER_HOST\"></div>"
+	echo "  <script src=\"https://$WORKER_HOST/embed.js\" defer></script>"
+	if grep -q '"owner-link"' package.json 2>/dev/null; then
+		echo
+		if link=$(npm run --silent owner-link 2>/dev/null) && [ -n "$link" ]; then
+			echo "Moderate as the owner (single use, expires in 10 minutes):"
+			echo
+			echo "  $link"
+			echo
+			echo "For a new link any time, run: npm run owner-link"
+		else
+			echo "Could not create the owner sign-in link. Run: npm run owner-link"
+			PENDING=1
+		fi
+	fi
+	echo
+	echo "More options (sign-in providers, email, spam services): npm run setup -- --secrets"
+	if [ "$PENDING" != 0 ]; then
+		echo
+		echo "Something was skipped above. Re-run: npm run setup"
+	fi
 	echo "Tail logs: npm run tail"
-	exit 0
-fi
+}
 
-echo
-echo "=== Next steps ==="
-# BEGIN:must-edit-vars
-# Generated by `npm run config:build` from scripts/config-registry.ts. Do not edit by hand.
-echo "1. Edit wrangler.toml before deploying — these ship as placeholders:"
-echo "     ALLOWED_ORIGINS     — comma-separated origins allowed to embed and call /api/*"
-echo "     ADMIN_EMAILS        — comma-separated emails that get auto-admin on OAuth signup"
-echo "     PUBLIC_BASE_URL     — public URL of this Worker; used in permalinks and email bodies"
-echo "     OAUTH_CALLBACK_BASE — must match the redirect URI registered with each provider"
-echo "   Plus the [[routes]] pattern, if you skipped it above."
-# END:must-edit-vars
-echo "2. Apply schema:  npm run migrate -- --remote"
-echo "3. Deploy:        npm run deploy"
-echo "4. Tail logs:     npm run tail"
+main_full() {
+	apply_domain
+	select_account
+	provision_resources
+	echo
+	echo "=== Secrets ==="
+	generate_secrets
+	setup_hostname
+	ask_origin
+	setup_turnstile
+	echo
+	echo "=== Migrate, deploy, verify ==="
+	run_migrate
+	deploy_worker
+	verify_health
+	finish
+}
+
+# Optional keys only: no provisioning, no generated secrets, no deploy.
+main_secrets() {
+	select_account
+	echo
+	echo "=== Optional secrets ==="
+	echo "Skip any key you do not have yet. Re-run this any time."
+	echo
+	echo "These can be set two ways:"
+	echo "  b) bulk   — fill in one file, upload them all in a single call"
+	echo "  p) prompt — answer one question per secret"
+	echo
+	read -r -p "Which? [b/P] " mode
+	case "$mode" in
+		b|B|bulk|BULK) bulk_secrets ;;
+		*) interactive_secrets ;;
+	esac
+	echo
+	echo "Done. Secrets take effect on the next request; no redeploy needed."
+}
+
+main_vars() {
+	configure_vars
+	echo
+	echo "Edited wrangler.toml. Apply it with: npm run deploy"
+}
+
+case "$MODE" in
+	full) main_full ;;
+	secrets) main_secrets ;;
+	vars) main_vars ;;
+esac

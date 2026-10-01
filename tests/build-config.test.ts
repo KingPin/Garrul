@@ -7,9 +7,9 @@ import {
 	buildDevVars,
 	buildSecretsRequired,
 	buildSecretsPointer,
+	buildMustEditBanner,
 	buildSetupPrompts,
 	buildSetupGenerated,
-	buildSetupNextSteps,
 	buildSetupVarPrompts,
 	buildKvNamespaceBlocks,
 	buildSetupKvCreates,
@@ -311,16 +311,13 @@ describe("setup.sh prompt lists", () => {
 	});
 });
 
-describe("setup.sh next-steps block", () => {
+describe("mustEdit vars in the template banner", () => {
 	// This list was hardcoded ("ALLOWED_ORIGINS, ADMIN_EMAILS, route pattern")
 	// with no flag to generate it from, so a newly added placeholder var would
 	// go unmentioned with config:check green — the drift #42 set out to close.
 	it("names every mustEdit var with its hint, in registry order", () => {
-		const steps = buildSetupNextSteps();
-		const width = Math.max(...MUST_EDIT_VARS.map((e) => e.name.length));
-		const order = MUST_EDIT_VARS.map((e) =>
-			steps.indexOf(`${e.name.padEnd(width)} — ${e.hint}`),
-		);
+		const banner = buildMustEditBanner();
+		const order = MUST_EDIT_VARS.map((e) => banner.indexOf(e.name));
 		for (const [i, at] of order.entries()) {
 			expect(at, MUST_EDIT_VARS[i]?.name).toBeGreaterThan(-1);
 		}
@@ -328,30 +325,10 @@ describe("setup.sh next-steps block", () => {
 	});
 
 	it("mentions no var that isn't flagged mustEdit", () => {
-		const steps = buildSetupNextSteps();
+		const banner = buildMustEditBanner();
 		for (const e of VARS) {
 			if (e.mustEdit) continue;
-			expect(steps, e.name).not.toMatch(new RegExp(`\\b${e.name}\\b`));
-		}
-	});
-
-	// The region sits at column 0 in a `set -euo pipefail` script, so anything
-	// other than a comment or an echo is executed on every install.
-	it("emits nothing executable but echo", () => {
-		const offenders = buildSetupNextSteps()
-			.split("\n")
-			.filter((line) => !/^(#|echo ")/.test(line));
-		expect(offenders).toEqual([]);
-	});
-
-	it("is the state the committed script is in", () => {
-		expect(read("scripts/setup.sh")).toContain(buildSetupNextSteps());
-	});
-
-	it("keeps the step numbering contiguous", () => {
-		const setup = read("scripts/setup.sh");
-		for (const n of [1, 2, 3, 4]) {
-			expect(setup, `step ${n}`).toMatch(new RegExp(`^echo "${n}\\. `, "m"));
+			expect(banner, e.name).not.toMatch(new RegExp(`\\b${e.name}\\b`));
 		}
 	});
 

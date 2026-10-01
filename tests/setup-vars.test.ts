@@ -145,16 +145,20 @@ describe("var validation", () => {
 });
 
 describe("setup.sh end-to-end steps", () => {
-	it("migrates, deploys and verifies after the secrets, in that order", () => {
+	it("runs provision, secrets, hostname, origin, turnstile, then migrate, deploy and verify", () => {
 		const s = readFileSync(SETUP, "utf8");
+		const main = s.slice(s.indexOf("main_full() {"));
 		const at = [
-			'echo "=== Production secrets ==="',
-			"\tconfigure_vars\n",
-			"\tnpm run migrate -- --remote\n",
+			"\tprovision_resources\n",
+			"\tgenerate_secrets\n",
+			"\tsetup_hostname\n",
+			"\task_origin\n",
+			"\tsetup_turnstile\n",
+			"\trun_migrate\n",
 			"\tdeploy_worker\n",
-			"\t\tverify_health\n",
-			'echo "=== Next steps ==="',
-		].map((needle) => s.indexOf(needle));
+			"\tverify_health\n",
+			"\tfinish\n",
+		].map((needle) => main.indexOf(needle));
 		for (const i of at) expect(i).toBeGreaterThan(-1);
 		expect(at).toEqual([...at].sort((a, b) => a - b));
 	});

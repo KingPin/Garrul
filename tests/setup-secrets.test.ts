@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 import { beforeEach, describe, expect, it } from "vitest";
 
 const SETUP = join(dirname(fileURLToPath(import.meta.url)), "..", "scripts", "setup.sh");
-const EXTRACT = ["secret_exists", "put_random_secret", "put_secret"]
+const EXTRACT = ["secret_exists", "have_secret", "put_random_secret", "put_secret"]
 	.map((f) => `/^${f}() {/,/^}/p`)
 	.join(";");
 
