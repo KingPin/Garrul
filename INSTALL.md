@@ -22,7 +22,7 @@ migration. Every step below works on both paths; only
 ## Prerequisites
 
 - A **Cloudflare account** (free plan is fine for small operators).
-- **Node.js ≥ 24** and `npm`. The repo's `.nvmrc` pins the version.
+- **Node.js ≥ 24**, `npm` and `git`. The repo's `.nvmrc` pins the Node version.
 - **Optional: a domain on Cloudflare DNS.** Only the custom-domain
   route needs it, and only because `custom_domain = true` requires the
   zone to be on Cloudflare. Skip it and you deploy to `*.workers.dev`
@@ -37,22 +37,35 @@ migration. Every step below works on both paths; only
 
 ## 1. Authenticate `wrangler`
 
-Wrangler ships as a dev dependency, so `npm install` (next step)
-will install it. After that, log in once per machine:
+Log in once per machine. This works before you clone the repo:
+`npx` fetches wrangler on demand, and `npm install` in step 4 installs
+the pinned copy.
 
 ```bash
 npx wrangler login
 ```
 
-A browser tab opens; approve the OAuth scope. The token lands in
-`~/.wrangler/config/default.toml`.
+A browser tab opens; approve the OAuth scope. If your Cloudflare login
+can use several accounts, setup asks which one to use.
+
+**On a server with no browser** (an SSH session, say), `wrangler login`
+cannot finish. Create an API token at
+<https://dash.cloudflare.com/profile/api-tokens> that can edit Workers,
+KV and D1, and export it before running setup:
+
+```bash
+export CLOUDFLARE_API_TOKEN=...
+```
 
 ## 2. Register OAuth apps (optional)
 
 Skip this step if you only want anonymous commenting.
 
 Decide your worker's public URL first — typically
-`https://comments.<yourdomain>`. The callback URL pattern is:
+`https://comments.<yourdomain>`. On `*.workers.dev` you only learn the
+URL at the first deploy, so register the apps after step 7 instead and
+set the secrets then (`wrangler secret put NAME`). The callback URL
+pattern is:
 
 ```
 <OAUTH_CALLBACK_BASE>/api/v1/auth/<provider>/callback
@@ -145,7 +158,7 @@ any secret later with `wrangler secret put NAME`.
 **Bulk** (fewer keystrokes — one file, one upload):
 
 ```bash
-cp secrets.example.env secrets.env   # then edit it
+install -m 600 secrets.example.env secrets.env   # then edit it
 npx wrangler secret bulk secrets.env
 rm secrets.env
 ```
@@ -269,8 +282,9 @@ it lists the sites that embed the widget, not the Worker itself.)
 
 ## 8. Verify
 
-Setup runs this health check for you. To repeat it (substitute your
-`*.workers.dev` URL if you haven't set up a custom domain):
+Below, `comments.example.com` stands for your Worker's URL — your
+`*.workers.dev` address if you haven't set up a custom domain. Setup
+runs this health check for you. To repeat it:
 
 ```bash
 curl -fsS https://comments.example.com/api/v1/health
@@ -323,7 +337,7 @@ goes — is section 5 of `AGENTS-OPERATE.md`, generated from
 
 | Variable                       | Required             | Notes |
 | ------------------------------ | -------------------- | ----- |
-| `ALLOWED_ORIGINS`              | yes                  | Comma-separated origins allowed to embed and POST. No trailing slash. |
+| `ALLOWED_ORIGINS`              | yes                  | Comma-separated origins allowed to embed and POST, each as `https://host`. No path, no trailing slash; matched by exact string. |
 | `ADMIN_EMAILS`                 | yes                  | Comma-separated; matching OAuth signups auto-admin. |
 | `PUBLIC_BASE_URL`              | yes                  | Public URL of this worker; used in permalinks and notification emails. |
 | `OAUTH_CALLBACK_BASE`          | if OAuth enabled     | Same value as `PUBLIC_BASE_URL` in most setups. |
