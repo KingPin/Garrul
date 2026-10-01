@@ -60,6 +60,7 @@ const run = (
 		kvRows?: string;
 		accounts?: string;
 		input?: string;
+		failFirstList?: boolean;
 	} = {},
 ) => {
 	const d1List =
@@ -72,8 +73,15 @@ const run = (
 		(opts.kv
 			? `[{"id":"${opts.kv}","title":"RATE_LIMITS"}]`
 			: "[]");
+	const failFirst = opts.failFirstList
+		? `if [ "$2" = list ] || [ "$3" = list ]; then
+		[ -e failed-once ] || { touch failed-once; return 1; }
+	fi
+	`
+		: "";
 	const stub = `wrangler() {
 	echo "wrangler $*" >> calls.log
+	${failFirst}
 	case "$1 $2" in
 		"whoami --json") echo '✔ banner' ; echo '{"loggedIn":true,"accounts":${opts.accounts ?? "[]"}}' ;;
 		"d1 list") echo '${d1List}' ;;
@@ -214,6 +222,36 @@ describe("create_kv", () => {
 		expect(r.status, r.stderr).toBe(0);
 		expect(read("wrangler.toml")).toBe(before);
 		expect(read("calls.log")).not.toContain("namespace create");
+	});
+});
+
+describe("failed lookups", () => {
+	// Review of #168 follow-up: a transient list failure is not proof that the
+	// configured id is absent.
+	it("keeps the configured KV id when the first list fails", () => {
+		writeFileSync(join(dir, "wrangler.toml"), toml(ACCOUNT_DB, ACCOUNT_KV));
+		const before = read("wrangler.toml");
+		const r = run("create_kv RATE_LIMITS", {
+			failFirstList: true,
+			kvRows: `[{"id":"${ACCOUNT_KV}","title":"custom"},{"id":"ffffffffffffffffffffffffffffffff","title":"RATE_LIMITS"}]`,
+		});
+		expect(r.status).not.toBe(0);
+		expect(r.stderr).toContain("could not list kv");
+		expect(read("wrangler.toml")).toBe(before);
+	});
+	it("keeps the configured D1 id when the first list fails", () => {
+		writeFileSync(join(dir, "wrangler.toml"), toml(ACCOUNT_DB, ACCOUNT_KV));
+		const before = read("wrangler.toml");
+		const r = run("create_d1 DB garrul-db", { failFirstList: true, d1: ACCOUNT_DB });
+		expect(r.status).not.toBe(0);
+		expect(read("wrangler.toml")).toBe(before);
+		expect(read("calls.log")).not.toContain("d1 create");
+	});
+	it("stops on an unparseable list instead of creating", () => {
+		writeFileSync(join(dir, "wrangler.toml"), toml(STALE_DB, ACCOUNT_KV));
+		const r = run("create_d1 DB garrul-db", { d1Rows: "not json" });
+		expect(r.status).not.toBe(0);
+		expect(read("calls.log")).not.toContain("d1 create");
 	});
 });
 

@@ -257,15 +257,17 @@ set_d1_id() {
 }
 
 # remote_id <d1|kv> <name-or-id> — id of the resource with that name or id in the logged-in
-# account. Empty when there is none or the lookup failed; the caller then
-# creates it, and wrangler reports a real auth error there.
+# account. Empty when the list was read and holds no match. Returns 1 when the
+# lookup fails or the list does not parse: "absent" and "could not look" must
+# stay distinct, or a transient API error lets name-based repair overwrite a
+# valid configured id.
 remote_id() {
 	local json
 	case "$1" in
-		d1) json=$(wrangler d1 list --json 2>/dev/null) || return 0 ;;
-		kv) json=$(wrangler kv namespace list 2>/dev/null) || return 0 ;;
-		*) return 0 ;;
-	esac
+		d1) json=$(wrangler d1 list --json 2>/dev/null) ;;
+		kv) json=$(wrangler kv namespace list 2>/dev/null) ;;
+		*) return 1 ;;
+	esac || { echo "error: could not list $1 resources in this account (run wrangler whoami, then retry)." >&2; return 1; }
 	# Slice from the first line that starts with [ — wrangler prints a banner or an
 	# account-picker line ahead of the JSON.
 	printf '%s' "$json" | node -e '
@@ -275,9 +277,12 @@ remote_id() {
 				const rows = JSON.parse(s.slice(s.search(/^\[/m)));
 				const hit = rows.find((r) => [r.name ?? r.title, r.uuid ?? r.id].includes(process.argv[1]));
 				if (hit) console.log(hit.uuid ?? hit.id);
-			} catch {}
+			} catch {
+				console.error("error: could not parse the resource list from wrangler");
+				process.exit(1);
+			}
 		});
-	' "$2" || true
+	' "$2"
 }
 
 # block_field <table> <binding> <key> — the quoted value of `key` in the
@@ -322,15 +327,18 @@ create_d1() {
 	current=$(block_field d1_databases "$binding" database_id)
 	# A configured id that exists in this account wins: it may be a custom
 	# database, and a name lookup could point the binding somewhere else.
-	if [ -n "$current" ] && [ -n "$(remote_id d1 "$current")" ]; then
-		echo "✓ $binding already points at an existing D1 database — leaving it alone"
-		return
+	if [ -n "$current" ]; then
+		id=$(remote_id d1 "$current") || exit 1
+		if [ -n "$id" ]; then
+			echo "✓ $binding already points at an existing D1 database — leaving it alone"
+			return
+		fi
 	fi
 	# A stale id keeps the operator's chosen database_name; the template name is
 	# only the default.
 	name=$(block_field d1_databases "$binding" database_name)
 	name=${name:-$2}
-	id=$(remote_id d1 "$name")
+	id=$(remote_id d1 "$name") || exit 1
 	if [ -n "$id" ]; then
 		echo "✓ D1 database '$name' already exists in this account — reusing it"
 	else
@@ -359,11 +367,14 @@ create_kv() {
 	current=$(block_field kv_namespaces "$binding" id)
 	# Same rule as create_d1: a configured id that exists here is kept, even if
 	# the namespace title is not the binding name.
-	if [ -n "$current" ] && [ -n "$(remote_id kv "$current")" ]; then
-		echo "✓ $binding already points at an existing KV namespace — leaving it alone"
-		return
+	if [ -n "$current" ]; then
+		id=$(remote_id kv "$current") || exit 1
+		if [ -n "$id" ]; then
+			echo "✓ $binding already points at an existing KV namespace — leaving it alone"
+			return
+		fi
 	fi
-	id=$(remote_id kv "$binding")
+	id=$(remote_id kv "$binding") || exit 1
 	if [ -n "$id" ]; then
 		echo "✓ KV namespace '$binding' already exists in this account — reusing it"
 	else
