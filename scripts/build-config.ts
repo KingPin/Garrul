@@ -366,7 +366,7 @@ const buildSetupPrompts = (indent = "\t", secrets = SECRETS): string => {
 			}
 			consumed.add(partner.name);
 			lines.push(
-				`${indent}put_secret_pair ${shQuote(group)} ${shQuote(e.hint)} ${e.name} ${partner.name}`,
+				`${indent}put_secret_pair ${shQuote(group)} ${shQuote(e.hint)} ${e.name} ${shQuote(e.field ?? "")} ${partner.name} ${shQuote(partner.field ?? "")}`,
 			);
 		}
 	}

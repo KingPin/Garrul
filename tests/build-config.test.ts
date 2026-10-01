@@ -230,8 +230,22 @@ describe("setup.sh prompt lists", () => {
 	it("collapses a declared pair into a single prompt", () => {
 		const prompts = buildSetupPrompts();
 		expect(prompts).toContain('put_secret_pair "GitHub OAuth" ');
-		expect(prompts).toMatch(/GH_CLIENT_ID GH_CLIENT_SECRET$/m);
+		expect(prompts).toMatch(
+			/GH_CLIENT_ID "Client ID" GH_CLIENT_SECRET "Client secret"$/m,
+		);
 		expect(prompts).toMatch(/^\tput_secret AKISMET_API_KEY /m);
+	});
+
+	// wrangler's own prompt never names the field, so setup.sh has to. An
+	// unlabelled half would fall back to the bare env name, which a reader
+	// cannot map to the provider's dashboard.
+	it("labels both halves of every pair", () => {
+		for (const e of SECRETS) {
+			if (!e.pairWith) continue;
+			const partner = SECRETS.find((p) => p.name === e.pairWith);
+			expect(e.field, e.name).toBeTruthy();
+			expect(partner?.field, e.pairWith).toBeTruthy();
+		}
 	});
 
 	// Group size used to stand in for `pairWith`, which got Telegram wrong:
