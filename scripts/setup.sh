@@ -194,11 +194,10 @@ set_binding_id() {
 			# sprintf because a literal one would close the shell quoting that
 			# wraps this whole program.
 			q      = "[\"" sprintf("%c", 39) "]"
-			# An optional dotted prefix matches wranglers per-environment
-			# overrides, [[env.production.kv_namespaces]], which redeclare every
-			# binding. The prefix must end in a dot, so [[foo_kv_namespaces]]
-			# stays unmatched.
-			hdrre  = "^[[:space:]]*\\[\\[([A-Za-z0-9_.-]+\\.)?" table "\\]\\]"
+			# Top-level tables only. Setup resolves resources for the default
+			# environment, so [[env.<name>.kv_namespaces]] overrides belong to the
+			# operator and stay untouched.
+			hdrre  = "^[[:space:]]*\\[\\[" table "\\]\\]"
 			bindre = "^[[:space:]]*binding[[:space:]]*=[[:space:]]*" q binding q
 			phre   = q ph q
 			# Anchored on the key, so `id` never matches `database_id`.
@@ -257,7 +256,7 @@ set_d1_id() {
 	set_binding_id d1_databases "$1" database_id "$ANY_VALUE" "$2"
 }
 
-# remote_id <d1|kv> <name> — id of the resource with that name in the logged-in
+# remote_id <d1|kv> <name-or-id> — id of the resource with that name or id in the logged-in
 # account. Empty when there is none or the lookup failed; the caller then
 # creates it, and wrangler reports a real auth error there.
 remote_id() {
@@ -274,27 +273,63 @@ remote_id() {
 		process.stdin.on("data", (d) => { s += d; }).on("end", () => {
 			try {
 				const rows = JSON.parse(s.slice(s.search(/^\[/m)));
-				const hit = rows.find((r) => (r.name ?? r.title) === process.argv[1]);
+				const hit = rows.find((r) => [r.name ?? r.title, r.uuid ?? r.id].includes(process.argv[1]));
 				if (hit) console.log(hit.uuid ?? hit.id);
 			} catch {}
 		});
 	' "$2" || true
 }
 
-# Write the id unless wrangler.toml already carries exactly it.
+# block_field <table> <binding> <key> — the quoted value of `key` in the
+# top-level [[table]] block that binds `binding`. Empty when there is none.
+block_field() {
+	awk -v table="$1" -v binding="$2" -v key="$3" '
+		function flush() {
+			if (istgt && val != "") { print val; done = 1; exit }
+			istgt = 0; val = ""
+		}
+		BEGIN {
+			q = "[\"" sprintf("%c", 39) "]"
+			hdrre  = "^[[:space:]]*\\[\\[" table "\\]\\]"
+			bindre = "^[[:space:]]*binding[[:space:]]*=[[:space:]]*" q binding q
+			keyre  = "^[[:space:]]*" key "[[:space:]]*=[[:space:]]*" q
+			pre = "^[^=]*=[[:space:]]*" q
+			post = q ".*$"
+		}
+		/^[[:space:]]*\[/ { flush(); inblk = ($0 ~ hdrre); next }
+		inblk && $0 ~ bindre { istgt = 1 }
+		inblk && $0 ~ keyre { val = $0; sub(pre, "", val); sub(post, "", val) }
+		END { if (!done) flush() }
+	' wrangler.toml
+}
+
+# Write the id unless the binding already carries exactly it. Compares the
+# target binding's own value: the id appearing elsewhere in the file (a
+# comment, another binding, an environment override) proves nothing.
 apply_id() {
-	local setter="$1" binding="$2" id="$3"
-	if grep -qF "\"$id\"" wrangler.toml; then
+	local setter="$1" binding="$2" id="$3" current="$4"
+	if [ "$current" = "$id" ]; then
 		echo "✓ $binding already points at $id"
 		return
 	fi
 	"$setter" "$binding" "$id"
 }
 
-# create_d1 <binding> <database_name>
+# create_d1 <binding> <default_database_name>
 create_d1() {
-	local binding="$1" name="$2" id
+	local binding="$1" name current id
 	echo
+	current=$(block_field d1_databases "$binding" database_id)
+	# A configured id that exists in this account wins: it may be a custom
+	# database, and a name lookup could point the binding somewhere else.
+	if [ -n "$current" ] && [ -n "$(remote_id d1 "$current")" ]; then
+		echo "✓ $binding already points at an existing D1 database — leaving it alone"
+		return
+	fi
+	# A stale id keeps the operator's chosen database_name; the template name is
+	# only the default.
+	name=$(block_field d1_databases "$binding" database_name)
+	name=${name:-$2}
 	id=$(remote_id d1 "$name")
 	if [ -n "$id" ]; then
 		echo "✓ D1 database '$name' already exists in this account — reusing it"
@@ -315,12 +350,19 @@ create_d1() {
 		echo "warning: could not auto-extract database_id for $binding; copy it into wrangler.toml manually." >&2
 		return
 	fi
-	apply_id set_d1_id "$binding" "$id"
+	apply_id set_d1_id "$binding" "$id" "$current"
 }
 
 create_kv() {
-	local binding="$1" id
+	local binding="$1" current id
 	echo
+	current=$(block_field kv_namespaces "$binding" id)
+	# Same rule as create_d1: a configured id that exists here is kept, even if
+	# the namespace title is not the binding name.
+	if [ -n "$current" ] && [ -n "$(remote_id kv "$current")" ]; then
+		echo "✓ $binding already points at an existing KV namespace — leaving it alone"
+		return
+	fi
 	id=$(remote_id kv "$binding")
 	if [ -n "$id" ]; then
 		echo "✓ KV namespace '$binding' already exists in this account — reusing it"
@@ -341,7 +383,7 @@ create_kv() {
 		echo "warning: could not auto-extract id for $binding; copy manually." >&2
 		return
 	fi
-	apply_id set_kv_id "$binding" "$id"
+	apply_id set_kv_id "$binding" "$id" "$current"
 }
 
 # BEGIN:d1-bindings
