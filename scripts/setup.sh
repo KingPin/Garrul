@@ -716,6 +716,9 @@ if confirm_yes "Apply the schema to production D1 (npm run migrate -- --remote)?
 	set -e
 	if [ $rc -ne 0 ]; then
 		echo "error: npm run migrate -- --remote failed (exit $rc). Fix the above and re-run." >&2
+		echo "  \"database ... could not be found [code: 7404]\" means database_id in" >&2
+		echo "  wrangler.toml is not in the logged-in account (npx wrangler whoami)." >&2
+		echo "  Re-running setup replaces it with the account's own." >&2
 		exit $rc
 	fi
 else
