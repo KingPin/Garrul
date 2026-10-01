@@ -1040,7 +1040,21 @@ main_full() {
 	run_migrate
 	deploy_worker
 	verify_health
+	note_placeholder_vars
 	finish
+}
+
+# ADMIN_EMAILS decides who is auto-admin on OAuth signup; EMAIL_FROM only
+# matters once email is configured, so it is a note and not a pending item.
+note_placeholder_vars() {
+	if var_is_placeholder ADMIN_EMAILS; then
+		echo
+		echo "ADMIN_EMAILS is still the placeholder \"$(get_var ADMIN_EMAILS wrangler.toml)\" — set it in wrangler.toml and run: npm run deploy"
+		PENDING=1
+	fi
+	if var_is_placeholder EMAIL_FROM; then
+		echo "EMAIL_FROM is still the placeholder — set it before enabling email."
+	fi
 }
 
 # Optional keys only: no provisioning, no generated secrets, no deploy.
