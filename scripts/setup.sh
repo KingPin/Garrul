@@ -859,7 +859,7 @@ verify_health() {
 	fi
 	# A fresh custom domain can take ~30s to get its certificate.
 	for i in 1 2 3; do
-		if curl -fsS "$base/api/v1/health"; then
+		if curl -fs "$base/api/v1/health"; then
 			echo
 			echo "✓ $base/api/v1/health answered — Garrul is live"
 			return 0
