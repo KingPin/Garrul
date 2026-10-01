@@ -95,8 +95,8 @@ signed-in commenters too"**) if you want them challenged as well.
 ## 4. Clone, install, run setup
 
 ```bash
-git clone https://github.com/KingPin/Garrul.git comments
-cd comments
+git clone https://github.com/KingPin/Garrul.git
+cd Garrul
 git checkout "$(git describe --tags --abbrev=0)"   # latest release, not main
 npm install
 npm run setup
