@@ -50,7 +50,9 @@ ALLOWED_ORIGINS = "https://yourblog.example.com"
 ADMIN_EMAILS = "you@example.com"
 EMAIL_PROVIDER = "resend"
 # From address for digest emails. Must be on a domain verified in Resend.
-EMAIL_FROM = "Garrul <comments@example.com>"
+# Empty keeps email off: the widget hides the subscribe button until this and
+# PUBLIC_BASE_URL are both set.
+EMAIL_FROM = ""
 # Optional. Global ceiling on outbound subscription-confirmation email, counted
 # in D1. Also editable at runtime from /admin/settings. Global, not per-reader:
 # a spent window turns away new subscribers until it rolls (confirmed
