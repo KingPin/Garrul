@@ -117,6 +117,20 @@ apply_domain() {
 # the id lookups that capture wrangler's output. Ask once, up front, and hand
 # the answer to every call through CLOUDFLARE_ACCOUNT_ID. Skipped when the
 # caller or wrangler.toml already pins an account.
+# Pin the chosen account in wrangler.toml, at the top level (before the first
+# table header), so a later `npm run owner-link` from a fresh shell resolves
+# it without a prompt it cannot show. An existing account_id is never touched.
+persist_account_id() {
+	local tmp
+	grep -qE '^[[:space:]]*account_id[[:space:]]*=' wrangler.toml && return 0
+	tmp=$(mktemp)
+	awk -v id="$1" '
+		/^\[/ && !done { print "account_id = \"" id "\"\n"; done = 1 }
+		{ print }
+		END { if (!done) print "account_id = \"" id "\"" }
+	' wrangler.toml > "$tmp" && mv "$tmp" wrangler.toml
+	echo "  ✓ account_id saved to wrangler.toml"
+}
 select_account() {
 	local json rows n i choice id name
 	[ -n "${CLOUDFLARE_ACCOUNT_ID:-}" ] && return 0
@@ -142,6 +156,7 @@ select_account() {
 		echo
 		echo "✓ Cloudflare account: $name"
 		export CLOUDFLARE_ACCOUNT_ID="$id"
+		persist_account_id "$id"
 		return 0
 	fi
 	echo
@@ -162,6 +177,7 @@ select_account() {
 	IFS=$'\t' read -r id name <<< "$(printf '%s\n' "$rows" | sed -n "${choice}p")"
 	echo "✓ using $name"
 	export CLOUDFLARE_ACCOUNT_ID="$id"
+	persist_account_id "$id"
 }
 # Write an id into the wrangler.toml block that declares this binding — not
 # into the first remaining placeholder in the file.

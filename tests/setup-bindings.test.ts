@@ -13,6 +13,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 const SETUP = join(dirname(fileURLToPath(import.meta.url)), "..", "scripts", "setup.sh");
 const FNS = [
+	"persist_account_id",
 	"select_account",
 	"set_binding_id",
 	"set_kv_id",
