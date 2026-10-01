@@ -19,6 +19,7 @@ import {
 	OWNER_TOKEN_TTL_MS,
 	hashOwnerToken,
 } from "../src/lib/owner-login";
+import { nameKey } from "../src/lib/display-name";
 import { ulid } from "../src/lib/ulid";
 import { parseTomlVars } from "./upgrade/toml-vars";
 
@@ -65,10 +66,18 @@ export const classifyOwnerRows = (
 	return { kind: "ok", id: r.id };
 };
 
+const OWNER_NAME = "Owner";
+
+// name_key is what the name-claim rules match on; without it the owner's
+// display name is invisible to them.
 export const insertOwnerSql = (id: string, now: number): string => {
 	if (!/^[0-9A-Z]{26}$/.test(id)) throw new Error("bad owner id");
-	return `INSERT INTO users (id, provider, provider_id, name, is_admin, role, created_at) VALUES ('${id}', '${OWNER_PROVIDER}', '${OWNER_PROVIDER_ID}', 'Owner', 1, 'admin', ${Math.trunc(now)}) ON CONFLICT(provider, provider_id) DO NOTHING`;
+	return `INSERT INTO users (id, provider, provider_id, name, name_key, is_admin, role, created_at) VALUES ('${id}', '${OWNER_PROVIDER}', '${OWNER_PROVIDER_ID}', '${OWNER_NAME}', '${nameKey(OWNER_NAME)}', 1, 'admin', ${Math.trunc(now)}) ON CONFLICT(provider, provider_id) DO NOTHING`;
 };
+
+// Owner rows made before name_key was written. Never overwrites a key.
+export const backfillOwnerKeySql = (): string =>
+	`UPDATE users SET name_key = '${nameKey(OWNER_NAME)}' WHERE provider = '${OWNER_PROVIDER}' AND erased_at IS NULL AND name_key IS NULL`;
 
 export const clearOldTokensSql = (userId: string, now: number): string => {
 	if (!/^[0-9A-Z]{26}$/.test(userId)) throw new Error("bad owner id");
@@ -152,6 +161,7 @@ const main = async (): Promise<void> => {
 			state = read();
 		}
 		if (state.kind !== "ok") throw new Error("Could not create the owner row.");
+		d1(db, local, backfillOwnerKeySql());
 
 		const token = newToken();
 		const now = Date.now();

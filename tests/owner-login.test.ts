@@ -5,6 +5,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	OWNER_ROWS_SQL,
+	backfillOwnerKeySql,
 	RefuseError,
 	classifyOwnerRows,
 	clearOldTokensSql,
@@ -13,6 +14,8 @@ import {
 	newToken,
 	resolveBaseUrl,
 } from "../scripts/owner-link";
+import { isNameClaimed } from "../src/db/queries";
+import { nameKey } from "../src/lib/display-name";
 import { OWNER_TOKEN_TTL_MS, hashOwnerToken } from "../src/lib/owner-login";
 import { adminHarness } from "./helpers/admin-sqlite";
 import { installMockCaches, uninstallMockCaches } from "./helpers/mock-caches";
@@ -94,6 +97,36 @@ describe("owner-link helpers", () => {
 		expect(sqlite.prepare("SELECT token_hash FROM owner_login_tokens").all()).toEqual([
 			{ token_hash: "b".repeat(64) },
 		]);
+	});
+
+	it("writes name_key so the name-claim rules see the owner", async () => {
+		const { sqlite, env } = adminHarness();
+		sqlite.exec(insertOwnerSql(OWNER_ID, 1));
+		expect(sqlite.prepare("SELECT name_key FROM users WHERE id = ?").get(OWNER_ID)).toEqual({
+			name_key: nameKey("Owner"),
+		});
+		sqlite.exec("INSERT INTO posts (slug, title, url, created_at) VALUES ('p', 'P', 'https://b.example/p', 1)");
+		const now = Date.now();
+		sqlite.exec(
+			`INSERT INTO comments (id, post_slug, user_id, body_md, body_html, renderer_version, status, ip_hash, user_agent, created_at, depth)
+			 VALUES ('c1', 'p', '${OWNER_ID}', 'md', '<p>md</p>', 3, 'approved', 'h', 'ua', ${now}, 0)`,
+		);
+		expect(await isNameClaimed(env.DB, nameKey("Owner"), now)).toBe(true);
+	});
+
+	it("backfills a missing key on a live owner row and leaves other keys alone", () => {
+		const { sqlite } = adminHarness();
+		sqlite.exec(insertOwnerSql(OWNER_ID, 1));
+		sqlite.exec(`UPDATE users SET name_key = NULL WHERE id = '${OWNER_ID}'`);
+		sqlite.exec(backfillOwnerKeySql());
+		const key = () => (sqlite.prepare("SELECT name_key k FROM users WHERE id = ?").get(OWNER_ID) as { k: string }).k;
+		expect(key()).toBe(nameKey("Owner"));
+		sqlite.exec(`UPDATE users SET name_key = 'custom' WHERE id = '${OWNER_ID}'`);
+		sqlite.exec(backfillOwnerKeySql());
+		expect(key()).toBe("custom");
+		sqlite.exec(`UPDATE users SET name_key = NULL, erased_at = 5 WHERE id = '${OWNER_ID}'`);
+		sqlite.exec(backfillOwnerKeySql());
+		expect(sqlite.prepare("SELECT name_key k FROM users WHERE id = ?").get(OWNER_ID)).toEqual({ k: null });
 	});
 
 	it("rejects bad ids and hashes before building SQL", () => {
