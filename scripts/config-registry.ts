@@ -176,7 +176,6 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
 		name: "ADMIN_EMAILS",
 		kind: "var",
 		required: false,
-		mustEdit: true,
 		group: "Core",
 		hint: "comma-separated emails that get auto-admin on OAuth signup",
 		description:

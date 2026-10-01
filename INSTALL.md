@@ -230,7 +230,7 @@ ADMIN_EMAILS    = "you@example.com"                # comma-separated
 PUBLIC_BASE_URL     = "https://comments.example.com"
 OAUTH_CALLBACK_BASE = "https://comments.example.com"
 EMAIL_PROVIDER = "resend"                          # remove if you don't want email
-EMAIL_FROM     = "Garrul <comments@example.com>"   # must be a verified Resend sender
+EMAIL_FROM     = "Garrul <comments@example.com>"   # ships empty (email off); must be a verified Resend sender
 ```
 
 Then pick where the Worker answers requests. Both options are real
@@ -356,7 +356,7 @@ goes — is section 5 of `AGENTS-OPERATE.md`, generated from
 | Variable                       | Required             | Notes |
 | ------------------------------ | -------------------- | ----- |
 | `ALLOWED_ORIGINS`              | yes                  | Comma-separated origins allowed to embed and POST, each as `https://host`. No path, no trailing slash; matched by exact string. |
-| `ADMIN_EMAILS`                 | yes                  | Comma-separated; matching OAuth signups auto-admin. |
+| `ADMIN_EMAILS`                 | no (ships empty)     | Comma-separated; matching OAuth signups auto-admin. |
 | `PUBLIC_BASE_URL`              | yes                  | Public URL of this worker; used in permalinks and notification emails. |
 | `OAUTH_CALLBACK_BASE`          | if OAuth enabled     | Same value as `PUBLIC_BASE_URL` in most setups. |
 | `IP_HASH_SECRET`               | yes                  | HMAC-SHA-256 pepper. Never store raw IPs. |

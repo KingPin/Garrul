@@ -137,8 +137,7 @@
     {
       "name": "ADMIN_EMAILS",
       "required": false,
-      "addedIn": "1.0.0",
-      "placeholder": "you@example.com"
+      "addedIn": "1.0.0"
     },
     {
       "name": "EDIT_WINDOW_MINUTES",

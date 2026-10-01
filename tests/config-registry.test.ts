@@ -94,13 +94,12 @@ describe("registry shape", () => {
 		]);
 	});
 
-	it("marks exactly the four placeholder vars mustEdit", () => {
+	it("marks exactly the three placeholder vars mustEdit", () => {
 		// Spelled out rather than derived so widening the set is a deliberate,
 		// reviewed edit: every name here is echoed at operators in setup.sh's
-		// next-steps block, and a silent addition would bury the real four.
+		// next-steps block, and a silent addition would bury the real three.
 		expect(MUST_EDIT_VARS.map((e) => e.name)).toEqual([
 			"ALLOWED_ORIGINS",
-			"ADMIN_EMAILS",
 			"PUBLIC_BASE_URL",
 			"OAUTH_CALLBACK_BASE",
 		]);

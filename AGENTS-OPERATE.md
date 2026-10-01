@@ -199,7 +199,7 @@ between the two is a build error, not a silent misclassification.
 |---|---|---|---|---|
 | `ENV` | var | Switches dev affordances (CORS open, cookies `SameSite=Lax`). Production must be `production`. | `production` | `wrangler.toml` |
 | `ALLOWED_ORIGINS` | var | Comma-separated origins allowed to embed + call `/api/*`. Doubles as the CSRF `Origin` allowlist. See section 6. | `https://yourblog.example.com` | `wrangler.toml` — **replace the shipped placeholder before deploying** |
-| `ADMIN_EMAILS` | var | Comma-separated emails. OAuth signups matching get auto-admin. | `you@example.com` | `wrangler.toml` — **replace the shipped placeholder before deploying** |
+| `ADMIN_EMAILS` | var | Comma-separated emails. OAuth signups matching get auto-admin. | `you@example.com` | `wrangler.toml` |
 | `EDIT_WINDOW_MINUTES` | var | Minutes a commenter can edit their own post. Default 15; `0` disables editing. | `15` | `wrangler.toml` default; **Admin → Settings** overrides |
 | `PUBLIC_BASE_URL` | var | Public URL of the Worker; used in permalinks + email bodies. | `https://comments.example.com` | `wrangler.toml` — **replace the shipped placeholder before deploying** |
 | `CANONICAL_URL` | var | Optional. Override for the public URL used by the `/AGENTS.md` route when the inbound `Host` differs from the canonical address. | `https://comments.example.com` | `wrangler.toml` |

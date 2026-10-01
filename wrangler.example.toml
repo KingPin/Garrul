@@ -7,11 +7,10 @@
 # ── START HERE ────────────────────────────────────────────────────────
 #
 # Most of this file is optional flags with sane defaults. These are the
-# 4 values that ship as placeholders and must be replaced before you
+# 3 values that ship as placeholders and must be replaced before you
 # deploy — everything else can wait:
 #
 #   ALLOWED_ORIGINS      — comma-separated origins allowed to embed and call /api/*
-#   ADMIN_EMAILS         — comma-separated emails that get auto-admin on OAuth signup
 #   PUBLIC_BASE_URL      — public URL of this Worker; used in permalinks and email bodies
 #   OAUTH_CALLBACK_BASE  — must match the redirect URI registered with each provider
 #
@@ -47,7 +46,7 @@ preview_urls = false
 ENV = "production"
 EDIT_WINDOW_MINUTES = "15"
 ALLOWED_ORIGINS = "https://yourblog.example.com"
-ADMIN_EMAILS = "you@example.com"
+ADMIN_EMAILS = ""
 EMAIL_PROVIDER = "resend"
 # From address for digest emails. Must be on a domain verified in Resend.
 # Empty keeps email off: the widget hides the subscribe button until this and
