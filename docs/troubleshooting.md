@@ -20,6 +20,15 @@ Cloudflare account has to enable the product once. Open
 enable it (free), then re-run `npm run deploy`, or `npm run setup`,
 which keeps everything already configured.
 
+### `wrangler deploy` says "You can either deploy your worker to one or more routes… or register a workers.dev subdomain"
+
+A new Cloudflare account has no `*.workers.dev` subdomain until you pick
+one, and `wrangler.toml` has no `[[routes]]` to fall back on. Open
+`https://dash.cloudflare.com/<account-id>/workers/onboarding`, register a
+subdomain (free), then re-run `npm run deploy`, or `npm run setup`, which
+keeps everything already configured. For a custom domain, uncomment
+`[[routes]]` instead.
+
 ### `npm run upgrade` says every secret is missing and every migration is pending
 
 A plan that lists **all** required secrets as missing and **all**
