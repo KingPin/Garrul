@@ -449,11 +449,41 @@ put_secret_pair() {
 	esac
 }
 
+# secret_exists <name> — 0 when the Worker has that secret, 1 when it does not
+# (including a Worker that is not deployed yet), 2 when the lookup failed or did
+# not parse. "Could not check" must never read as "missing": the caller would
+# regenerate and overwrite a live JWT_SECRET / IP_HASH_SECRET.
+secret_exists() {
+	local out
+	out=$(NO_COLOR=1 wrangler secret list --format json 2>&1) || {
+		if printf '%s' "$out" | grep -Eq 'Worker ".*" not found'; then return 1; fi
+		printf '%s\n' "$out" >&2
+		return 2
+	}
+	printf '%s' "$out" | node -e '
+		let s = "";
+		process.stdin.on("data", (d) => { s += d; }).on("end", () => {
+			try {
+				const rows = JSON.parse(s.slice(s.search(/^\[/m)));
+				process.exit(rows.some((r) => r.name === process.argv[1]) ? 0 : 1);
+			} catch {
+				process.exit(2);
+			}
+		});
+	' "$1"
+}
+
 # Auto-generate a 32-byte base64 random secret and stream it to wrangler.
 # Falls back to interactive entry if openssl is unavailable.
 put_random_secret() {
 	local name="$1"
-	local hint="$2"
+	local hint="$2" rc=0
+	secret_exists "$name" || rc=$?
+	case "$rc" in
+		0) echo "  ✓ $name already set — kept (regenerating would invalidate existing data)"; return ;;
+		1) ;;
+		*) echo "error: could not check whether $name is set. Fix the above and re-run." >&2; exit 1 ;;
+	esac
 	if ! command -v openssl >/dev/null 2>&1; then
 		put_secret "$name" "$hint"
 		return
