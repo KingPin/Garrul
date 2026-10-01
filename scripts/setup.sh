@@ -53,6 +53,9 @@ while [ $# -gt 0 ]; do
 	shift
 done
 PENDING=0
+# Set when a required check failed (health, owner link): finish() reports an
+# incomplete install and exits nonzero. PENDING alone is only a warning.
+FAILED=0
 
 if [ ! -f wrangler.example.toml ]; then
 	echo "error: wrangler.example.toml missing — run from repo root." >&2
@@ -850,7 +853,7 @@ verify_health() {
 		return 0
 	fi
 	if ! command -v curl >/dev/null 2>&1; then
-		echo "  skipped — curl not installed; open $base/api/v1/health in a browser"
+		echo "  deployed; health not checked — curl not installed. Open $base/api/v1/health in a browser"
 		PENDING=1
 		return 0
 	fi
@@ -865,7 +868,8 @@ verify_health() {
 	done
 	echo "✗ $base/api/v1/health did not answer." >&2
 	echo "  See docs/troubleshooting.md for the common failure modes." >&2
-	PENDING=1
+	echo "  A new custom domain can take about 30 seconds to get its certificate; re-run: npm run setup" >&2
+	FAILED=1
 }
 
 
@@ -969,35 +973,56 @@ setup_turnstile() {
 }
 
 # The page-ready embed snippet comes first: it is what the reader came for.
+# The owner link is made before anything prints, so the header reflects the
+# final status: a failed required check never sits under "Garrul is live".
 finish() {
-	local link
+	local link="" errf has_owner=0
+	if grep -q '"owner-link"' package.json 2>/dev/null; then
+		has_owner=1
+		errf=$(mktemp)
+		if link=$(npm run --silent owner-link 2>"$errf") && [ -n "$link" ]; then
+			:
+		else
+			link=""
+			FAILED=1
+		fi
+	fi
 	echo
-	echo "=== Garrul is live ==="
+	if [ "$FAILED" != 0 ]; then
+		echo "=== Setup incomplete ==="
+		echo
+		echo "The Worker is deployed, but a required check failed (see above)."
+	else
+		echo "=== Garrul is live ==="
+	fi
 	echo
 	echo "Paste this where comments should appear (change data-slug per post):"
 	echo
 	echo "  <div id=\"garrul\" data-slug=\"hello-world\" data-api=\"https://$WORKER_HOST\"></div>"
 	echo "  <script src=\"https://$WORKER_HOST/embed.js\" defer></script>"
-	if grep -q '"owner-link"' package.json 2>/dev/null; then
+	if [ "$has_owner" = 1 ]; then
 		echo
-		if link=$(npm run --silent owner-link 2>/dev/null) && [ -n "$link" ]; then
+		if [ -n "$link" ]; then
 			echo "Moderate as the owner (single use, expires in 10 minutes):"
 			echo
 			echo "  $link"
 			echo
 			echo "For a new link any time, run: npm run owner-link"
 		else
-			echo "Could not create the owner sign-in link. Run: npm run owner-link"
-			PENDING=1
+			echo "Could not create the owner sign-in link:" >&2
+			sed 's/^/  /' "$errf" >&2
+			echo "Fix the above, then run: npm run owner-link"
 		fi
+		rm -f "$errf"
 	fi
 	echo
 	echo "More options (sign-in providers, email, spam services): npm run setup -- --secrets"
-	if [ "$PENDING" != 0 ]; then
+	if [ "$FAILED" != 0 ] || [ "$PENDING" != 0 ]; then
 		echo
-		echo "Something was skipped above. Re-run: npm run setup"
+		echo "Something was skipped or failed above. Re-run: npm run setup"
 	fi
 	echo "Tail logs: npm run tail"
+	[ "$FAILED" = 0 ] || exit 1
 }
 
 main_full() {
