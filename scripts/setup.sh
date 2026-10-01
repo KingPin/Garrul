@@ -567,6 +567,9 @@ put_random_secret IP_HASH_SECRET "auto-generated HMAC pepper — generate once a
 # END:generated-secrets
 
 echo
+echo "Skip any key you do not have yet (Google, Discord, Resend, ...). Add it"
+echo "later with wrangler secret put NAME, or re-run npm run setup."
+echo
 echo "The remaining secrets can be set two ways:"
 echo "  b) bulk   — fill in one file, upload them all in a single call"
 echo "  p) prompt — answer one question per secret"
@@ -850,6 +853,7 @@ fi
 if [ "$PENDING" = 0 ]; then
 	echo
 	echo "=== Done ==="
+	echo "Skipped a key? Add it later with wrangler secret put NAME or re-run npm run setup."
 	echo "Tail logs: npm run tail"
 	exit 0
 fi
