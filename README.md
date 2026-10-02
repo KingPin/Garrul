@@ -91,6 +91,20 @@ inline:
 More, including dark mode, mobile, and the rest of the admin UI:
 [`docs/screenshots.md`](docs/screenshots.md).
 
+## Architecture
+
+One Worker serves the widget, the API and the admin UI; a cron pass on the
+same Worker sends notifications:
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/architecture-dark.webp">
+  <img alt="Garrul architecture: the reader's page loads the widget, which calls the Garrul Worker; the Worker uses D1, KV and the edge cache, verifies Turnstile, exchanges OAuth codes and optionally classifies spam; a cron handler reads the D1 notification queue and sends email via Resend and webhook retries" src="docs/screenshots/architecture-light.webp">
+</picture>
+
+The Worker, cron handler, D1, KV and edge cache run in your Cloudflare
+account; everything else is an outside service. Component-by-component notes:
+[`docs/architecture.md`](docs/architecture.md).
+
 ## Install
 
 Deploying to production takes ~20 minutes the first time, and then
