@@ -13,6 +13,7 @@ tag's docs rather than `main`.
 | [`../INSTALL.md`](../INSTALL.md) | Full first-time deploy: prerequisites, OAuth apps, Turnstile, `wrangler.toml`, remote migrations, smoke test. Also `## Updating` for `npm run upgrade`, and `## Local development`. |
 | [`../README.md`](../README.md) | What Garrul is, feature list, quick local poke-around. |
 | [`screenshots.md`](screenshots.md) | What it looks like before you deploy it: the widget in light, dark and mobile, plus a page-by-page tour of the admin UI. |
+| [`architecture.md`](architecture.md) | The diagram: what runs in your Cloudflare account, which outside services get called and when. |
 
 ## Embedding on your site
 
