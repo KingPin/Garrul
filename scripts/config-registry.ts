@@ -247,9 +247,9 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
 		kind: "var",
 		required: false,
 		group: "Core",
-		hint: 'set to "1" or "true" to hide the "Powered by Garrul" line',
+		hint: 'set to "1" or "true" to hide the "Comments by Garrul" line',
 		description:
-			'Optional. Set to `1`/`true` to suppress the "Powered by Garrul" attribution under the comment list. Unset = attribution shown.',
+			'Optional. Set to `1`/`true` to suppress the "Comments by Garrul" attribution under the comment list. Unset = attribution shown.',
 		example: "false",
 		addedIn: "1.0.0",
 	},

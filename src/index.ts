@@ -133,7 +133,7 @@ export type Bindings = {
 	//                              (a shared alias) than the admin accounts.
 	MODERATOR_EMAIL_ENABLED?: string;
 	MODERATOR_NOTIFY_EMAILS?: string;
-	// Set to "1" or "true" to suppress the "Powered by Garrul" attribution
+	// Set to "1" or "true" to suppress the "Comments by Garrul" attribution
 	// rendered under the comment list. Unset = attribution shown.
 	BRANDING_HIDDEN?: string;
 	// Cloudflare usage dashboard (optional). When both are set, /admin/usage
