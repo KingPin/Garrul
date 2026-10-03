@@ -11,7 +11,7 @@
  *   - providers: OAuth providers the operator has actually configured.
  *     Each entry requires BOTH client_id and client_secret to be set;
  *     the widget uses this to render only the login buttons that will work.
- *   - branding_hidden: when true, the widget skips the "Powered by Garrul"
+ *   - branding_hidden: when true, the widget skips the "Comments by Garrul"
  *     attribution. Operators flip this server-side via BRANDING_HIDDEN; it
  *     intentionally has no HTML/data-attribute opt-out.
  *   - feature flags (comments_enabled, reactions_enabled, voting_enabled,

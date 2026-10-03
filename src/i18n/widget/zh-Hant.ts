@@ -136,5 +136,5 @@ export const zhHant = {
 	"w.err.generic": "無法載入留言。",
 
 	// ── Attribution ─────────────────────────────────────────────────────────
-	"w.powered_by": "由 {link} 提供",
+	"w.powered_by": "留言由 {link} 提供",
 } satisfies WidgetTable;

@@ -169,7 +169,7 @@ Rules:
   `Intl.PluralRules`, so Russian is asked for `few` and French is not
   asked for `many`.
 - **Don't translate**: OAuth provider names (`GitHub`, `Google`, …),
-  the "Powered by Garrul" attribution, or `example.com` in the email
+  the "Comments by Garrul" attribution, or `example.com` in the email
   placeholder — it's the RFC 2606 reserved domain.
 - **Keep values terse.** Widget copy sits in buttons and a composer;
   German already averages ~30% longer than English. Every non-English

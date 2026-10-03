@@ -181,5 +181,5 @@ export const nl = {
 
 	// ── Attribution ─────────────────────────────────────────────────────────
 	// "Garrul" is a product name and stays untranslated inside {link}.
-	"w.powered_by": "Mogelijk gemaakt door {link}",
+	"w.powered_by": "Reacties door {link}",
 } satisfies WidgetTable;

@@ -165,5 +165,5 @@ export const nb = {
 
 	// ── Attribution ─────────────────────────────────────────────────────────
 	// "Garrul" is a product name and stays untranslated inside {link}.
-	"w.powered_by": "Drevet av {link}",
+	"w.powered_by": "Kommentarer av {link}",
 } satisfies WidgetTable;

@@ -176,5 +176,5 @@ export const ja = {
 
 	// ── Attribution ─────────────────────────────────────────────────────────
 	// "Garrul" is a product name and stays untranslated inside {link}.
-	"w.powered_by": "{link}を利用しています",
+	"w.powered_by": "コメント提供：{link}",
 } satisfies WidgetTable;

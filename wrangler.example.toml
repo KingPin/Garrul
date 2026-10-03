@@ -78,7 +78,7 @@ PUBLIC_BASE_URL = "https://comments.example.com"
 # each provider (e.g. https://comments.example.com/api/v1/auth/github/callback).
 # Leave unset in dev; the worker falls back to the request origin.
 OAUTH_CALLBACK_BASE = "https://comments.example.com"
-# Optional. Set "1"/"true" to hide the "Powered by Garrul" line under the
+# Optional. Set "1"/"true" to hide the "Comments by Garrul" line under the
 # comment list. Unset = attribution shown.
 # BRANDING_HIDDEN = "false"
 # Feature flags. These are env-var DEFAULTS — an operator can override any of
