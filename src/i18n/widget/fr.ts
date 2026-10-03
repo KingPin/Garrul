@@ -142,5 +142,5 @@ export const fr = {
 
 	// ── Attribution ─────────────────────────────────────────────────────────
 	// "Garrul" is a product name and stays untranslated inside {link}.
-	"w.powered_by": "Propulsé par {link}",
+	"w.powered_by": "Commentaires par {link}",
 } satisfies WidgetTable;

@@ -218,7 +218,7 @@ export const EN = {
 	// ── Attribution ─────────────────────────────────────────────────────────
 	// "Garrul" is the product name and is never translated; it renders inside
 	// the {link} slot.
-	"w.powered_by": "Powered by {link}",
+	"w.powered_by": "Comments by {link}",
 } satisfies StringTable;
 
 export type WidgetKey = keyof typeof EN;
