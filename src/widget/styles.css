@@ -14,6 +14,14 @@
  */
 :host {
 	all: initial;
+	/* Default 0 keeps the widget flush with surrounding host text. Opt-in for
+	   hosts that set --garrul-bg and want breathing room inside the panel. */
+	/* 0px, not 0: .gr-turnstile feeds this into calc() beside lengths, where a
+	   unitless 0 invalidates the whole expression. For the same reason the
+	   public var is documented as one length: a two-value shorthand pads fine
+	   but invalidates that calc(), dropping the narrow-screen offset. */
+	--gr-pad: var(--garrul-padding, 0px);
+	padding: var(--gr-pad);
 	display: block;
 	/* Native UI is painted by the UA, not by our --gr-* vars: <select> popups,
 	   scrollbars, focus rings, the text-field caret. Without this they stay
@@ -406,6 +414,13 @@ button:active:not([disabled]) { opacity: 0.75; }
    explicit dimensions and an iframe is a replaced element, so its box is
    reserved at appendChild rather than at load. */
 .gr-turnstile:empty { display: none; }
+/* The frame is a fixed 300px, which barely fits a 320px phone even with no
+   root padding. When the content box is narrower than 300px, pull the slot
+   into the root's --garrul-padding (never past it) so opting into padding
+   doesn't push the challenge past the viewport. Wide layouts compute 0. */
+.gr-turnstile {
+	margin-inline-start: max(calc(-1 * var(--gr-pad)), min(0px, calc(100% + var(--gr-pad) - 300px)));
+}
 .gr-turnstile-frame {
 	border: 0;
 	width: 300px;
