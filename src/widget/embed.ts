@@ -2806,6 +2806,20 @@ const buildForm = (
 	form.className = "gr-form";
 	form.autocomplete = "off";
 
+	const body = el("textarea");
+	body.className = "gr-body-input";
+	body.name = "body";
+	body.placeholder = s("w.body_ph");
+	body.setAttribute("aria-label", s("w.body_ph"));
+	body.required = true;
+
+	// The card frames everything the reader fills in: name field on top, notify
+	// and staff options below the editor. The Turnstile slot and submit stay
+	// outside it: the challenge iframe is a fixed 300px, and the card's padding
+	// would push it past a 320px viewport.
+	const card = buildWritePreview(body, apiBase);
+	form.appendChild(card);
+
 	if (!signedIn) {
 		const name = el("input");
 		name.className = "gr-name-input";
@@ -2814,16 +2828,8 @@ const buildForm = (
 		name.placeholder = s("w.name_ph");
 		name.setAttribute("aria-label", s("w.name_ph"));
 		name.required = true;
-		form.appendChild(name);
+		card.prepend(name);
 	}
-
-	const body = el("textarea");
-	body.className = "gr-body-input";
-	body.name = "body";
-	body.placeholder = s("w.body_ph");
-	body.setAttribute("aria-label", s("w.body_ph"));
-	body.required = true;
-	form.appendChild(buildWritePreview(body, apiBase));
 
 	const honey = el("input");
 	honey.className = "gr-honeypot";
@@ -2857,7 +2863,7 @@ const buildForm = (
 		// copy, so it stays out of the string table.
 		const notifyText = document.createTextNode(` ${s("w.notify")}`);
 		notifyWrap.append(notifyCb, notifyText);
-		form.appendChild(notifyWrap);
+		card.appendChild(notifyWrap);
 
 		// `sessionEmail`, not `signedIn`. An X/Twitter reader is signed in with no
 		// address at all, so the no-field branch posted `{post_slug}` with nothing
@@ -2876,7 +2882,7 @@ const buildForm = (
 				emailInput.hidden = !notifyCb.checked;
 				emailInput.required = notifyCb.checked;
 			});
-			form.appendChild(emailInput);
+			card.appendChild(emailInput);
 		}
 	}
 
@@ -2891,6 +2897,8 @@ const buildForm = (
 	// out from under the cursor between mousedown and mouseup and lose the
 	// click. The focusin trigger excludes the submit button for exactly that
 	// reason — moving the slot means revisiting that exclusion.
+	if (staffEligible) card.appendChild(buildStaffToggle());
+
 	if (siteKey && (!signedIn || turnstileAlways)) {
 		const tsSlot = el("div", "gr-turnstile");
 		tsSlot.setAttribute("role", "group");
@@ -2898,9 +2906,7 @@ const buildForm = (
 		form.appendChild(tsSlot);
 	}
 
-	if (staffEligible) form.appendChild(buildStaffToggle());
-
-	const submit = el("button", undefined, s("w.post_comment"));
+	const submit = el("button", "gr-submit", s("w.post_comment"));
 	submit.type = "submit";
 
 	const errBox = statusBox("gr-error is-inline");
