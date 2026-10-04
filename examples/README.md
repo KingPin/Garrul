@@ -25,6 +25,8 @@ The framework recipes are deliberately near-identical at the HTML level —
 the only thing that varies is how each platform renders the five `data-*`
 attributes from its post metadata.
 
+To restyle the widget, set `--garrul-*` custom properties on the mount element (see [`docs/THEMING.md`](../docs/THEMING.md)); the [theme builder](https://garrul.com/theme) previews presets and variables on the real widget and emits the snippet.
+
 ## The embed contract
 
 Every recipe boils down to a mount element plus the `embed.js` script:

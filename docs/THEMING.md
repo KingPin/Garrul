@@ -4,6 +4,8 @@ The Garrul widget mounts inside a Shadow DOM, so host-page styles never
 leak in. The **only** supported way to restyle the widget is by overriding
 the CSS custom properties listed below.
 
+> Prefer clicking to typing? The [theme builder](https://garrul.com/theme) previews every preset and variable on the real widget and hands you the snippet to paste next to your embed.
+
 These names are part of the **public, semver-protected API**. Renaming
 or removing any of them is a breaking change.
 
