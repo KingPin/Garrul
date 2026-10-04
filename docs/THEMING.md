@@ -4,6 +4,8 @@ The Garrul widget mounts inside a Shadow DOM, so host-page styles never
 leak in. The **only** supported way to restyle the widget is by overriding
 the CSS custom properties listed below.
 
+> Prefer clicking to typing? The [theme builder](https://garrul.com/theme) previews every preset and variable on the real widget and hands you the snippet to paste next to your embed.
+
 These names are part of the **public, semver-protected API**. Renaming
 or removing any of them is a breaking change.
 
@@ -58,6 +60,10 @@ Or in a stylesheet:
 | `--garrul-vote-active`    | `--garrul-badge-bg`                      | Active vote / reaction highlight (defaults to the badge background) |
 | `--garrul-shadow`         | `0 1px 2px rgba(0,0,0,.06)`              | Box-shadow on raised surfaces         |
 | `--garrul-motion`         | `120ms`                                  | Duration of every hover/press/state transition. Set `0ms` to opt out; a reader's `prefers-reduced-motion` overrides it either way |
+
+`--garrul-font` can only name fonts the host page already loads. `@font-face`
+cannot be declared inside the shadow root, so load the web font on your page
+(a `<link>` or your own stylesheet) and the widget inherits it.
 
 ## Presets
 

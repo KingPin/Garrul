@@ -139,6 +139,7 @@ const embedCard = (env: Bindings): string => {
   </div>
   <p class="muted">Paste this where comments should appear. Set <code>data-slug</code> to a stable per-page id.</p>
   <pre class="embed-snippet" x-ref="embed"><code>${snippet}</code></pre>
+  <p class="muted">Want a different look? The <a href="https://garrul.com/theme" target="_blank" rel="noopener">theme builder</a> previews presets and colors on the real widget and hands you the snippet to paste next to this one.</p>
 </div>`;
 };
 

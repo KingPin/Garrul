@@ -22,7 +22,8 @@ dashboard page); every other integration is optional.
 - **OAuth sign-in** (GitHub, Google, Facebook, X, Discord) plus anonymous
   posting, rate-limited and Turnstile-gated
 - **Embeddable widget**: CI-capped at 30 KB gzipped, Shadow-DOM isolated,
-  themeable, with an iframe alternative
+  themeable ([visual theme builder](https://garrul.com/theme)), with an
+  iframe alternative
 - **Reply notifications by email**, built in: readers opt in from the
   widget, confirm by double opt-in, get a debounced digest, and leave in
   one click from Gmail's own Unsubscribe button. Bring a Resend key
