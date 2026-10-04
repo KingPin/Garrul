@@ -927,7 +927,15 @@ const mountTurnstileFrame = (
 		"xr-spatial-tracking; accelerometer; gyroscope; magnetometer",
 	);
 	const parentOrigin = encodeURIComponent(window.location.origin);
-	frame.src = `${apiBase}/embed/turnstile-frame?parent_origin=${parentOrigin}`;
+	// The frame route honours ?theme= so Turnstile's own chrome follows a
+	// pinned data-theme on #garrul instead of the OS. Anything other than an
+	// explicit light/dark falls through to "auto", which is what the frame's
+	// color-scheme already resolves.
+	const root = container.getRootNode();
+	const pinned =
+		root instanceof ShadowRoot ? root.host.getAttribute("data-theme") : null;
+	const theme = pinned === "light" || pinned === "dark" ? pinned : "auto";
+	frame.src = `${apiBase}/embed/turnstile-frame?parent_origin=${parentOrigin}&theme=${theme}`;
 	container.appendChild(frame);
 
 	const tokenInput = el("input") as HTMLInputElement;

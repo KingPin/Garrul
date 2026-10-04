@@ -363,7 +363,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
    whole widget off by redefining a single variable rather than hunting rules.
    Paint properties only — never `all`, which would sweep in height and animate
    the composer's autosize into a rubber band. */
-.gr-toolbar-btn, .gr-form button, .gr-actions button, .gr-low-score,
+.gr-toolbar-btn, .gr-form > button, .gr-actions button, .gr-low-score,
 .gr-vote, .gr-reaction, .gr-sort select, .gr-loadmore, .gr-collapse, .gr-showmore,
 .gr-signin button, .gr-signed button, .gr-attribution a {
 	transition: background-color var(--gr-motion), border-color var(--gr-motion),
@@ -413,7 +413,11 @@ button:active:not([disabled]) { opacity: 0.75; }
 	display: block;
 	color-scheme: light dark;
 }
-.gr-form button {
+/* Direct child only: the submit button is the form's one top-level button.
+   The Write/Preview tabs and the Markdown toolbar are also <button>s inside
+   the form, and a descendant selector here outranks their own class rules
+   (.gr-tab is 0,1,0; this is 0,1,1), repainting them in the accent palette. */
+.gr-form > button {
 	font: inherit;
 	background: var(--gr-accent);
 	color: var(--gr-accent-fg);
@@ -423,8 +427,8 @@ button:active:not([disabled]) { opacity: 0.75; }
 	cursor: pointer;
 	align-self: flex-start;
 }
-.gr-form button:hover:not([disabled]) { background: var(--gr-accent-hover); }
-.gr-form button[disabled] { opacity: 0.6; cursor: progress; }
+.gr-form > button:hover:not([disabled]) { background: var(--gr-accent-hover); }
+.gr-form > button[disabled] { opacity: 0.6; cursor: progress; }
 .gr-error {
 	color: var(--gr-error);
 	font-size: 0.9em;
