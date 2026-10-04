@@ -61,6 +61,10 @@ Or in a stylesheet:
 | `--garrul-shadow`         | `0 1px 2px rgba(0,0,0,.06)`              | Box-shadow on raised surfaces         |
 | `--garrul-motion`         | `120ms`                                  | Duration of every hover/press/state transition. Set `0ms` to opt out; a reader's `prefers-reduced-motion` overrides it either way |
 
+`--garrul-font` can only name fonts the host page already loads. `@font-face`
+cannot be declared inside the shadow root, so load the web font on your page
+(a `<link>` or your own stylesheet) and the widget inherits it.
+
 ## Presets
 
 If you want a different look and don't want to pick 21 colors, set
