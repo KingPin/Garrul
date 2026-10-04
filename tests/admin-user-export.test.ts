@@ -59,7 +59,13 @@ const makeD1 = (db: DatabaseSync): any => ({
 });
 
 const makeKv = () => {
-	const store = new Map<string, string>();
+	// A fresh version-check entry, so the admin middleware never reaches
+	// api.github.com from a test. Without it the refresh runs under a no-op
+	// waitUntil, and its warning lands after the file has torn down.
+	const store = new Map<string, string>([
+		["meta:latest-release", JSON.stringify({ kind: "null", fetchedAt: Date.now() })],
+		["meta:recent-releases", JSON.stringify({ kind: "null", fetchedAt: Date.now() })],
+	]);
 	return {
 		async get(key: string, type?: "json") {
 			const raw = store.get(key);
