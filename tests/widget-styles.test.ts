@@ -62,6 +62,14 @@ describe("widget stylesheet minification", () => {
 		for (const c of classes) expect(minified).toContain(c);
 	});
 
+	it("scopes the accent-button rule to the form's direct children", () => {
+		// The tabs and Markdown toolbar are <button>s nested inside .gr-form.
+		// A descendant selector outranks their class rules and paints them in
+		// the accent palette, so only the top-level submit may match.
+		expect(source).not.toMatch(/\.gr-form button\b/);
+		expect(source).toContain(".gr-form > button {");
+	});
+
 	it("preserves every shipped data-preset palette", () => {
 		// Preset names are as public as the variable names (docs/THEMING.md), and
 		// the iframe route validates ?preset= against its own copy of the list —
