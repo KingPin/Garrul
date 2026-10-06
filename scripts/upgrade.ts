@@ -8,8 +8,9 @@
  *   npm run upgrade -- --yes       # non-interactive (CI); secrets must be pre-set
  *   npm run upgrade -- --version v0.0.2
  *
- * Interactive flow prints the GitHub release notes (when available) and
- * the drift plan, then asks for confirmation. `--yes` skips that prompt.
+ * Interactive flow prints the GitHub release notes for every release since
+ * the installed version (when available) and the drift plan, then asks for
+ * confirmation. `--yes` skips that prompt.
  *
  * Preflight requires a Cloudflare login (`wrangler whoami`) before anything
  * is fetched or read. The drift plan is built from live reads of the Worker's
@@ -50,7 +51,12 @@ import {
 	parseSemver,
 	type Manifest,
 } from "./upgrade/manifest";
-import { plainText, releaseNotesLines } from "./upgrade/plain-text";
+import { plainText } from "./upgrade/plain-text";
+import {
+	releaseNotesSection,
+	releasesInRange,
+	type Release,
+} from "./upgrade/release-notes";
 import { describeGithubFailure, githubHeaders } from "./upgrade/github";
 import {
 	diffSecrets,
@@ -120,13 +126,11 @@ const stepFail = (suffix: string): void => {
 	process.stdout.write(` FAIL\n  ${suffix}\n`);
 };
 
-type ReleaseInfo = { tag: string; url: string; notes: string | null };
-
 const parseReleaseResponse = (
 	body: unknown,
 	owner: string,
 	repo: string,
-): ReleaseInfo => {
+): Release => {
 	if (
 		typeof body !== "object" ||
 		body === null ||
@@ -136,6 +140,7 @@ const parseReleaseResponse = (
 	}
 	const tag = (body as { tag_name: string }).tag_name;
 	const rawNotes = (body as { body?: unknown }).body;
+	const rawTitle = (body as { name?: unknown }).name;
 	const notes =
 		typeof rawNotes === "string" && rawNotes.trim().length > 0
 			? rawNotes
@@ -145,6 +150,7 @@ const parseReleaseResponse = (
 	// at the boundary rather than at each print site.
 	return {
 		tag: plainText(tag),
+		title: typeof rawTitle === "string" ? plainText(rawTitle) : null,
 		url: plainText(
 			typeof (body as { html_url?: unknown }).html_url === "string"
 				? (body as { html_url: string }).html_url
@@ -157,7 +163,7 @@ const parseReleaseResponse = (
 const fetchLatestRelease = async (
 	owner: string,
 	repo: string,
-): Promise<ReleaseInfo> => {
+): Promise<Release> => {
 	const headers = githubHeaders();
 	const res = await fetch(
 		`https://api.github.com/repos/${owner}/${repo}/releases/latest`,
@@ -176,59 +182,66 @@ const fetchLatestRelease = async (
 	return parseReleaseResponse(await res.json(), owner, repo);
 };
 
-const fetchReleaseForTag = async (
-	owner: string,
-	repo: string,
-	tag: string,
-): Promise<ReleaseInfo | null> => {
+/**
+ * Every published release, for the notes of each tag an upgrade spans. One
+ * request whatever the span, so a long upgrade costs no more of the 60/hr
+ * unauthenticated cap than a short one.
+ */
+// ponytail: first page only (100 releases); a span reaching further back still
+// gets the compare link, which covers everything. Paginate if anyone needs it.
+const fetchReleases = async (owner: string, repo: string): Promise<Release[]> => {
 	const headers = githubHeaders();
 	const res = await fetch(
-		`https://api.github.com/repos/${owner}/${repo}/releases/tags/${encodeURIComponent(tag)}`,
+		`https://api.github.com/repos/${owner}/${repo}/releases?per_page=100`,
 		{ headers },
 	);
-	if (res.status === 404) return null;
 	if (!res.ok) {
 		throw new Error(
 			describeGithubFailure(
 				res,
-				`releases/tags/${tag}`,
+				"releases",
 				`${owner}/${repo}`,
 				headers.Authorization !== undefined,
 			),
 		);
 	}
-	return parseReleaseResponse(await res.json(), owner, repo);
+	const body: unknown = await res.json();
+	if (!Array.isArray(body)) throw new Error("GitHub releases response is not a list");
+	return body
+		.filter(
+			(r) =>
+				typeof r === "object" &&
+				r !== null &&
+				r.draft !== true &&
+				r.prerelease !== true,
+		)
+		.map((r) => parseReleaseResponse(r, owner, repo));
 };
 
-const printReleaseNotes = (info: ReleaseInfo | null, tag: string): void => {
+const printReleaseNotes = (
+	releases: Release[] | null,
+	installed: string,
+	targetTag: string,
+	owner: string,
+	repo: string,
+): void => {
 	console.log("");
-	console.log(`Release notes (${tag}):`);
-	if (!info) {
-		console.log("  (no GitHub release published for this tag)");
+	console.log(`Release notes (v${installed} → ${targetTag}):`);
+	if (releases === null) {
+		console.log("  (could not fetch release notes)");
 		return;
 	}
-	console.log(`  ${info.url}`);
-	if (!info.notes) {
-		console.log("  (release has no description)");
-		return;
-	}
-	console.log("");
-	// The release body is attacker-controlled free text on exactly the same
-	// terms as the manifest descriptions below, and it prints FIRST — so a
-	// cursor-movement sequence here can rewrite the "Breaking changes — manual
-	// steps required" block that appears further down, before the operator ever
-	// reaches `confirm("Proceed?")`. plain-text.ts strips the escapes and caps
-	// the volume so the body can't scroll the plan out of the terminal either.
-	const { lines, truncated } = releaseNotesLines(info.notes);
-	for (const line of lines) {
-		console.log(`  ${line}`);
-	}
-	if (truncated > 0) {
-		console.log("");
-		console.log(
-			`  … ${truncated} more line(s) not shown — read the full notes at ${info.url}`,
-		);
-	}
+	// The release text is attacker-controlled on exactly the same terms as the
+	// manifest descriptions below, and it prints FIRST — so a cursor-movement
+	// sequence here could rewrite the "Breaking changes — manual steps
+	// required" block further down, before the operator reaches
+	// `confirm("Proceed?")`. release-notes.ts strips the escapes and caps the
+	// volume so it can't scroll the plan out of the terminal either.
+	const compareUrl = plainText(
+		`https://github.com/${owner}/${repo}/compare/v${installed}...${targetTag}`,
+	);
+	const inRange = releasesInRange(releases, installed, targetTag);
+	for (const line of releaseNotesSection(inRange, compareUrl)) console.log(line);
 };
 
 const computePlan = (
@@ -611,7 +624,7 @@ export const main = async (
 		wrangler?: typeof wranglerModule;
 		git?: typeof gitModule;
 		fetchLatest?: typeof fetchLatestRelease;
-		fetchReleaseForTag?: typeof fetchReleaseForTag;
+		fetchReleases?: typeof fetchReleases;
 		fetchTargetManifest?: typeof fetchRemote;
 		loadLocal?: typeof loadLocal;
 	} = {},
@@ -619,7 +632,7 @@ export const main = async (
 	const wrangler = deps.wrangler ?? wranglerModule;
 	const git = deps.git ?? gitModule;
 	const fetchLatest = deps.fetchLatest ?? fetchLatestRelease;
-	const fetchReleaseTag = deps.fetchReleaseForTag ?? fetchReleaseForTag;
+	const fetchAllReleases = deps.fetchReleases ?? fetchReleases;
 	const fetchTargetManifest = deps.fetchTargetManifest ?? fetchRemote;
 	const readLocal = deps.loadLocal ?? loadLocal;
 	const flags = parseFlags(argv);
@@ -665,7 +678,6 @@ export const main = async (
 		})();
 
 	let targetTag: string;
-	let release: ReleaseInfo | null = null;
 	if (flags.version) {
 		if (!parseSemver(flags.version)) {
 			stepFail(`bad --version: ${flags.version}`);
@@ -673,9 +685,7 @@ export const main = async (
 		}
 		targetTag = flags.version.startsWith("v") ? flags.version : `v${flags.version}`;
 	} else {
-		const latest = await fetchLatest(remote.owner, remote.repo);
-		targetTag = latest.tag;
-		release = latest;
+		targetTag = (await fetchLatest(remote.owner, remote.repo)).tag;
 	}
 	stepOk(targetTag);
 
@@ -695,14 +705,13 @@ export const main = async (
 	const target = await fetchTargetManifest(remote.owner, remote.repo, targetTag);
 	stepOk();
 
-	if (release === null) {
-		step("Fetching release notes…");
-		try {
-			release = await fetchReleaseTag(remote.owner, remote.repo, targetTag);
-			stepOk(release ? "OK" : "none");
-		} catch (err) {
-			stepOk(`skipped (${(err as Error).message})`);
-		}
+	step("Fetching release notes…");
+	let releases: Release[] | null = null;
+	try {
+		releases = await fetchAllReleases(remote.owner, remote.repo);
+		stepOk();
+	} catch (err) {
+		stepOk(`skipped (${(err as Error).message})`);
 	}
 
 	if (compareSemver(local.version, target.minPreviousVersion) < 0) {
@@ -737,7 +746,7 @@ export const main = async (
 		process.exit(1);
 	}
 
-	printReleaseNotes(release, targetTag);
+	printReleaseNotes(releases, local.version, targetTag, remote.owner, remote.repo);
 	printPlan(local, target, plan);
 
 	if (flags.dryRun) {
