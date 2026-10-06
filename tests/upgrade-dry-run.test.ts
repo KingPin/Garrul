@@ -382,6 +382,25 @@ describe("upgrade dry-run", () => {
 		expect(output).not.toMatch(/Breaking changes/);
 	});
 
+	it("keeps the target's notes when the releases list fails", async () => {
+		const failing = vi.fn(async (): Promise<never> => {
+			throw new Error("rate limited");
+		});
+		await main(["--dry-run"], {
+			wrangler: wranglerMock,
+			git: gitMock,
+			fetchLatest,
+			fetchReleases: failing,
+			fetchTargetManifest,
+			loadLocal,
+		});
+
+		const output: string = logSpy.mock.calls.map((c: unknown[]) => c.join(" ")).join("\n");
+		expect(output).toMatch(/new shiny thing/);
+		expect(output).toMatch(/could not load notes for earlier releases/);
+		expect(output).not.toMatch(/could not fetch release notes/);
+	});
+
 	it("tolerates a target with no GitHub release", async () => {
 		const missing = vi.fn(async () => []);
 		await main(["--dry-run", "--version", "v1.2.0"], {

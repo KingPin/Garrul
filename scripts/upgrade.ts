@@ -225,6 +225,7 @@ const printReleaseNotes = (
 	targetTag: string,
 	owner: string,
 	repo: string,
+	listFailed = false,
 ): void => {
 	console.log("");
 	console.log(`Release notes (v${installed} → ${targetTag}):`);
@@ -245,6 +246,10 @@ const printReleaseNotes = (
 	const inRange = releasesInRange(releases, installed, targetTag);
 	for (const line of releaseNotesSection(inRange, compareUrl, releasesUrl)) {
 		console.log(line);
+	}
+	if (listFailed) {
+		console.log("");
+		console.log(`  (could not load notes for earlier releases — see ${releasesUrl})`);
 	}
 };
 
@@ -682,6 +687,8 @@ export const main = async (
 		})();
 
 	let targetTag: string;
+	// Kept so a failed releases-list fetch can still show the target's notes.
+	let latest: Release | null = null;
 	if (flags.version) {
 		if (!parseSemver(flags.version)) {
 			stepFail(`bad --version: ${flags.version}`);
@@ -689,7 +696,8 @@ export const main = async (
 		}
 		targetTag = flags.version.startsWith("v") ? flags.version : `v${flags.version}`;
 	} else {
-		targetTag = (await fetchLatest(remote.owner, remote.repo)).tag;
+		latest = await fetchLatest(remote.owner, remote.repo);
+		targetTag = latest.tag;
 	}
 	stepOk(targetTag);
 
@@ -711,10 +719,17 @@ export const main = async (
 
 	step("Fetching release notes…");
 	let releases: Release[] | null = null;
+	let listFailed = false;
 	try {
 		releases = await fetchAllReleases(remote.owner, remote.repo);
 		stepOk();
 	} catch (err) {
+		// e.g. /releases/latest spent the last of the unauthenticated rate
+		// limit. The target's own notes are already in hand; don't drop them.
+		if (latest) {
+			releases = [latest];
+			listFailed = true;
+		}
 		stepOk(`skipped (${(err as Error).message})`);
 	}
 
@@ -750,7 +765,14 @@ export const main = async (
 		process.exit(1);
 	}
 
-	printReleaseNotes(releases, local.version, targetTag, remote.owner, remote.repo);
+	printReleaseNotes(
+		releases,
+		local.version,
+		targetTag,
+		remote.owner,
+		remote.repo,
+		listFailed,
+	);
 	printPlan(local, target, plan);
 
 	if (flags.dryRun) {
