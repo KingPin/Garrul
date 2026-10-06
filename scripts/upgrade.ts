@@ -241,8 +241,11 @@ const printReleaseNotes = (
 	const compareUrl = plainText(
 		`https://github.com/${owner}/${repo}/compare/v${installed}...${targetTag}`,
 	);
+	const releasesUrl = plainText(`https://github.com/${owner}/${repo}/releases`);
 	const inRange = releasesInRange(releases, installed, targetTag);
-	for (const line of releaseNotesSection(inRange, compareUrl)) console.log(line);
+	for (const line of releaseNotesSection(inRange, compareUrl, releasesUrl)) {
+		console.log(line);
+	}
 };
 
 const computePlan = (

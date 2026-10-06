@@ -68,11 +68,14 @@ export const headline = (r: Release): string => {
 
 /**
  * The section as terminal-safe lines. `releases` is the already-ranged list,
- * newest first; `compareUrl` is the GitHub compare view for the full span.
+ * newest first; `compareUrl` is the GitHub compare view for the full span
+ * (code changes only), `releasesUrl` the releases page — the one place every
+ * body the caps cut off can still be read.
  */
 export const releaseNotesSection = (
 	releases: Release[],
 	compareUrl: string,
+	releasesUrl: string,
 ): string[] => {
 	if (releases.length === 0) {
 		return ["  (no GitHub release published for this range)"];
@@ -94,13 +97,13 @@ export const releaseNotesSection = (
 		for (const r of older.slice(0, MAX_TITLES)) out.push(`    ${headline(r)}`);
 		const hidden = older.length - MAX_TITLES;
 		if (hidden > 0) {
-			out.push(`    … ${hidden} earlier release(s) — see ${compareUrl}`);
+			out.push(`    … ${hidden} earlier release(s) — see ${releasesUrl}`);
 		}
 	}
 	if (out.length <= MAX_LINES) return out;
 	return [
 		...out.slice(0, MAX_LINES),
 		"",
-		`  … ${out.length - MAX_LINES} more line(s) not shown — read the full notes at ${compareUrl}`,
+		`  … ${out.length - MAX_LINES} more line(s) not shown — read the full notes at ${releasesUrl}`,
 	];
 };
