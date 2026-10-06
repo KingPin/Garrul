@@ -212,6 +212,7 @@ const fetchReleases = async (owner: string, repo: string): Promise<Release[]> =>
 			(r) =>
 				typeof r === "object" &&
 				r !== null &&
+				typeof r.tag_name === "string" &&
 				r.draft !== true &&
 				r.prerelease !== true,
 		)
