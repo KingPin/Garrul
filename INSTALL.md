@@ -392,6 +392,10 @@ the target version's `release-manifest.json`, prints a plan, asks you
 to confirm, then applies it: create any missing KV/D1 bindings,
 prompt for new secrets, run forward-only migrations, deploy.
 
+Before the plan it prints the release notes for every release since the
+version you run, not just the target: the newest three in full, older
+ones as one line each, and a GitHub compare link for the whole span.
+
 Useful flags:
 
 | Flag                    | Effect                                                        |
@@ -404,7 +408,7 @@ Useful flags:
 | `--skip-deploy`         | Stop after migrations. Useful when staging a deploy by hand.  |
 | `--rerender`            | Run `npm run rerender -- --remote` after deploy (if the renderer version bumped). |
 
-The release lookup uses the GitHub API, which allows 60 unauthenticated
+The release lookups use the GitHub API, which allows 60 unauthenticated
 requests per hour per IP. If it fails with a rate-limit 403, either wait
 for the reset time it prints or export a token for the run — both
 `GITHUB_TOKEN` and `GH_TOKEN` are honored, and neither is required:

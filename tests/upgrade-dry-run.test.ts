@@ -114,16 +114,19 @@ const makeGitMock = (): typeof gitModule => ({
 	parseRemote: vi.fn(() => ({ owner: "kingpin", repo: "garrul" })),
 });
 
-const fetchLatest = vi.fn(async () => ({
-	tag: "v1.2.0",
-	url: "https://github.com/kingpin/garrul/releases/tag/v1.2.0",
-	notes: "## Highlights\n- new shiny thing",
-}));
-const fetchReleaseForTag = vi.fn(async (_o: string, _r: string, tag: string) => ({
+const release = (tag: string, notes: string) => ({
 	tag,
+	title: `${tag} — ${notes}`,
 	url: `https://github.com/kingpin/garrul/releases/tag/${tag}`,
-	notes: "## Highlights\n- new shiny thing",
-}));
+	notes: `## Highlights\n- ${notes}`,
+});
+const fetchReleases = vi.fn(async () => [
+	release("v1.3.0", "not in this upgrade"),
+	release("v1.2.0", "new shiny thing"),
+	release("v1.1.0", "older shiny thing"),
+	release("v1.0.0", "already installed"),
+]);
+const fetchLatest = vi.fn(async () => release("v1.2.0", "new shiny thing"));
 const fetchTargetManifest = vi.fn(
 	async (): Promise<Manifest> => structuredClone(fakeTargetManifest),
 );
@@ -152,7 +155,7 @@ describe("upgrade dry-run", () => {
 		wranglerMock = makeWranglerMock();
 		gitMock = makeGitMock();
 		fetchLatest.mockClear();
-		fetchReleaseForTag.mockClear();
+		fetchReleases.mockClear();
 		fetchTargetManifest.mockClear();
 		loadLocal.mockClear();
 		logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
@@ -171,7 +174,7 @@ describe("upgrade dry-run", () => {
 			wrangler: wranglerMock,
 			git: gitMock,
 			fetchLatest,
-			fetchReleaseForTag,
+			fetchReleases,
 			fetchTargetManifest,
 			loadLocal,
 		});
@@ -193,7 +196,7 @@ describe("upgrade dry-run", () => {
 			wrangler: wranglerMock,
 			git: gitMock,
 			fetchLatest,
-			fetchReleaseForTag,
+			fetchReleases,
 			fetchTargetManifest,
 			loadLocal,
 		});
@@ -211,17 +214,13 @@ describe("upgrade dry-run", () => {
 			wrangler: wranglerMock,
 			git: gitMock,
 			fetchLatest,
-			fetchReleaseForTag,
+			fetchReleases,
 			fetchTargetManifest,
 			loadLocal,
 		});
 
 		expect(fetchLatest).not.toHaveBeenCalled();
-		expect(fetchReleaseForTag).toHaveBeenCalledWith(
-			"kingpin",
-			"garrul",
-			"v1.2.0",
-		);
+		expect(fetchReleases).toHaveBeenCalledWith("kingpin", "garrul");
 		expect(fetchTargetManifest).toHaveBeenCalledWith(
 			"kingpin",
 			"garrul",
@@ -234,14 +233,18 @@ describe("upgrade dry-run", () => {
 			wrangler: wranglerMock,
 			git: gitMock,
 			fetchLatest,
-			fetchReleaseForTag,
+			fetchReleases,
 			fetchTargetManifest,
 			loadLocal,
 		});
 
 		const output: string = logSpy.mock.calls.map((c: unknown[]) => c.join(" ")).join("\n");
-		expect(output).toMatch(/Release notes \(v1\.2\.0\):/);
+		expect(output).toMatch(/Release notes \(v1\.0\.0 → v1\.2\.0\):/);
 		expect(output).toMatch(/new shiny thing/);
+		// Every release the upgrade spans, and nothing outside it.
+		expect(output).toMatch(/older shiny thing/);
+		expect(output).not.toMatch(/not in this upgrade|already installed/);
+		expect(output).toMatch(/compare\/v1\.0\.0\.\.\.v1\.2\.0/);
 		expect(output.indexOf("Release notes")).toBeLessThan(
 			output.indexOf("Plan: 1.0.0"),
 		);
@@ -252,7 +255,7 @@ describe("upgrade dry-run", () => {
 			wrangler: wranglerMock,
 			git: gitMock,
 			fetchLatest,
-			fetchReleaseForTag,
+			fetchReleases,
 			fetchTargetManifest,
 			loadLocal,
 		});
@@ -272,7 +275,7 @@ describe("upgrade dry-run", () => {
 			wrangler: wranglerMock,
 			git: gitMock,
 			fetchLatest,
-			fetchReleaseForTag,
+			fetchReleases,
 			fetchTargetManifest,
 			loadLocal,
 		});
@@ -303,7 +306,7 @@ describe("upgrade dry-run", () => {
 			wrangler: wranglerMock,
 			git: gitMock,
 			fetchLatest,
-			fetchReleaseForTag,
+			fetchReleases,
 			fetchTargetManifest,
 			loadLocal,
 		});
@@ -329,7 +332,7 @@ describe("upgrade dry-run", () => {
 			wrangler: wranglerMock,
 			git: gitMock,
 			fetchLatest,
-			fetchReleaseForTag,
+			fetchReleases,
 			fetchTargetManifest,
 			loadLocal,
 		});
@@ -367,7 +370,7 @@ describe("upgrade dry-run", () => {
 			wrangler: wranglerMock,
 			git: gitMock,
 			fetchLatest,
-			fetchReleaseForTag,
+			fetchReleases,
 			fetchTargetManifest: targetNoBreaks,
 			loadLocal: current,
 		});
@@ -379,13 +382,32 @@ describe("upgrade dry-run", () => {
 		expect(output).not.toMatch(/Breaking changes/);
 	});
 
-	it("tolerates a missing GitHub release (404)", async () => {
-		const missing = vi.fn(async () => null);
+	it("keeps the target's notes when the releases list fails", async () => {
+		const failing = vi.fn(async (): Promise<never> => {
+			throw new Error("rate limited");
+		});
+		await main(["--dry-run"], {
+			wrangler: wranglerMock,
+			git: gitMock,
+			fetchLatest,
+			fetchReleases: failing,
+			fetchTargetManifest,
+			loadLocal,
+		});
+
+		const output: string = logSpy.mock.calls.map((c: unknown[]) => c.join(" ")).join("\n");
+		expect(output).toMatch(/new shiny thing/);
+		expect(output).toMatch(/could not load notes for earlier releases/);
+		expect(output).not.toMatch(/could not fetch release notes/);
+	});
+
+	it("tolerates a target with no GitHub release", async () => {
+		const missing = vi.fn(async () => []);
 		await main(["--dry-run", "--version", "v1.2.0"], {
 			wrangler: wranglerMock,
 			git: gitMock,
 			fetchLatest,
-			fetchReleaseForTag: missing,
+			fetchReleases: missing,
 			fetchTargetManifest,
 			loadLocal,
 		});
@@ -437,7 +459,7 @@ describe("upgrade refuses to plan against a deployment it cannot read", () => {
 		wrangler: wranglerMock,
 		git: gitMock,
 		fetchLatest,
-		fetchReleaseForTag,
+		fetchReleases,
 		fetchTargetManifest,
 		loadLocal,
 	});

@@ -114,10 +114,10 @@ Critical paths only: API contracts, sanitizer (XSS), auth cookie roundtrip, rate
 Atomic commits per concern, conventional-commits style (`feat:`, `fix:`, `refactor:`, `docs:`, `chore:`, `test:`). No "milestone done" commits.
 
 ### Releases
-`npm run upgrade` (`scripts/upgrade.ts`) fetches and prints the **GitHub Release body** before the drift plan, so every tag needs a concise, operator-focused body. `generate_release_notes: true` in `release.yml` is a stub — always rewrite it.
+`npm run upgrade` (`scripts/upgrade.ts`) prints the **GitHub Release notes** for every release since the installed version before the drift plan (`scripts/upgrade/release-notes.ts`): the newest three bodies in full, older ones as their **title** alone. So every tag needs a concise, operator-focused body *and* a title that stands on its own. `generate_release_notes: true` in `release.yml` is a stub — always rewrite it.
 
 - **Body**: group by `feat:`/`fix:`/`chore:` or `Highlights:`/`Notes:`, 3–6 lines. Say what changes for someone upgrading (env vars, endpoints, behavior), not internal refactors. Patch releases get notes too; never publish a bare `"v1.5.1"`. Mirror the summary in the annotated tag message.
-- **Title**: every release gets one via `gh release edit vX.Y.Z --title "..."`, format `vX.Y.Z — <operator-visible change>` (lowercase unless it opens on a proper noun; two clauses joined by *and* for a headline pair). Keep the tag in the title — GitHub notifications and the Atom feed show the name alone. Describe a patch's effect, not the bug's name. The title is not part of the upgrade contract (`upgrade.ts` reads `tag_name`, `body`, `html_url`), so it can be retitled after the fact.
+- **Title**: every release gets one via `gh release edit vX.Y.Z --title "..."`, format `vX.Y.Z — <operator-visible change>` (lowercase unless it opens on a proper noun; two clauses joined by *and* for a headline pair). Keep the tag in the title — GitHub notifications and the Atom feed show the name alone. Describe a patch's effect, not the bug's name. The title is the one-line summary an operator several releases behind sees, and it is read live at upgrade time, so retitling after the fact fixes it for every later upgrade.
 
 ### Secrets
 `wrangler.toml` is gitignored (`wrangler.example.toml` is the template). Production secrets via `wrangler secret put`; local via `.dev.vars` (`.dev.vars.example` is the template).
