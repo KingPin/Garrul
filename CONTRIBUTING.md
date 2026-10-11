@@ -109,7 +109,7 @@ from people who aren't us.
 
 Garrul ships Arabic, German, Spanish, French, Italian, Japanese, Norwegian
 Bokmål, Dutch, Polish, Portuguese and Traditional Chinese. Norwegian Bokmål
-and Polish have been reviewed by native speakers. **The other eight are machine-seeded: LLM
+and Polish have been reviewed by native speakers. **The other nine are machine-seeded: LLM
 output that no native speaker has checked.** What
 that fails at is register and consistency — "Post" as a noun where it
 should be an imperative, formal address where the rest of the file is
