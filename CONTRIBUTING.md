@@ -107,9 +107,9 @@ it looks for a change in the set of variable *names*.
 This is the easiest useful PR in the repo, and the one we most need
 from people who aren't us.
 
-Garrul ships German, Spanish, French, Italian, Japanese, Norwegian
-Bokmål, Dutch, Polish and Portuguese. Norwegian Bokmål and Polish have been
-reviewed by native speakers. **The other seven are machine-seeded: LLM
+Garrul ships Arabic, German, Spanish, French, Italian, Japanese, Norwegian
+Bokmål, Dutch, Polish, Portuguese and Traditional Chinese. Norwegian Bokmål
+and Polish have been reviewed by native speakers. **The other eight are machine-seeded: LLM
 output that no native speaker has checked.** What
 that fails at is register and consistency — "Post" as a noun where it
 should be an imperative, formal address where the rest of the file is
@@ -147,7 +147,9 @@ sv: { label: "Swedish", endonym: "Svenska", rtl: false, status: "machine-seeded"
 operator picking a locale in the admin UI reads. Use `status:
 "reviewed"` if you actually speak it, and add `maintainer: "@yourhandle"`
 if you are also willing to be asked about it later — the two are
-separate, and the second is optional.
+separate, and the second is optional. Set `rtl: true` for right-to-left
+scripts such as Arabic; the widget applies its own direction and uses
+logical layout properties.
 
 Some locales can intentionally leave selected server keys untranslated.
 For example, `zh-Hant` omits `err.*` so API error messages remain English;

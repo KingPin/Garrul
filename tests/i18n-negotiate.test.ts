@@ -30,6 +30,8 @@ describe("matchLocale", () => {
 		// *match* English, so the caller can tell a hit from a miss.
 		expect(matchLocale("en-GB")).toBe("en");
 		expect(matchLocale("EN-us")).toBe("en");
+		expect(matchLocale("ar-EG")).toBe("ar");
+		expect(matchLocale("AR-SA")).toBe("ar");
 	});
 
 	it("routes the Norwegian macrolanguage tag to Bokmål", () => {
@@ -135,6 +137,11 @@ describe("resolveLocale", () => {
 
 	it("falls through the auto sentinel to the host-page hint", () => {
 		expect(resolveLocale({ operatorDefault: AUTO_LOCALE, hostPage: "en" })).toBe("en");
+	});
+
+	it("requires explicit opt-in for the unreviewed Arabic locale", () => {
+		expect(resolveLocale({ hostPage: "ar" })).toBe("en");
+		expect(resolveLocale({ requested: "ar-EG", hostPage: "en" })).toBe("ar");
 	});
 
 	it("ignores an unmatched source and keeps negotiating", () => {

@@ -12,6 +12,7 @@
  * per key with an English fallback (see `makeS`) — which is what lets a partial
  * translation ship instead of blocking a locale until it is complete.
  */
+import { ar } from "./ar";
 import type { StringValue, WidgetKey } from "../../widget/strings";
 import { de } from "./de";
 import { es } from "./es";
@@ -28,6 +29,7 @@ import { zhHant } from "./zh-Hant";
 export type WidgetTable = Partial<Record<WidgetKey, StringValue>>;
 
 export const WIDGET_TABLES: Record<string, WidgetTable> = {
+	ar,
 	de,
 	es,
 	fr,

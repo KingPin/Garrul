@@ -100,6 +100,13 @@ describe("GET /api/v1/config — locale", () => {
 		expect(body.strings).toEqual({ "w.reply": "Antwortish" });
 	});
 
+	it("serves Arabic strings and right-to-left direction", async () => {
+		const body = await getConfig("?lang=ar-EG");
+		expect(body.locale).toBe("ar");
+		expect(body.rtl).toBe(true);
+		expect(body.strings).toMatchObject({ "w.toolbar": "التنسيق" });
+	});
+
 	it("ships the locale's own overrides, not a merged English copy", async () => {
 		// Merging server-side would put ~60 keys on the wire for a translation
 		// that filled in one. The widget falls back per key instead.
