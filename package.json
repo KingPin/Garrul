@@ -58,8 +58,8 @@
     "tail": "wrangler tail"
   },
   "dependencies": {
-    "hono": "^4.13.9",
-    "marked": "^18.0.14"
+    "hono": "^4.13.13",
+    "marked": "^18.1.0"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.14",
