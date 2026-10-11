@@ -1,0 +1,72 @@
+/** Arabic server strings. **Machine-seeded — not reviewed by a native speaker.** */
+import type { LocaleTable } from "./index";
+
+export const ar = {
+	// Validation / API errors
+	"err.body.required": "نص التعليق مطلوب.",
+	"err.body.too_long": "التعليق طويل جدًا (الحد الأقصى {max} حرفًا).",
+	"err.post.required": "معرّف المنشور مفقود.",
+	"err.post.invalid": "معرّف المنشور غير صالح.",
+	"err.parent.not_found": "لم يُعثر على التعليق الأصلي.",
+	"err.parent.different_post": "ينتمي التعليق الأصلي إلى منشور آخر.",
+	"err.parent.too_deep": "هذا النقاش متداخل بعمق كبير. يُرجى الرد على مستوى أعلى.",
+	"err.name.required": "اسم العرض مطلوب.",
+	"err.name.too_long": "اسم العرض طويل جدًا (الحد الأقصى {max} حرفًا).",
+	"err.name.reserved": "هذا الاسم غير متاح للتعليقات المجهولة. اختر اسمًا آخر أو سجّل الدخول.",
+	"err.turnstile.required": "تعذّر التحقق من مكافحة الرسائل المزعجة. حدّث الصفحة وحاول مرة أخرى.",
+	"err.turnstile.invalid": "تعذّر التحقق من مكافحة الرسائل المزعجة. حدّث الصفحة وحاول مرة أخرى.",
+	"err.ratelimit": "عدد التعليقات كبير جدًا. تمهّل وحاول مجددًا بعد قليل.",
+	"err.honeypot": "رُفض التعليق.",
+	"err.origin.forbidden": "حُظر الطلب: المصدر غير مسموح به.",
+	"err.session.expired": "انتهت صلاحية جلستك. حدّث الصفحة وحاول مرة أخرى.",
+	"err.edit.window_expired": "انتهت مهلة التعديل.",
+	"err.edit.not_author": "يمكنك تعديل تعليقاتك فقط.",
+	"err.delete.not_author": "يمكنك حذف تعليقاتك فقط.",
+	"err.not_found": "غير موجود.",
+	"err.banned": "حسابك محظور.",
+	"err.staff.forbidden": "يمكن للموظفين المسجلين الدخول فقط إضافة صفة الموظف إلى تعليق.",
+	"err.thread_closed": "التعليقات مغلقة على هذا المنشور.",
+	"err.internal": "حدث خطأ ما. حاول مرة أخرى.",
+
+	// Server-rendered reader UI
+	"ui.deleted": "[محذوف]",
+	"ui.subscribe.pending": "تحقق من بريدك الوارد لتأكيد الاشتراك.",
+	"ui.subscribe.confirmed": "تم تأكيد الاشتراك.",
+	"ui.subscribe.link_expired": "انتهت صلاحية الرابط أو سبق استخدامه.",
+	"ui.subscribe.confirmed_page": "تم تأكيد إشعارات التعليقات على «{title}».",
+	"ui.subscribe.already_unsubscribed": "ألغيت الاشتراك بالفعل في إشعارات التعليقات على «{title}».",
+	"ui.subscribe.unsubscribed": "أُلغِي الاشتراك في إشعارات التعليقات على «{title}».",
+	"ui.subscribe.unsubscribe_confirm": "هل تريد إلغاء الاشتراك في إشعارات التعليقات على «{title}»؟",
+	"ui.subscribe.unsubscribe_cta": "نعم، ألغِ الاشتراك",
+	"ui.subscribe.unsubscribe_note": "لم يتغير شيء بعد؛ سيظل الاشتراك فعالًا حتى التأكيد.",
+	"ui.subscribe.confirm_prompt": "هل تريد تفعيل إشعارات التعليقات على «{title}»؟",
+	"ui.subscribe.confirm_cta": "نعم، أرسل الإشعارات",
+	"ui.subscribe.confirm_note": "لم يتغير شيء بعد؛ لن تصلك الإشعارات حتى يتم التأكيد.",
+	"ui.subscribe.manage_others": "يتلقى هذا العنوان أيضًا إشعارات هذه النقاشات:",
+	"ui.subscribe.unsubscribe_row_cta": "إلغاء الاشتراك",
+	"ui.subscribe.unsubscribe_all_cta": "إلغاء الاشتراك في كل النقاشات",
+	"ui.subscribe.unsubscribed_all": "أُلغي اشتراكك في إشعارات التعليقات لكل النقاشات.",
+
+	// Transactional email
+	"email.confirm.subject": "تأكيد اشتراك التعليقات على {title}",
+	"email.confirm.heading": "تأكيد الاشتراك",
+	"email.confirm.intro": "طُلب تأكيد الاشتراك في إشعارات الردود على {title}.",
+	"email.confirm.ignore": "إذا لم تطلب ذلك، فتجاهل هذه الرسالة. لن تُرسل رسائل أخرى عن هذا النقاش إلى هذا العنوان ما لم تضغط رابط التأكيد أدناه.",
+	"email.confirm.cta": "تأكيد الاشتراك",
+	"email.confirm.paste": "أو الصق هذا الرابط في المتصفح:",
+	"email.digest.subject": "ردود جديدة على «{title}»",
+	"email.digest.heading": {
+		zero: "لا تعليقات جديدة على «{title}»",
+		one: "تعليق جديد واحد على «{title}»",
+		two: "تعليقان جديدان على «{title}»",
+		few: "{count} تعليقات جديدة على «{title}»",
+		many: "{count} تعليقًا جديدًا على «{title}»",
+		other: "{count} تعليق جديد على «{title}»",
+	},
+	"email.digest.permalink": "رابط دائم",
+	"email.digest.unsubscribe": "إلغاء الاشتراك في هذا النقاش",
+
+	// Atom feed
+	"feed.title": "التعليقات على {title}",
+	"feed.entry_title": "علّق {author}",
+} satisfies LocaleTable;

@@ -13,6 +13,7 @@
  * translation ship instead of blocking a locale until it is complete.
  */
 import type { StringValue, WidgetKey } from "../../widget/strings";
+import { ar } from "./ar";
 import { de } from "./de";
 import { es } from "./es";
 import { fr } from "./fr";
@@ -28,6 +29,7 @@ import { zhHant } from "./zh-Hant";
 export type WidgetTable = Partial<Record<WidgetKey, StringValue>>;
 
 export const WIDGET_TABLES: Record<string, WidgetTable> = {
+	ar,
 	de,
 	es,
 	fr,

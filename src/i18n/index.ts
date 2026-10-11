@@ -1,3 +1,4 @@
+import { ar } from "./ar";
 import { de } from "./de";
 import { en, type StringKey } from "./en";
 import { es } from "./es";
@@ -27,9 +28,8 @@ export interface LocaleMeta {
 	/** Native name — shown to operators choosing a locale. */
 	readonly endonym: string;
 	/**
-	 * Right-to-left script. No RTL locale ships yet; the field exists so that
-	 * adding one is a CSS pass rather than a schema change. The widget's
-	 * layout already uses logical properties, so `dir` is the only switch.
+	 * Right-to-left script. The widget's layout uses logical properties, so
+	 * `dir` is the only layout switch required for an RTL locale.
 	 */
 	readonly rtl: boolean;
 	/**
@@ -86,6 +86,7 @@ export const FALLBACK_LOCALE = "en";
  * locale has both, but nothing enforces the reading order for a human.
  */
 export const LOCALES: Record<string, LocaleMeta> = {
+	ar: { label: "Arabic", endonym: "العربية", rtl: true, status: "machine-seeded" },
 	en: { label: "English", endonym: "English", rtl: false, status: "source" },
 	de: { label: "German", endonym: "Deutsch", rtl: false, status: "machine-seeded" },
 	es: { label: "Spanish", endonym: "Español", rtl: false, status: "machine-seeded" },
@@ -131,6 +132,7 @@ export type LocaleTable = Partial<Record<StringKey, Message>>;
  * parity test exists to catch.
  */
 export const TABLES: Record<string, LocaleTable> = {
+	ar,
 	en,
 	de,
 	es,

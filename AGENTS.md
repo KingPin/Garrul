@@ -361,10 +361,10 @@ reads the language.
 Regional tags match their base language (`de-AT` → `de`), and anything
 unrecognized falls back to English rather than failing the mount.
 
-Shipped tags: `en` (source) plus `de`, `es`, `fr`, `it`, `ja`, `nb`, `nl`,
-`pl`, `pt` and `zh-Hant`. `nb` and `pl` are reviewed and therefore
-auto-selectable from `<html lang>`; the other eight are machine-seeded and
-opt-in per the paragraph above. `pt` is the bare primary subtag and serves
+Shipped tags: `en` (source) plus `ar`, `de`, `es`, `fr`, `it`, `ja`, `nb`,
+`nl`, `pl`, `pt` and `zh-Hant`. `nb` and `pl` are reviewed and therefore
+auto-selectable from `<html lang>`; the other nine are machine-seeded and
+opt-in per the paragraph above. `ar` renders right-to-left. `pt` is the bare primary subtag and serves
 `pt-BR` and `pt-PT` alike; there is no `pt-BR` entry to match. `zh-Hant`
 serves the explicit Traditional Chinese script and the `zh-TW`, `zh-HK` and
 `zh-MO` regions when no script is given; explicit other scripts win over the
