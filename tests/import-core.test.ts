@@ -334,18 +334,32 @@ describe("ghost identity derivation", () => {
 		expect(captured).toEqual([]);
 	});
 
-	it("still passes a link-derived slug through unchecked, as it always has", async () => {
-		// Pre-existing behavior, pinned so the adapter-slug check above cannot
-		// quietly grow to cover it: a percent-encoded path imported before this
-		// check existed and must keep importing.
+	it("digests an unaddressable link-derived slug instead of throwing, and counts it", async () => {
+		// #117: a percent-encoded path used to import onto `caf%C3%A9`, a page
+		// the read API 400s. It must still import (the adapter-slug check above
+		// must not grow to cover it), just onto a slug a reader can load.
 		const exported = exportOf(
 			[{ name: "A", email: null, is_anonymous: true }],
 			"https://example.com/caf%C3%A9",
 		);
 		const { db, captured } = makeFreshDb();
-		await runImport(db, stubAdapter("disqus", exported), "", "test-secret");
+		const plan = await runImport(db, stubAdapter("disqus", exported), "", "test-secret");
 		const post = captured.find((c) => c.sql.startsWith("INSERT INTO posts"));
-		expect(post!.binds[0]).toBe("caf%C3%A9");
+		expect(post!.binds[0]).toBe(`disqus-${slugDigest("caf%C3%A9")}`);
+		expect(plan.fallback_slugs).toBe(1);
+	});
+
+	it("counts no fallback slug for an addressable link, a missing link or an override", async () => {
+		const author = [{ name: "A", email: null, is_anonymous: true }];
+		for (const [link, opts] of [
+			["https://example.com/hello", {}],
+			[null, {}],
+			["https://example.com/caf%C3%A9", { slug_override: "one-page" }],
+		] as const) {
+			const { db } = makeFreshDb();
+			const plan = await runImport(db, stubAdapter("disqus", exportOf(author, link)), "", "test-secret", opts);
+			expect(plan.fallback_slugs).toBe(0);
+		}
 	});
 
 	it("falls back to a source-prefixed slug when a thread has no link", async () => {

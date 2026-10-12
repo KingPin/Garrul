@@ -1388,6 +1388,24 @@ threads merged three. If the count surprises you, run with `--slug=`
 to force everything onto one page deliberately, in which case
 `merged_pages` reports zero because the collapse is what you asked
 for.
+
+**`fallback_slugs` counts pages whose link could not become a slug.**
+A thread link whose path the read API would reject — percent-encoding
+(`/caf%C3%A9`), a character outside letters, digits and `_ - . /`, more
+than 200 characters, or a `javascript:` URL — gets a stable synthetic
+slug, `<source>-<16 hex digits>`, instead. The comments import and the
+page keeps its title and url, so you can find it in the admin UI. The
+host page still needs `data-slug="<that slug>"` before the widget shows
+them. Imports before this counter existed stored such paths verbatim,
+on a page no reader could load. A re-run creates the new page but no
+comments (they already exist), so move them once, per stranded slug:
+
+```sh
+wrangler d1 execute garrul-db --remote --command \
+  "SELECT slug, url FROM posts WHERE slug GLOB '*[^a-zA-Z0-9_./-]*' OR length(slug) > 200"
+wrangler d1 execute garrul-db --remote --command \
+  "UPDATE comments SET post_slug = '<new slug>' WHERE post_slug = '<old slug>'; DELETE FROM posts WHERE slug = '<old slug>'"
+```
 **Remark42 specifics.** The export is JSONL — one metadata header
 object, then one object per comment — and Garrul takes it with or
 without that header, so both `backup`'s file and the export API's

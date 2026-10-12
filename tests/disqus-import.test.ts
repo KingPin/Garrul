@@ -339,21 +339,38 @@ describe("htmlToMarkdown", () => {
 
 describe("slugFromLink", () => {
 	it("strips host + leading/trailing slashes", () => {
-		expect(slugFromLink("https://x.com/blog/hello/", "fallback")).toBe(
+		expect(slugFromLink("https://x.com/blog/hello/", "x-", "fallback")).toBe(
 			"blog/hello",
 		);
 	});
 
 	it("falls back when link is null", () => {
-		expect(slugFromLink(null, "fallback")).toBe("fallback");
+		expect(slugFromLink(null, "x-", "fallback")).toBe("fallback");
 	});
 
 	it("falls back on malformed URLs", () => {
-		expect(slugFromLink("not a url", "fallback")).toBe("fallback");
+		expect(slugFromLink("not a url", "x-", "fallback")).toBe("fallback");
 	});
 
 	it("uses fallback when the link is just the host", () => {
-		expect(slugFromLink("https://x.com/", "fallback")).toBe("fallback");
+		expect(slugFromLink("https://x.com/", "x-", "fallback")).toBe("fallback");
+	});
+
+	// #117: each of these used to pass through verbatim and import onto a
+	// page the read API 400s.
+	it("digests a path the read API would reject", () => {
+		for (const bad of [
+			"https://x.com/caf%C3%A9",
+			"https://x.com/a(b)",
+			"https://x.com/~user",
+			`https://x.com/${"a".repeat(201)}`,
+			"javascript:alert(1)",
+		]) {
+			expect(slugFromLink(bad, "x-", "fallback")).toMatch(/^x-[0-9a-f]{16}$/);
+		}
+		expect(slugFromLink("https://x.com/a(b)/", "x-", "fallback")).toBe(
+			slugFromLink("https://y.com/a(b)", "x-", "fallback"),
+		);
 	});
 });
 
@@ -752,7 +769,7 @@ describe("runDisqusImport — shapes measured in a real export", () => {
 	// falls back to the synthetic one, and safePostUrl refuses to store it.
 	it("survives a double-encoded, space-bearing thread link", async () => {
 		const link = "https://%2f%2fexample.com%2fi%2fbkmi web/";
-		expect(slugFromLink(link, "disqus-t9")).toBe("disqus-t9");
+		expect(slugFromLink(link, "x-", "disqus-t9")).toBe("disqus-t9");
 		expect(safePostUrl(link)).toBeNull();
 
 		const xml = `<disqus>
@@ -776,7 +793,7 @@ describe("runDisqusImport — shapes measured in a real export", () => {
 	// next to the query-string case deliberately: the mechanism is identical
 	// and only one of the two outcomes is a problem.
 	it("folds a protocol-relative link onto the same slug as its absolute twin", async () => {
-		expect(slugFromLink("https://example.com/i/yL3a", "fb")).toBe("i/yL3a");
-		expect(slugFromLink("https://example.net/i/yL3a", "fb")).toBe("i/yL3a");
+		expect(slugFromLink("https://example.com/i/yL3a", "x-", "fb")).toBe("i/yL3a");
+		expect(slugFromLink("https://example.net/i/yL3a", "x-", "fb")).toBe("i/yL3a");
 	});
 });
