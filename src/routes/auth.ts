@@ -14,6 +14,7 @@ import { Hono } from "hono";
 import type { Bindings } from "../index";
 import {
 	PROVIDERS,
+	ProviderHttpError,
 	buildAuthorizeUrl,
 	callbackUrl,
 	computeCodeChallenge,
@@ -184,6 +185,16 @@ auth.get("/:provider/start", async (c) => {
 	return c.redirect(url, 302);
 });
 
+// The failure page names its reason. `msg` is always one of the fixed codes
+// the callback passes, never request data, so it is safe to interpolate.
+const statusText = (ok: boolean, msg: string): string => {
+	if (ok) return "Signed in. You can close this window.";
+	if (msg === "token_exchange_rate_limited") {
+		return "Sign-in failed: the sign-in provider is rate-limiting this server (HTTP 429). Sign in again; another attempt usually gets through.";
+	}
+	return msg ? `Sign-in failed (${msg}).` : "Sign-in failed.";
+};
+
 const finishHtml = (
 	return_origin: string,
 	ok: boolean,
@@ -203,7 +214,7 @@ const finishHtml = (
 		return `<!doctype html>
 <html><head><meta charset="utf-8"><title>Garrul</title></head>
 <body>
-<p>${ok ? "Signed in. You can close this window." : "Sign-in failed."}</p>
+<p>${statusText(ok, msg)}</p>
 <script>setTimeout(function(){ window.close(); }, 250);</script>
 </body></html>`;
 	}
@@ -223,7 +234,7 @@ const finishHtml = (
 	return `<!doctype html>
 <html><head><meta charset="utf-8"><title>Garrul</title></head>
 <body>
-<p>${ok ? "Signed in. You can close this window." : "Sign-in failed."}</p>
+<p>${statusText(ok, msg)}</p>
 <script>
 (function() {
 	try {
@@ -295,6 +306,11 @@ auth.get("/:provider/callback", async (c) => {
 		);
 	} catch (err) {
 		log.error("oauth.token", { provider, error: String(err) });
+		if (err instanceof ProviderHttpError && err.status === 429) {
+			writeEvent(c.env.ANALYTICS, "oauth.failed", { provider, outcome: "token_exchange_rate_limited" });
+			if (err.retryAfter) c.header("Retry-After", err.retryAfter);
+			return c.html(finishHtml(payload.return_origin, false, "token_exchange_rate_limited"), 503);
+		}
 		writeEvent(c.env.ANALYTICS, "oauth.failed", { provider, outcome: "token_exchange" });
 		return c.html(finishHtml(payload.return_origin, false, "token_exchange_failed"));
 	}

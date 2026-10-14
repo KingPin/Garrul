@@ -276,6 +276,28 @@ curl -sI https://comments.<yourdomain>/api/v1/health \
 
 No header back means that origin isn't allow-listed.
 
+### "Sign-in failed: the sign-in provider is rate-limiting this server (HTTP 429)"
+
+The provider's token endpoint refused every one of the Worker's code
+exchange attempts with HTTP 429. GitHub blocks some of the shared
+Cloudflare Workers egress addresses, answering `Access to this site has
+been restricted` with `Retry-After: 300`, regardless of your client
+credentials or request headers. Nothing is misconfigured. When the
+browser is already signed in to GitHub and the app is already
+authorized, GitHub redirects straight back, so this page appears
+immediately with no GitHub prompt.
+
+The block is per egress address, not per client, so waiting out
+`Retry-After` does not help. The Worker already retries a blocked
+exchange several times in a row; when all of them are blocked, sign in
+again right away, since a new attempt usually leaves from an address
+GitHub does not block. Confirm the cause from the
+Analytics Engine `garrul_events` dataset, where each such attempt is an
+`oauth.failed` row with outcome `token_exchange_rate_limited`, or from
+`wrangler tail` (`oauth.token` … `token exchange 429 retry-after=300`).
+Every other token-exchange failure keeps outcome `token_exchange` and
+the page names it as `Sign-in failed (token_exchange_failed).`
+
 ### "redirect_uri_mismatch" (any provider)
 
 The redirect URI registered in your OAuth app must exactly match
