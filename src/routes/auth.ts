@@ -300,7 +300,11 @@ auth.get("/:provider/callback", async (c) => {
 			payload.code_verifier,
 		);
 	} catch (err) {
-		log.error("oauth.token", { provider, error: String(err) });
+		log.error("oauth.token", {
+			provider,
+			error: String(err),
+			...(err instanceof ProviderHttpError && { status: err.status, retry_after: err.retryAfter }),
+		});
 		if (err instanceof ProviderHttpError && err.status === 429) {
 			writeEvent(c.env.ANALYTICS, "oauth.failed", { provider, outcome: "token_exchange_rate_limited" });
 			// GitHub's 429 is the egress-address block exchangeCodeForToken
