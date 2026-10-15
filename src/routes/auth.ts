@@ -206,7 +206,8 @@ const finishHtml = (
 	// have no safe target to postMessage to. Previously we fell back to
 	// `targetOrigin="*"` which leaks the auth-completion message to whatever
 	// happens to be the opener. Render a static page instead — the popup
-	// closes itself and the parent notices that close and infers state via
+	// closes itself on success (a failure page stays up so the reader can
+	// read why) and the parent notices that close and infers state via
 	// /auth/me. That inference lives in src/widget/auth-recovery.ts; it was described
 	// here for a while before it actually existed (issue #58), so keep the
 	// two in step if either moves.
@@ -215,8 +216,7 @@ const finishHtml = (
 <html><head><meta charset="utf-8"><title>Garrul</title></head>
 <body>
 <p>${statusText(ok, msg)}</p>
-<script>setTimeout(function(){ window.close(); }, 250);</script>
-</body></html>`;
+${ok ? "<script>setTimeout(function(){ window.close(); }, 250);</script>\n" : ""}</body></html>`;
 	}
 	// return_origin is a validated, allow-listed string here; JSON.stringify
 	// emits it as a safe JS string literal. `handoff` is a 48-hex-char token
@@ -241,8 +241,7 @@ const finishHtml = (
 		if (window.opener && !window.opener.closed) {
 			window.opener.postMessage(${payload}, ${targetOrigin});
 		}
-	} catch (e) {}
-	setTimeout(function(){ window.close(); }, 250);
+	} catch (e) {}${ok ? "\n\tsetTimeout(function(){ window.close(); }, 250);" : ""}
 })();
 </script>
 </body></html>`;

@@ -62,6 +62,19 @@ const provider = (token: [number, unknown], profile: [number, unknown] = [200, {
 
 const PROFILE = { sub: "g-1", email: "boss@example.com", email_verified: true, name: "Boss" };
 
+// Run the finish page's inline script against a fake window; report what it did.
+const runPage = (html: string) => {
+	const script = html.match(/<script>([\s\S]*?)<\/script>/)?.[1] ?? "";
+	const posted: unknown[] = [];
+	let closes = 0;
+	const win = {
+		opener: { closed: false, postMessage: (m: unknown) => posted.push(m) },
+		close: () => closes++,
+	};
+	new Function("window", "setTimeout", script)(win, (fn: () => void) => fn());
+	return { posted, closes };
+};
+
 afterEach(() => {
 	vi.unstubAllGlobals();
 });
@@ -116,6 +129,20 @@ describe("GET /:provider/callback — full round trip", () => {
 		const html = await (await h.signIn()).text();
 		expect(html).toContain(`"message":"banned"`);
 		expect(h.sessionKeys()).toEqual([]);
+	});
+
+	// A failed sign-in has to stay on screen: the widget drops the message on
+	// !ok, so the popup is the only place the reader can see why.
+	it.each([
+		["posting", BLOG],
+		["static", "https://evil.example.com"],
+	])("%s page closes the popup on success only", async (_, returnTo) => {
+		provider([200, { access_token: "at" }], [200, PROFILE]);
+		expect(runPage(await (await setup().signIn(returnTo)).text()).closes).toBe(1);
+		provider([500, {}]);
+		const failed = runPage(await (await setup().signIn(returnTo)).text());
+		expect(failed.closes).toBe(0);
+		expect(failed.posted).toHaveLength(returnTo === BLOG ? 1 : 0);
 	});
 
 	it("answers 503 when the provider loses its credentials mid-flow", async () => {
