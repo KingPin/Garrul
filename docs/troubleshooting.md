@@ -296,7 +296,7 @@ Analytics Engine `garrul_events` dataset, where each such attempt is an
 `oauth.failed` row with outcome `token_exchange_rate_limited`, or from
 `wrangler tail` (`oauth.token` … `token exchange 429 retry-after=300`).
 Every other token-exchange failure keeps outcome `token_exchange` and
-the page names it as `Sign-in failed (token_exchange_failed).`
+the page shows a plain `Sign-in failed.`
 
 ### "redirect_uri_mismatch" (any provider)
 

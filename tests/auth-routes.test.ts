@@ -288,11 +288,13 @@ describe("GET /:provider/callback — token exchange failures", () => {
 		expect(body).not.toContain("Wait");
 	});
 
-	it("names the failure reason on the static page for other exchange errors", async () => {
+	it("keeps internal failure codes off the page for other exchange errors", async () => {
 		const { path, cookie } = await startFlow();
 		vi.stubGlobal("fetch", async () => new Response("nope", { status: 500 }));
 		const res = await app().request(path, { headers: { cookie } }, oauthEnv());
 		expect(res.status).toBe(200);
-		expect(await res.text()).toContain("Sign-in failed (token_exchange_failed).");
+		const body = await res.text();
+		expect(body).toContain("<p>Sign-in failed.</p>");
+		expect(body).not.toContain("token_exchange_failed");
 	});
 });

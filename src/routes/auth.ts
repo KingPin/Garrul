@@ -185,19 +185,17 @@ auth.get("/:provider/start", async (c) => {
 	return c.redirect(url, 302);
 });
 
-// The failure page names its reason. `msg` is always one of the fixed codes
-// the callback passes, never request data, so it is safe to interpolate.
-const statusText = (ok: boolean, msg: string): string => {
-	if (ok) return "Signed in. You can close this window.";
-	return msg ? `Sign-in failed (${msg}).` : "Sign-in failed.";
-};
+// Readers see plain text; the failure code stays in the postMessage payload
+// and the logs. A caller with something worth saying passes its own `text`.
+const statusText = (ok: boolean): string =>
+	ok ? "Signed in. You can close this window." : "Sign-in failed.";
 
 const finishHtml = (
 	return_origin: string,
 	ok: boolean,
 	msg = "",
 	handoff: string | null = null,
-	text = statusText(ok, msg),
+	text = statusText(ok),
 ): string => {
 	// When return_origin wasn't validated against ALLOWED_ORIGINS (e.g. the
 	// caller didn't pass `?return=` or passed an unrecognized origin), we

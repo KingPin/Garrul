@@ -113,6 +113,7 @@ describe("GET /:provider/callback — full round trip", () => {
 		const { signIn, users, sessionKeys } = setup();
 		const html = await (await signIn()).text();
 		expect(html).toContain(`"ok":false,"message":"${message}"`);
+		expect(html).toContain("<p>Sign-in failed.</p>");
 		expect(users()).toEqual([]);
 		expect(sessionKeys()).toEqual([]);
 	});
@@ -128,6 +129,7 @@ describe("GET /:provider/callback — full round trip", () => {
 			.run();
 		const html = await (await h.signIn()).text();
 		expect(html).toContain(`"message":"banned"`);
+		expect(html).toContain("<p>Sign-in failed.</p>");
 		expect(h.sessionKeys()).toEqual([]);
 	});
 
