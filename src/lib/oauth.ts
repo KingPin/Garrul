@@ -500,8 +500,8 @@ export const buildAuthorizeUrl = (
  * callback can tell a transient upstream block from a broken configuration:
  * GitHub answers 429 "Access to this site has been restricted"
  * (Retry-After: 300) to some shared Cloudflare Workers egress addresses.
- * exchangeCodeForToken retries those; this error means every attempt was
- * blocked.
+ * exchangeCodeForToken retries those for GitHub only; for GitHub this error
+ * means every attempt was blocked, for any other provider it is the first 429.
  */
 export class ProviderHttpError extends Error {
 	constructor(
@@ -557,7 +557,9 @@ export const exchangeCodeForToken = async (
 			headers,
 			body,
 		});
-		if (res.status !== 429 || attempt >= TOKEN_EXCHANGE_ATTEMPTS) break;
+		// Only GitHub's block gets the rapid retry. Every other provider's 429
+		// is a real rate limit whose Retry-After should be honoured.
+		if (provider !== "github" || res.status !== 429 || attempt >= TOKEN_EXCHANGE_ATTEMPTS) break;
 		await res.body?.cancel();
 		await new Promise((r) => setTimeout(r, TOKEN_EXCHANGE_RETRY_DELAY_MS));
 	}

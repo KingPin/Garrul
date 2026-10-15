@@ -457,6 +457,15 @@ describe("exchangeCodeForToken", () => {
 		expect(count()).toBe(TOKEN_EXCHANGE_ATTEMPTS);
 	});
 
+	it("does not retry another provider's 429 and keeps its Retry-After", async () => {
+		const count = stubStatuses([429]);
+		const err = await exchangeCodeForToken("discord", "c", "id", "sec", "https://x.test/cb").catch((e) => e);
+		expect(err).toBeInstanceOf(ProviderHttpError);
+		expect(err.status).toBe(429);
+		expect(err.retryAfter).toBe("300");
+		expect(count()).toBe(1);
+	});
+
 	it("does not retry other failures", async () => {
 		const count = stubStatuses([500]);
 		const err = await exchangeCodeForToken("github", "c", "id", "sec", "https://x.test/cb").catch((e) => e);
