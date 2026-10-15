@@ -64,7 +64,8 @@ const PROFILE = { sub: "g-1", email: "boss@example.com", email_verified: true, n
 
 // Run the finish page's inline script against a fake window; report what it did.
 const runPage = (html: string) => {
-	const script = html.match(/<script>([\s\S]*?)<\/script>/)?.[1] ?? "";
+	const open = html.indexOf("<script>");
+	const script = open < 0 ? "" : html.slice(open + 8, html.indexOf("</script>", open));
 	const posted: unknown[] = [];
 	let closes = 0;
 	const win = {
