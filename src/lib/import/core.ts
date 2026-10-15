@@ -284,6 +284,12 @@ export type ImportPlan = {
 	 * what the operator asked for rather than a surprise.
 	 */
 	merged_pages: number;
+	/**
+	 * Pages whose link-derived path the read API would reject (`SLUG_RE`) and
+	 * that got a synthetic `<prefix><16 hex>` slug instead. Each one is a host
+	 * page that needs `data-slug` set to that slug before its comments show.
+	 */
+	fallback_slugs: number;
 };
 
 export type ImportOptions = {
@@ -293,16 +299,27 @@ export type ImportOptions = {
 	slug_override?: string | null;
 };
 
-export const slugFromLink = (link: string | null, fallback: string): string => {
-	if (!link) return fallback;
+/**
+ * The path a thread's link points at, leading/trailing slashes stripped and
+ * repeated slashes collapsed; "" for no link, an unparseable one, or `/`.
+ */
+const linkPath = (link: string | null): string => {
+	if (!link) return "";
 	try {
-		const u = new URL(link);
-		const path = u.pathname.replace(/^\/+|\/+$/g, "").replace(/\/+/g, "/");
-		return path || fallback;
+		return new URL(link).pathname.replace(/^\/+|\/+$/g, "").replace(/\/+/g, "/");
 	} catch {
-		return fallback;
+		return "";
 	}
 };
+
+/**
+ * A Garrul slug from a thread's link: its path, or `fallback` when there is
+ * none. A path the read API would reject (percent-encoding, `(`, `~`, more
+ * than 200 characters, a `javascript:` URL's body) falls back to
+ * `<prefix><digest>` via `slugFromPath`, the same rule isso and Cusdis use.
+ */
+export const slugFromLink = (link: string | null, prefix: string, fallback: string): string =>
+	slugFromPath(linkPath(link), prefix, fallback);
 
 const FNV64_OFFSET_BASIS = 0xcbf29ce484222325n;
 const FNV64_PRIME = 0x100000001b3n;
@@ -572,6 +589,7 @@ export const runImport = async (
 		new_users: 0,
 		new_comments: 0,
 		merged_pages: 0,
+		fallback_slugs: 0,
 	};
 
 	// An operator-typed override is checked once, up front, so `--slug=` (an
@@ -592,10 +610,9 @@ export const runImport = async (
 		// promise is a bug in the adapter, not in the export — hence an error
 		// naming the thread's position, the same way the adapters' own errors
 		// do, and not a silent fallback that would hide the bug behind a
-		// working import. A slug *derived* from `link` is deliberately not
-		// checked here: `slugFromLink` has always passed a pathname through
-		// verbatim (percent-encoding, a `javascript:` path and all), and
-		// refusing those now would abort a Disqus or Remark42 export that
+		// working import. A slug *derived* from `link` is not the adapter's
+		// promise but the export's data, so an unaddressable one falls back to
+		// a digest (and is counted) instead of aborting an export that
 		// imported before.
 		if (t.slug !== undefined && !SLUG_RE.test(t.slug)) {
 			throw new Error(
@@ -603,10 +620,12 @@ export const runImport = async (
 					"(letters, digits, _ - . /, 1-200 characters)",
 			);
 		}
+		const fromLink = opts.slug_override == null && t.slug === undefined;
+		const path = fromLink ? linkPath(t.link) : "";
 		const slug =
 			opts.slug_override ??
 			t.slug ??
-			slugFromLink(t.link, `${adapter.slugFallbackPrefix}${t.source_id}`);
+			slugFromPath(path, adapter.slugFallbackPrefix, `${adapter.slugFallbackPrefix}${t.source_id}`);
 		slugByThreadSourceId.set(t.source_id, slug);
 		if (threadBySlugCandidate.has(slug)) {
 			// First thread wins, and the comments on this one follow its slug
@@ -614,6 +633,7 @@ export const runImport = async (
 			if (!opts.slug_override) plan.merged_pages += 1;
 			continue;
 		}
+		if (path !== "" && path !== slug) plan.fallback_slugs += 1;
 		threadBySlugCandidate.set(slug, t);
 	}
 
