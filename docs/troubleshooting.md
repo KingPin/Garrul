@@ -276,27 +276,34 @@ curl -sI https://comments.<yourdomain>/api/v1/health \
 
 No header back means that origin isn't allow-listed.
 
-### "Sign-in failed: the sign-in provider is rate-limiting this server (HTTP 429)"
+### "Sign-in failed: … (HTTP 429)"
 
-The provider's token endpoint refused every one of the Worker's code
-exchange attempts with HTTP 429. GitHub blocks some of the shared
-Cloudflare Workers egress addresses, answering `Access to this site has
-been restricted` with `Retry-After: 300`, regardless of your client
-credentials or request headers. Nothing is misconfigured. When the
-browser is already signed in to GitHub and the app is already
-authorized, GitHub redirects straight back, so this page appears
-immediately with no GitHub prompt.
+The provider's token endpoint refused the Worker's code exchange with
+HTTP 429. The sign-in popup stays open on this page so the reader can
+see it.
 
-The block is per egress address, not per client, so waiting out
-`Retry-After` does not help. The Worker already retries a blocked
-exchange several times in a row; when all of them are blocked, sign in
-again right away, since a new attempt usually leaves from an address
-GitHub does not block. Confirm the cause from the
-Analytics Engine `garrul_events` dataset, where each such attempt is an
-`oauth.failed` row with outcome `token_exchange_rate_limited`, or from
-`wrangler tail` (`oauth.token` … `token exchange 429 retry-after=300`).
-Every other token-exchange failure keeps outcome `token_exchange` and
-the page shows a plain `Sign-in failed.`
+**GitHub** ("GitHub refused this server's request"). GitHub blocks some
+of the shared Cloudflare Workers egress addresses, answering `Access to
+this site has been restricted` with `Retry-After: 300`, regardless of
+your client credentials or request headers. Nothing is misconfigured.
+When the browser is already signed in to GitHub and the app is already
+authorized, GitHub redirects straight back, so this page appears with no
+GitHub prompt. The block has been seen to come and go between requests,
+so the Worker retries a blocked exchange a few times in a row and does
+not pass `Retry-After` on. When every retry is blocked, sign in again; a
+later attempt may get through.
+
+**Any other provider** ("the sign-in provider is rate-limiting this
+server"). This is a real rate limit. The Worker does not retry it, passes
+the provider's `Retry-After` through, and asks the reader to wait a few
+minutes.
+
+Confirm the cause from the Analytics Engine `garrul_events` dataset,
+where each such attempt is an `oauth.failed` row with outcome
+`token_exchange_rate_limited`, or from `wrangler tail` (`oauth.token`
+with `status: 429` and `retry_after`). Every other token-exchange
+failure keeps outcome `token_exchange` and the page shows a plain
+`Sign-in failed.`
 
 ### "redirect_uri_mismatch" (any provider)
 
