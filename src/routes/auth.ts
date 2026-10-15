@@ -14,6 +14,7 @@ import { Hono } from "hono";
 import type { Bindings } from "../index";
 import {
 	PROVIDERS,
+	ProviderHttpError,
 	buildAuthorizeUrl,
 	callbackUrl,
 	computeCodeChallenge,
@@ -184,18 +185,25 @@ auth.get("/:provider/start", async (c) => {
 	return c.redirect(url, 302);
 });
 
+// Readers see plain text; the failure code stays in the postMessage payload
+// and the logs. A caller with something worth saying passes its own `text`.
+const statusText = (ok: boolean): string =>
+	ok ? "Signed in. You can close this window." : "Sign-in failed.";
+
 const finishHtml = (
 	return_origin: string,
 	ok: boolean,
 	msg = "",
 	handoff: string | null = null,
+	text = statusText(ok),
 ): string => {
 	// When return_origin wasn't validated against ALLOWED_ORIGINS (e.g. the
 	// caller didn't pass `?return=` or passed an unrecognized origin), we
 	// have no safe target to postMessage to. Previously we fell back to
 	// `targetOrigin="*"` which leaks the auth-completion message to whatever
 	// happens to be the opener. Render a static page instead — the popup
-	// closes itself and the parent notices that close and infers state via
+	// closes itself on success (a failure page stays up so the reader can
+	// read why) and the parent notices that close and infers state via
 	// /auth/me. That inference lives in src/widget/auth-recovery.ts; it was described
 	// here for a while before it actually existed (issue #58), so keep the
 	// two in step if either moves.
@@ -203,9 +211,8 @@ const finishHtml = (
 		return `<!doctype html>
 <html><head><meta charset="utf-8"><title>Garrul</title></head>
 <body>
-<p>${ok ? "Signed in. You can close this window." : "Sign-in failed."}</p>
-<script>setTimeout(function(){ window.close(); }, 250);</script>
-</body></html>`;
+<p>${text}</p>
+${ok ? "<script>setTimeout(function(){ window.close(); }, 250);</script>\n" : ""}</body></html>`;
 	}
 	// return_origin is a validated, allow-listed string here; JSON.stringify
 	// emits it as a safe JS string literal. `handoff` is a 48-hex-char token
@@ -223,15 +230,14 @@ const finishHtml = (
 	return `<!doctype html>
 <html><head><meta charset="utf-8"><title>Garrul</title></head>
 <body>
-<p>${ok ? "Signed in. You can close this window." : "Sign-in failed."}</p>
+<p>${text}</p>
 <script>
 (function() {
 	try {
 		if (window.opener && !window.opener.closed) {
 			window.opener.postMessage(${payload}, ${targetOrigin});
 		}
-	} catch (e) {}
-	setTimeout(function(){ window.close(); }, 250);
+	} catch (e) {}${ok ? "\n\tsetTimeout(function(){ window.close(); }, 250);" : ""}
 })();
 </script>
 </body></html>`;
@@ -294,7 +300,23 @@ auth.get("/:provider/callback", async (c) => {
 			payload.code_verifier,
 		);
 	} catch (err) {
-		log.error("oauth.token", { provider, error: String(err) });
+		log.error("oauth.token", {
+			provider,
+			error: String(err),
+			...(err instanceof ProviderHttpError && { status: err.status, retry_after: err.retryAfter }),
+		});
+		if (err instanceof ProviderHttpError && err.status === 429) {
+			writeEvent(c.env.ANALYTICS, "oauth.failed", { provider, outcome: "token_exchange_rate_limited" });
+			// GitHub's 429 is the egress-address block exchangeCodeForToken
+			// already retried, and its Retry-After is not worth honouring; any
+			// other provider's is a real rate limit, so pass its wait along.
+			const github = provider === "github";
+			if (!github && err.retryAfter) c.header("Retry-After", err.retryAfter);
+			const text = github
+				? "Sign-in failed: GitHub refused this server's request (HTTP 429). Sign in again; a new attempt may get through."
+				: "Sign-in failed: the sign-in provider is rate-limiting this server (HTTP 429). Wait a few minutes, then sign in again.";
+			return c.html(finishHtml(payload.return_origin, false, "token_exchange_rate_limited", null, text), 503);
+		}
 		writeEvent(c.env.ANALYTICS, "oauth.failed", { provider, outcome: "token_exchange" });
 		return c.html(finishHtml(payload.return_origin, false, "token_exchange_failed"));
 	}

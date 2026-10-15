@@ -495,6 +495,28 @@ export const buildAuthorizeUrl = (
 	return `${cfg.authorize_url}?${params.toString()}`;
 };
 
+/**
+ * A provider's token endpoint answered non-2xx. Carries the status so the
+ * callback can tell a transient upstream block from a broken configuration:
+ * GitHub answers 429 "Access to this site has been restricted"
+ * (Retry-After: 300) to some shared Cloudflare Workers egress addresses.
+ * exchangeCodeForToken retries those for GitHub only; for GitHub this error
+ * means every attempt was blocked, for any other provider it is the first 429.
+ */
+export class ProviderHttpError extends Error {
+	constructor(
+		readonly status: number,
+		readonly retryAfter: string | null,
+		message: string,
+	) {
+		super(message);
+		this.name = "ProviderHttpError";
+	}
+}
+
+export const TOKEN_EXCHANGE_ATTEMPTS = 5;
+export const TOKEN_EXCHANGE_RETRY_DELAY_MS = 300;
+
 export const exchangeCodeForToken = async (
 	provider: ProviderId,
 	code: string,
@@ -524,13 +546,32 @@ export const exchangeCodeForToken = async (
 	} else {
 		body.set("client_secret", client_secret);
 	}
-	const res = await fetch(cfg.token_url, {
-		method: "POST",
-		headers,
-		body,
-	});
+	// GitHub's 429 is a block on the egress address, not a rate limit on this
+	// client: it lands on some Cloudflare Workers egress addresses and not
+	// others, and the edge refuses the request before the code is consumed.
+	// The block has been seen to clear between requests, so a short retry is
+	// cheap insurance. Whether a retry inside one invocation leaves from a
+	// different address is unconfirmed; drop the loop if it never helps.
+	let res: Response;
+	for (let attempt = 1; ; attempt++) {
+		res = await fetch(cfg.token_url, {
+			method: "POST",
+			headers,
+			body,
+		});
+		// Only GitHub's block gets the rapid retry. Every other provider's 429
+		// is a real rate limit whose Retry-After should be honoured.
+		if (provider !== "github" || res.status !== 429 || attempt >= TOKEN_EXCHANGE_ATTEMPTS) break;
+		await res.body?.cancel();
+		await new Promise((r) => setTimeout(r, TOKEN_EXCHANGE_RETRY_DELAY_MS));
+	}
 	if (!res.ok) {
-		throw new Error(`${provider} token exchange ${res.status}`);
+		const retryAfter = res.headers.get("retry-after");
+		throw new ProviderHttpError(
+			res.status,
+			retryAfter,
+			`${provider} token exchange ${res.status}${retryAfter ? ` retry-after=${retryAfter}` : ""}`,
+		);
 	}
 	const json = (await res.json()) as {
 		access_token?: string;

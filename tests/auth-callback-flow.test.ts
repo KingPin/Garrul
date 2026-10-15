@@ -62,6 +62,20 @@ const provider = (token: [number, unknown], profile: [number, unknown] = [200, {
 
 const PROFILE = { sub: "g-1", email: "boss@example.com", email_verified: true, name: "Boss" };
 
+// Run the finish page's inline script against a fake window; report what it did.
+const runPage = (html: string) => {
+	const open = html.indexOf("<script>");
+	const script = open < 0 ? "" : html.slice(open + 8, html.indexOf("</script>", open));
+	const posted: unknown[] = [];
+	let closes = 0;
+	const win = {
+		opener: { closed: false, postMessage: (m: unknown) => posted.push(m) },
+		close: () => closes++,
+	};
+	new Function("window", "setTimeout", script)(win, (fn: () => void) => fn());
+	return { posted, closes };
+};
+
 afterEach(() => {
 	vi.unstubAllGlobals();
 });
@@ -100,6 +114,7 @@ describe("GET /:provider/callback — full round trip", () => {
 		const { signIn, users, sessionKeys } = setup();
 		const html = await (await signIn()).text();
 		expect(html).toContain(`"ok":false,"message":"${message}"`);
+		expect(html).toContain("<p>Sign-in failed.</p>");
 		expect(users()).toEqual([]);
 		expect(sessionKeys()).toEqual([]);
 	});
@@ -115,7 +130,36 @@ describe("GET /:provider/callback — full round trip", () => {
 			.run();
 		const html = await (await h.signIn()).text();
 		expect(html).toContain(`"message":"banned"`);
+		expect(html).toContain("<p>Sign-in failed.</p>");
 		expect(h.sessionKeys()).toEqual([]);
+	});
+
+	// A failed sign-in has to stay on screen: the widget drops the message on
+	// !ok, so the popup is the only place the reader can see why.
+	it.each([
+		["posting", BLOG],
+		["static", "https://evil.example.com"],
+	])("%s page closes the popup on success only", async (_, returnTo) => {
+		provider([200, { access_token: "at" }], [200, PROFILE]);
+		expect(runPage(await (await setup().signIn(returnTo)).text()).closes).toBe(1);
+		provider([500, {}]);
+		const failed = runPage(await (await setup().signIn(returnTo)).text());
+		expect(failed.closes).toBe(0);
+		expect(failed.posted).toHaveLength(returnTo === BLOG ? 1 : 0);
+	});
+
+	it("passes another provider's 429 Retry-After through and asks the reader to wait", async () => {
+		const fetchMock = vi.fn(
+			async () => new Response("slow down", { status: 429, headers: { "retry-after": "30" } }),
+		);
+		vi.stubGlobal("fetch", fetchMock);
+		const res = await setup().signIn();
+		expect(res.status).toBe(503);
+		expect(res.headers.get("retry-after")).toBe("30");
+		const html = await res.text();
+		expect(html).toContain(`"message":"token_exchange_rate_limited"`);
+		expect(html).toContain("Wait a few minutes");
+		expect(fetchMock).toHaveBeenCalledTimes(1);
 	});
 
 	it("answers 503 when the provider loses its credentials mid-flow", async () => {

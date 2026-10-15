@@ -11,7 +11,7 @@
  * 2. `/callback` must reject a malformed `state` before it reaches
  *    bindCookieName, whose output is interpolated into a Set-Cookie *name*.
  */
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { Hono } from "hono";
 import { auth } from "../src/routes/auth";
 import { issueHandoff } from "../src/lib/oauth";
@@ -240,5 +240,66 @@ describe("auth routes — refusals and sign-out", () => {
 		const res = await post("/signout", "", `__Host-garrul_sess=${sid}`);
 		expect(await res.json()).toEqual({ ok: true });
 		expect(sessions.store.has(`sess:${sid}`)).toBe(false);
+	});
+});
+
+/**
+ * GitHub answers the token exchange with 429 "Access to this site has been
+ * restricted" (Retry-After: 300) to some shared Cloudflare Workers egress
+ * addresses. When every retry is blocked, the callback must say so. It used to
+ * fold that into a bare "Sign-in failed."
+ * with nothing on the page or in the analytics row that said why, so a
+ * transient upstream block read as a broken install.
+ */
+describe("GET /:provider/callback — token exchange failures", () => {
+	const oauthEnv = () =>
+		({
+			...(env as unknown as Record<string, unknown>),
+			GH_CLIENT_ID: "cid",
+			GH_CLIENT_SECRET: "csecret",
+		}) as Record<string, unknown>;
+
+	/** Run /start for real and return the callback path plus its flow cookie. */
+	const startFlow = async () => {
+		const res = await app().request("/github/start", {}, oauthEnv());
+		const state = new URL(res.headers.get("location")!).searchParams.get("state")!;
+		const cookie = res.headers.get("set-cookie")!.split(";", 1)[0]!;
+		return { path: `/github/callback?code=the-code&state=${state}`, cookie };
+	};
+
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it("names GitHub's 429 block and does not ask the reader to wait", async () => {
+		const { path, cookie } = await startFlow();
+		// Skip the real retry delay between the blocked attempts.
+		vi.stubGlobal("setTimeout", (fn: () => void) => {
+			fn();
+			return 0;
+		});
+		vi.stubGlobal("fetch", async () =>
+			new Response('{"message":"Access to this site has been restricted."}', {
+				status: 429,
+				headers: { "retry-after": "300" },
+			}),
+		);
+		const res = await app().request(path, { headers: { cookie } }, oauthEnv());
+		expect(res.status).toBe(503);
+		expect(res.headers.get("retry-after")).toBeNull();
+		const body = await res.text();
+		expect(body).toContain("HTTP 429");
+		expect(body).toContain("Sign in again");
+		expect(body).not.toContain("Wait");
+	});
+
+	it("keeps internal failure codes off the page for other exchange errors", async () => {
+		const { path, cookie } = await startFlow();
+		vi.stubGlobal("fetch", async () => new Response("nope", { status: 500 }));
+		const res = await app().request(path, { headers: { cookie } }, oauthEnv());
+		expect(res.status).toBe(200);
+		const body = await res.text();
+		expect(body).toContain("<p>Sign-in failed.</p>");
+		expect(body).not.toContain("token_exchange_failed");
 	});
 });

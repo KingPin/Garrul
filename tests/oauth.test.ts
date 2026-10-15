@@ -23,8 +23,11 @@ import {
 	issueHandoff,
 	issueState,
 	PROVIDERS,
+	ProviderHttpError,
 	randomHex,
 	STATE_MAX_AGE_MS,
+	TOKEN_EXCHANGE_ATTEMPTS,
+	TOKEN_EXCHANGE_RETRY_DELAY_MS,
 	verifyState,
 } from "../src/lib/oauth";
 import { base64UrlEncode } from "../src/lib/hmac";
@@ -421,5 +424,64 @@ describe("exchangeCodeForToken", () => {
 		const body = (calls[0]!.init.body as URLSearchParams).toString();
 		expect(body).toContain("client_secret=sec");
 		expect(body).not.toContain("code_verifier");
+	});
+
+	// Responds with the given statuses in order, then 200 with a token. The
+	// retry delay runs at once; `delays` records what was asked for.
+	let delays: number[] = [];
+	const stubStatuses = (statuses: number[]) => {
+		let calls = 0;
+		delays = [];
+		vi.stubGlobal("setTimeout", (fn: () => void, ms: number) => {
+			delays.push(ms);
+			fn();
+			return 0;
+		});
+		vi.stubGlobal("fetch", async () => {
+			const status = statuses[calls++];
+			if (status === undefined) {
+				return new Response(JSON.stringify({ access_token: "tok-123" }), {
+					status: 200,
+					headers: { "content-type": "application/json" },
+				});
+			}
+			return new Response("restricted", { status, headers: { "retry-after": "300" } });
+		});
+		return () => calls;
+	};
+
+	it("retries a 429 (GitHub blocking one egress address) and returns the token once an attempt gets through", async () => {
+		const count = stubStatuses([429, 429]);
+		const token = await exchangeCodeForToken("github", "c", "id", "sec", "https://x.test/cb");
+		expect(token).toBe("tok-123");
+		expect(count()).toBe(3);
+		expect(delays).toEqual([TOKEN_EXCHANGE_RETRY_DELAY_MS, TOKEN_EXCHANGE_RETRY_DELAY_MS]);
+	});
+
+	it("gives up with a 429 ProviderHttpError after TOKEN_EXCHANGE_ATTEMPTS blocked attempts", async () => {
+		const count = stubStatuses(Array(TOKEN_EXCHANGE_ATTEMPTS).fill(429));
+		const err = await exchangeCodeForToken("github", "c", "id", "sec", "https://x.test/cb").catch((e) => e);
+		expect(err).toBeInstanceOf(ProviderHttpError);
+		expect(err.status).toBe(429);
+		expect(err.retryAfter).toBe("300");
+		expect(String(err)).toMatch(/^ProviderHttpError: /);
+		expect(count()).toBe(TOKEN_EXCHANGE_ATTEMPTS);
+		expect(delays).toHaveLength(TOKEN_EXCHANGE_ATTEMPTS - 1);
+	});
+
+	it("does not retry another provider's 429 and keeps its Retry-After", async () => {
+		const count = stubStatuses([429]);
+		const err = await exchangeCodeForToken("discord", "c", "id", "sec", "https://x.test/cb").catch((e) => e);
+		expect(err).toBeInstanceOf(ProviderHttpError);
+		expect(err.status).toBe(429);
+		expect(err.retryAfter).toBe("300");
+		expect(count()).toBe(1);
+	});
+
+	it("does not retry other failures", async () => {
+		const count = stubStatuses([500]);
+		const err = await exchangeCodeForToken("github", "c", "id", "sec", "https://x.test/cb").catch((e) => e);
+		expect(err.status).toBe(500);
+		expect(count()).toBe(1);
 	});
 });
