@@ -189,9 +189,6 @@ auth.get("/:provider/start", async (c) => {
 // the callback passes, never request data, so it is safe to interpolate.
 const statusText = (ok: boolean, msg: string): string => {
 	if (ok) return "Signed in. You can close this window.";
-	if (msg === "token_exchange_rate_limited") {
-		return "Sign-in failed: the sign-in provider is rate-limiting this server (HTTP 429). Sign in again; another attempt usually gets through.";
-	}
 	return msg ? `Sign-in failed (${msg}).` : "Sign-in failed.";
 };
 
@@ -200,6 +197,7 @@ const finishHtml = (
 	ok: boolean,
 	msg = "",
 	handoff: string | null = null,
+	text = statusText(ok, msg),
 ): string => {
 	// When return_origin wasn't validated against ALLOWED_ORIGINS (e.g. the
 	// caller didn't pass `?return=` or passed an unrecognized origin), we
@@ -215,7 +213,7 @@ const finishHtml = (
 		return `<!doctype html>
 <html><head><meta charset="utf-8"><title>Garrul</title></head>
 <body>
-<p>${statusText(ok, msg)}</p>
+<p>${text}</p>
 ${ok ? "<script>setTimeout(function(){ window.close(); }, 250);</script>\n" : ""}</body></html>`;
 	}
 	// return_origin is a validated, allow-listed string here; JSON.stringify
@@ -234,7 +232,7 @@ ${ok ? "<script>setTimeout(function(){ window.close(); }, 250);</script>\n" : ""
 	return `<!doctype html>
 <html><head><meta charset="utf-8"><title>Garrul</title></head>
 <body>
-<p>${statusText(ok, msg)}</p>
+<p>${text}</p>
 <script>
 (function() {
 	try {
@@ -307,8 +305,15 @@ auth.get("/:provider/callback", async (c) => {
 		log.error("oauth.token", { provider, error: String(err) });
 		if (err instanceof ProviderHttpError && err.status === 429) {
 			writeEvent(c.env.ANALYTICS, "oauth.failed", { provider, outcome: "token_exchange_rate_limited" });
-			if (err.retryAfter) c.header("Retry-After", err.retryAfter);
-			return c.html(finishHtml(payload.return_origin, false, "token_exchange_rate_limited"), 503);
+			// GitHub's 429 is the egress-address block exchangeCodeForToken
+			// already retried, and its Retry-After is not worth honouring; any
+			// other provider's is a real rate limit, so pass its wait along.
+			const github = provider === "github";
+			if (!github && err.retryAfter) c.header("Retry-After", err.retryAfter);
+			const text = github
+				? "Sign-in failed: GitHub refused this server's request (HTTP 429). Sign in again; a new attempt may get through."
+				: "Sign-in failed: the sign-in provider is rate-limiting this server (HTTP 429). Wait a few minutes, then sign in again.";
+			return c.html(finishHtml(payload.return_origin, false, "token_exchange_rate_limited", null, text), 503);
 		}
 		writeEvent(c.env.ANALYTICS, "oauth.failed", { provider, outcome: "token_exchange" });
 		return c.html(finishHtml(payload.return_origin, false, "token_exchange_failed"));

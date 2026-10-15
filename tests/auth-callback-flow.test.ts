@@ -145,6 +145,20 @@ describe("GET /:provider/callback — full round trip", () => {
 		expect(failed.posted).toHaveLength(returnTo === BLOG ? 1 : 0);
 	});
 
+	it("passes another provider's 429 Retry-After through and asks the reader to wait", async () => {
+		const fetchMock = vi.fn(
+			async () => new Response("slow down", { status: 429, headers: { "retry-after": "30" } }),
+		);
+		vi.stubGlobal("fetch", fetchMock);
+		const res = await setup().signIn();
+		expect(res.status).toBe(503);
+		expect(res.headers.get("retry-after")).toBe("30");
+		const html = await res.text();
+		expect(html).toContain(`"message":"token_exchange_rate_limited"`);
+		expect(html).toContain("Wait a few minutes");
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+	});
+
 	it("answers 503 when the provider loses its credentials mid-flow", async () => {
 		const fetchMock = provider([200, { access_token: "at" }]);
 		const res = await setup().signIn(BLOG, { GOOGLE_CLIENT_SECRET: "" });

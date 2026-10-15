@@ -271,7 +271,7 @@ describe("GET /:provider/callback — token exchange failures", () => {
 		vi.unstubAllGlobals();
 	});
 
-	it("names a provider 429 as a rate limit and passes Retry-After through", async () => {
+	it("names GitHub's 429 block and does not ask the reader to wait", async () => {
 		const { path, cookie } = await startFlow();
 		vi.stubGlobal("fetch", async () =>
 			new Response('{"message":"Access to this site has been restricted."}', {
@@ -281,11 +281,11 @@ describe("GET /:provider/callback — token exchange failures", () => {
 		);
 		const res = await app().request(path, { headers: { cookie } }, oauthEnv());
 		expect(res.status).toBe(503);
-		expect(res.headers.get("retry-after")).toBe("300");
+		expect(res.headers.get("retry-after")).toBeNull();
 		const body = await res.text();
-		expect(body).toContain("Sign-in failed");
-		expect(body).toContain("rate-limiting");
 		expect(body).toContain("HTTP 429");
+		expect(body).toContain("Sign in again");
+		expect(body).not.toContain("Wait");
 	});
 
 	it("names the failure reason on the static page for other exchange errors", async () => {
