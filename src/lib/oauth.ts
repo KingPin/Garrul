@@ -548,8 +548,9 @@ export const exchangeCodeForToken = async (
 	// GitHub's 429 is a block on the egress address, not a rate limit on this
 	// client: it lands on some Cloudflare Workers egress addresses and not
 	// others, and the edge refuses the request before the code is consumed.
-	// Waiting out Retry-After does not help; an immediate retry usually
-	// leaves from a different address and succeeds.
+	// The block has been seen to clear between requests, so a short retry is
+	// cheap insurance. Whether a retry inside one invocation leaves from a
+	// different address is unconfirmed; drop the loop if it never helps.
 	let res: Response;
 	for (let attempt = 1; ; attempt++) {
 		res = await fetch(cfg.token_url, {
