@@ -27,6 +27,7 @@ import {
 	randomHex,
 	STATE_MAX_AGE_MS,
 	TOKEN_EXCHANGE_ATTEMPTS,
+	TOKEN_EXCHANGE_RETRY_DELAY_MS,
 	verifyState,
 } from "../src/lib/oauth";
 import { base64UrlEncode } from "../src/lib/hmac";
@@ -425,9 +426,17 @@ describe("exchangeCodeForToken", () => {
 		expect(body).not.toContain("code_verifier");
 	});
 
-	// Responds with the given statuses in order, then 200 with a token.
+	// Responds with the given statuses in order, then 200 with a token. The
+	// retry delay runs at once; `delays` records what was asked for.
+	let delays: number[] = [];
 	const stubStatuses = (statuses: number[]) => {
 		let calls = 0;
+		delays = [];
+		vi.stubGlobal("setTimeout", (fn: () => void, ms: number) => {
+			delays.push(ms);
+			fn();
+			return 0;
+		});
 		vi.stubGlobal("fetch", async () => {
 			const status = statuses[calls++];
 			if (status === undefined) {
@@ -446,6 +455,7 @@ describe("exchangeCodeForToken", () => {
 		const token = await exchangeCodeForToken("github", "c", "id", "sec", "https://x.test/cb");
 		expect(token).toBe("tok-123");
 		expect(count()).toBe(3);
+		expect(delays).toEqual([TOKEN_EXCHANGE_RETRY_DELAY_MS, TOKEN_EXCHANGE_RETRY_DELAY_MS]);
 	});
 
 	it("gives up with a 429 ProviderHttpError after TOKEN_EXCHANGE_ATTEMPTS blocked attempts", async () => {
@@ -454,7 +464,9 @@ describe("exchangeCodeForToken", () => {
 		expect(err).toBeInstanceOf(ProviderHttpError);
 		expect(err.status).toBe(429);
 		expect(err.retryAfter).toBe("300");
+		expect(String(err)).toMatch(/^ProviderHttpError: /);
 		expect(count()).toBe(TOKEN_EXCHANGE_ATTEMPTS);
+		expect(delays).toHaveLength(TOKEN_EXCHANGE_ATTEMPTS - 1);
 	});
 
 	it("does not retry another provider's 429 and keeps its Retry-After", async () => {

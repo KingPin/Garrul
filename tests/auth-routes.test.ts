@@ -273,6 +273,11 @@ describe("GET /:provider/callback — token exchange failures", () => {
 
 	it("names GitHub's 429 block and does not ask the reader to wait", async () => {
 		const { path, cookie } = await startFlow();
+		// Skip the real retry delay between the blocked attempts.
+		vi.stubGlobal("setTimeout", (fn: () => void) => {
+			fn();
+			return 0;
+		});
 		vi.stubGlobal("fetch", async () =>
 			new Response('{"message":"Access to this site has been restricted."}', {
 				status: 429,
