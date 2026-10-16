@@ -23,6 +23,7 @@ import { Hono } from "hono";
 import type { Bindings } from "../index";
 import {
 	adminInsertSpamVerdict,
+	countDirectReplies,
 	enqueueModeratorNotification,
 	enqueueNotification,
 	getComment,
@@ -37,7 +38,6 @@ import {
 	isNameClaimed,
 	isUserRole,
 	listActiveSubscriptionsForPost,
-	countDirectReplies,
 	listCommentsForThreads,
 	listReactionsForComments,
 	listThreadRefsForPost,

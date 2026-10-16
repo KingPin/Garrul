@@ -739,7 +739,8 @@ that looks exactly like a moderator removal: `status: "deleted"`,
 (`{"id": "", "name": "[deleted]"}`) with no votes or reactions. A moderator-
 deleted comment now renders the same anonymous way. A spam or held comment
 with no approved replies is not shown at all; a moderator-deleted one follows
-the `show_deleted_placeholders` setting.
+the `show_deleted_placeholders` setting. Every removed node, a moderator-deleted
+one included, returns `deleted_at: null` and `edited_at: null`.
 
 Replying to a spam comment, or to someone else's held comment, returns the
 same `400` as replying to a comment that does not exist. You can still reply

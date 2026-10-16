@@ -14,7 +14,7 @@
  *     live descendant; otherwise it's pruned. A hidden comment (spam, or
  *     someone else's pending) follows the same rule, so approved replies
  *     under it stay reachable. Removed nodes (hidden, or deleted by a
- *     moderator) render in one anonymous shape — see `removedNode`.
+ *     moderator) render in one anonymous shape — see `isRemoved` and `toNode`.
  *
  * Tree assembly is pure-CPU and runs server-side so the widget receives
  * exactly what it needs to paint and never has to chase parent_id chains

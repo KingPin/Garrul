@@ -871,9 +871,9 @@ const THREAD_SCORE =
  *
  * A hidden root (spam, or someone else's pending) is a thread when it has a
  * live direct child, so its approved replies stay reachable under a
- * placeholder. Known ceiling: a hidden root whose only live descendants sit
- * below a second hidden level stays unpaged. Probe with a bounded recursive
- * EXISTS if that shape ever shows up.
+ * placeholder. Known ceiling: a hidden root whose live descendants all sit
+ * below a non-live level (a second hidden row, or a deleted one) stays
+ * unpaged. Probe with a bounded recursive EXISTS if that shape ever shows up.
  *
  * Cursor semantics: return rows strictly after the cursor position in the
  * requested order. The caller passes `limit = pageSize + 1` to learn whether a
@@ -1054,9 +1054,10 @@ export const setCommentPin = async (
  * row. It still costs one table-row read (for `status`) plus one probe of
  * comments_parent_idx, which is (parent_id) only: the same cost as before this
  * change. Bounding it needs a covering (parent_id, status, user_id) index or
- * counting scanned children, deliberately not done here. A child is walked only from its parent's
- * level, so the cap never orphans a row. A parent_id cycle from a bad import
- * keeps every level non-empty, so the cap is also its guard.
+ * counting scanned children, deliberately not done here. A child is walked
+ * only from its parent's level, so the cap never orphans a row. A parent_id
+ * cycle from a bad import keeps every level non-empty, so the cap is also its
+ * guard.
  *
  * `truncated` reports that either cap fired; the caller logs it. The walk
  * metadata comes from a one-row LEFT JOIN, so it arrives (with a NULL comment)
@@ -3670,8 +3671,10 @@ export const adminSpamThread = async (
 
 /**
  * A comment plus every descendant, any status, for the spam-thread cascade.
- * The LIMIT sits inside the CTE so it bounds the walk itself: a caller that
- * passes cap + 1 learns "too big" without reading the rest of a huge thread.
+ * The LIMIT inside the CTE bounds the rows returned, so a caller that passes
+ * cap + 1 learns "too big". It does not bound the read: SQLite keeps
+ * iterating the parent index past a recursive LIMIT, so the cost still
+ * scales with the root's fan-out. Acceptable on this admin-only, capped path.
  */
 export const listSubtreeForCascade = async (
 	db: D1Database,
