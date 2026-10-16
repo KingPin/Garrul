@@ -690,6 +690,15 @@ export const insertComment = async (
 	};
 };
 
+/** Number of direct replies to a comment, any status. */
+export const countDirectReplies = async (db: D1Database, id: string): Promise<number> =>
+	(
+		await db
+			.prepare("SELECT COUNT(*) AS n FROM comments WHERE parent_id = ?")
+			.bind(id)
+			.first<{ n: number }>()
+	)?.n ?? 0;
+
 export const getComment = async (
 	db: D1Database,
 	id: string,

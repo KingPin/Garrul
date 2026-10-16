@@ -37,6 +37,7 @@ import {
 	isNameClaimed,
 	isUserRole,
 	listActiveSubscriptionsForPost,
+	countDirectReplies,
 	listCommentsForThreads,
 	listReactionsForComments,
 	listThreadRefsForPost,
@@ -1430,6 +1431,18 @@ comments.patch("/:id", async (c) => {
 		nextStatus === existing.status ? undefined : nextStatus,
 	);
 	await bustTreeCache(c.env, c.req.url, existing.post_slug, numbers);
+
+	// An edit that sends a comment back to the queue hides it, and its replies
+	// now hang under a placeholder. Logged so an operator can see why a thread
+	// suddenly shows a removed comment. Ids and a count only, no PII. The count
+	// query runs only on this transition, which is rare.
+	if (nextStatus !== existing.status) {
+		log.info("comment.requarantined", {
+			comment_id: id,
+			post_slug: existing.post_slug,
+			replies: await countDirectReplies(c.env.DB, id),
+		});
+	}
 
 	// Same fire-and-forget shape as POST, so the moderator sees why the edit was
 	// held.
