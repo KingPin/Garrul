@@ -3700,34 +3700,52 @@ export const listSubtreeForCascade = async (
 // Bulk comment status update (used by the queue's bulk-actions bar)
 // ---------------------------------------------------------------------------
 
+/**
+ * Bulk status change plus one audit row per touched comment, in three
+ * queries whatever the id count: D1 allows 50 per Worker invocation on the
+ * Free plan, and BULK_ACTION_LIMIT is 100. One read of the rows that exist
+ * (the caller needs post_slug/user_id for cache busts and webhooks), then the
+ * UPDATE and the audit INSERT in ONE `db.batch`, which D1 runs as a single
+ * transaction — a failed audit insert leaves no unaudited status change.
+ *
+ * Ids travel as ONE JSON-array bind read through json_each, not one `?` per
+ * id: D1 caps a query at 100 bound parameters.
+ */
 export const adminBulkUpdateCommentStatus = async (
 	db: D1Database,
 	ids: string[],
 	status: CommentStatus,
-): Promise<string[]> => {
+	audit: { adminId: string; action: AdminAction },
+): Promise<{ id: string; post_slug: string; user_id: string }[]> => {
 	if (ids.length === 0) return [];
-	const now = Date.now();
-	const deletedAt = status === "deleted" ? now : null;
-	// One JSON-array bind read through json_each, not one `?` per id: D1 caps a
-	// query at 100 bound parameters, and BULK_ACTION_LIMIT is 100 ids plus the
-	// two status binds.
-	// Only update rows that currently exist; return their IDs so the caller
-	// can audit-log exactly the rows that were touched.
 	const existing = await db
-		.prepare("SELECT id FROM comments WHERE id IN (SELECT value FROM json_each(?))")
-		.bind(JSON.stringify(ids))
-		.all<{ id: string }>();
-	const presentIds = (existing.results ?? []).map((r) => r.id);
-	if (presentIds.length === 0) return [];
-	await db
 		.prepare(
-			`UPDATE comments
-			    SET status = ?, deleted_at = ?
-			  WHERE id IN (SELECT value FROM json_each(?))`,
+			"SELECT id, post_slug, user_id FROM comments WHERE id IN (SELECT value FROM json_each(?))",
 		)
-		.bind(status, deletedAt, JSON.stringify(presentIds))
-		.run();
-	return presentIds;
+		.bind(JSON.stringify(ids))
+		.all<{ id: string; post_slug: string; user_id: string }>();
+	const rows = existing.results ?? [];
+	if (rows.length === 0) return [];
+	const now = Date.now();
+	const targets = JSON.stringify(rows.map((r) => ({ id: r.id, audit_id: ulid() })));
+	await db.batch([
+		db
+			.prepare(
+				`UPDATE comments SET status = ?1, deleted_at = ?2
+				  WHERE id IN (SELECT value ->> 'id' FROM json_each(?3))`,
+			)
+			.bind(status, status === "deleted" ? now : null, targets),
+		db
+			.prepare(
+				`INSERT INTO audit_log
+				   (id, admin_id, action, target_kind, target_id, reason, meta, created_at)
+				 SELECT t.value ->> 'audit_id', ?1, ?2, 'comment', c.id, NULL,
+				        json_object('batch_size', CAST(?3 AS INTEGER), 'new_status', ?4), ?5
+				   FROM json_each(?6) t JOIN comments c ON c.id = t.value ->> 'id'`,
+			)
+			.bind(audit.adminId, audit.action, rows.length, status, now, targets),
+	]);
+	return rows;
 };
 
 // ---------------------------------------------------------------------------

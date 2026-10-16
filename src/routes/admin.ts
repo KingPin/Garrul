@@ -93,7 +93,7 @@ import {
 	type WebhookAdapter,
 	type WebhookEndpoint,
 } from "../db/queries";
-import { fireWebhook, type WebhookEvent } from "../lib/webhook";
+import { fireWebhook, fireWebhooks, type WebhookEvent } from "../lib/webhook";
 import {
 	banUser,
 	type CommentAction,
@@ -1762,7 +1762,6 @@ admin.post("/api/comments/bulk", async (c) => {
 	if (ids.length > BULK_ACTION_LIMIT) {
 		return c.json({ error: "too_many" }, 400);
 	}
-	const touched = await adminBulkUpdateCommentStatus(c.env.DB, ids, newStatus);
 	const bulkAction: AdminAction =
 		action === "spam"
 			? "bulk.spam"
@@ -1771,8 +1770,17 @@ admin.post("/api/comments/bulk", async (c) => {
 				: action === "restore"
 					? "bulk.restore"
 					: "bulk.approve";
-	// Bust caches + fire webhooks for each touched comment. Both are
-	// independent of one another, so missing rows just no-op.
+	// A fixed number of D1 queries at any size (D1 allows 50 per invocation on
+	// the Free plan): status + audit in one batch, cache busts on the Cache
+	// API, and one webhook endpoint load for every event.
+	const rows = await adminBulkUpdateCommentStatus(c.env.DB, ids, newStatus, {
+		adminId: user.id,
+		action: bulkAction,
+	});
+	const touched = rows.map((r) => r.id);
+	for (const slug of new Set(rows.map((r) => r.post_slug))) {
+		await bustTreeCache(c.env, c.req.url, slug);
+	}
 	const webhookEvent: WebhookEvent | null =
 		newStatus === "approved"
 			? "comment.approved"
@@ -1781,26 +1789,18 @@ admin.post("/api/comments/bulk", async (c) => {
 				: newStatus === "deleted"
 					? "comment.deleted"
 					: null;
-	for (const id of touched) {
-		const existing = await getComment(c.env.DB, id);
-		if (!existing) continue;
-		await adminInsertAudit(c.env.DB, {
-			admin_id: user.id,
-			action: bulkAction,
-			target_kind: "comment",
-			target_id: id,
-			meta: { batch_size: touched.length, new_status: newStatus },
-		});
-		await bustTreeCache(c.env, c.req.url, existing.post_slug);
-		if (webhookEvent) {
-			fireWebhook(c.env, c.executionCtx, {
+	if (webhookEvent) {
+		fireWebhooks(
+			c.env,
+			c.executionCtx,
+			rows.map((r) => ({
 				event: webhookEvent,
-				comment_id: id,
-				post_slug: existing.post_slug,
-				user_id: existing.user_id,
+				comment_id: r.id,
+				post_slug: r.post_slug,
+				user_id: r.user_id,
 				ts: Date.now(),
-			});
-		}
+			})),
+		);
 	}
 	return c.json({ ok: true, status: newStatus, touched });
 });
