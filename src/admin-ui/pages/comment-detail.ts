@@ -14,6 +14,7 @@ import {
 	replyComposer,
 } from "../components/reply-composer";
 import { escapeHtml, jsLiteral } from "../escape";
+import { replyHint } from "./queue";
 
 const formatTs = (ts: number): string =>
 	new Date(ts).toISOString().slice(0, 16).replace("T", " ");
@@ -302,7 +303,7 @@ export const renderCommentDetail = (
     }).finally(() => { this.busy = false; });
   }
 }">
-  <h2>Comment</h2>
+  <h2>Comment${replyHint(comment)}</h2>
   ${commentCard(comment, "Selected")}
   <div class="actions" style="margin-top:0.5rem">${actionsFor(comment)}</div>
   ${banAuthorAction(comment, isAdmin)}

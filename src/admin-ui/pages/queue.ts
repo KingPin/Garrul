@@ -27,6 +27,18 @@ const auditStrip = (a: AuditRowWithAdmin | undefined): string => {
 	return `<div class="muted audit-strip">${escapeHtml(a.action)} by ${escapeHtml(who)} · ${relTime(a.created_at)}</div>`;
 };
 
+/**
+ * Direct-reply count on a hidden comment. Deliberately no claim about what
+ * readers see: the replies may be hidden too, and this cheap count can't tell.
+ * Empty string otherwise.
+ */
+export const replyHint = (c: AdminComment): string => {
+	const n = c.reply_count ?? 0;
+	return (c.status === "spam" || c.status === "pending") && n > 0
+		? ` <span class="pill" title="Direct replies to this comment, any status">↳ ${n} direct repl${n === 1 ? "y" : "ies"}</span>`
+		: "";
+};
+
 /** Open-report count badge for a queue row. Empty string when zero. */
 const reportBadge = (n: number): string =>
 	n > 0
@@ -362,7 +374,7 @@ export const renderQueue = (
     :class="allIds[cursor] === ${jsLiteral(c.id)} ? 'row-cursor' : ''"
     @bulk-done.window="if ($event.detail.ids.includes(${jsLiteral(c.id)})) gone = true">
   <td class="bulk-cell"><input type="checkbox" :value="${jsLiteral(c.id)}" x-model="selected" :disabled="busy"></td>
-  <td><span class="pill ${c.status}">${c.status}</span>${reportBadge(reportCounts[c.id] ?? 0)}${noteBadge(noteCounts.comment[c.id] ?? 0, "this comment")}</td>
+  <td><span class="pill ${c.status}">${c.status}</span>${reportBadge(reportCounts[c.id] ?? 0)}${replyHint(c)}${noteBadge(noteCounts.comment[c.id] ?? 0, "this comment")}</td>
   <td>${authorCell(c, noteCounts.user[c.user_id] ?? 0)}</td>
   <td class="score-cell" title="up / down">${scoreCell(c)}</td>
   <td class="meta-cell">${metaCell(c)}</td>

@@ -1638,6 +1638,9 @@ export type AdminComment = Omit<Comment, "as_staff"> & {
 	// `comment` query selects it — the parent/replies/ip_siblings/user_recent
 	// side-queries on the same page don't.
 	as_staff?: number;
+	// Direct children, any status. Optional for the same reason as post_url:
+	// only the queue query and the detail page's top-level query select it.
+	reply_count?: number;
 };
 
 type AdminCommentRow = Omit<
@@ -1727,7 +1730,8 @@ export const adminListComments = async (
 		       u.is_banned  AS author_is_banned,
 		       ${hostExpr("p.url")} AS host,
 		       p.url        AS post_url,
-		       p.title      AS post_title
+		       p.title      AS post_title,
+		       (SELECT COUNT(*) FROM comments r WHERE r.parent_id = c.id) AS reply_count
 		  FROM comments c
 		  LEFT JOIN users u ON u.id = c.user_id
 		  LEFT JOIN posts p ON p.slug = c.post_slug
@@ -3438,7 +3442,8 @@ export const adminGetCommentDetail = async (
 			        u.is_admin   AS author_is_admin,
 			        u.is_banned  AS author_is_banned,
 			        ${hostExpr("p.url")} AS host,
-			        p.title      AS post_title
+			        p.title      AS post_title,
+			        (SELECT COUNT(*) FROM comments r WHERE r.parent_id = c.id) AS reply_count
 			   FROM comments c
 			   LEFT JOIN users u ON u.id = c.user_id
 			   LEFT JOIN posts p ON p.slug = c.post_slug
