@@ -23,6 +23,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { comments } from "../src/routes/api.comments";
+import { t } from "../src/i18n";
 import { MAX_REPLY_DEPTH } from "../src/lib/tree";
 import { installMockCaches, uninstallMockCaches } from "./helpers/mock-caches";
 import type { Bindings } from "../src/index";
@@ -216,5 +217,50 @@ describe("reply nesting cap", () => {
 		expect(res.status).toBe(201);
 		const json = (await res.json()) as { comment: { id: string } };
 		expect(depthOf(json.comment.id)).toBe(1);
+	});
+});
+
+describe("POST /comments — hidden parents", () => {
+	const OTHER = "01HU0000000000000000OTHR";
+	const seedParent = (id: string, status: string, owner = USER) => {
+		sqlite
+			.prepare(
+				"INSERT OR IGNORE INTO users (id, provider, provider_id, name, created_at) VALUES (?, 'anon', NULL, 'Other', 1)",
+			)
+			.run(OTHER);
+		sqlite
+			.prepare(
+				`INSERT INTO comments (id, post_slug, parent_id, user_id, body_md, body_html,
+				                       renderer_version, status, created_at, depth)
+				 VALUES (?, ?, NULL, ?, 'x', '<p>x</p>', 1, ?, 1, 1)`,
+			)
+			.run(id, SLUG, owner, status);
+		return id;
+	};
+	const rowCount = () =>
+		(sqlite.prepare("SELECT COUNT(*) AS n FROM comments").get() as { n: number }).n;
+	// 26-char Crockford ids: the route validates parent_id's ULID shape.
+	const HIDDEN = `01J${"0".repeat(19)}HDN1`;
+	const OWN = `01J${"0".repeat(19)}WNP1`;
+
+	for (const [label, status, owner] of [
+		["a spam parent", "spam", USER],
+		["someone else's pending parent", "pending", OTHER],
+	] as const) {
+		it(`answers a reply to ${label} like a missing parent`, async () => {
+			const parent = seedParent(HIDDEN, status, owner);
+			const before = rowCount();
+			const res = await post({ slug: SLUG, parent_id: parent, body: "a reply" });
+			expect(res.status).toBe(400);
+			// The exact missing-parent message, so the response is no oracle.
+			expect(((await res.json()) as { error: string }).error).toBe(t("err.parent.not_found"));
+			expect(rowCount()).toBe(before);
+		});
+	}
+
+	it("lets the author reply under their own pending comment", async () => {
+		const parent = seedParent(OWN, "pending", USER);
+		const res = await post({ slug: SLUG, parent_id: parent, body: "a reply" });
+		expect(res.status).toBe(201);
 	});
 });

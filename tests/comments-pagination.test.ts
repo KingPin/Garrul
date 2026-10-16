@@ -27,14 +27,16 @@
  * a mock `caches.default` for the first-page edge cache. Every `.all()` is
  * recorded so the tests can assert what SQL actually asked for.
  */
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { Hono } from "hono";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { comments } from "../src/routes/api.comments";
 import {
+	countApprovedCommentsBySlugs,
 	getUserVotesOnComments,
+	listCommentsForThreads,
 	listReactionsForComments,
 	listUserReactionsOnComments,
 } from "../src/db/queries";
@@ -936,4 +938,217 @@ describe("GET /comments — pinned thread", () => {
 		const page = await get(mkEnv(), `slug=${SLUG}`);
 		for (const t of page.threads) expect("pinned" in t).toBe(false);
 	});
+});
+
+describe("GET /comments — hidden parents", () => {
+	const SPAMMER = "01HU0000000000000000SPAM";
+	type Node = {
+		id: string;
+		status: string;
+		deleted_by: string | null;
+		author: { id: string; name: string };
+		score_up: number;
+		replies: Node[];
+	};
+	const nodes = (page: ListResp) => page.threads as unknown as Node[];
+
+	const addSpammer = () =>
+		sqlite
+			.prepare(
+				"INSERT INTO users (id, provider, provider_id, name, created_at) VALUES (?, 'anon', NULL, 'Buy Pills', 1)",
+			)
+			.run(SPAMMER);
+
+	const seedRow = (
+		id: string,
+		parent: string | null,
+		status: string,
+		createdAt: number,
+		opts: { user?: string; score?: number } = {},
+	) =>
+		sqlite
+			.prepare(
+				`INSERT INTO comments (id, post_slug, parent_id, user_id, body_md, body_html,
+				                       renderer_version, status, created_at, depth, score_up, score_down)
+				 VALUES (?, ?, ?, ?, 'x', ?, 1, ?, ?, 1, ?, 0)`,
+			)
+			.run(id, SLUG, parent, opts.user ?? USER, `<p>${id}</p>`, status, createdAt, opts.score ?? 0);
+
+	it("returns an approved reply that sits behind 2,100 earlier spam leaves", async () => {
+		addSpammer();
+		seedRow(mkUlid(1), null, "approved", 1000);
+		for (let i = 0; i < 2100; i++) {
+			seedRow(mkUlid(10_000 + i), mkUlid(1), "spam", 2000 + i, { user: SPAMMER });
+		}
+		seedRow(mkUlid(50_000), mkUlid(1), "approved", 100_000);
+		const page = await get(mkEnv(), `slug=${SLUG}`);
+		expect(nodes(page)[0]!.replies.map((r) => r.id)).toEqual([mkUlid(50_000)]);
+		// Spam leaves never reach the output, so they can't eat TREE_ROW_LIMIT.
+		expect(subtreeQuery()!.rows).toBe(2);
+	});
+
+	for (const flag of ["false", "true"]) {
+		it(`a deleted leaf cannot resurrect its spam parent (SHOW_DELETED_PLACEHOLDERS=${flag})`, async () => {
+			addSpammer();
+			seedRow(mkUlid(1), null, "approved", 1000);
+			seedRow(mkUlid(2), mkUlid(1), "spam", 2000, { user: SPAMMER });
+			seedRow(mkUlid(3), mkUlid(2), "deleted", 3000);
+			const page = await get(mkEnv({ SHOW_DELETED_PLACEHOLDERS: flag }), `slug=${SLUG}`);
+			expect(nodes(page).map((t) => t.id)).toEqual([mkUlid(1)]);
+			expect(nodes(page)[0]!.replies).toEqual([]);
+		});
+	}
+
+	it("pages a spam root with an approved reply as a masked placeholder", async () => {
+		addSpammer();
+		seedRow(mkUlid(1), null, "spam", 1000, { user: SPAMMER });
+		seedRow(mkUlid(2), mkUlid(1), "approved", 2000);
+		const page = await get(mkEnv(), `slug=${SLUG}`);
+		const root = nodes(page)[0]!;
+		expect(root).toMatchObject({
+			id: mkUlid(1),
+			status: "deleted",
+			deleted_by: "moderator",
+			author: { id: "", name: "[deleted]" },
+		});
+		expect(root.replies.map((r) => r.id)).toEqual([mkUlid(2)]);
+		expect(JSON.stringify(page)).not.toContain("Buy Pills");
+		// The badge count was already right; now the tree agrees with it.
+		const counts = await countApprovedCommentsBySlugs(mkEnv().DB, [SLUG]);
+		expect(counts.get(SLUG)).toBe(1);
+	});
+
+	it("does not page a spam root whose only reply is deleted", async () => {
+		addSpammer();
+		seedRow(mkUlid(1), null, "spam", 1000, { user: SPAMMER });
+		seedRow(mkUlid(2), mkUlid(1), "deleted", 2000);
+		const page = await get(mkEnv(), `slug=${SLUG}`);
+		expect(page.threads).toEqual([]);
+	});
+
+	it("sort=top scores a masked root as 0 in order and cursor", async () => {
+		addSpammer();
+		seedRow(mkUlid(1), null, "approved", 1000, { score: 10 });
+		seedRow(mkUlid(2), null, "approved", 1001, { score: 0 });
+		seedRow(mkUlid(3), null, "spam", 1002, { user: SPAMMER, score: 42 });
+		seedRow(mkUlid(4), mkUlid(3), "approved", 1003);
+		setSetting("comments_per_page", "2");
+		const env = mkEnv();
+		const first = await get(env, `slug=${SLUG}&sort=top`);
+		// 10, then the masked root (0, higher id) ahead of the other 0.
+		expect(first.threads.map((t) => t.id)).toEqual([mkUlid(1), mkUlid(3)]);
+		expect(first.next_cursor).toBe(`0:${mkUlid(3)}`);
+		expect(nodes(first)[1]!.score_up).toBe(0);
+		const second = await get(env, `slug=${SLUG}&sort=top&before=${first.next_cursor}`);
+		expect(second.threads.map((t) => t.id)).toEqual([mkUlid(2)]);
+		expect(second.next_cursor).toBeNull();
+	});
+
+	it("shows a signed-in viewer their own pending under a masked spam root", async () => {
+		addSpammer();
+		seedRow(mkUlid(1), null, "spam", 1000, { user: SPAMMER });
+		seedRow(mkUlid(2), mkUlid(1), "pending", 2000);
+		seedRow(mkUlid(3), mkUlid(2), "approved", 3000, { user: SPAMMER });
+		const sid = "a".repeat(64);
+		const env = {
+			...mkEnv(),
+			SESSIONS: {
+				get: async (k: string) =>
+					k === `sess:${sid}`
+						? JSON.stringify({ user_id: USER, expires_at: 4_102_444_800_000 })
+						: null,
+				put: async () => {},
+				delete: async () => {},
+			},
+		} as unknown as Bindings;
+		const app = new Hono<{ Bindings: Bindings }>().route("/", comments);
+		const res = await app.request(
+			`/?slug=${SLUG}`,
+			{ headers: { cookie: `__Host-garrul_sess=${sid}` } },
+			env as unknown as Record<string, unknown>,
+		);
+		const page = (await res.json()) as ListResp;
+		const root = nodes(page)[0]!;
+		expect(root).toMatchObject({ id: mkUlid(1), status: "deleted" });
+		expect(root.replies.map((r) => [r.id, r.status])).toEqual([[mkUlid(2), "pending"]]);
+		expect(root.replies[0]!.replies.map((r) => r.id)).toEqual([mkUlid(3)]);
+	});
+
+	it("logs truncation when the walk passes TREE_SCAN_LIMIT", async () => {
+		addSpammer();
+		seedRow(mkUlid(1), null, "approved", 1000);
+		// Each spam row has a spam child, so it enters the walk (only hidden
+		// LEAVES are skipped). 4,001 of them pass the 4,000-row scan cap.
+		for (let i = 0; i < 4001; i++) {
+			seedRow(mkUlid(10_000 + i), mkUlid(1), "spam", 2000 + i, { user: SPAMMER });
+			seedRow(mkUlid(30_000 + i), mkUlid(10_000 + i), "spam", 9000 + i, { user: SPAMMER });
+		}
+		const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+		try {
+			await get(mkEnv(), `slug=${SLUG}`);
+			const lines = spy.mock.calls.map((c) => String(c[0]));
+			expect(lines.some((l) => l.includes('"comments.page_truncated"'))).toBe(true);
+		} finally {
+			spy.mockRestore();
+		}
+	});
+
+	it("logs truncation when the capped walk keeps no row at all", async () => {
+		addSpammer();
+		// A spam root is paged because it has a live direct child. The 4,001
+		// spam children (each with a spam child, so each enters the walk) come
+		// first in index order and fill the level cap; the approved reply,
+		// inserted last, never gets walked. Nothing survives the keep rule, so
+		// the walk metadata has to arrive without a comment row.
+		seedRow(mkUlid(1), null, "spam", 1000, { user: SPAMMER });
+		for (let i = 0; i < 4001; i++) {
+			seedRow(mkUlid(10_000 + i), mkUlid(1), "spam", 2000 + i, { user: SPAMMER });
+			seedRow(mkUlid(30_000 + i), mkUlid(10_000 + i), "spam", 9000 + i, { user: SPAMMER });
+		}
+		seedRow(mkUlid(50_000), mkUlid(1), "approved", 100_000);
+		const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+		try {
+			await get(mkEnv(), `slug=${SLUG}`);
+			const lines = spy.mock.calls.map((c) => String(c[0]));
+			expect(lines.some((l) => l.includes('"comments.page_truncated"'))).toBe(true);
+		} finally {
+			spy.mockRestore();
+		}
+	});
+
+	it("walks a 320,000-reply thread for about the cost of an 8,000-reply one", async () => {
+		// node:sqlite exposes no VM step counter, so this compares wall time.
+		// A row-at-a-time recursive CTE keeps scanning a parent's children past
+		// its LIMIT, so its time grows with the width here (~6x); the level walk
+		// is flat. If this flakes, widen the gap between the widths, never the
+		// 2x bound.
+		const wide = (root: string, n: number, createdAt: number) => {
+			seedRow(root, null, "approved", createdAt);
+			sqlite
+				.prepare(
+					`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ?)
+					 INSERT INTO comments (id, post_slug, parent_id, user_id, body_md, body_html,
+					                       renderer_version, status, created_at, depth, score_up, score_down)
+					 SELECT ? || printf('%07d', i), ?, ?, ?, 'x', '<p>x</p>', 1, 'approved', ? + i, 2, 0, 0
+					   FROM n`,
+				)
+				.run(n, root, SLUG, root, USER, createdAt);
+		};
+		wide(mkUlid(1), 8_000, 1000);
+		wide(mkUlid(2), 320_000, 1_000_000);
+		const db = mkEnv().DB;
+		const median = async (id: string) => {
+			const times: number[] = [];
+			for (let i = 0; i < 5; i++) {
+				const t = performance.now();
+				const { truncated } = await listCommentsForThreads(db, [id]);
+				times.push(performance.now() - t);
+				expect(truncated).toBe(true);
+			}
+			return times.sort((a, b) => a - b)[2]!;
+		};
+		const narrow = await median(mkUlid(1));
+		const broad = await median(mkUlid(2));
+		expect(broad).toBeLessThan(2 * narrow);
+	}, 30_000);
 });

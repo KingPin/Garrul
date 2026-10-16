@@ -12,12 +12,14 @@
  */
 import {
 	adminInsertAudit,
+	adminSpamThread,
 	type CommentStatus,
 	countActiveAdmins,
 	eraseUserData,
 	getComment,
 	getUser,
 	listPostSlugsForUser,
+	listSubtreeForCascade,
 	resolveReportsForComment,
 	setCommentPin,
 	setUserBanned,
@@ -89,6 +91,58 @@ export const moderateComment = async (args: {
 		});
 	}
 	return { ok: true, id: commentId, status: newStatus };
+};
+
+/** Largest subtree the spam-thread cascade takes, matching the bulk route. */
+export const THREAD_ACTION_LIMIT = 100;
+
+/**
+ * Mark a comment and every reply below it as spam, in a fixed number of
+ * queries whatever the size: D1 allows 50 per Worker invocation on the Free
+ * plan. So one root read, one subtree read, one two-statement batch (audit +
+ * update, atomic — see adminSpamThread), one cache bust and ONE webhook (for
+ * the root) — each fireWebhook costs a query of its own, so one per row would
+ * break the cap.
+ *
+ * All-or-nothing: a subtree over THREAD_ACTION_LIMIT rows (already-spam rows
+ * count, which keeps the walk to one LIMIT) is refused unchanged, and the
+ * operator falls back to bulk spam.
+ *
+ * Deleted rows are skipped (see adminSpamThread), and a deleted root is
+ * not_found: the UI offers no button there.
+ */
+export const moderateThread = async (args: {
+	env: Bindings;
+	executionCtx: WaitUntilCtx;
+	reqUrl: string;
+	adminId: string;
+	commentId: string;
+	reason?: string | null;
+}): Promise<
+	| { ok: true; id: string; touched: number }
+	| { ok: false; error: "not_found" | "too_many" }
+> => {
+	const { env, commentId } = args;
+	const root = await getComment(env.DB, commentId);
+	if (!root || root.status === "deleted") return { ok: false, error: "not_found" };
+	const subtree = await listSubtreeForCascade(env.DB, commentId, THREAD_ACTION_LIMIT + 1);
+	if (subtree.length > THREAD_ACTION_LIMIT) return { ok: false, error: "too_many" };
+	const touched = await adminSpamThread(env.DB, {
+		ids: subtree.filter((r) => r.status !== "spam" && r.status !== "deleted").map((r) => r.id),
+		adminId: args.adminId,
+		rootId: commentId,
+		reason: args.reason ?? null,
+	});
+	if (touched === 0) return { ok: true, id: commentId, touched: 0 };
+	await bustTreeCache(env, args.reqUrl, root.post_slug);
+	fireWebhook(env, args.executionCtx, {
+		event: "comment.spam",
+		comment_id: commentId,
+		post_slug: root.post_slug,
+		user_id: root.user_id,
+		ts: Date.now(),
+	});
+	return { ok: true, id: commentId, touched };
 };
 
 /**

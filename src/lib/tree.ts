@@ -11,9 +11,10 @@
  *     visual indent regardless of true depth, but still attribute who
  *     was replied to.
  *   - A `deleted` comment is kept in the tree IFF it has at least one
- *     non-deleted descendant; otherwise it's pruned. body_html is
- *     replaced with the empty string for deleted nodes — the widget
- *     renders the [deleted] placeholder.
+ *     live descendant; otherwise it's pruned. A hidden comment (spam, or
+ *     someone else's pending) follows the same rule, so approved replies
+ *     under it stay reachable. Removed nodes (hidden, or deleted by a
+ *     moderator) render in one anonymous shape — see `isRemoved` and `toNode`.
  *
  * Tree assembly is pure-CPU and runs server-side so the widget receives
  * exactly what it needs to paint and never has to chase parent_id chains
@@ -21,6 +22,7 @@
  */
 
 import type { Comment, TreeComment } from "../db/queries";
+import { t } from "../i18n";
 
 /**
  * Deliberately no `is_admin`/`role`: the tree is served to anonymous readers,
@@ -163,36 +165,104 @@ const markAncestors = (
 };
 
 /**
- * Returns the set of comment IDs that should remain visible — every non-
- * deleted comment, plus every deleted ancestor that has a non-deleted
- * descendant. When `keepAllDeleted` is set (the show_deleted_placeholders
- * flag), every deleted comment is kept too, so leaf deletions surface as a
- * placeholder rather than being pruned.
+ * How a row renders for one viewer. `live` rows render as themselves. `masked`
+ * rows (spam, or someone else's pending) and `deleted` rows render only as
+ * placeholders, and only where keepableSet keeps them.
  */
-const keepableSet = (rows: TreeComment[], keepAllDeleted: boolean): Set<string> => {
+type Kind = "live" | "masked" | "deleted";
+
+const kindOf = (r: TreeComment, viewerId: string | null): Kind => {
+	if (r.status === "deleted") return "deleted";
+	if (r.status === "approved") return "live";
+	if (r.status === "pending" && viewerId !== null && r.user_id === viewerId) return "live";
+	return "masked";
+};
+
+/** Hidden rows and moderator deletions share one public shape. */
+const isRemoved = (row: TreeComment, kind: Kind): boolean =>
+	kind === "masked" || (kind === "deleted" && row.deleted_by === "moderator");
+
+/**
+ * The author shown on every removed node. English on purpose, like the
+ * placeholder eraseUser writes: the tree cache key carries no locale, so a
+ * per-request translation would be served to every locale from one entry.
+ */
+const REMOVED_AUTHOR: TreeAuthor = {
+	id: "",
+	name: t("ui.deleted"),
+	provider: "anon",
+	avatar_svg: null,
+	avatar_url: null,
+};
+
+/**
+ * Returns the set of comment IDs that should remain visible: every live
+ * comment, plus every hidden or deleted ancestor that has a live descendant.
+ * When `keepAllDeleted` is set (the show_deleted_placeholders flag), deleted
+ * comments are kept too — but only where no hidden row sits between them and
+ * their nearest live ancestor. Otherwise a kept deleted leaf would pull its
+ * spam parent back in through the ancestor pass, rendering a placeholder that
+ * preserves no live discussion. listCommentsForThreads applies the same rule
+ * in SQL; this copy keeps the builder correct on its own.
+ */
+const keepableSet = (
+	rows: TreeComment[],
+	kind: Map<string, Kind>,
+	keepAllDeleted: boolean,
+): Set<string> => {
 	const parentOf = new Map<string, string | null>();
 	for (const r of rows) parentOf.set(r.id, r.parent_id);
 
 	// "Has a live descendant" is the same set as "is a strict ancestor of some
-	// non-deleted comment", so it falls out of one upward pass instead of a
-	// recursive descent per node (which was also stack-overflowable).
+	// live comment", so it falls out of one upward pass instead of a recursive
+	// descent per node (which was also stack-overflowable).
 	const hasLiveDescendant = new Set<string>();
 	markAncestors(
-		rows.filter((r) => r.status !== "deleted").map((r) => r.id),
+		rows.filter((r) => kind.get(r.id) === "live").map((r) => r.id),
 		parentOf,
 		hasLiveDescendant,
 	);
 
+	// Whether a masked row sits on the walk from `id` up to its nearest live
+	// ancestor (inclusive of `id`). Memoized along each walk so the total stays
+	// O(N), for the same reason as markAncestors; the path bound is its cycle
+	// guard.
+	const taint = new Map<string, boolean>();
+	const isTainted = (id: string): boolean => {
+		const path: string[] = [];
+		let cur: string | null = id;
+		let result = false;
+		while (cur !== null && path.length <= parentOf.size) {
+			const known = taint.get(cur);
+			if (known !== undefined) {
+				result = known;
+				break;
+			}
+			const k = kind.get(cur);
+			if (k === undefined || k === "live") break;
+			path.push(cur);
+			if (k === "masked") {
+				result = true;
+				break;
+			}
+			cur = parentOf.get(cur) ?? null;
+		}
+		for (const p of path) taint.set(p, result);
+		return result;
+	};
+
 	const keep = new Set<string>();
 	for (const r of rows) {
-		if (r.status !== "deleted") {
+		const k = kind.get(r.id);
+		if (k === "live" || hasLiveDescendant.has(r.id)) {
 			keep.add(r.id);
-		} else if (keepAllDeleted || hasLiveDescendant.has(r.id)) {
+		} else if (k === "deleted" && keepAllDeleted && !isTainted(r.id)) {
 			keep.add(r.id);
 		}
 	}
-	// Also keep any ancestor of a kept node so the chain stays intact. Snapshot
-	// the seeds: the walk grows `keep` as it goes.
+	// Also keep any ancestor of a kept node so the chain stays intact. After
+	// the rule above this only adds rows it already allows. Snapshot the seeds:
+	// the walk grows `keep` as it goes.
 	markAncestors([...keep], parentOf, keep);
 	return keep;
 };
@@ -211,38 +281,69 @@ const buildAuthor = (
 
 const toNode = (
 	row: TreeComment,
+	kind: Kind,
 	depth: number,
 	flatten_from: string | null,
 	usersById: Map<string, TreeAuthor>,
 	reactionsById: Map<string, ReactionCount[]>,
 	myVotes: Map<string, -1 | 1>,
-): TreeNode => ({
-	id: row.id,
-	parent_id: row.parent_id,
-	body_html: row.status === "deleted" ? "" : row.body_html,
-	status: row.status,
-	edited_at: row.edited_at,
-	deleted_at: row.deleted_at,
-	deleted_by: row.status === "deleted" ? row.deleted_by : null,
-	created_at: row.created_at,
-	author: buildAuthor(usersById, row.user_id),
-	depth,
-	flatten_from,
-	can_reply: row.depth < MAX_REPLY_DEPTH,
-	reactions: reactionsById.get(row.id) ?? [],
-	score_up: row.score_up ?? 0,
-	score_down: row.score_down ?? 0,
-	my_vote: myVotes.get(row.id) ?? 0,
-	// A dormant pin (the row left `approved`) pages normally and is not flagged,
-	// matching getPinnedThreadRef.
-	...(row.pinned_at != null && row.status === "approved"
-		? { pinned: true as const }
-		: {}),
-	// A tombstone keeps no badge: the author and body are gone, so a staff
-	// mark would be a role claim about nothing.
-	...(row.as_staff === 1 && row.status !== "deleted" ? { staff: true as const } : {}),
-	replies: [],
-});
+): TreeNode => {
+	if (isRemoved(row, kind)) {
+		// Spam, someone else's pending and a moderator delete must be
+		// indistinguishable to a reader: no author, no votes, no reactions, no
+		// timestamps beyond the one sibling order needs. A real deleted_at next to
+		// a null one would tell them apart, so neither carries one.
+		return {
+			id: row.id,
+			parent_id: row.parent_id,
+			body_html: "",
+			status: "deleted",
+			edited_at: null,
+			deleted_at: null,
+			deleted_by: "moderator",
+			created_at: row.created_at,
+			author: REMOVED_AUTHOR,
+			depth,
+			flatten_from,
+			can_reply: row.depth < MAX_REPLY_DEPTH,
+			reactions: [],
+			score_up: 0,
+			score_down: 0,
+			my_vote: 0,
+			replies: [],
+		};
+	}
+	// Votes are public only on live nodes; listThreadRefsForPost sorts a
+	// non-approved root as 0 for the same reason.
+	const live = kind === "live";
+	return {
+		id: row.id,
+		parent_id: row.parent_id,
+		body_html: row.status === "deleted" ? "" : row.body_html,
+		status: row.status,
+		edited_at: row.edited_at,
+		deleted_at: row.deleted_at,
+		deleted_by: row.status === "deleted" ? row.deleted_by : null,
+		created_at: row.created_at,
+		author: buildAuthor(usersById, row.user_id),
+		depth,
+		flatten_from,
+		can_reply: row.depth < MAX_REPLY_DEPTH,
+		reactions: reactionsById.get(row.id) ?? [],
+		score_up: live ? (row.score_up ?? 0) : 0,
+		score_down: live ? (row.score_down ?? 0) : 0,
+		my_vote: myVotes.get(row.id) ?? 0,
+		// A dormant pin (the row left `approved`) pages normally and is not flagged,
+		// matching getPinnedThreadRef.
+		...(row.pinned_at != null && row.status === "approved"
+			? { pinned: true as const }
+			: {}),
+		// A tombstone keeps no badge: the author and body are gone, so a staff
+		// mark would be a role claim about nothing.
+		...(row.as_staff === 1 && row.status !== "deleted" ? { staff: true as const } : {}),
+		replies: [],
+	};
+};
 
 /**
  * Iterative build with depth flattening. Anything past MAX_DEPTH is appended
@@ -278,6 +379,7 @@ const buildSubtree = (
 	depth: number,
 	children: ChildIndex,
 	keep: Set<string>,
+	kind: Map<string, Kind>,
 	usersById: Map<string, TreeAuthor>,
 	byId: Map<string, TreeComment>,
 	reactionsById: Map<string, ReactionCount[]>,
@@ -309,6 +411,7 @@ const buildSubtree = (
 		if (frame.depth < MAX_DEPTH) {
 			const node = toNode(
 				frame.row,
+				kind.get(frame.row.id)!,
 				frame.depth,
 				null,
 				usersById,
@@ -322,11 +425,18 @@ const buildSubtree = (
 			// flatten_from pointing at the immediate parent's author name, and keep
 			// chasing descendants into the same array so nothing is dropped.
 			const parentRow = byId.get(frame.parentId);
+			// Through the removed check, so a hidden parent's name never leaks
+			// via the "@name" prefix of a flattened reply.
 			const parentAuthorName =
-				parentRow != null ? buildAuthor(usersById, parentRow.user_id).name : null;
+				parentRow == null
+					? null
+					: isRemoved(parentRow, kind.get(parentRow.id)!)
+						? REMOVED_AUTHOR.name
+						: buildAuthor(usersById, parentRow.user_id).name;
 			frame.out.push(
 				toNode(
 					frame.row,
+					kind.get(frame.row.id)!,
 					MAX_DEPTH,
 					parentAuthorName,
 					usersById,
@@ -349,18 +459,30 @@ export const buildTree = (
 	usersById: Map<string, TreeAuthor>,
 	reactionsById: Map<string, ReactionCount[]> = new Map(),
 	myVotes: Map<string, -1 | 1> = new Map(),
-	opts: { keepAllDeleted?: boolean } = {},
+	opts: { keepAllDeleted?: boolean; viewerId?: string | null } = {},
 ): BuildResult => {
 	const byId = new Map<string, TreeComment>();
 	for (const r of rows) byId.set(r.id, r);
+	const kind = new Map<string, Kind>();
+	for (const r of rows) kind.set(r.id, kindOf(r, opts.viewerId ?? null));
 	const children = indexByParent(rows);
-	const keep = keepableSet(rows, opts.keepAllDeleted ?? false);
+	const keep = keepableSet(rows, kind, opts.keepAllDeleted ?? false);
 
 	const tops = (children.get(null) ?? []).filter((t) => keep.has(t.id));
 	const threads: TreeNode[] = [];
 	for (const t of tops) {
-		const node = toNode(t, 0, null, usersById, reactionsById, myVotes);
-		node.replies = buildSubtree(t.id, 1, children, keep, usersById, byId, reactionsById, myVotes);
+		const node = toNode(t, kind.get(t.id)!, 0, null, usersById, reactionsById, myVotes);
+		node.replies = buildSubtree(
+			t.id,
+			1,
+			children,
+			keep,
+			kind,
+			usersById,
+			byId,
+			reactionsById,
+			myVotes,
+		);
 		threads.push(node);
 	}
 	return { threads };

@@ -218,15 +218,19 @@ describe("POST /api/v1/comments/:id/report", () => {
 		expect(fireWebhook).not.toHaveBeenCalled();
 	});
 
-	it("returns ok for a deleted comment without opening a report", async () => {
-		const id = await seedComment();
-		sqlite.prepare("UPDATE comments SET status = 'deleted' WHERE id = ?").run(id);
-		const res = await report(mkEnv(), id);
-		expect(res.status).toBe(200);
-		expect(await res.json()).toEqual({ ok: true });
-		expect(reportRowCount(id)).toBe(0);
-		expect(fireWebhook).not.toHaveBeenCalled();
-	});
+	// Spam and pending ids are public now (as placeholders), so only an
+	// approved comment can take a report.
+	for (const status of ["deleted", "spam", "pending"]) {
+		it(`returns ok for a ${status} comment without opening a report`, async () => {
+			const id = await seedComment();
+			sqlite.prepare("UPDATE comments SET status = ? WHERE id = ?").run(status, id);
+			const res = await report(mkEnv(), id);
+			expect(res.status).toBe(200);
+			expect(await res.json()).toEqual({ ok: true });
+			expect(reportRowCount(id)).toBe(0);
+			expect(fireWebhook).not.toHaveBeenCalled();
+		});
+	}
 
 	it("rejects an anonymous reporter whose ip_hash ghost is banned", async () => {
 		// Banning an abusive anonymous author bans their ghost row. The gate used

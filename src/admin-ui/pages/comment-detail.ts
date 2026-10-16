@@ -14,6 +14,7 @@ import {
 	replyComposer,
 } from "../components/reply-composer";
 import { escapeHtml, jsLiteral } from "../escape";
+import { replyHint } from "./queue";
 
 const formatTs = (ts: number): string =>
 	new Date(ts).toISOString().slice(0, 16).replace("T", " ");
@@ -209,6 +210,12 @@ const actionsFor = (c: AdminComment): string => {
 		parts.push(
 			`<button :disabled="busy" class="bad" @click="busy=true; act('spam').finally(()=>busy=false)">Spam</button>`,
 		);
+	// Cascade: this comment and every reply below it. The confirm names the
+	// scope rather than a count — reply_count is direct children only.
+	if (status !== "deleted" && (c.reply_count ?? 0) > 0)
+		parts.push(
+			`<button :disabled="busy" class="bad" @click="if (confirm('Mark this comment and every reply below it as spam?')) { busy=true; act('spam_thread').finally(()=>busy=false) }">Spam thread</button>`,
+		);
 	if (status !== "deleted")
 		parts.push(
 			`<button :disabled="busy" class="bad" @click="busy=true; act('delete').finally(()=>busy=false)">Delete</button>`,
@@ -294,15 +301,19 @@ export const renderCommentDetail = (
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ action }),
     }).then(r => {
-      if (!r.ok) throw new Error('action failed: ' + r.status);
-      this.$dispatch('toast', { text: action === 'pin' ? 'Pinned' : action === 'unpin' ? 'Unpinned' : action + 'd' });
+      if (!r.ok) return r.json().catch(() => ({})).then(j => {
+        throw new Error(j.error === 'too_many'
+          ? 'Thread too large (over 100 comments). Use bulk spam.'
+          : 'action failed: ' + r.status);
+      });
+      this.$dispatch('toast', { text: action === 'pin' ? 'Pinned' : action === 'unpin' ? 'Unpinned' : action === 'spam_thread' ? 'Thread marked spam' : action + 'd' });
       setTimeout(() => location.reload(), 600);
     }).catch(e => {
       this.$dispatch('toast', { text: e.message, kind: 'bad' });
     }).finally(() => { this.busy = false; });
   }
 }">
-  <h2>Comment</h2>
+  <h2>Comment${replyHint(comment)}</h2>
   ${commentCard(comment, "Selected")}
   <div class="actions" style="margin-top:0.5rem">${actionsFor(comment)}</div>
   ${banAuthorAction(comment, isAdmin)}

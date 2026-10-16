@@ -323,9 +323,16 @@ const loadEndpoints = async (env: WebhookEnv): Promise<WebhookEndpoint[]> => {
 	return rows;
 };
 
-export const dispatchWebhook = async (
+// One endpoint load for every payload, so a bulk action pays for it once
+// instead of once per comment. Known ceiling: the slack/discord/telegram
+// adapters still read D1 per event (comment, user, post), and a failed POST
+// still enqueues one delivery row per event, all inside waitUntil. A large
+// bulk action against rich or failing endpoints can therefore run past D1's
+// per-invocation query cap; that drops deliveries, never moderation state,
+// which has already committed.
+const dispatchWebhooks = async (
 	env: WebhookEnv,
-	payload: WebhookPayload,
+	payloads: WebhookPayload[],
 ): Promise<void> => {
 	let endpoints: WebhookEndpoint[];
 	try {
@@ -335,9 +342,12 @@ export const dispatchWebhook = async (
 		return;
 	}
 	await Promise.all(
-		endpoints.map((e) => dispatchToEndpoint(env, e, payload)),
+		payloads.flatMap((p) => endpoints.map((e) => dispatchToEndpoint(env, e, p))),
 	);
 };
+
+export const dispatchWebhook = (env: WebhookEnv, payload: WebhookPayload): Promise<void> =>
+	dispatchWebhooks(env, [payload]);
 
 export const fireWebhook = (
 	env: WebhookEnv,
@@ -352,6 +362,23 @@ export const fireWebhook = (
 		return;
 	}
 	executionCtx.waitUntil(dispatchWebhook(env, payload));
+};
+
+/** fireWebhook for many events at once, loading the endpoint list once. */
+export const fireWebhooks = (
+	env: WebhookEnv,
+	executionCtx: { waitUntil(p: Promise<unknown>): void } | undefined,
+	payloads: WebhookPayload[],
+): void => {
+	if (payloads.length === 0) return;
+	if (!executionCtx) {
+		log.warn("webhook.skipped_no_ctx", {
+			event: payloads[0]?.event,
+			count: payloads.length,
+		});
+		return;
+	}
+	executionCtx.waitUntil(dispatchWebhooks(env, payloads));
 };
 
 // -------------------------- retry handler -----------------------------------

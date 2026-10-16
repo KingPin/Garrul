@@ -12,7 +12,7 @@
  * so both the status transitions and the persisted verdict rows are the real
  * ones.
  */
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { Hono } from "hono";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
@@ -175,6 +175,41 @@ const verdictsFor = (id: string): { source: string; verdict: string }[] =>
 		.all(id) as { source: string; verdict: string }[];
 
 describe("PATCH /comments/:id — spam re-evaluation", () => {
+	const requarantineLines = async (run: () => unknown) => {
+		const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+		try {
+			await run();
+			return spy.mock.calls
+				.map((c) => JSON.parse(String(c[0])) as Record<string, unknown>)
+				.filter((l) => l.msg === "comment.requarantined");
+		} finally {
+			spy.mockRestore();
+		}
+	};
+
+	it("logs comment.requarantined with the direct reply count", async () => {
+		const id = seed();
+		sqlite
+			.prepare(
+				`INSERT INTO comments (id, post_slug, parent_id, user_id, body_md, body_html,
+				                       renderer_version, status, created_at, depth)
+				 VALUES ('01J0000000000000000000RPY1', ?, ?, ?, 'r', '<p>r</p>', 1, 'approved', ?, 2)`,
+			)
+			.run(SLUG, id, USER, Date.now());
+		const lines = await requarantineLines(() => patch(id, "now with https://spam.example/buy"));
+		expect(lines).toEqual([
+			expect.objectContaining({ comment_id: id, post_slug: SLUG, replies: 1 }),
+		]);
+		expect(Object.keys(lines[0]!).sort()).toEqual(
+			["comment_id", "level", "msg", "post_slug", "replies", "ts"].sort(),
+		);
+	});
+
+	it("does not log it for a clean edit", async () => {
+		const id = seed();
+		expect(await requarantineLines(() => patch(id, "still harmless, just longer"))).toEqual([]);
+	});
+
 	it("sends an approved comment back to the queue when the edit trips a heuristic", async () => {
 		const id = seed();
 		const res = await patch(id, "now with https://spam.example/buy");

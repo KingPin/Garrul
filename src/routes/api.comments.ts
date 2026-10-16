@@ -23,6 +23,7 @@ import { Hono } from "hono";
 import type { Bindings } from "../index";
 import {
 	adminInsertSpamVerdict,
+	countDirectReplies,
 	enqueueModeratorNotification,
 	enqueueNotification,
 	getComment,
@@ -43,6 +44,7 @@ import {
 	listUserReactionsOnComments,
 	softDeleteComment,
 	TREE_ROW_LIMIT,
+	TREE_SCAN_LIMIT,
 	updateCommentBody,
 	upsertPost,
 	COMMENT_SORTS,
@@ -685,6 +687,16 @@ comments.post("/", async (c) => {
 	if (body.parent_id) {
 		const parent = await getComment(c.env.DB, body.parent_id);
 		if (!parent) return c.json({ error: t("err.parent.not_found") }, 400);
+		// A hidden parent answers exactly like a missing one, so the response is
+		// no oracle for moderation state. Without this a stale page could reply
+		// under spam, and the live reply would then keep the spam visible as a
+		// placeholder. The author of a pending parent can see it, so they may.
+		if (
+			parent.status === "spam" ||
+			(parent.status === "pending" && parent.user_id !== author.id)
+		) {
+			return c.json({ error: t("err.parent.not_found") }, 400);
+		}
 		if (parent.post_slug !== slug) {
 			return c.json({ error: t("err.parent.different_post") }, 400);
 		}
@@ -1139,10 +1151,16 @@ export const buildTreePage = async (
 		cursorKey === null ? await getPinnedThreadRef(env.DB, slug) : null;
 	const shownRefs = pinnedRef ? [pinnedRef, ...pageRefs] : pageRefs;
 
+	// When the operator opts in, keep every deleted comment as a placeholder
+	// (leaf deletions included) rather than pruning them. A toggle change is
+	// reflected for anonymous viewers within the tree-cache TTL.
+	const keepAllDeleted = flags.show_deleted_placeholders;
+
 	const { rows, truncated } = await listCommentsForThreads(
 		env.DB,
 		shownRefs.map((r) => r.id),
 		viewerId,
+		keepAllDeleted,
 	);
 	if (truncated) {
 		log.warn("comments.page_truncated", {
@@ -1150,6 +1168,7 @@ export const buildTreePage = async (
 			sort,
 			threads: shownRefs.length,
 			limit: TREE_ROW_LIMIT,
+			scan_limit: TREE_SCAN_LIMIT,
 		});
 	}
 	const authors = await loadAuthors(env.DB, rows);
@@ -1177,13 +1196,9 @@ export const buildTreePage = async (
 		? await getUserVotesOnComments(env.DB, pageIds, session.user_id)
 		: new Map<string, -1 | 1>();
 
-	// When the operator opts in, keep every deleted comment as a placeholder
-	// (leaf deletions included) rather than pruning them. A toggle change is
-	// reflected for anonymous viewers within the tree-cache TTL.
-	const keepAllDeleted = flags.show_deleted_placeholders;
-
 	const { threads: allThreads } = buildTree(rows, authors, reactionsById, myVotes, {
 		keepAllDeleted,
+		viewerId,
 	});
 
 	// SQL already ordered and sliced the threads; restore that order over the
@@ -1416,6 +1431,18 @@ comments.patch("/:id", async (c) => {
 		nextStatus === existing.status ? undefined : nextStatus,
 	);
 	await bustTreeCache(c.env, c.req.url, existing.post_slug, numbers);
+
+	// An edit that sends a comment back to the queue hides it, and its replies
+	// now hang under a placeholder. Logged so an operator can see why a thread
+	// suddenly shows a removed comment. Ids and a count only, no PII. The count
+	// query runs only on this transition, which is rare.
+	if (nextStatus !== existing.status) {
+		log.info("comment.requarantined", {
+			comment_id: id,
+			post_slug: existing.post_slug,
+			replies: await countDirectReplies(c.env.DB, id),
+		});
+	}
 
 	// Same fire-and-forget shape as POST, so the moderator sees why the edit was
 	// held.

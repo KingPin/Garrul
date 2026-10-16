@@ -730,6 +730,22 @@ Cancel, and `Escape` backs out. Before v2.9.0 this was `window.confirm()`,
 which is suppressed entirely in some webviews and in cross-origin iframes
 without user activation — where the button appeared to do nothing.
 
+### Removed comments and their replies (since v2.37.0)
+
+A comment marked spam, or held for moderation, no longer takes its replies
+with it. If it has approved replies, it stays in the tree as a placeholder
+that looks exactly like a moderator removal: `status: "deleted"`,
+`deleted_by: "moderator"`, an empty body, and an anonymous author
+(`{"id": "", "name": "[deleted]"}`) with no votes or reactions. A moderator-
+deleted comment now renders the same anonymous way. A spam or held comment
+with no approved replies is not shown at all; a moderator-deleted one follows
+the `show_deleted_placeholders` setting. Every removed node, a moderator-deleted
+one included, returns `deleted_at: null` and `edited_at: null`.
+
+Replying to a spam comment, or to someone else's held comment, returns the
+same `400` as replying to a comment that does not exist. You can still reply
+under your own held comment.
+
 ### Comment length (since v2.9.0)
 
 A comment body is capped at **10,000 characters**. This is a constant, not
