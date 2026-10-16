@@ -43,6 +43,7 @@ import {
 	listUserReactionsOnComments,
 	softDeleteComment,
 	TREE_ROW_LIMIT,
+	TREE_SCAN_LIMIT,
 	updateCommentBody,
 	upsertPost,
 	COMMENT_SORTS,
@@ -1139,10 +1140,16 @@ export const buildTreePage = async (
 		cursorKey === null ? await getPinnedThreadRef(env.DB, slug) : null;
 	const shownRefs = pinnedRef ? [pinnedRef, ...pageRefs] : pageRefs;
 
+	// When the operator opts in, keep every deleted comment as a placeholder
+	// (leaf deletions included) rather than pruning them. A toggle change is
+	// reflected for anonymous viewers within the tree-cache TTL.
+	const keepAllDeleted = flags.show_deleted_placeholders;
+
 	const { rows, truncated } = await listCommentsForThreads(
 		env.DB,
 		shownRefs.map((r) => r.id),
 		viewerId,
+		keepAllDeleted,
 	);
 	if (truncated) {
 		log.warn("comments.page_truncated", {
@@ -1150,6 +1157,7 @@ export const buildTreePage = async (
 			sort,
 			threads: shownRefs.length,
 			limit: TREE_ROW_LIMIT,
+			scan_limit: TREE_SCAN_LIMIT,
 		});
 	}
 	const authors = await loadAuthors(env.DB, rows);
@@ -1176,11 +1184,6 @@ export const buildTreePage = async (
 	const myVotes = session
 		? await getUserVotesOnComments(env.DB, pageIds, session.user_id)
 		: new Map<string, -1 | 1>();
-
-	// When the operator opts in, keep every deleted comment as a placeholder
-	// (leaf deletions included) rather than pruning them. A toggle change is
-	// reflected for anonymous viewers within the tree-cache TTL.
-	const keepAllDeleted = flags.show_deleted_placeholders;
 
 	const { threads: allThreads } = buildTree(rows, authors, reactionsById, myVotes, {
 		keepAllDeleted,

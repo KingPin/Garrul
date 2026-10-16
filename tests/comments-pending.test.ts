@@ -99,6 +99,15 @@ const makeDb = (approved: Row[], pending: Row[]) => {
 			},
 			all: async () => {
 				if (sql.includes("key, value FROM settings")) return { results: [] };
+				// The thread-refs query (viewer is bind 1) and the subtree walk
+				// (viewer is bind 0) both select live rows: approved plus the
+				// viewer's own pending, scoped here like the real SQL does.
+				if (sql.includes("thread_level") || sql.includes("parent_id IS NULL")) {
+					const uid = sql.includes("thread_level") ? boundArgs[0] : boundArgs[1];
+					return {
+						results: [...approved, ...pending.filter((r) => r.user_id === uid)],
+					};
+				}
 				if (
 					sql.includes("FROM comments") &&
 					sql.includes("status = 'pending'")

@@ -778,6 +778,22 @@ const visiblePredicate = (
 };
 
 /**
+ * Rows that render as themselves for this viewer: approved, plus the viewer's
+ * own pending. Unlike visiblePredicate it excludes `deleted`, which renders
+ * only as a placeholder and never justifies keeping a hidden parent.
+ */
+const livePredicate = (
+	viewer_id: string | null,
+	alias: string,
+): { sql: string; binds: string[] } =>
+	viewer_id
+		? {
+				sql: `(${alias}.status = 'approved' OR (${alias}.status = 'pending' AND ${alias}.user_id = ?))`,
+				binds: [viewer_id],
+			}
+		: { sql: `${alias}.status = 'approved'`, binds: [] };
+
+/**
  * Hard backstop on how many comment rows one page of a tree may pull out of D1.
  *
  * Pagination below is thread-scoped, so the normal cost of a page is "the
@@ -789,6 +805,16 @@ const visiblePredicate = (
  * and the caller logs when it happens so the operator isn't guessing.
  */
 export const TREE_ROW_LIMIT = 2000;
+
+/**
+ * Cap on the tree walk, whatever the rows' status. The output LIMIT bounds
+ * what is returned, not what the walk reads; this bounds the read. Each level
+ * of the walk reads at most this many rows and no level starts once this many
+ * have been walked, so one call visits fewer than 2 × TREE_SCAN_LIMIT rows
+ * however wide or deep the threads are. Hidden leaves never enter the walk:
+ * each costs one uncounted index probe (see listCommentsForThreads).
+ */
+export const TREE_SCAN_LIMIT = 2 * TREE_ROW_LIMIT;
 
 export type ThreadRef = { id: string; score: number; created_at: number };
 
@@ -810,6 +836,15 @@ export const COMMENT_SORTS = ["new", "top", "old"] as const;
 export type CommentSort = (typeof COMMENT_SORTS)[number];
 
 /**
+ * The public score a thread sorts and pages on. A non-approved root (a hidden
+ * root kept for its live replies, or a deleted one) renders with zero votes,
+ * so it must sort and cursor as 0 too — its real score would otherwise leak
+ * through its position and through the `<score>:<id>` cursor.
+ */
+const THREAD_SCORE =
+	"(CASE WHEN status = 'approved' THEN score_up - score_down ELSE 0 END)";
+
+/**
  * One page of top-level thread ids in the requested sort order, plus the two
  * values a keyset cursor needs: net score (for `top`) and `created_at` (for
  * `new`/`old`).
@@ -821,7 +856,14 @@ export type CommentSort = (typeof COMMENT_SORTS)[number];
  * the tiebreaker for equal timestamps; the pair is a total order because ids
  * are unique.
  *
- * `top` orders on `(score DESC, id DESC)`; unchanged.
+ * `top` orders on `(THREAD_SCORE DESC, id DESC)`: the net score for an
+ * approved root, 0 for any other.
+ *
+ * A hidden root (spam, or someone else's pending) is a thread when it has a
+ * live direct child, so its approved replies stay reachable under a
+ * placeholder. Known ceiling: a hidden root whose only live descendants sit
+ * below a second hidden level stays unpaged. Probe with a bounded recursive
+ * EXISTS if that shape ever shows up.
  *
  * Cursor semantics: return rows strictly after the cursor position in the
  * requested order. The caller passes `limit = pageSize + 1` to learn whether a
@@ -842,13 +884,14 @@ export const listThreadRefsForPost = async (
 	},
 ): Promise<ThreadRef[]> => {
 	const visible = visiblePredicate(opts.viewer_id ?? null);
+	const live = livePredicate(opts.viewer_id ?? null, "ch");
 	let cursorSql = "";
 	const cursorBinds: (string | number)[] = [];
 	if (opts.cursor) {
 		if (opts.sort === "top") {
 			const score = opts.cursor.score ?? 0;
 			cursorSql =
-				"AND ((score_up - score_down) < ? OR ((score_up - score_down) = ? AND id < ?))";
+				`AND (${THREAD_SCORE} < ? OR (${THREAD_SCORE} = ? AND id < ?))`;
 			cursorBinds.push(score, score, opts.cursor.id);
 		} else if (typeof opts.cursor.created_at === "number") {
 			const ts = opts.cursor.created_at;
@@ -865,21 +908,24 @@ export const listThreadRefsForPost = async (
 	}
 	const order =
 		opts.sort === "top"
-			? "(score_up - score_down) DESC, id DESC"
+			? `${THREAD_SCORE} DESC, id DESC`
 			: opts.sort === "old"
 				? "created_at ASC, id ASC"
 				: "created_at DESC, id DESC";
 	const result = await db
 		.prepare(
-			`SELECT id, (score_up - score_down) AS score, created_at
+			`SELECT id, ${THREAD_SCORE} AS score, created_at
 			   FROM comments
 			  WHERE post_slug = ? AND parent_id IS NULL
 			    AND (pinned_at IS NULL OR status <> 'approved')
-			    AND ${visible.sql} ${cursorSql}
+			    AND (${visible.sql}
+			         OR EXISTS (SELECT 1 FROM comments ch
+			                     WHERE ch.parent_id = comments.id AND ${live.sql}))
+			    ${cursorSql}
 			  ORDER BY ${order}
 			  LIMIT ?`,
 		)
-		.bind(post_slug, ...visible.binds, ...cursorBinds, opts.limit)
+		.bind(post_slug, ...visible.binds, ...live.binds, ...cursorBinds, opts.limit)
 		.all<ThreadRef>();
 	return result.results ?? [];
 };
@@ -965,63 +1011,119 @@ export const setCommentPin = async (
 };
 
 /**
- * Every visible comment belonging to the given top-level threads.
+ * Every comment the tree needs for the given top-level threads: live rows
+ * (approved, plus the viewer's own pending), the hidden or deleted ancestors
+ * that keep them reachable, and — when `keepAllDeleted` is set — deleted rows
+ * with no hidden row between them and their nearest live ancestor. The
+ * selection happens HERE, before the output LIMIT, so a pile of spam can't
+ * fill TREE_ROW_LIMIT and push approved replies out. buildTree applies the
+ * same rule again (keepableSet).
  *
  * Replaces a query that selected EVERY comment on the slug with no LIMIT at
  * all: ~5,000 rows on a busy post, multiplied by the four-to-five queries this
  * endpoint runs, put D1's 5M daily row-read cap within reach of about a
  * thousand unauthenticated requests.
  *
- * The recursive CTE applies the visibility predicate to the recursive step as
- * well as the seed, so an unreachable subtree (children of a spam comment) is
- * never read. Those rows were previously fetched and then silently dropped by
- * the tree builder, which couldn't reach them either — same output, fewer rows.
+ * How the walk works. `thread_level` walks down from the seeds through every
+ * status, one LEVEL per recursive step: each step's row holds that whole level
+ * as a JSON array of nodes. Each node carries `need` — the non-live ancestors
+ * between it and its nearest live ancestor — and `tainted` — whether a hidden
+ * row is among them; `carry`/`ctaint` are the same two as its children inherit
+ * them. `keep` is then: live rows, the `need` of live rows, and (when keeping
+ * deleted) untainted deleted rows plus their `need`.
  *
- * `truncated` reports that TREE_ROW_LIMIT clipped the result; the caller logs
- * it. Rows come back created_at ASC so the builder's sibling ordering is a
+ * Cost. Why levels and not one row per step: SQLite stops a row-at-a-time
+ * recursive CTE at its LIMIT but keeps iterating the parent index past it, so
+ * 50,000 replies under one comment cost 4.6× the VM steps of 5,000 for the
+ * same 4,000 rows walked. Here each level's children come from a plain
+ * `LIMIT ?3` subquery, which does stop the scan, and no level starts once ?3
+ * rows have been walked: under 2 × TREE_SCAN_LIMIT rows visited whatever the
+ * width or depth. A hidden LEAF never enters the walk: the `EXISTS` probe reads
+ * only comments_parent_idx, so a spam pile costs one uncounted index probe per
+ * row and no walk or output row. A child is walked only from its parent's
+ * level, so the cap never orphans a row. A parent_id cycle from a bad import
+ * keeps every level non-empty, so the cap is also its guard.
+ *
+ * `truncated` reports that either cap fired; the caller logs it. The walk
+ * metadata comes from a one-row LEFT JOIN, so it arrives (with a NULL comment)
+ * even when the keep set is empty — a capped walk that kept nothing must still
+ * warn. Rows come back created_at ASC so the builder's sibling ordering is a
  * no-op scan.
  *
- * The ids travel as ONE JSON-array bind read back through `json_each`, not one
- * `?` each: D1 caps a query at 100 bound parameters, and a page is up to 200
- * threads (`comments_per_page` max) plus the pinned one, plus the limit and
- * the signed-in visibility binds.
+ * Numbered binds, because the live test appears many times: ?1 viewer (NULL
+ * for anonymous, which matches no user_id), ?2 thread ids as ONE JSON array
+ * (D1 caps a query at 100 bound parameters and a page is up to 200 threads),
+ * ?3 scan cap, ?4 keep-deleted flag, ?5 row cap.
  */
 export const listCommentsForThreads = async (
 	db: D1Database,
 	threadIds: string[],
 	viewer_id: string | null = null,
+	keepAllDeleted = false,
 ): Promise<{ rows: TreeComment[]; truncated: boolean }> => {
 	if (threadIds.length === 0) return { rows: [], truncated: false };
-	const seed = visiblePredicate(viewer_id, "s");
-	const step = visiblePredicate(viewer_id, "c");
+	const live = (a: string) =>
+		`(${a}.status = 'approved' OR (${a}.status = 'pending' AND ${a}.user_id = ?1))`;
+	const hidden = (a: string) => `${a}.status IN ('spam', 'pending')`;
+	// One walked row as a JSON node; `carry`/`ctaint` are what its children
+	// inherit as `need`/`tainted`.
+	const node = (a: string, need: string, carry: string, tainted: string) =>
+		`json_object('id', ${a}.id, 'status', ${a}.status, 'live', ${live(a)}, 'need', ${need},
+		   'carry', CASE WHEN ${live(a)} THEN json('[]') ELSE ${carry} END,
+		   'tainted', ${tainted},
+		   'ctaint', CASE WHEN ${live(a)} THEN 0 ELSE (${tainted} OR ${hidden(a)}) END)`;
 	const result = await db
 		.prepare(
-			`WITH RECURSIVE thread(id) AS (
-			 	SELECT s.id FROM comments s
-			 	 WHERE s.id IN (SELECT value FROM json_each(?)) AND ${seed.sql}
-			 	UNION
-			 	SELECT c.id FROM comments c
-			 	 JOIN thread t ON c.parent_id = t.id
-			 	 WHERE ${step.sql}
+			`WITH RECURSIVE thread_level(nodes, before) AS (
+			 	SELECT json_group_array(${node("s", "json('[]')", "json_array(s.id)", "0")}), 0
+			 	  FROM comments s
+			 	 WHERE s.id IN (SELECT value FROM json_each(?2))
+			 	UNION ALL
+			 	SELECT (SELECT json_group_array(${node("c", "json(c.pcarry)", "json_insert(c.pcarry, '$[#]', c.id)", "c.pctaint")})
+			 	          FROM (SELECT c.*, p.value ->> 'carry' AS pcarry, p.value ->> 'ctaint' AS pctaint
+			 	                  FROM json_each(l.nodes) p
+			 	                  JOIN comments c ON c.parent_id = p.value ->> 'id'
+			 	                 WHERE ${live("c")} OR c.status = 'deleted'
+			 	                    OR EXISTS (SELECT 1 FROM comments g WHERE g.parent_id = c.id)
+			 	                 LIMIT ?3) c),
+			 	       l.before + json_array_length(l.nodes)
+			 	  FROM thread_level l
+			 	 WHERE json_array_length(l.nodes) > 0
+			 	   AND l.before + json_array_length(l.nodes) < ?3
+			 ),
+			 thread AS (
+			 	SELECT j.value ->> 'id' AS id, j.value ->> 'status' AS status,
+			 	       j.value ->> 'live' AS live, j.value -> 'need' AS need,
+			 	       j.value ->> 'tainted' AS tainted
+			 	  FROM thread_level, json_each(thread_level.nodes) j
+			 ),
+			 keep(id) AS (
+			 	SELECT id FROM thread WHERE live
+			 	UNION SELECT j.value FROM thread t, json_each(t.need) j WHERE t.live
+			 	UNION SELECT id FROM thread WHERE ?4 AND status = 'deleted' AND NOT tainted
+			 	UNION SELECT j.value FROM thread t, json_each(t.need) j
+			 	       WHERE ?4 AND t.status = 'deleted' AND NOT t.tainted
 			 )
-			 SELECT ${TREE_COLUMNS}
-			 FROM comments
-			 WHERE id IN (SELECT id FROM thread)
-			 ORDER BY created_at ASC, id ASC
-			 LIMIT ?`,
+			 SELECT m.walked, ${TREE_COLUMNS}
+			   FROM (SELECT max(before + json_array_length(nodes)) AS walked FROM thread_level) m
+			   LEFT JOIN comments ON comments.id IN (SELECT id FROM keep)
+			  ORDER BY comments.created_at ASC, comments.id ASC
+			  LIMIT ?5`,
 		)
 		.bind(
+			viewer_id,
 			JSON.stringify(threadIds),
-			...seed.binds,
-			...step.binds,
+			TREE_SCAN_LIMIT,
+			keepAllDeleted ? 1 : 0,
 			TREE_ROW_LIMIT + 1,
 		)
-		.all<TreeComment>();
-	const rows = result.results ?? [];
-	if (rows.length > TREE_ROW_LIMIT) {
-		return { rows: rows.slice(0, TREE_ROW_LIMIT), truncated: true };
-	}
-	return { rows, truncated: false };
+		.all<TreeComment & { walked: number }>();
+	const all = result.results ?? [];
+	const walked = all[0]?.walked ?? 0;
+	// An empty keep set still yields the metadata row, with a NULL comment.
+	const rows = all.filter((r) => r.id !== null);
+	const truncated = rows.length > TREE_ROW_LIMIT || walked >= TREE_SCAN_LIMIT;
+	return { rows: rows.slice(0, TREE_ROW_LIMIT), truncated };
 };
 
 /**
