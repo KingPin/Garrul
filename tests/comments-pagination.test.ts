@@ -1044,6 +1044,36 @@ describe("GET /comments — hidden parents", () => {
 		expect(second.next_cursor).toBeNull();
 	});
 
+	it("shows a signed-in viewer their own pending under a masked spam root", async () => {
+		addSpammer();
+		seedRow(mkUlid(1), null, "spam", 1000, { user: SPAMMER });
+		seedRow(mkUlid(2), mkUlid(1), "pending", 2000);
+		seedRow(mkUlid(3), mkUlid(2), "approved", 3000, { user: SPAMMER });
+		const sid = "a".repeat(64);
+		const env = {
+			...mkEnv(),
+			SESSIONS: {
+				get: async (k: string) =>
+					k === `sess:${sid}`
+						? JSON.stringify({ user_id: USER, expires_at: 4_102_444_800_000 })
+						: null,
+				put: async () => {},
+				delete: async () => {},
+			},
+		} as unknown as Bindings;
+		const app = new Hono<{ Bindings: Bindings }>().route("/", comments);
+		const res = await app.request(
+			`/?slug=${SLUG}`,
+			{ headers: { cookie: `__Host-garrul_sess=${sid}` } },
+			env as unknown as Record<string, unknown>,
+		);
+		const page = (await res.json()) as ListResp;
+		const root = nodes(page)[0]!;
+		expect(root).toMatchObject({ id: mkUlid(1), status: "deleted" });
+		expect(root.replies.map((r) => [r.id, r.status])).toEqual([[mkUlid(2), "pending"]]);
+		expect(root.replies[0]!.replies.map((r) => r.id)).toEqual([mkUlid(3)]);
+	});
+
 	it("logs truncation when the walk passes TREE_SCAN_LIMIT", async () => {
 		addSpammer();
 		seedRow(mkUlid(1), null, "approved", 1000);

@@ -810,9 +810,10 @@ export const TREE_ROW_LIMIT = 2000;
  * Cap on the tree walk, whatever the rows' status. The output LIMIT bounds
  * what is returned, not what the walk reads; this bounds the read. Each level
  * of the walk reads at most this many rows and no level starts once this many
- * have been walked, so one call visits fewer than 2 × TREE_SCAN_LIMIT rows
- * however wide or deep the threads are. Hidden leaves never enter the walk:
- * each costs one uncounted index probe (see listCommentsForThreads).
+ * have been walked, so one call walks fewer than 2 × TREE_SCAN_LIMIT rows
+ * however wide or deep the threads are. Hidden LEAVES are not capped: they
+ * never enter the walk, but each costs one row read plus one index probe
+ * (see listCommentsForThreads).
  */
 export const TREE_SCAN_LIMIT = 2 * TREE_ROW_LIMIT;
 
@@ -1038,9 +1039,13 @@ export const setCommentPin = async (
  * same 4,000 rows walked. Here each level's children come from a plain
  * `LIMIT ?3` subquery, which does stop the scan, and no level starts once ?3
  * rows have been walked: under 2 × TREE_SCAN_LIMIT rows visited whatever the
- * width or depth. A hidden LEAF never enters the walk: the `EXISTS` probe reads
- * only comments_parent_idx, so a spam pile costs one uncounted index probe per
- * row and no walk or output row. A child is walked only from its parent's
+ * width or depth. Rows that enter the walk are capped; hidden LEAVES are not.
+ * A hidden leaf is filtered out in the level subquery's WHERE, before its
+ * LIMIT, so it never counts toward the cap and never produces a walk or output
+ * row. It still costs one table-row read (for `status`) plus one probe of
+ * comments_parent_idx, which is (parent_id) only: the same cost as before this
+ * change. Bounding it needs a covering (parent_id, status, user_id) index or
+ * counting scanned children, deliberately not done here. A child is walked only from its parent's
  * level, so the cap never orphans a row. A parent_id cycle from a bad import
  * keeps every level non-empty, so the cap is also its guard.
  *
@@ -1080,7 +1085,7 @@ export const listCommentsForThreads = async (
 			 	 WHERE s.id IN (SELECT value FROM json_each(?2))
 			 	UNION ALL
 			 	SELECT (SELECT json_group_array(${node("c", "json(c.pcarry)", "json_insert(c.pcarry, '$[#]', c.id)", "c.pctaint")})
-			 	          FROM (SELECT c.*, p.value ->> 'carry' AS pcarry, p.value ->> 'ctaint' AS pctaint
+			 	          FROM (SELECT c.id, c.status, c.user_id, p.value ->> 'carry' AS pcarry, p.value ->> 'ctaint' AS pctaint
 			 	                  FROM json_each(l.nodes) p
 			 	                  JOIN comments c ON c.parent_id = p.value ->> 'id'
 			 	                 WHERE ${live("c")} OR c.status = 'deleted'
