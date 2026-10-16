@@ -1688,7 +1688,7 @@ all hidden too renders nothing. Moderator-deleted comments are anonymized the
 same way, so readers can't tell spam removals from deletions.
 
 - **Spam thread.** The comment detail page offers **Spam thread** on any
-  comment with replies: it marks that comment and every reply below it spam.
+  non-deleted comment with replies: it marks that comment and every reply below it spam.
   Each comment it changes gets a `thread.spam` audit row whose meta records
   `root_id`, `prev_status` and `batch_size`, so you can undo by restoring
   those rows. Status and audit rows commit atomically. Subtrees over 100
