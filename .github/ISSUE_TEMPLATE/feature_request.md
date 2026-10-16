@@ -7,9 +7,11 @@ assignees: ''
 ---
 
 <!--
-Check the v2 backlog in CLAUDE.md before filing — multi-site, real-time,
-image upload, importers, @mentions, in-comment search, generic OIDC, and
-webhook signing are explicitly deferred.
+Check "Out of scope (v2 backlog)" in CLAUDE.md before filing — multi-tenant
+per Worker, real-time updates, image uploads, a WordPress importer,
+self-serve account delete, @mentions, in-comment search, generic OIDC,
+per-post auto-close schedules, and community hide-and-hold are explicitly
+deferred.
 -->
 
 **Problem**
