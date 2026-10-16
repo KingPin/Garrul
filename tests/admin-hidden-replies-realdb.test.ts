@@ -130,6 +130,30 @@ describe("POST /admin/api/comments/:id — spam_thread", () => {
 		});
 	}
 
+	// softDeleteComment keeps the body; flipping a deleted row to spam would let
+	// an approve from the spam queue republish an author-deleted comment.
+	it("leaves deleted descendants alone and 404s a deleted root", async () => {
+		const { h, add, statusOf, act } = seeded();
+		add("r", null, "approved");
+		add("a", "r", "approved");
+		add("d", "r", "deleted");
+		h.sqlite.exec("UPDATE comments SET deleted_at = 42, deleted_by = 'author' WHERE id = 'd'");
+		const res = await act("r", "spam_thread");
+		expect(await res.json()).toEqual({ ok: true, id: "r", touched: 2 });
+		expect(h.sqlite.prepare("SELECT status, deleted_at, deleted_by FROM comments WHERE id = 'd'").get()).toEqual({
+			status: "deleted",
+			deleted_at: 42,
+			deleted_by: "author",
+		});
+		expect(audits(h).map((a) => a.target_id)).toEqual(["a", "r"]);
+		expect(audits(h)[0]?.meta.batch_size).toBe(2);
+
+		add("z", null, "deleted");
+		add("z1", "z", "approved");
+		expect((await act("z", "spam_thread")).status).toBe(404);
+		expect(statusOf("z1")).toBe("approved");
+	});
+
 	it("404s a missing root and lets a mod run it", async () => {
 		const { add, statusOf, act } = seeded();
 		expect((await act("nope", "spam_thread")).status).toBe(404);

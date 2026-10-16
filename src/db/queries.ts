@@ -3631,7 +3631,9 @@ export const adminGetUserDetail = async (
  *
  * The audit INSERT goes first and reads `prev_status` from the row itself, so
  * it records exactly what the UPDATE then changes, both under the same
- * `status <> 'spam'` filter. One statement each, whatever the row count: D1
+ * `status NOT IN ('spam', 'deleted')` filter. Deleted rows are left alone:
+ * softDeleteComment keeps the body, so spamming one (deleted_at cleared,
+ * deleted_by kept) would let an approve from the spam queue republish it. One statement each, whatever the row count: D1
  * allows 50 queries per Worker invocation on the Free plan. Ids travel as ONE
  * JSON bind (`[{id, audit_id}]`) under D1's 100-parameter cap.
  */
@@ -3650,16 +3652,16 @@ export const adminSpamThread = async (
 				        json_object('root_id', ?3, 'prev_status', c.status,
 				                    'batch_size', (SELECT count(*) FROM comments c2
 				                                    WHERE c2.id IN (SELECT value ->> 'id' FROM json_each(?4))
-				                                      AND c2.status <> 'spam')),
+				                                      AND c2.status NOT IN ('spam', 'deleted'))),
 				        ?5
 				   FROM json_each(?4) t JOIN comments c ON c.id = t.value ->> 'id'
-				  WHERE c.status <> 'spam'`,
+				  WHERE c.status NOT IN ('spam', 'deleted')`,
 			)
 			.bind(args.adminId, args.reason, args.rootId, targets, Date.now()),
 		db
 			.prepare(
 				`UPDATE comments SET status = 'spam', deleted_at = NULL
-				  WHERE id IN (SELECT value ->> 'id' FROM json_each(?1)) AND status <> 'spam'`,
+				  WHERE id IN (SELECT value ->> 'id' FROM json_each(?1)) AND status NOT IN ('spam', 'deleted')`,
 			)
 			.bind(targets),
 	]);

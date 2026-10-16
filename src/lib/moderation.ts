@@ -107,6 +107,9 @@ export const THREAD_ACTION_LIMIT = 100;
  * All-or-nothing: a subtree over THREAD_ACTION_LIMIT rows (already-spam rows
  * count, which keeps the walk to one LIMIT) is refused unchanged, and the
  * operator falls back to bulk spam.
+ *
+ * Deleted rows are skipped (see adminSpamThread), and a deleted root is
+ * not_found: the UI offers no button there.
  */
 export const moderateThread = async (args: {
 	env: Bindings;
@@ -121,11 +124,11 @@ export const moderateThread = async (args: {
 > => {
 	const { env, commentId } = args;
 	const root = await getComment(env.DB, commentId);
-	if (!root) return { ok: false, error: "not_found" };
+	if (!root || root.status === "deleted") return { ok: false, error: "not_found" };
 	const subtree = await listSubtreeForCascade(env.DB, commentId, THREAD_ACTION_LIMIT + 1);
 	if (subtree.length > THREAD_ACTION_LIMIT) return { ok: false, error: "too_many" };
 	const touched = await adminSpamThread(env.DB, {
-		ids: subtree.filter((r) => r.status !== "spam").map((r) => r.id),
+		ids: subtree.filter((r) => r.status !== "spam" && r.status !== "deleted").map((r) => r.id),
 		adminId: args.adminId,
 		rootId: commentId,
 		reason: args.reason ?? null,
