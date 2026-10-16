@@ -25,6 +25,9 @@ export const makeD1 = (db: DatabaseSync): any => ({
 		let bound: unknown[] = [];
 		return {
 			bind(...args: unknown[]) {
+				// Real D1 rejects a query with more than 100 bound parameters;
+				// SQLite's own cap is far higher, so the stub has to enforce it.
+				if (args.length > 100) throw new Error(`D1: ${args.length} bound parameters > 100`);
 				bound = args;
 				return this;
 			},

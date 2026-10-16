@@ -3510,23 +3510,24 @@ export const adminBulkUpdateCommentStatus = async (
 	if (ids.length === 0) return [];
 	const now = Date.now();
 	const deletedAt = status === "deleted" ? now : null;
-	const placeholders = ids.map(() => "?").join(",");
+	// One JSON-array bind read through json_each, not one `?` per id: D1 caps a
+	// query at 100 bound parameters, and BULK_ACTION_LIMIT is 100 ids plus the
+	// two status binds.
 	// Only update rows that currently exist; return their IDs so the caller
 	// can audit-log exactly the rows that were touched.
 	const existing = await db
-		.prepare(`SELECT id FROM comments WHERE id IN (${placeholders})`)
-		.bind(...ids)
+		.prepare("SELECT id FROM comments WHERE id IN (SELECT value FROM json_each(?))")
+		.bind(JSON.stringify(ids))
 		.all<{ id: string }>();
 	const presentIds = (existing.results ?? []).map((r) => r.id);
 	if (presentIds.length === 0) return [];
-	const presentPlaceholders = presentIds.map(() => "?").join(",");
 	await db
 		.prepare(
 			`UPDATE comments
 			    SET status = ?, deleted_at = ?
-			  WHERE id IN (${presentPlaceholders})`,
+			  WHERE id IN (SELECT value FROM json_each(?))`,
 		)
-		.bind(status, deletedAt, ...presentIds)
+		.bind(status, deletedAt, JSON.stringify(presentIds))
 		.run();
 	return presentIds;
 };
