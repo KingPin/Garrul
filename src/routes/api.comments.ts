@@ -1184,6 +1184,7 @@ export const buildTreePage = async (
 
 	const { threads: allThreads } = buildTree(rows, authors, reactionsById, myVotes, {
 		keepAllDeleted,
+		viewerId,
 	});
 
 	// SQL already ordered and sliced the threads; restore that order over the

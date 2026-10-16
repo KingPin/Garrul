@@ -388,3 +388,127 @@ describe("buildTree — staff flag", () => {
 		expect(threads[0]).not.toHaveProperty("staff");
 	});
 });
+
+describe("buildTree — hidden parents", () => {
+	const spammer = author("spam-user", "Buy Cheap Pills");
+	const users = () => usersById(author("u1"), author("u2", "Other"), spammer);
+	const placeholderShape = {
+		status: "deleted",
+		deleted_by: "moderator",
+		deleted_at: null,
+		edited_at: null,
+		body_html: "",
+		author: { id: "", name: "[deleted]", provider: "anon", avatar_svg: null, avatar_url: null },
+		score_up: 0,
+		score_down: 0,
+		reactions: [],
+		my_vote: 0,
+	};
+
+	it("keeps a spam root as a placeholder above its approved reply", () => {
+		const rows = [mk("s", null, 100, "spam-user", "spam"), mk("r", "s", 200)];
+		const { threads } = buildTree(rows, users());
+		expect(threads).toHaveLength(1);
+		expect(threads[0]).toMatchObject(placeholderShape);
+		expect(threads[0]!.replies.map((r) => r.id)).toEqual(["r"]);
+		expect(threads[0]!.replies[0]!.status).toBe("approved");
+	});
+
+	it("keeps a spam reply in place so its approved replies stay reachable", () => {
+		const rows = [
+			mk("root", null, 100),
+			mk("s", "root", 200, "spam-user", "spam"),
+			mk("g", "s", 300),
+		];
+		const { threads } = buildTree(rows, users());
+		const s = threads[0]!.replies[0]!;
+		expect(s).toMatchObject({ id: "s", ...placeholderShape });
+		expect(s.replies.map((r) => r.id)).toEqual(["g"]);
+	});
+
+	for (const keepAllDeleted of [false, true]) {
+		it(`prunes a spam leaf (keepAllDeleted=${keepAllDeleted})`, () => {
+			const rows = [mk("root", null, 100), mk("s", "root", 200, "spam-user", "spam")];
+			const { threads } = buildTree(rows, users(), undefined, undefined, { keepAllDeleted });
+			expect(threads[0]!.replies).toEqual([]);
+		});
+
+		it(`a deleted leaf cannot resurrect its spam parent (keepAllDeleted=${keepAllDeleted})`, () => {
+			const rows = [
+				mk("root", null, 100),
+				mk("s", "root", 200, "spam-user", "spam"),
+				mk("d", "s", 300, "u1", "deleted"),
+			];
+			const { threads } = buildTree(rows, users(), undefined, undefined, { keepAllDeleted });
+			expect(threads.map((t) => t.id)).toEqual(["root"]);
+			expect(threads[0]!.replies).toEqual([]);
+		});
+	}
+
+	it("still keeps a deleted-only chain under a live root when keepAllDeleted is set", () => {
+		const rows = [
+			mk("root", null, 100),
+			mk("d1", "root", 200, "u1", "deleted"),
+			mk("d2", "d1", 300, "u1", "deleted"),
+		];
+		const { threads } = buildTree(rows, users(), undefined, undefined, { keepAllDeleted: true });
+		expect(threads[0]!.replies.map((r) => r.id)).toEqual(["d1"]);
+		expect(threads[0]!.replies[0]!.replies.map((r) => r.id)).toEqual(["d2"]);
+	});
+
+	it("keeps two stacked hidden levels above an approved reply", () => {
+		const rows = [
+			mk("root", null, 100),
+			mk("s", "root", 200, "spam-user", "spam"),
+			mk("p", "s", 300, "u2", "pending"),
+			mk("a", "p", 400),
+		];
+		const { threads } = buildTree(rows, users());
+		const s = threads[0]!.replies[0]!;
+		expect(s).toMatchObject({ id: "s", ...placeholderShape });
+		expect(s.replies[0]).toMatchObject({ id: "p", ...placeholderShape });
+		expect(s.replies[0]!.replies.map((r) => r.id)).toEqual(["a"]);
+	});
+
+	it("masks someone else's pending parent but shows the viewer their own", () => {
+		const rows = [
+			mk("theirs", null, 100, "u2", "pending"),
+			mk("r1", "theirs", 200),
+			mk("mine", null, 300, "u1", "pending"),
+			mk("r2", "mine", 400),
+		];
+		const { threads } = buildTree(rows, users(), undefined, undefined, { viewerId: "u1" });
+		const byId = new Map(threads.map((t) => [t.id, t]));
+		expect(byId.get("theirs")).toMatchObject(placeholderShape);
+		expect(byId.get("mine")).toMatchObject({ status: "pending", body_html: "<p>mine</p>" });
+		expect(byId.get("mine")!.author.id).toBe("u1");
+	});
+
+	it("never serializes a hidden author, including the flatten prefix past MAX_DEPTH", () => {
+		// c0..c3 nest normally; c4 (spam) and c5 render flattened. c5's
+		// flatten_from names its immediate parent, which is the hidden c4.
+		const rows = chain(MAX_DEPTH + 2).map((r) =>
+			r.id === `c${MAX_DEPTH}` ? { ...r, user_id: "spam-user", status: "spam" as const } : r,
+		);
+		const json = JSON.stringify(buildTree(rows, users()).threads);
+		expect(json).not.toContain("Buy Cheap Pills");
+		expect(json).not.toContain("spam-user");
+		expect(json).toContain(`"flatten_from":"[deleted]"`);
+	});
+
+	it("masks a moderator-deleted node and keeps an author-deleted node's author", () => {
+		const rows = [
+			mk("root", null, 100),
+			{ ...mk("byMod", "root", 200, "u2", "deleted", "moderator"), score_up: 5 },
+			mk("byModChild", "byMod", 250),
+			{ ...mk("byAuthor", "root", 300, "u2", "deleted", "author"), score_up: 7 },
+			mk("byAuthorChild", "byAuthor", 350),
+		];
+		const { threads } = buildTree(rows, users());
+		const byId = new Map(threads[0]!.replies.map((r) => [r.id, r]));
+		expect(byId.get("byMod")).toMatchObject(placeholderShape);
+		expect(byId.get("byAuthor")!.author.name).toBe("Other");
+		expect(byId.get("byAuthor")!.deleted_by).toBe("author");
+		expect(byId.get("byAuthor")!.score_up).toBe(0);
+	});
+});
