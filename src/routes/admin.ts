@@ -99,6 +99,7 @@ import {
 	type CommentAction,
 	eraseUser,
 	moderateComment,
+	moderateThread,
 	pinComment,
 	resolveReports,
 } from "../lib/moderation";
@@ -2010,6 +2011,20 @@ admin.post("/api/comments/:id", async (c) => {
 			return c.json({ error: pinned.error }, pinned.error === "not_found" ? 404 : 400);
 		}
 		return c.json({ ok: true, id: pinned.id, pinned: pinned.pinned });
+	}
+	if (body?.action === "spam_thread") {
+		const result = await moderateThread({
+			env: c.env,
+			executionCtx: c.executionCtx,
+			reqUrl: c.req.url,
+			adminId: user.id,
+			commentId: id,
+			reason: body.reason ?? null,
+		});
+		if (!result.ok) {
+			return c.json({ error: result.error }, result.error === "not_found" ? 404 : 400);
+		}
+		return c.json({ ok: true, id: result.id, touched: result.touched });
 	}
 	const action = body?.action as CommentAction | undefined;
 	if (

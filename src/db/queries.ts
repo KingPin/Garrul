@@ -2916,6 +2916,10 @@ export const ADMIN_ACTIONS = [
 	"bulk.spam",
 	"bulk.delete",
 	"bulk.restore",
+	// Spam-thread cascade: one row per comment it touched. meta carries
+	// `{root_id, prev_status, batch_size}`; prev_status is what makes a manual
+	// undo possible from the audit log.
+	"thread.spam",
 	"webhook.create",
 	"webhook.update",
 	"webhook.delete",
@@ -3608,6 +3612,74 @@ export const adminGetUserDetail = async (
 		reactions_received: reactionsRow?.n ?? 0,
 		audit,
 	};
+};
+
+/**
+ * Spam-thread write: the audit rows and the status update in ONE `db.batch`,
+ * which D1 runs as a single transaction. Split, a failed audit insert after a
+ * committed update would leave the rows spam with no `prev_status` to undo
+ * from, and a retry would skip them as already spam.
+ *
+ * The audit INSERT goes first and reads `prev_status` from the row itself, so
+ * it records exactly what the UPDATE then changes, both under the same
+ * `status <> 'spam'` filter. One statement each, whatever the row count: D1
+ * allows 50 queries per Worker invocation on the Free plan. Ids travel as ONE
+ * JSON bind (`[{id, audit_id}]`) under D1's 100-parameter cap.
+ */
+export const adminSpamThread = async (
+	db: D1Database,
+	args: { ids: string[]; adminId: string; rootId: string; reason: string | null },
+): Promise<number> => {
+	if (args.ids.length === 0) return 0;
+	const targets = JSON.stringify(args.ids.map((id) => ({ id, audit_id: ulid() })));
+	const [, update] = await db.batch([
+		db
+			.prepare(
+				`INSERT INTO audit_log
+				   (id, admin_id, action, target_kind, target_id, reason, meta, created_at)
+				 SELECT t.value ->> 'audit_id', ?1, 'thread.spam', 'comment', c.id, ?2,
+				        json_object('root_id', ?3, 'prev_status', c.status,
+				                    'batch_size', (SELECT count(*) FROM comments c2
+				                                    WHERE c2.id IN (SELECT value ->> 'id' FROM json_each(?4))
+				                                      AND c2.status <> 'spam')),
+				        ?5
+				   FROM json_each(?4) t JOIN comments c ON c.id = t.value ->> 'id'
+				  WHERE c.status <> 'spam'`,
+			)
+			.bind(args.adminId, args.reason, args.rootId, targets, Date.now()),
+		db
+			.prepare(
+				`UPDATE comments SET status = 'spam', deleted_at = NULL
+				  WHERE id IN (SELECT value ->> 'id' FROM json_each(?1)) AND status <> 'spam'`,
+			)
+			.bind(targets),
+	]);
+	return update?.meta.changes ?? 0;
+};
+
+/**
+ * A comment plus every descendant, any status, for the spam-thread cascade.
+ * The LIMIT sits inside the CTE so it bounds the walk itself: a caller that
+ * passes cap + 1 learns "too big" without reading the rest of a huge thread.
+ */
+export const listSubtreeForCascade = async (
+	db: D1Database,
+	rootId: string,
+	limit: number,
+): Promise<{ id: string; status: CommentStatus }[]> => {
+	const result = await db
+		.prepare(
+			`WITH RECURSIVE sub(id) AS (
+			   SELECT ?1
+			   UNION
+			   SELECT c.id FROM comments c JOIN sub s ON c.parent_id = s.id
+			   LIMIT ?2
+			 )
+			 SELECT id, status FROM comments WHERE id IN (SELECT id FROM sub)`,
+		)
+		.bind(rootId, limit)
+		.all<{ id: string; status: CommentStatus }>();
+	return result.results ?? [];
 };
 
 // ---------------------------------------------------------------------------
