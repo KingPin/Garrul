@@ -1678,6 +1678,35 @@ for Latin `K`) are not caught. Names are keyed in `users.name_key` (migration
 0028); the migration backfills an ASCII approximation, and each account gets
 its exact key on its next login.
 
+### Hidden parents and the spam-thread action (since v2.37.0)
+
+Marking a comment spam, or an edit sending it back to the queue, used to hide
+every reply under it. Now the approved replies stay visible and the hidden
+comment renders as an anonymous "[removed by a moderator]" placeholder,
+indistinguishable from a moderator delete. A hidden comment whose replies are
+all hidden too renders nothing. Moderator-deleted comments are anonymized the
+same way, so readers can't tell spam removals from deletions.
+
+- **Spam thread.** The comment detail page offers **Spam thread** on any
+  comment with replies: it marks that comment and every reply below it spam.
+  Each comment it changes gets a `thread.spam` audit row whose meta records
+  `root_id`, `prev_status` and `batch_size`, so you can undo by restoring
+  those rows. Status and audit rows commit atomically. Subtrees over 100
+  comments (already-spam rows count) are refused unchanged; use bulk spam for
+  those. The action fires one `comment.spam` webhook, for the root comment
+  only.
+- **Reply hint.** Spam and pending rows in the queue show "↳ N direct
+  replies". That counts direct replies of any status; it does not say whether
+  readers can see them.
+- **Re-quarantine log.** When an edit trips the spam check and moves an
+  approved comment back to pending, `wrangler tail` shows
+  `comment.requarantined` with `comment_id`, `post_slug` and `replies`.
+- **Reply guard.** Replies to a spam comment, or to someone else's pending
+  comment, are refused with the same error as a missing parent.
+- **Truncation.** `comments.page_truncated` now also fires when the rows
+  entering one page's tree walk hit the scan cap (4,000, logged as
+  `scan_limit`).
+
 ### Mount cost and free-tier headroom (since v2.15.0)
 
 The Workers free tier allows **100,000 requests/day**, and what a

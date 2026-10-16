@@ -435,6 +435,16 @@ A bell that looks lit but dashed/dimmed is the third state: subscribed
 but **awaiting confirmation**. Nothing is delivered to that address
 until they click the link in the confirmation email.
 
+## Moderation
+
+### A removed comment still shows its replies
+
+Expected since v2.37.0. When a comment is marked spam, held for moderation, or
+deleted by a moderator, its approved replies stay visible and the comment
+itself shows as "[removed by a moderator]" with no author. To remove the whole
+conversation, open the comment in the admin and use **Spam thread** (up to 100
+comments), or select the replies in the queue and bulk-spam them.
+
 ## Performance
 
 ### First comment load feels slow
