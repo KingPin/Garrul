@@ -1725,6 +1725,85 @@ admin.delete("/api/notes/:id", async (c) => {
 	return c.json({ ok: true, id });
 });
 
+// Must stay above the /api/comments/:id routes: Hono matches in registration order, so :id would take "bulk" as a comment id.
+const BULK_ACTION_LIMIT = 100;
+
+admin.post("/api/comments/bulk", async (c) => {
+	const user = await requireMod(c);
+	if (user instanceof Response) return user;
+	const body = await c.req
+		.json<{ ids?: unknown; action?: string }>()
+		.catch(() => null);
+	if (!body) return c.json({ error: "invalid_body" }, 400);
+	const action = body.action as CommentAction | undefined;
+	let newStatus: CommentStatus;
+	switch (action) {
+		case "approve":
+		case "restore":
+			newStatus = "approved";
+			break;
+		case "spam":
+			newStatus = "spam";
+			break;
+		case "delete":
+			newStatus = "deleted";
+			break;
+		default:
+			return c.json({ error: "invalid_action" }, 400);
+	}
+	if (!Array.isArray(body.ids)) {
+		return c.json({ error: "invalid_ids" }, 400);
+	}
+	const ids = (body.ids as unknown[]).filter(
+		(x): x is string => typeof x === "string" && x.length > 0,
+	);
+	if (ids.length === 0) return c.json({ error: "empty_ids" }, 400);
+	if (ids.length > BULK_ACTION_LIMIT) {
+		return c.json({ error: "too_many" }, 400);
+	}
+	const touched = await adminBulkUpdateCommentStatus(c.env.DB, ids, newStatus);
+	const bulkAction: AdminAction =
+		action === "spam"
+			? "bulk.spam"
+			: action === "delete"
+				? "bulk.delete"
+				: action === "restore"
+					? "bulk.restore"
+					: "bulk.approve";
+	// Bust caches + fire webhooks for each touched comment. Both are
+	// independent of one another, so missing rows just no-op.
+	const webhookEvent: WebhookEvent | null =
+		newStatus === "approved"
+			? "comment.approved"
+			: newStatus === "spam"
+				? "comment.spam"
+				: newStatus === "deleted"
+					? "comment.deleted"
+					: null;
+	for (const id of touched) {
+		const existing = await getComment(c.env.DB, id);
+		if (!existing) continue;
+		await adminInsertAudit(c.env.DB, {
+			admin_id: user.id,
+			action: bulkAction,
+			target_kind: "comment",
+			target_id: id,
+			meta: { batch_size: touched.length, new_status: newStatus },
+		});
+		await bustTreeCache(c.env, c.req.url, existing.post_slug);
+		if (webhookEvent) {
+			fireWebhook(c.env, c.executionCtx, {
+				event: webhookEvent,
+				comment_id: id,
+				post_slug: existing.post_slug,
+				user_id: existing.user_id,
+				ts: Date.now(),
+			});
+		}
+	}
+	return c.json({ ok: true, status: newStatus, touched });
+});
+
 // --------------------------- Moderator replies -----------------------------
 //
 // POST /admin/api/comments/:id/reply
@@ -2001,84 +2080,6 @@ admin.post("/api/comments/:id/reports/resolve", async (c) => {
 	const result = await resolveReports({ env: c.env, adminId: user.id, commentId: id });
 	if (!result.ok) return c.json({ error: result.error }, 404);
 	return c.json({ ok: true, id: result.id, resolved: result.resolved });
-});
-
-const BULK_ACTION_LIMIT = 100;
-
-admin.post("/api/comments/bulk", async (c) => {
-	const user = await requireMod(c);
-	if (user instanceof Response) return user;
-	const body = await c.req
-		.json<{ ids?: unknown; action?: string }>()
-		.catch(() => null);
-	if (!body) return c.json({ error: "invalid_body" }, 400);
-	const action = body.action as CommentAction | undefined;
-	let newStatus: CommentStatus;
-	switch (action) {
-		case "approve":
-		case "restore":
-			newStatus = "approved";
-			break;
-		case "spam":
-			newStatus = "spam";
-			break;
-		case "delete":
-			newStatus = "deleted";
-			break;
-		default:
-			return c.json({ error: "invalid_action" }, 400);
-	}
-	if (!Array.isArray(body.ids)) {
-		return c.json({ error: "invalid_ids" }, 400);
-	}
-	const ids = (body.ids as unknown[]).filter(
-		(x): x is string => typeof x === "string" && x.length > 0,
-	);
-	if (ids.length === 0) return c.json({ error: "empty_ids" }, 400);
-	if (ids.length > BULK_ACTION_LIMIT) {
-		return c.json({ error: "too_many" }, 400);
-	}
-	const touched = await adminBulkUpdateCommentStatus(c.env.DB, ids, newStatus);
-	const bulkAction: AdminAction =
-		action === "spam"
-			? "bulk.spam"
-			: action === "delete"
-				? "bulk.delete"
-				: action === "restore"
-					? "bulk.restore"
-					: "bulk.approve";
-	// Bust caches + fire webhooks for each touched comment. Both are
-	// independent of one another, so missing rows just no-op.
-	const webhookEvent: WebhookEvent | null =
-		newStatus === "approved"
-			? "comment.approved"
-			: newStatus === "spam"
-				? "comment.spam"
-				: newStatus === "deleted"
-					? "comment.deleted"
-					: null;
-	for (const id of touched) {
-		const existing = await getComment(c.env.DB, id);
-		if (!existing) continue;
-		await adminInsertAudit(c.env.DB, {
-			admin_id: user.id,
-			action: bulkAction,
-			target_kind: "comment",
-			target_id: id,
-			meta: { batch_size: touched.length, new_status: newStatus },
-		});
-		await bustTreeCache(c.env, c.req.url, existing.post_slug);
-		if (webhookEvent) {
-			fireWebhook(c.env, c.executionCtx, {
-				event: webhookEvent,
-				comment_id: id,
-				post_slug: existing.post_slug,
-				user_id: existing.user_id,
-				ts: Date.now(),
-			});
-		}
-	}
-	return c.json({ ok: true, status: newStatus, touched });
 });
 
 admin.post("/api/users/:id", async (c) => {
