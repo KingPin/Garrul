@@ -3728,13 +3728,16 @@ export const adminBulkUpdateCommentStatus = async (
 	if (rows.length === 0) return [];
 	const now = Date.now();
 	const targets = JSON.stringify(rows.map((r) => ({ id: r.id, audit_id: ulid() })));
+	// Same attribution as updateCommentStatus: a bulk delete is a moderator
+	// removal, which the tree renders with the author masked.
+	const deleted = status === "deleted";
 	await db.batch([
 		db
 			.prepare(
-				`UPDATE comments SET status = ?1, deleted_at = ?2
-				  WHERE id IN (SELECT value ->> 'id' FROM json_each(?3))`,
+				`UPDATE comments SET status = ?1, deleted_at = ?2, deleted_by = ?3
+				  WHERE id IN (SELECT value ->> 'id' FROM json_each(?4))`,
 			)
-			.bind(status, status === "deleted" ? now : null, targets),
+			.bind(status, deleted ? now : null, deleted ? "moderator" : null, targets),
 		db
 			.prepare(
 				`INSERT INTO audit_log

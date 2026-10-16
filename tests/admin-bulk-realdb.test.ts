@@ -3,7 +3,9 @@
  * enforces D1's 100-bound-parameter cap. The helper used to bind one `?` per
  * id plus two status binds, so 99 ids was 101 parameters.
  */
+import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { comments } from "../src/routes/api.comments";
 import { ADMIN_ID, adminHarness } from "./helpers/admin-sqlite";
 import { installMockCaches, uninstallMockCaches } from "./helpers/mock-caches";
 
@@ -127,5 +129,34 @@ describe("POST /admin/api/comments/bulk — fixed query count", () => {
 			spy.mockRestore();
 		}
 		expect(spamCount()).toBe(0);
+	});
+});
+
+// The bulk path once left deleted_by NULL, so the tree read a bulk-deleted
+// spam parent as an author delete and returned its real author.
+describe("POST /admin/api/comments/bulk — delete keeps a hidden parent masked", () => {
+	it("bulk-deleting a spam parent with an approved reply leaves an anonymous placeholder", async () => {
+		const { h, bulk } = seeded(0);
+		h.sqlite.exec(
+			"INSERT INTO users (id, provider, provider_id, name, created_at) VALUES ('u2', 'github', '9', 'Hidden Author', 1)",
+		);
+		h.sqlite.exec(
+			`INSERT INTO comments (id, post_slug, parent_id, user_id, body_md, body_html, status, created_at, depth)
+			 VALUES ('root', 'p', NULL, 'u2', 'x', '<p>x</p>', 'spam', 1, 1),
+			        ('kid', 'p', 'root', 'u1', 'y', '<p>y</p>', 'approved', 2, 2)`,
+		);
+		expect((await bulk({ ids: ["root"], action: "delete" })).status).toBe(200);
+
+		const app = new Hono().route("/", comments);
+		const res = await app.request("/?slug=p", {}, h.env as unknown as Record<string, unknown>);
+		expect(res.status).toBe(200);
+		const page = (await res.json()) as { threads: Record<string, unknown>[] };
+		expect(page.threads[0]).toMatchObject({
+			id: "root",
+			status: "deleted",
+			deleted_by: "moderator",
+			author: { id: "", name: "[deleted]" },
+		});
+		expect(JSON.stringify(page)).not.toContain("Hidden Author");
 	});
 });
