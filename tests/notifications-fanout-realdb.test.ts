@@ -15,6 +15,8 @@ import {
 	MAX_NOTIFICATIONS_PER_DIGEST,
 	enqueueNotificationsForPost,
 	listPendingDigests,
+	markAllSubscriptionsUnsubscribedForEmail,
+	markSubscriptionUnsubscribed,
 } from "../src/db/queries";
 import { runDigest } from "../src/lib/digest";
 
@@ -203,5 +205,36 @@ describe("runDigest at the D1 bind cap", () => {
 		queueFor("big", 100);
 		await runDigest(env(), DUE);
 		expect(pending()).toBe(50);
+	});
+});
+
+describe("unsubscribe stamps pending notifications", () => {
+	const sentAt = (nid: string): number | null =>
+		(sqlite.prepare("SELECT sent_at FROM notifications WHERE id = ?").get(nid) as { sent_at: number | null }).sent_at;
+
+	it("single: stamps only that subscription's pending rows", async () => {
+		addSub("a", "a@example.com");
+		addSub("b", "b@example.com");
+		queueFor("a", 2);
+		queueFor("b", 1);
+		sqlite.prepare("UPDATE notifications SET sent_at = 5 WHERE id = 'a-n000'").run();
+		await markSubscriptionUnsubscribed(db, "a");
+		expect(sentAt("a-n000")).toBe(5);
+		expect(sentAt("a-n001")).not.toBeNull();
+		expect(sentAt("b-n000")).toBeNull();
+	});
+
+	it("all-for-address: stamps every subscription of that address and nothing else", async () => {
+		addSub("a1", "reader@example.com");
+		addSub("a2", "reader@example.com", { slug: "other" });
+		addSub("b", "b@example.com");
+		queueFor("a1", 1);
+		queueFor("a2", 1);
+		queueFor("b", 1);
+		expect(await markAllSubscriptionsUnsubscribedForEmail(db, "READER@example.com")).toBe(2);
+		expect(sentAt("a1-n000")).not.toBeNull();
+		expect(sentAt("a2-n000")).not.toBeNull();
+		expect(sentAt("b-n000")).toBeNull();
+		expect(await markAllSubscriptionsUnsubscribedForEmail(db, "reader@example.com")).toBe(0);
 	});
 });

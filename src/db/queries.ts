@@ -2525,6 +2525,18 @@ export const markSubscriptionUnsubscribed = async (
 		.prepare(`UPDATE subscriptions SET unsubscribed_at = ? WHERE id = ?`)
 		.bind(now, id)
 		.run();
+	// Pending rows for a cancelled subscription would otherwise sit in the
+	// digest's JOIN every tick forever. `sent_at` here means "nothing left to
+	// do", the same sentinel the digest writes when every comment in a group
+	// was moderated away. Subscriptions first, then notifications: a failure
+	// in between leaves today's behavior, never an unsent notification.
+	await db
+		.prepare(
+			`UPDATE notifications SET sent_at = ?
+			  WHERE subscription_id = ? AND sent_at IS NULL`,
+		)
+		.bind(now, id)
+		.run();
 };
 
 /**
@@ -2546,15 +2558,26 @@ export const markAllSubscriptionsUnsubscribedForEmail = async (
 	email: string,
 ): Promise<number> => {
 	const now = Date.now();
+	// Lowercased for the same reason as everywhere else in this file:
+	// `subscriptions.email` is always written through `.toLowerCase()`,
+	// while `users.email` keeps whatever casing the provider returned.
+	const normalized = email.toLowerCase();
 	const res = await db
 		.prepare(
 			`UPDATE subscriptions SET unsubscribed_at = ?
 			  WHERE email = ? AND unsubscribed_at IS NULL`,
 		)
-		// Lowercased for the same reason as everywhere else in this file:
-		// `subscriptions.email` is always written through `.toLowerCase()`,
-		// while `users.email` keeps whatever casing the provider returned.
-		.bind(now, email.toLowerCase())
+		.bind(now, normalized)
+		.run();
+	// No single id to bind on this path; stamp by address. Same sentinel and
+	// same ordering argument as markSubscriptionUnsubscribed.
+	await db
+		.prepare(
+			`UPDATE notifications SET sent_at = ?
+			  WHERE sent_at IS NULL
+			    AND subscription_id IN (SELECT id FROM subscriptions WHERE email = ?)`,
+		)
+		.bind(now, normalized)
 		.run();
 	return res.meta?.changes ?? 0;
 };
