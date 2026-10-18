@@ -1,6 +1,6 @@
 /**
  * The "update available" refresh runs only after an admin or mod session has
- * been accepted. Before this, `admin.use("*", versionCheckMiddleware())` ran
+ * been accepted. Before this, the old unconditional version-check middleware ran
  * two KV reads on every anonymous `GET /admin/anything`, and on an expired
  * entry every concurrent request fetched GitHub and wrote KV — an
  * unauthenticated path to the account-wide 1000 writes/day cap.
