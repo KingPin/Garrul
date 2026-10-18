@@ -2700,7 +2700,9 @@ export type PendingDigest = {
  * Group pending notifications by subscription. Returns one digest per
  * subscriber with their queued notifications. Each digest is the
  * cron job's atomic unit: send the email, then mark the listed
- * notification_ids as sent.
+ * notification_ids as sent. A subscriber's rows are never split across
+ * the `limit`, and a group holds at most `MAX_NOTIFICATIONS_PER_DIGEST`
+ * rows; the rest go out on the next tick.
  *
  * `older_than` filters out notifications newer than the debounce window
  * so a burst of replies coalesces into the next cron tick.
@@ -2741,6 +2743,10 @@ export const listPendingDigests = async (
 	for (const row of result.results ?? []) {
 		let g = groups.get(row.subscription_id);
 		if (!g) {
+			// A new subscriber past the limit is skipped, never `break`: rows
+			// are sorted by time across subscribers, so breaking mid-scan split
+			// a subscriber already in the map into two digests.
+			if (groups.size >= limit) continue;
 			g = {
 				subscription_id: row.subscription_id,
 				email: row.email,
@@ -2752,9 +2758,11 @@ export const listPendingDigests = async (
 			};
 			groups.set(row.subscription_id, g);
 		}
+		// See MAX_NOTIFICATIONS_PER_DIGEST: the consumers bind one parameter
+		// per id, and the overflow waits for the next tick.
+		if (g.notification_ids.length >= MAX_NOTIFICATIONS_PER_DIGEST) continue;
 		g.notification_ids.push(row.notification_id);
 		g.comment_ids.push(row.comment_id);
-		if (groups.size >= limit) break;
 	}
 	return Array.from(groups.values());
 };

@@ -6,12 +6,17 @@
  * enforces D1's 100-bound-parameter cap, which is the whole point of the
  * digest boundary tests below.
  */
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { makeD1 } from "./helpers/admin-sqlite";
-import { enqueueNotificationsForPost } from "../src/db/queries";
+import {
+	MAX_NOTIFICATIONS_PER_DIGEST,
+	enqueueNotificationsForPost,
+	listPendingDigests,
+} from "../src/db/queries";
+import { runDigest } from "../src/lib/digest";
 
 const MIGRATIONS_DIR = join(__dirname, "../src/db/migrations");
 const SLUG = "fanout-post";
@@ -105,5 +110,98 @@ describe("enqueueNotificationsForPost", () => {
 		addSub("elsewhere", "else@example.com", { slug: "other" });
 		expect(await enqueueNotificationsForPost(db, SLUG, "c1", null, T0)).toBe(1);
 		expect(rows().map((r) => r.subscription_id)).toEqual(["live"]);
+	});
+});
+
+/** Queue `count` due notifications for `subId`, each on its own comment. */
+const queueFor = (subId: string, count: number, tOffset = 0): void => {
+	for (let i = 0; i < count; i++) {
+		const cid = `${subId}-c${i}`;
+		addComment(cid);
+		sqlite
+			.prepare(
+				`INSERT INTO notifications (id, subscription_id, comment_id, created_at, sent_at)
+				 VALUES (?, ?, ?, ?, NULL)`,
+			)
+			.run(`${subId}-n${String(i).padStart(3, "0")}`, subId, cid, T0 + tOffset + i);
+	}
+};
+
+const DUE = T0 + 10 * 60 * 1000;
+
+describe("listPendingDigests", () => {
+	it("returns whole groups, never a subscriber split across the limit", async () => {
+		addSub("a", "a@example.com");
+		addSub("b", "b@example.com");
+		addSub("c", "c@example.com");
+		// Interleave so that sorting by created_at alternates subscribers.
+		for (let i = 0; i < 4; i++) {
+			for (const s of ["a", "b", "c"]) {
+				const cid = `${s}-${i}`;
+				addComment(cid);
+				sqlite
+					.prepare(
+						`INSERT INTO notifications (id, subscription_id, comment_id, created_at, sent_at)
+						 VALUES (?, ?, ?, ?, NULL)`,
+					)
+					.run(`${s}-n${i}`, s, cid, T0 + i * 3 + ["a", "b", "c"].indexOf(s));
+			}
+		}
+		const groups = await listPendingDigests(db, DUE, 2);
+		expect(groups.map((g) => g.subscription_id)).toEqual(["a", "b"]);
+		for (const g of groups) expect(g.notification_ids).toHaveLength(4);
+	});
+
+	it("caps one subscriber's group at MAX_NOTIFICATIONS_PER_DIGEST oldest rows", async () => {
+		addSub("big", "big@example.com");
+		queueFor("big", 101);
+		const [g] = await listPendingDigests(db, DUE, 50);
+		expect(MAX_NOTIFICATIONS_PER_DIGEST).toBe(50);
+		expect(g?.notification_ids).toHaveLength(50);
+		expect(g?.notification_ids[0]).toBe("big-n000");
+		expect(g?.notification_ids[49]).toBe("big-n049");
+	});
+});
+
+describe("runDigest at the D1 bind cap", () => {
+	let sent: unknown[];
+	const env = () =>
+		({
+			DB: db,
+			EMAIL_PROVIDER: "resend",
+			RESEND_API_KEY: "re_test",
+			EMAIL_FROM: "comments@example.com",
+			PUBLIC_BASE_URL: "https://comments.example.com",
+		}) as never;
+	const pending = (): number =>
+		(sqlite.prepare("SELECT COUNT(*) AS n FROM notifications WHERE sent_at IS NULL").get() as { n: number }).n;
+
+	beforeEach(() => {
+		sent = [];
+		vi.stubGlobal("fetch", async (_url: string, init: RequestInit) => {
+			sent.push(JSON.parse(String(init.body)));
+			return new Response(JSON.stringify({ id: "sent" }), { status: 200 });
+		});
+	});
+	afterEach(() => vi.unstubAllGlobals());
+
+	it("drains 101 rows over three ticks without exceeding 100 binds", async () => {
+		addSub("big", "big@example.com");
+		queueFor("big", 101);
+		await runDigest(env(), DUE);
+		expect(sent).toHaveLength(1);
+		expect(pending()).toBe(51);
+		await runDigest(env(), DUE);
+		expect(pending()).toBe(1);
+		await runDigest(env(), DUE);
+		expect(pending()).toBe(0);
+		expect(sent).toHaveLength(3);
+	});
+
+	it("marks 50 of exactly 100 rows on the first tick", async () => {
+		addSub("big", "big@example.com");
+		queueFor("big", 100);
+		await runDigest(env(), DUE);
+		expect(pending()).toBe(50);
 	});
 });
