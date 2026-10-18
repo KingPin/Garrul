@@ -23,6 +23,7 @@ import {
 	softDeleteComment,
 	updateCommentStatus,
 } from "../src/db/queries";
+import { sweepExpiredIpHashes } from "../src/db/ip-retention";
 
 const MIGRATIONS_DIR = join(__dirname, "../src/db/migrations");
 
@@ -564,5 +565,24 @@ describe("listThreadRefsForPost seeks on the 0030 indexes (real SQLite)", () => 
 			expect(ids).toHaveLength(199);
 			expect(ids).not.toContain("R007");
 		}
+	});
+});
+
+describe("IP-retention sweep uses the 0030 partial indexes (real SQLite)", () => {
+	it("seeks both subqueries instead of scanning", async () => {
+		const sqlite = new DatabaseSync(":memory:");
+		applyMigrations(sqlite, migrationFiles());
+		captured.length = 0;
+		const db = makeD1(sqlite);
+		await sweepExpiredIpHashes(db, 30, 1_700_000_000_000);
+		expect(captured).toHaveLength(2);
+		const plan = (i: number): string =>
+			(sqlite
+				.prepare(`EXPLAIN QUERY PLAN ${captured[i]!.sql}`)
+				.all(...(captured[i]!.binds as never[])) as { detail: string }[])
+				.map((r) => r.detail)
+				.join("\n");
+		expect(plan(0)).toContain("USING INDEX comments_ip_retention_idx (<expr><?)");
+		expect(plan(1)).toContain("USING INDEX reports_ip_retention_idx (created_at<?)");
 	});
 });
