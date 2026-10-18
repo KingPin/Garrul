@@ -72,7 +72,13 @@ if (!publicCopy.equals(raw)) {
 	console.error("[size] public/embed.js differs from dist/embed.js — rebuild.");
 	process.exit(1);
 }
-const headers = readFileSync(join(PUBLIC_DIR, "_headers"), "utf8");
+let headers: string;
+try {
+	headers = readFileSync(join(PUBLIC_DIR, "_headers"), "utf8");
+} catch {
+	console.error("[size] public/_headers missing — run `npm run build:embed`.");
+	process.exit(1);
+}
 for (const line of ["/embed.js", "Cache-Control: public, max-age=3600, s-maxage=86400", "X-Content-Type-Options: nosniff"]) {
 	if (!headers.includes(line)) {
 		console.error(`[size] public/_headers is missing "${line}".`);
