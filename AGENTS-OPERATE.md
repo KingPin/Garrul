@@ -2085,6 +2085,8 @@ The 12 steps (each prints `→ name… OK`):
 11. **Deploy** (`npm run deploy`)
 12. **Post-deploy** — optional rerender; append a line to `.garrul-upgrade-log.json` (gitignored, operator-local)
 
+v2.38: migration 0030 adds paging and retention indexes; run `npm run migrate`.
+
 ### Release manifest
 
 Each tagged release ships `release-manifest.json` declaring what the
