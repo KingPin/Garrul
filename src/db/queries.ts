@@ -2646,22 +2646,6 @@ export const listActiveSubscriptionsForPost = async (
 	return result.results ?? [];
 };
 
-export const enqueueNotification = async (
-	db: D1Database,
-	subscription_id: string,
-	comment_id: string,
-): Promise<void> => {
-	const id = ulid();
-	const now = Date.now();
-	await db
-		.prepare(
-			`INSERT INTO notifications (id, subscription_id, comment_id, created_at, sent_at)
-			 VALUES (?, ?, ?, ?, NULL)`,
-		)
-		.bind(id, subscription_id, comment_id, now)
-		.run();
-};
-
 /**
  * Enqueue one notification per eligible subscriber of a post, in one
  * statement. Replaces the read-then-insert-per-row loop, which spent one D1
