@@ -287,6 +287,7 @@ const computePlan = (
 			current.version,
 			target.breakingChanges,
 		),
+		assetsMissing: !toml.hasAssets,
 	};
 };
 
@@ -438,6 +439,16 @@ const printPlan = (current: Manifest, target: Manifest, plan: Plan): void => {
 			console.log(`  • ${d.binding} (${d.databaseName})`);
 		}
 	}
+	if (plan.assetsMissing) {
+		console.log("Recommended: serve embed.js as a static asset (add to wrangler.toml by hand):");
+		console.log("");
+		console.log("  [assets]");
+		console.log('  directory = "./public"');
+		console.log("");
+		console.log("  Asset requests do not run the Worker and are not billed as Worker");
+		console.log("  requests. Without it, /embed.js keeps working from the Worker at one");
+		console.log("  request per browser-cache miss. `npm run build:embed` fills public/.");
+	}
 	if (plan.migrations.pending.length > 0) {
 		console.log(`Pending migrations: ${plan.migrations.pending.length}`);
 		for (const m of plan.migrations.pending) console.log(`  • ${m}`);
@@ -471,7 +482,8 @@ const printPlan = (current: Manifest, target: Manifest, plan: Plan): void => {
 		!plan.renderer.bumped &&
 		plan.newVars.length === 0 &&
 		plan.newSecrets.length === 0 &&
-		plan.vars.missing.length === 0
+		plan.vars.missing.length === 0 &&
+		!plan.assetsMissing
 	) {
 		console.log("(no infra changes; code-only release)");
 	}

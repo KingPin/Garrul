@@ -254,6 +254,8 @@ export type Plan = {
 	migrations: MigrationDiff;
 	renderer: RendererDiff;
 	breakingChanges: Manifest["breakingChanges"];
+	/** Informational only — wrangler.toml is the operator's file. */
+	assetsMissing: boolean;
 };
 
 export const hasMutations = (plan: Plan): boolean =>

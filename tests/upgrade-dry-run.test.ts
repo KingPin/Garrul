@@ -89,6 +89,7 @@ const makeWranglerMock = (): typeof wranglerModule => ({
 			PUBLIC_BASE_URL: "https://comments.example.com",
 			ALLOWED_ORIGINS: "https://mysite.dev",
 		},
+		hasAssets: true,
 		raw: "",
 	})),
 	queryAppliedMigrations: vi.fn(() => [
@@ -248,6 +249,21 @@ describe("upgrade dry-run", () => {
 		expect(output.indexOf("Release notes")).toBeLessThan(
 			output.indexOf("Plan: 1.0.0"),
 		);
+	});
+
+	it("recommends [assets] only when wrangler.toml lacks it", async () => {
+		const run = async () => {
+			logSpy.mockClear();
+			await main(["--dry-run"], { wrangler: wranglerMock, git: gitMock, fetchLatest, fetchReleases, fetchTargetManifest, loadLocal });
+			return logSpy.mock.calls.map((c: unknown[]) => c.join(" ")).join("\n");
+		};
+		expect(await run()).not.toMatch(/Recommended: serve embed\.js/);
+		const base = wranglerMock.parseWranglerToml(".");
+		vi.mocked(wranglerMock.parseWranglerToml).mockReturnValue({ ...base, hasAssets: false });
+		const output = await run();
+		expect(output).toMatch(/Recommended: serve embed\.js as a static asset/);
+		expect(output).toMatch(/\[assets\]\n\s+directory = "\.\/public"/);
+		expect(output).not.toMatch(/code-only release/);
 	});
 
 	it("reports vars the target release added that are not set", async () => {

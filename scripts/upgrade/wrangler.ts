@@ -177,6 +177,13 @@ export type WranglerToml = {
 	varNames: string[];
 	/** The same table with its values, for the shipped-placeholder check. */
 	vars: TomlVars;
+	/**
+	 * Whether a top-level `[assets]` table is present. Since v2.38 the
+	 * template serves embed.js from Workers Static Assets through it; an
+	 * install without the block still works via the Hono fallback route, at
+	 * one billed Worker request per browser-cache miss.
+	 */
+	hasAssets: boolean;
 	raw: string;
 };
 
@@ -211,6 +218,7 @@ export const parseWranglerToml = (repoRoot: string): WranglerToml => {
 		analyticsBindings: grabBindings("analytics_engine_datasets"),
 		varNames: Object.keys(vars),
 		vars,
+		hasAssets: /^\s*\[assets\]\s*$/m.test(raw),
 		raw,
 	};
 };
