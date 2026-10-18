@@ -4,6 +4,8 @@ node_modules/
 # Build output
 dist/
 build/
+# Static Assets copy of embed.js, written by scripts/build-embed.ts
+public/
 *.tsbuildinfo
 src/widget/embed.bundled.ts
 src/widget/styles.gen.ts

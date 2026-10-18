@@ -55,3 +55,28 @@ if (gz.length > LIMIT_GZ_BYTES) {
 	process.exit(1);
 }
 console.log("[size] OK");
+
+// Static Assets copy (see scripts/build-embed.ts). Wrangler serves
+// public/embed.js without invoking the Worker when `[assets]` is configured,
+// so it must be the same bytes the Hono fallback route serves, or an install
+// with and without the block would run different widgets.
+const PUBLIC_DIR = join(ROOT, "public");
+let publicCopy: Buffer;
+try {
+	publicCopy = readFileSync(join(PUBLIC_DIR, "embed.js"));
+} catch {
+	console.error("[size] public/embed.js missing — run `npm run build:embed`.");
+	process.exit(1);
+}
+if (!publicCopy.equals(raw)) {
+	console.error("[size] public/embed.js differs from dist/embed.js — rebuild.");
+	process.exit(1);
+}
+const headers = readFileSync(join(PUBLIC_DIR, "_headers"), "utf8");
+for (const line of ["/embed.js", "Cache-Control: public, max-age=3600, s-maxage=86400", "X-Content-Type-Options: nosniff"]) {
+	if (!headers.includes(line)) {
+		console.error(`[size] public/_headers is missing "${line}".`);
+		process.exit(1);
+	}
+}
+console.log("[size] public/embed.js matches dist/embed.js; _headers ok");
