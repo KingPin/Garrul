@@ -6,6 +6,7 @@
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { comments } from "../src/routes/api.comments";
+import { bustSettingsCache } from "../src/lib/settings";
 import { ADMIN_ID, adminHarness } from "./helpers/admin-sqlite";
 import { installMockCaches, uninstallMockCaches } from "./helpers/mock-caches";
 
@@ -57,6 +58,9 @@ describe("POST /admin/api/comments/bulk — parameter cap", () => {
 describe("POST /admin/api/comments/bulk — fixed query count", () => {
 	const countedBulk = async (n: number) => {
 		const s = seeded(n);
+		// Both runs must start with a cold settings memo, or the second skips
+		// the settings read and the counts differ for the wrong reason.
+		await bustSettingsCache(s.h.env);
 		const db = s.h.env.DB as unknown as { prepare: (sql: string) => unknown };
 		const real = db.prepare.bind(db);
 		let queries = 0;

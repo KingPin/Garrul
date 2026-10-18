@@ -28,7 +28,6 @@ import { describe, it, expect } from "vitest";
 import { Hono } from "hono";
 import { admin } from "../src/routes/admin";
 import {
-	loadSettings,
 	MAX_TEXT_SETTING_CHARS,
 	STAFF_BADGE_LABEL_MAX,
 } from "../src/lib/settings";
@@ -506,47 +505,5 @@ describe("POST /admin/settings — reaction kind lists", () => {
 		expect(res.status).toBe(400);
 		expect(await res.json()).toEqual({ error: "invalid_reaction_kinds:comment_reaction_kinds" });
 		expect(settingWrites(runs)).toEqual([]);
-	});
-});
-
-describe("GET /admin/settings — a settings blob cached by the previous release", () => {
-	const getSettings = (env: Bindings) =>
-		new Hono<{ Bindings: Bindings }>().route("/admin", admin).request(
-			"/admin/settings",
-			{ headers: { cookie: `__Host-garrul_sess=${SID}` } },
-			env as unknown as Record<string, unknown>,
-			execCtx as unknown as ExecutionContext,
-		);
-
-	// Derive a real blob, then shape it like one cached before the new text
-	// keys existed (or with a junk row) and put it where the loader reads.
-	const seedBlob = async (texts: (t: Record<string, string>) => void) => {
-		const { env, kv } = mkEnv();
-		const blob = JSON.parse(JSON.stringify(await loadSettings(env)));
-		texts(blob.texts);
-		kv.store.set("settings:resolved", JSON.stringify(blob));
-		return env;
-	};
-
-	it("renders 200 and the loader fills the missing keys with defaults", async () => {
-		const env = await seedBlob((t) => {
-			delete t.staff_badge_label;
-			delete t.comment_reaction_kinds;
-			delete t.page_reaction_kinds;
-		});
-		const { texts } = await loadSettings(env);
-		expect(texts.staff_badge_label).toBe("");
-		expect(texts.comment_reaction_kinds).toBe("fire,love,wow,laugh,hmm,cry");
-		expect(texts.page_reaction_kinds).toBe("fire,love,wow,laugh,hmm,cry");
-		expect((await getSettings(env)).status).toBe(200);
-	});
-
-	// Seeding the raw row would round-trip `bogus` on every save and 400 it.
-	it("seeds a reaction list from the lenient read, not the raw row", async () => {
-		const env = await seedBlob((t) => {
-			t.comment_reaction_kinds = "rocket,bogus";
-		});
-		const html = await (await getSettings(env)).text();
-		expect(html).toContain("&quot;comment_reaction_kinds&quot;:&quot;rocket&quot;");
 	});
 });

@@ -5,14 +5,14 @@
  *
  *     DB row  >  env var  >  hardcoded default
  *
- * plus the KV cache behavior that fronts it (GET /api/v1/config is hit on
+ * plus the per-isolate memo that fronts it (GET /api/v1/config is hit on
  * every widget mount, so loadFlags() must avoid a D1 read when warm and bust
  * cleanly on save).
  *
  * No Miniflare: a hand-rolled `settings` D1 stub + an in-memory KV stub, in
  * the same style as votes.test.ts.
  */
-import { describe, it, expect } from "vitest";
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import { Hono } from "hono";
 import type { Requestable } from "./helpers/app";
 import {
@@ -54,12 +54,15 @@ const makeKv = () => {
 	// every write, so a test proving concurrent misses don't each write needs
 	// the call count rather than the resulting store size.
 	let puts = 0;
+	let gets = 0;
 	return {
 		store,
+		gets: () => gets,
 		putOpts,
 		deletes: () => deletes,
 		puts: () => puts,
 		async get(key: string, type?: "json") {
+			gets++;
 			const raw = store.get(key);
 			if (raw == null) return null;
 			return type === "json" ? JSON.parse(raw) : raw;
@@ -85,17 +88,27 @@ const makeKv = () => {
 // the DB was never touched.
 const makeDb = (rows: Record<string, string>) => {
 	let reads = 0;
+	let hold: Promise<void> | null = null;
 	return {
 		reads: () => reads,
+		setRow: (key: string, value: string) => {
+			rows[key] = value;
+		},
+		holdNextRead: (p: Promise<void>) => {
+			hold = p;
+		},
 		prepare(_sql: string) {
 			return {
 				async all() {
 					reads++;
+					const parked = hold;
+					hold = null;
+					// Rows are snapshotted before parking: a read in flight
+					// returns what it saw when it started.
+					const snapshot = Object.entries(rows);
+					if (parked) await parked;
 					return {
-						results: Object.entries(rows).map(([key, value]) => ({
-							key,
-							value,
-						})),
+						results: snapshot.map(([key, value]) => ({ key, value })),
 					};
 				},
 			};
@@ -116,6 +129,11 @@ const mkEnv = (
 	} as unknown as Bindings;
 	return { env, kv, db };
 };
+
+// The settings memo is module-level, so start every test cold.
+beforeEach(async () => {
+	await bustSettingsCache(mkEnv().env);
+});
 
 describe("loadFlags — defaults", () => {
 	it("returns built-in defaults when no DB rows and no env vars", async () => {
@@ -241,70 +259,66 @@ describe("loadFlags — DB row over env var", () => {
 	});
 });
 
-describe("loadFlags — KV cache", () => {
-	it("populates the cache on a cold read", async () => {
-		const { env, kv } = mkEnv({ comments_enabled: "false" });
-		await loadFlags(env);
-		expect(kv.store.has("settings:resolved")).toBe(true);
+describe("loadSettings — memo, no KV", () => {
+	beforeEach(async () => {
+		vi.useFakeTimers();
+		// Module-level memo survives between tests in this file.
+		await bustSettingsCache(mkEnv().env);
+	});
+	afterEach(() => vi.useRealTimers());
+
+	it("never reads or writes KV", async () => {
+		const { env, kv } = mkEnv();
+		await loadSettings(env);
+		expect(kv.puts()).toBe(0);
+		expect(kv.gets()).toBe(0);
 	});
 
-	it("serves a warm cache without touching D1", async () => {
-		const { env, db } = mkEnv({ comments_enabled: "false" });
-		const first = await loadFlags(env);
-		expect(db.reads()).toBe(1);
-		const second = await loadFlags(env);
-		expect(db.reads()).toBe(1); // no further D1 read
-		expect(second).toEqual(first);
+	it("serves the memo without a D1 read inside the window", async () => {
+		const { env, db } = mkEnv();
+		await loadSettings(env);
+		const reads = db.reads();
+		await loadSettings(env);
+		expect(db.reads()).toBe(reads);
 	});
 
-	it("a warm cache masks a changed DB row until busted", async () => {
-		const { env, kv } = mkEnv({ comments_enabled: "false" });
-		const before = await loadFlags(env);
-		expect(before.comments_enabled).toBe(false);
-
-		// Simulate an admin save writing a new value straight to the stub's
-		// backing rows — without busting, the cache still wins.
-		const cached = JSON.parse(
-			kv.store.get("settings:resolved") as string,
-		) as Record<string, unknown>;
-		kv.store.set(
-			"settings:resolved",
-			JSON.stringify({ ...cached, flags: { ...before } }), // unchanged entry
-		);
-		const stillCached = await loadFlags(env);
-		expect(stillCached.comments_enabled).toBe(false);
+	it("re-derives once the memo is 60 s old", async () => {
+		const { env, db } = mkEnv();
+		await loadSettings(env);
+		const reads = db.reads();
+		vi.advanceTimersByTime(60_000);
+		await loadSettings(env);
+		expect(db.reads()).toBe(reads + 1);
 	});
 
-	// The entry is on the hot path and re-populates once per TTL window per edge
-	// colo against a 1000-writes/day account-wide cap. At 300s a modest
-	// three-colo footprint spent ~864 of that budget re-deriving settings that
-	// hadn't changed. Freshness comes from bustSettingsCache on save, not from
-	// the TTL, so shortening it back buys nothing and costs quota — assert the
-	// value so a future edit is a deliberate one.
-	it("writes the cache key with a one-hour TTL", async () => {
-		const { env, kv } = mkEnv({ comments_enabled: "false" });
-		await loadFlags(env);
-		expect(kv.putOpts.get("settings:resolved")?.expirationTtl).toBe(3600);
-	});
-});
-
-describe("bustSettingsCache", () => {
-	it("deletes the cached resolved object", async () => {
-		const { env, kv } = mkEnv({ comments_enabled: "false" });
-		await loadFlags(env);
-		expect(kv.store.has("settings:resolved")).toBe(true);
+	it("bustSettingsCache forces a re-derive and deletes the legacy KV key", async () => {
+		const { env, db, kv } = mkEnv();
+		await loadSettings(env);
+		const reads = db.reads();
 		await bustSettingsCache(env);
-		expect(kv.store.has("settings:resolved")).toBe(false);
 		expect(kv.deletes()).toBe(1);
+		await loadSettings(env);
+		expect(db.reads()).toBe(reads + 1);
 	});
 
-	it("forces a fresh D1 read on the next load", async () => {
-		const { env, db } = mkEnv({ comments_enabled: "false" });
-		await loadFlags(env);
-		expect(db.reads()).toBe(1);
+	it("a derive started before a save cannot repopulate the memo with old values", async () => {
+		const { env, db } = mkEnv({ votes_enabled: "0" });
+		// Park the first D1 read so a save can land while it is in flight.
+		let release!: () => void;
+		db.holdNextRead(
+			new Promise<void>((r) => {
+				release = r;
+			}),
+		);
+		const stale = loadSettings(env);
 		await bustSettingsCache(env);
-		await loadFlags(env);
-		expect(db.reads()).toBe(2);
+		db.setRow("votes_enabled", "1");
+		const fresh = loadSettings(env);
+		release();
+		const [a, b] = await Promise.all([stale, fresh]);
+		expect(a.flags.votes_enabled).toBe(false); // the old caller got what it read
+		expect(b.flags.votes_enabled).toBe(true); // post-save caller did not join the old promise
+		expect((await loadSettings(env)).flags.votes_enabled).toBe(true); // memo holds the new derive
 	});
 });
 
@@ -468,13 +482,7 @@ describe("loadNumbers — KV cache", () => {
 // free tier allows 1000 writes/day *account wide*, and each key re-populates
 // once per TTL window per edge colo. Three keys spent 72 writes/colo/day; one
 // spends 24. These tests pin the consequences so a future split is deliberate.
-describe("settings cache — one entry for all groups", () => {
-	it("uses a single KV key", async () => {
-		const { env, kv } = mkEnv({ comments_per_page: "10" });
-		await loadNumbers(env);
-		expect([...kv.store.keys()]).toEqual(["settings:resolved"]);
-	});
-
+describe("settings memo — one derivation for all groups", () => {
 	it("resolves every group from one D1 read", async () => {
 		const { env, db } = mkEnv({
 			comments_enabled: "false",
@@ -509,24 +517,21 @@ describe("settings cache — one entry for all groups", () => {
 		await loadSettings(env);
 		expect(db.reads()).toBe(1);
 		await bustSettingsCache(env);
-		expect(kv.store.size).toBe(0);
 		expect(kv.deletes()).toBe(1);
 		await loadFlags(env);
 		expect(db.reads()).toBe(2);
 	});
 
 	it("collapses concurrent cold misses onto one derivation", async () => {
-		const { env, db, kv } = mkEnv({ comments_per_page: "10" });
+		const { env, db } = mkEnv({ comments_per_page: "10" });
 		const [a, b, c] = await Promise.all([
 			loadFlags(env),
 			loadNumbers(env),
 			loadStrings(env),
 		]);
-		// One D1 read and one KV write for three concurrent misses. Without the
-		// in-flight share this is 3 and 3 — the shape a cold colo under load
-		// takes, which is what makes it a write-quota problem.
+		// One D1 read for three concurrent misses. Without the in-flight share
+		// this is 3.
 		expect(db.reads()).toBe(1);
-		expect(kv.puts()).toBe(1);
 		expect(a.comments_enabled).toBe(true);
 		expect(b.comments_per_page).toBe(10);
 		expect(c.default_locale).toBe("auto");
@@ -543,43 +548,24 @@ describe("settings cache — one entry for all groups", () => {
 		expect(db.reads()).toBe(2);
 	});
 
-	// A blob missing a group would otherwise resolve every setting in it to
-	// `undefined` — a silent wrong answer, where a miss is merely a D1 read.
-	// Reachable today only via a hand-written entry, which is exactly what a
-	// stale deploy or a test fixture is.
-	it("ignores a cached blob that is missing a group", async () => {
-		const { env, kv, db } = mkEnv({ comments_per_page: "10" });
-		const { flags, numbers } = await loadSettings(env);
-		expect(db.reads()).toBe(1);
-		kv.store.set(
-			"settings:resolved",
-			JSON.stringify({ flags, numbers }), // no `strings`
-		);
-		const strings = await loadStrings(env);
-		expect(db.reads()).toBe(2); // fell through to D1 rather than trusting it
-		expect(strings.default_locale).toBe("auto");
-	});
 });
 
 // -- route-level flag gating -------------------------------------------------
 //
-// The gate is the first thing each POST handler runs. With a pre-warmed cache
-// disabling the flag, the handler returns 403 before touching D1 — so these
-// don't need the full comment/user/ghost stub chain. We pre-seed the KV cache
-// so loadFlags() resolves straight from it.
+// The gate is the first thing each POST handler runs. With the flag disabled
+// by a settings row, the handler returns 403 before any other query — so these
+// don't need the full comment/user/ghost stub chain.
 
 const mkGatedEnv = (cachedFlags: Partial<Record<FlagKey, boolean>>) => {
-	const kv = makeKv();
-	// A full-shaped entry: the loader rejects a blob missing a group, so every
-	// other group has to be present even when only the flags matter here.
-	kv.store.set(
-		"settings:resolved",
-		JSON.stringify({ flags: cachedFlags, numbers: {}, strings: {}, texts: {} }),
-	);
 	return {
-		TREE_CACHE: kv,
-		// DB present but should never be queried on the 403 path.
-		DB: makeDb({}),
+		TREE_CACHE: makeKv(),
+		// The flags come from settings rows; the handler 403s before any other
+		// query.
+		DB: makeDb(
+			Object.fromEntries(
+				Object.entries(cachedFlags).map(([k, v]) => [k, String(v)]),
+			),
+		),
 		IP_HASH_SECRET: "x".repeat(32),
 		ANALYTICS: { writeDataPoint: () => {} },
 		SESSIONS: { get: async () => null },
@@ -722,6 +708,7 @@ describe("promoted runtime settings — edit_window_minutes", () => {
 	it("leaves a pre-existing multi-day env window alone", async () => {
 		const { env } = mkEnv({}, { EDIT_WINDOW_MINUTES: "1440" });
 		expect((await loadNumbers(env)).edit_window_minutes).toBe(1440);
+		await bustSettingsCache(env);
 		const week = mkEnv({}, { EDIT_WINDOW_MINUTES: "10080" });
 		expect((await loadNumbers(week.env)).edit_window_minutes).toBe(10_080);
 	});
@@ -850,13 +837,11 @@ describe("loadStrings", () => {
 	});
 
 	it("skips D1 while warm", async () => {
-		const { env, db, kv } = mkEnv({ default_locale: "en" });
+		const { env, db } = mkEnv({ default_locale: "en" });
 		await loadStrings(env);
 		expect(db.reads()).toBe(1);
 		await loadStrings(env);
 		expect(db.reads()).toBe(1);
-		expect([...kv.store.keys()]).toEqual(["settings:resolved"]);
-		expect(kv.putOpts.get("settings:resolved")?.expirationTtl).toBe(3600);
 	});
 
 	it("a bust forces the next read back to D1", async () => {

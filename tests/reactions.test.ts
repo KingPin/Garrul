@@ -14,6 +14,8 @@ import { describe, it, expect, afterEach } from "vitest";
 import { Hono } from "hono";
 import type { TestApp, } from "./helpers/app";
 import { reactions } from "../src/routes/api.reactions";
+import { bustSettingsCache } from "../src/lib/settings";
+import type { Bindings } from "../src/index";
 import { installMockCaches, uninstallMockCaches } from "./helpers/mock-caches";
 
 const COMMENT_ID = "01HC000000000000000000ABCD";
@@ -275,6 +277,7 @@ describe("POST /reactions — only the operator's enabled kinds", () => {
 		const body = { comment_id: COMMENT_ID, kind: "rocket" };
 		expect((await post(app, env, body)).status).toBe(200);
 		settings.comment_reaction_kinds = "fire";
+		await bustSettingsCache(env as unknown as Bindings); // an admin save
 		const res = await post(app, env, body);
 		expect(res.status).toBe(400);
 		expect(((await res.json()) as { error: string }).error).toBe("invalid_kind");

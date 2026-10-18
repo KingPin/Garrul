@@ -41,6 +41,7 @@ import {
 	listUserReactionsOnComments,
 } from "../src/db/queries";
 import { treeCacheKey } from "../src/lib/tree-cache";
+import { bustSettingsCache } from "../src/lib/settings";
 import {
 	installMockCaches,
 	uninstallMockCaches,
@@ -582,6 +583,7 @@ describe("GET /comments — cache key varies with page size", () => {
 		await get(mkEnv(), `slug=${SLUG}`);
 
 		sqlite.prepare("DELETE FROM settings WHERE key = 'comments_per_page'").run();
+		await bustSettingsCache(mkEnv()); // an admin save
 		await get(mkEnv(), `slug=${SLUG}`);
 
 		expect(mockCache.store.has(treeCacheKey(REQ_URL, SLUG, "new", 10).url)).toBe(true);

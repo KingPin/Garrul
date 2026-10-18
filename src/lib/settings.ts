@@ -482,32 +482,20 @@ export const numberBounds = (
 	return { default: def, min, max };
 };
 
-// One KV entry holds every resolved group. Flags, numbers and strings all derive
-// from the same two inputs — a single `getAllSettings` read plus `env` — so
-// splitting them across three keys bought nothing and cost three KV reads,
-// three D1 queries and three KV writes on any route needing more than one
-// group. `GET /api/v1/config`, hit on every widget mount, needs all three.
+// Settings are resolved once per isolate per memo window and served from
+// module memory. KV used to front this (one entry, hour TTL) and the entry
+// re-populated on every miss — from anonymous traffic, on every colo, against
+// a free-tier cap of 1000 KV writes/day account-wide. With no writer on the
+// read path the entry is a guaranteed miss, so the read went too: memo → D1.
 //
-// Writes are what make this load-bearing. The KV free tier allows 1000
-// writes/day *account wide*, and an entry re-populates once per TTL window per
-// edge colo whether or not anything actually changed. At 3600s that is 24
-// writes per colo per day for one key; the three-key layout spent 72.
-//
-// The name is deliberately new rather than a reuse of `settings:flags`. A
-// rolling deploy runs old and new isolates side by side, and an old
-// `loadNumbers` reading a merged blob would resolve every numeric setting to
-// `undefined`. Distinct names mean neither version can read the other's shape;
-// the superseded entries just expire.
+// The name is kept only so `bustSettingsCache` can delete an entry written by
+// a pre-upgrade isolate during a rolling deploy.
 const CACHE_KEY_RESOLVED = "settings:resolved";
-// Staleness bound for the one path that does *not* bust the cache: an operator
-// editing an env var and redeploying, since a deploy doesn't clear KV. So a
-// stale value can survive up to an hour — documented in AGENTS-OPERATE.md.
-// Admin saves call `bustSettingsCache`, so those land on the next request.
-//
-// The arithmetic behind the value: at 300s the entry re-populated 288
-// times/day per colo, so even a three-colo footprint spent ~864 of the
-// 1000-write budget re-deriving settings that hadn't changed.
-const CACHE_TTL_SEC = 3600;
+// Staleness bound across isolates after a save or an env-var redeploy. Same
+// isolate is immediate (see `generation`). 60 s costs one small `settings`
+// read per active isolate per minute — nothing against 5M D1 rows/day — and
+// replaces an up-to-an-hour bound that AGENTS-OPERATE.md used to document.
+const SETTINGS_MEMO_MS = 60_000;
 
 // Defaults-on/off boolish parse: present + falsy → false; anything else
 // non-empty → true. Mirrors api.votes.ts / api.config.ts semantics so the
@@ -653,98 +641,61 @@ export interface ResolvedSettings {
 	readonly texts: ResolvedTexts;
 }
 
-/**
- * Shape check on the cached blob.
- *
- * A `get(..., "json")` hit is only trusted if it carries all four groups. The
- * key name makes a foreign shape unreachable today (see `CACHE_KEY_RESOLVED`),
- * but a partial blob would otherwise resolve every setting in the missing group
- * to `undefined` — a silent wrong answer, where a miss is merely a D1 read.
- *
- * Requiring a group added in a later version is also what makes adding one safe
- * during a rolling deploy, which is why `texts` was added here rather than
- * renaming the cache key. A new isolate reading a pre-`texts` blob fails this
- * check and re-derives; an old isolate reading a post-`texts` blob still finds
- * the three groups it knows about and ignores the fourth. Neither direction can
- * read a group as `undefined`, and the cost is bounded to one extra derivation
- * per colo during the rollout.
- */
-const isResolvedSettings = (v: unknown): v is ResolvedSettings => {
-	if (typeof v !== "object" || v === null) return false;
-	const c = v as Partial<Record<keyof ResolvedSettings, unknown>>;
-	return (
-		typeof c.flags === "object" &&
-		c.flags !== null &&
-		typeof c.numbers === "object" &&
-		c.numbers !== null &&
-		typeof c.strings === "object" &&
-		c.strings !== null &&
-		typeof c.texts === "object" &&
-		c.texts !== null
-	);
-};
-
-/** Read D1, resolve every group, and populate the cache entry. */
+/** Read D1 and resolve every group. */
 const deriveSettings = async (env: Bindings): Promise<ResolvedSettings> => {
 	const dbSettings = await getAllSettings(env.DB);
-	const resolved: ResolvedSettings = {
+	return {
 		flags: resolve(env, dbSettings),
 		numbers: resolveNumbers(env, dbSettings),
 		strings: resolveStrings(env, dbSettings),
 		texts: resolveTexts(env, dbSettings),
 	};
-	await env.TREE_CACHE.put(CACHE_KEY_RESOLVED, JSON.stringify(resolved), {
-		expirationTtl: CACHE_TTL_SEC,
-	}).catch(() => {});
-	return resolved;
 };
 
 /**
- * The derivation currently in flight, if any.
+ * Memo of the last derivation plus the derivation in flight, if any.
  *
- * A cold entry under concurrent traffic is the other write amplifier: every
- * request that arrives before the first `put` lands misses, queries D1 and
- * writes. Since they all derive the identical object, they can share one
- * derivation — so a cold colo costs one KV write rather than one per concurrent
- * request. That is the difference between a burst costing 1 write and 50.
+ * Concurrent cold callers share one derivation (one D1 read per burst, not
+ * one per request). `generation` makes `bustSettingsCache` immediate in this
+ * isolate: a derive captures the generation it started under and, on settle,
+ * publishes into the memo only if no bust happened meanwhile; a caller that
+ * arrives after a bust never joins the pre-bust promise. Without that, a load
+ * that began before an admin save could finish after it and pin old values
+ * for another memo window.
  *
- * Module state, but safe for the same reason the plural-rules cache in
- * src/i18n/index.ts is: nothing request-scoped is stored, only derived settings
- * that are identical for every caller. It is cleared as soon as the derivation
- * settles, so a bust can only ever be masked for the width of one in-flight
- * read — a window that already exists, since any request that read the cache
- * just before a bust is holding pre-bust data too.
+ * Module state is safe for the same reason the plural-rules cache in
+ * src/i18n/index.ts is: nothing request-scoped is stored.
  */
+let memo: { value: ResolvedSettings; at: number } | null = null;
 let inFlight: Promise<ResolvedSettings> | null = null;
+let generation = 0;
 
 /**
- * Resolve every setting (DB override > env > default), KV-cached as one entry.
+ * Resolve every setting (DB override > env > default), memoized per isolate.
  *
  * Prefer this over the per-group helpers when a caller needs more than one
- * group: it makes the single read and the single derivation explicit at the
- * call site.
+ * group: it makes the single derivation explicit at the call site.
  */
 export const loadSettings = async (
 	env: Bindings,
 ): Promise<ResolvedSettings> => {
-	const cached = await env.TREE_CACHE.get(CACHE_KEY_RESOLVED, "json").catch(
-		() => null,
-	);
-	if (isResolvedSettings(cached)) {
-		// A blob cached by the previous release lacks any text key added since.
-		// It lives up to the TTL after a deploy, so fill the gaps with defaults
-		// here, once, rather than make every caller tolerate `undefined`.
-		for (const key of TEXT_KEYS) {
-			if (typeof cached.texts[key] !== "string") {
-				(cached.texts as Record<string, string>)[key] = TEXTS[key].default;
-			}
-		}
-		return cached;
-	}
+	const now = Date.now();
+	if (memo && now - memo.at < SETTINGS_MEMO_MS) return memo.value;
 	if (inFlight) return inFlight;
-	const pending = deriveSettings(env).finally(() => {
-		inFlight = null;
-	});
+	const started = generation;
+	const pending = deriveSettings(env).then(
+		(value) => {
+			if (generation === started) {
+				memo = { value, at: Date.now() };
+				inFlight = null;
+			}
+			return value;
+		},
+		(err) => {
+			if (generation === started) inFlight = null;
+			throw err;
+		},
+	);
 	inFlight = pending;
 	return pending;
 };
@@ -779,6 +730,15 @@ export const loadStrings = async (env: Bindings): Promise<ResolvedStrings> =>
 export const loadTexts = async (env: Bindings): Promise<ResolvedTexts> =>
 	(await loadSettings(env)).texts;
 
-/** Drop the cached settings so the next read reflects a fresh save. */
-export const bustSettingsCache = (env: Bindings): Promise<void> =>
-	env.TREE_CACHE.delete(CACHE_KEY_RESOLVED).catch(() => {});
+/**
+ * Drop the memo so the next read in this isolate re-derives, detach any
+ * derive already in flight so it cannot publish pre-save values, and delete
+ * the legacy KV entry a pre-upgrade isolate may still write during a rolling
+ * deploy. Other isolates pick the change up within SETTINGS_MEMO_MS.
+ */
+export const bustSettingsCache = (env: Bindings): Promise<void> => {
+	generation++;
+	memo = null;
+	inFlight = null;
+	return env.TREE_CACHE.delete(CACHE_KEY_RESOLVED).catch(() => {});
+};
