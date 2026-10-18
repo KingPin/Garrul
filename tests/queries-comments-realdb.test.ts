@@ -410,3 +410,30 @@ describe("migration 0015 depth backfill (real SQLite)", () => {
 		).toBe(1);
 	});
 });
+
+describe("migration 0030 indexes (real SQLite)", () => {
+	const indexNames = (sqlite: DatabaseSync): string[] =>
+		(sqlite
+			.prepare("SELECT name FROM sqlite_master WHERE type = 'index' ORDER BY name")
+			.all() as { name: string }[]).map((r) => r.name);
+
+	it("adds the root, score and retention indexes and drops comments_score_idx", () => {
+		const sqlite = new DatabaseSync(":memory:");
+		applyMigrations(sqlite, migrationFiles());
+		const names = indexNames(sqlite);
+		expect(names).toContain("comments_root_chrono_idx");
+		expect(names).toContain("comments_root_score_idx");
+		expect(names).toContain("comments_ip_retention_idx");
+		expect(names).toContain("reports_ip_retention_idx");
+		expect(names).not.toContain("comments_score_idx");
+	});
+
+	it("is idempotent", () => {
+		const sqlite = new DatabaseSync(":memory:");
+		const files = migrationFiles();
+		applyMigrations(sqlite, files);
+		const last = files[files.length - 1] as string;
+		expect(last).toMatch(/^0030_/);
+		expect(() => applyMigrations(sqlite, [last])).not.toThrow();
+	});
+});
