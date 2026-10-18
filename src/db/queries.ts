@@ -2750,7 +2750,8 @@ export const listPendingDigests = async (
 			    AND n.created_at < ?
 			    AND s.unsubscribed_at IS NULL
 			    AND s.confirmed_at IS NOT NULL
-			  ORDER BY n.created_at ASC`,
+			  -- Fan-out gives all rows of one comment the same created_at, so ties are normal; n.id starts with a ULID, so the tiebreaker stays time-ordered and makes the per-tick caps deterministic.
+			  ORDER BY n.created_at ASC, n.id ASC`,
 		)
 		.bind(older_than)
 		.all<{
