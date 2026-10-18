@@ -282,8 +282,9 @@ DB settings row  >  env var  >  hardcoded default
 Operators flip them at runtime from the **admin Settings page** (`/admin`
 → Settings), which writes a row to the `settings` D1 table — no redeploy,
 no `wrangler` round-trip. "Reset to defaults" deletes the rows so the env
-var / default applies again. The resolved set is KV-cached and busted on save,
-so a toggle takes effect within seconds across the widget (`/api/v1/config`)
+var / default applies again. The resolved set is memoized per isolate and busted on save,
+so a toggle takes effect immediately in the isolate that saved and within 60
+seconds elsewhere, across the widget (`/api/v1/config`)
 and the server-side gates. Leaving a flag untouched in the admin UI writes no
 row, so existing installs that only set env vars are unaffected.
 Implementation: `src/lib/settings.ts`.

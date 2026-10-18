@@ -10,7 +10,7 @@
  *
  * No Miniflare: a small in-memory D1 that simulates the page_reactions /
  * page_votes / posts / users tables by matching on the SQL the query layer
- * issues, plus KV stubs for rate-limit + flag cache.
+ * issues, plus KV stubs for rate-limit; settings come from D1 rows.
  */
 import { describe, it, expect } from "vitest";
 import { Hono } from "hono";

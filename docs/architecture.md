@@ -15,7 +15,7 @@ the code wins.
 | Garrul Worker | One Hono app: `/embed.js`, the iframe embed, `/api/v1/*`, `/admin`, `/telegram`, feeds. Every state-changing request passes the `ALLOWED_ORIGINS` check. | [`../CLAUDE.md`](../CLAUDE.md) |
 | Cron handler | The same Worker's `scheduled` export, every 15 minutes: reply digests, moderator mail, webhook retries, Telegram digest, retention pruning. | [`notifications.md`](notifications.md) |
 | D1 | Comments, users, posts, settings overrides, the notification and webhook-retry queues. | [`compliance/data-inventory.md`](compliance/data-inventory.md) |
-| KV | Sessions, OAuth state, resolved settings. Writes are kept off the per-request path (sessions refresh on an interval, not on every hit): the free tier allows 1000 writes a day account-wide. | [`../AGENTS-OPERATE.md`](../AGENTS-OPERATE.md) |
+| KV | Sessions, OAuth state. Writes are kept off the per-request path (sessions refresh on an interval, not on every hit): the free tier allows 1000 writes a day account-wide. | [`../AGENTS-OPERATE.md`](../AGENTS-OPERATE.md) |
 | Edge cache | The Cache API: first page of each comment tree, and rate-limit counters. A new comment busts its tree entry. | — |
 
 ## Outside services

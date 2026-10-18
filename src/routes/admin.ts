@@ -1062,8 +1062,8 @@ admin.post("/settings", async (c) => {
 	for (const [key, value] of Object.entries(writtenTexts)) {
 		await setSetting(c.env.DB, key, value);
 	}
-	// One cache entry holds all four groups, so a write to any of them
-	// invalidates it. Still conditional: a no-op save shouldn't spend a KV write.
+	// One memo holds all four groups, so a write to any of them
+	// invalidates it. Still conditional: a no-op save needn't bust it.
 	const wrote =
 		Object.keys(writtenFlags).length > 0 ||
 		Object.keys(writtenNumbers).length > 0 ||

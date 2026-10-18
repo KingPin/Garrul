@@ -381,8 +381,8 @@ export const STAFF_BADGE_LABEL_MAX = 32;
 // MAX_TEXT_SETTING_CHARS for why boundedness is the invariant instead.
 //
 // Values are stored raw and parsed at the point of use. Storing the parsed form
-// here would push a parser's output through the KV cache, so a change to the
-// grammar would then need a cache-shape migration to take effect; a raw string
+// here would push a parser's output through the memo, so a change to the
+// grammar would wait out the memo window; a raw string
 // re-parsed downstream costs microseconds and can never go stale against the
 // code that reads it.
 //
@@ -492,8 +492,8 @@ export const numberBounds = (
 // a pre-upgrade isolate during a rolling deploy.
 const CACHE_KEY_RESOLVED = "settings:resolved";
 // Staleness bound across isolates after a save or an env-var redeploy. Same
-// isolate is immediate (see `generation`). 60 s costs one small `settings`
-// read per active isolate per minute — nothing against 5M D1 rows/day — and
+// isolate is immediate (see `generation`). 60 s costs one read of ≤~35
+// `settings` rows per active isolate per memo window — nothing against 5M D1 rows/day — and
 // replaces an up-to-an-hour bound that AGENTS-OPERATE.md used to document.
 const SETTINGS_MEMO_MS = 60_000;
 
@@ -633,7 +633,7 @@ const resolve = (
 	return out;
 };
 
-/** Every resolved settings group, as stored in the single cache entry. */
+/** Every resolved settings group, as held in the per-isolate memo. */
 export interface ResolvedSettings {
 	readonly flags: ResolvedFlags;
 	readonly numbers: ResolvedNumbers;

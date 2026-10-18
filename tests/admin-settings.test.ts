@@ -9,8 +9,8 @@
  *   - numbers are validated, clamped into [min,max], and stored as text;
  *   - a non-numeric value is rejected 400 (`invalid_number:<key>`);
  *   - unknown keys are ignored (whitelist);
- *   - the numbers cache is busted but the flag cache is left alone when only
- *     numbers change (independent cache entries);
+ *   - the legacy settings KV key is still deleted on a save (the memo bust is
+ *     in-process);
  *   - the write is audited;
  *   - "reset" clears both flag AND number keys.
  *
@@ -41,7 +41,7 @@ const ADMIN_ID = "01HADMIN0000000000000000AB";
 // D1 double: serves the admin user for the auth gate and captures every
 // .run() (setSetting INSERTs, deleteSettings DELETE, audit INSERT) so tests
 // can assert what was persisted.
-const makeDb = () => {
+const makeDb = (settingsRows: { key: string; value: string }[] = []) => {
 	const runs: { sql: string; binds: unknown[] }[] = [];
 	const chain = (sql: string) => ({
 		_binds: [] as unknown[],
@@ -67,7 +67,7 @@ const makeDb = () => {
 			return null;
 		},
 		async all() {
-			return { results: [] };
+			return { results: /FROM settings/i.test(sql) ? settingsRows : [] };
 		},
 		async run() {
 			runs.push({ sql, binds: this._binds });
@@ -98,8 +98,8 @@ const makeKv = (seed: Record<string, string> = {}) => {
 	};
 };
 
-const mkEnv = () => {
-	const { db, runs } = makeDb();
+const mkEnv = (settingsRows: { key: string; value: string }[] = []) => {
+	const { db, runs } = makeDb(settingsRows);
 	// Seed the version-check cache with a back-off entry so the admin
 	// middleware's fire-and-forget refresh never attempts a GitHub fetch.
 	const kv = makeKv({
@@ -505,5 +505,21 @@ describe("POST /admin/settings — reaction kind lists", () => {
 		expect(res.status).toBe(400);
 		expect(await res.json()).toEqual({ error: "invalid_reaction_kinds:comment_reaction_kinds" });
 		expect(settingWrites(runs)).toEqual([]);
+	});
+});
+
+describe("GET /admin/settings — reaction-list seed", () => {
+	// The page seeds Alpine from the lenient read (reactionKinds), not the raw
+	// row, so a junk entry cannot round-trip on save and 400 it.
+	it("seeds a reaction list from the lenient read, not the raw row", async () => {
+		const { env } = mkEnv([{ key: "comment_reaction_kinds", value: "rocket,bogus" }]);
+		const res = await new Hono<{ Bindings: Bindings }>().route("/admin", admin).request(
+			"/admin/settings",
+			{ headers: { cookie: `__Host-garrul_sess=${SID}` } },
+			env as unknown as Record<string, unknown>,
+			execCtx as unknown as ExecutionContext,
+		);
+		const html = await res.text();
+		expect(html).toContain("&quot;comment_reaction_kinds&quot;:&quot;rocket&quot;");
 	});
 });

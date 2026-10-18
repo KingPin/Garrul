@@ -45,10 +45,6 @@ import type { Bindings } from "../src/index";
 // bustSettingsCache() actually drops the resolved object.
 const makeKv = () => {
 	const store = new Map<string, string>();
-	// Options passed to put(), by key. KV's free tier caps writes at 1000/day
-	// *account wide*, and the entry re-populates once per TTL window per edge
-	// colo, so the TTL is a quota decision worth pinning down in a test.
-	const putOpts = new Map<string, { expirationTtl?: number }>();
 	let deletes = 0;
 	// Total put() calls, not distinct keys: the account-wide write cap counts
 	// every write, so a test proving concurrent misses don't each write needs
@@ -58,7 +54,6 @@ const makeKv = () => {
 	return {
 		store,
 		gets: () => gets,
-		putOpts,
 		deletes: () => deletes,
 		puts: () => puts,
 		async get(key: string, type?: "json") {
@@ -67,14 +62,9 @@ const makeKv = () => {
 			if (raw == null) return null;
 			return type === "json" ? JSON.parse(raw) : raw;
 		},
-		async put(
-			key: string,
-			value: string,
-			opts?: { expirationTtl?: number },
-		) {
+		async put(key: string, value: string) {
 			puts++;
 			store.set(key, value);
-			putOpts.set(key, opts ?? {});
 		},
 		async delete(key: string) {
 			deletes++;
@@ -212,6 +202,7 @@ describe("loadFlags — env var over default", () => {
 	it("treats various falsy spellings as off", async () => {
 		for (const raw of ["0", "false", "no", "off", "FALSE", " Off "]) {
 			const { env } = mkEnv({}, { REACTIONS_ENABLED: raw });
+			await bustSettingsCache(env); // memo is not keyed by env
 			const flags = await loadFlags(env);
 			expect(flags.reactions_enabled, `raw=${JSON.stringify(raw)}`).toBe(false);
 		}
@@ -325,7 +316,7 @@ describe("loadSettings — memo, no KV", () => {
 // -- numeric display settings ------------------------------------------------
 //
 // loadNumbers() mirrors loadFlags()'s precedence (DB > env > default) and shares
-// its cache entry, but resolves integers with a per-key [min,max] clamp.
+// its memo, but resolves integers with a per-key [min,max] clamp.
 
 describe("parseIntSetting — clamp + fallback", () => {
 	it("returns the fallback for undefined / empty / junk", () => {
@@ -455,7 +446,7 @@ describe("loadNumbers — DB row over env var", () => {
 	});
 });
 
-describe("loadNumbers — KV cache", () => {
+describe("loadNumbers — memo", () => {
 	it("serves a warm cache without touching D1", async () => {
 		const { env, db } = mkEnv({ comments_per_page: "10" });
 		const first = await loadNumbers(env);
@@ -475,13 +466,11 @@ describe("loadNumbers — KV cache", () => {
 	});
 });
 
-// -- one entry, every group --------------------------------------------------
+// -- one derivation, every group --------------------------------------------
 //
 // Flags, numbers and strings all derive from the same `getAllSettings` read plus
-// `env`, so they share a single KV entry. That is a write-quota decision: KV's
-// free tier allows 1000 writes/day *account wide*, and each key re-populates
-// once per TTL window per edge colo. Three keys spent 72 writes/colo/day; one
-// spends 24. These tests pin the consequences so a future split is deliberate.
+// `env`, so they share one memoized derivation: one D1 read serves every group.
+// These tests pin that so a future split is deliberate.
 describe("settings memo — one derivation for all groups", () => {
 	it("resolves every group from one D1 read", async () => {
 		const { env, db } = mkEnv({
@@ -899,14 +888,14 @@ describe("reaction kind lists — resolution", () => {
 	it("falls back to the default when nothing valid is left", async () => {
 		for (const raw of ["", "bogus", ",,"]) {
 			const { env } = mkEnv({ comment_reaction_kinds: raw });
+			await bustSettingsCache(env); // memo is not keyed by env
 			const { texts } = await loadSettings(env);
 			expect(reactionKinds(texts, "comment_reaction_kinds")).toEqual(SIX);
 		}
 	});
 
-	// A settings:resolved blob cached by the previous release has no such key.
-	// It lives up to an hour after deploy; it must read as "default", not crash.
-	it("reads a pre-upgrade cached blob as the default", () => {
+	// A texts object lacking the key must read as "default", not crash.
+	it("reads a texts object without the key as the default", () => {
 		expect(reactionKinds({} as ResolvedTexts, "comment_reaction_kinds")).toEqual(SIX);
 	});
 

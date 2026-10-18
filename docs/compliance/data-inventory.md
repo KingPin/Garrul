@@ -66,7 +66,7 @@ writing a name in it.
 | `SESSIONS` | `sess:<32 random bytes, hex>` | `{user_id, expires_at}` — no name, no email | 30 days, slid forward at most once a day (`src/lib/session.ts:55`) |
 | `OAUTH_STATE` | widget handoff / `tg:link:<token>` | `{user_id}` | 60 s (`src/lib/oauth.ts:395`) / 600 s (`src/routes/telegram.ts:65`) |
 | `RATE_LIMITS` | `spamcache:<first 32 hex of SHA-256(body_md)>` | The Workers-AI verdict for that body. Only written when `SPAM_PROVIDER=workers-ai`. | 6 h (`src/lib/spam/workers-ai.ts:22`) |
-| `TREE_CACHE` | resolved settings, `meta:latest-release` | Instance config and the version check — no personal data | 1 h (`src/lib/settings.ts:258`) |
+| `TREE_CACHE` | `meta:latest-release` (resolved settings no longer cached here; they live in a 60 s per-isolate memo) | The version check — no personal data | 1 h (`src/lib/version-check.ts:57`) |
 
 The spam cache key is **derived from the comment text**. It is a truncated hash,
 not the text, and it expires in six hours — but if the same body is submitted
