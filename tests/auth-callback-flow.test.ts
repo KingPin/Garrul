@@ -7,11 +7,12 @@
  * one-time handoff posted to the allow-listed opener, and must turn every
  * failure (token, profile, banned) into a failed page with no session.
  */
-import { afterEach, describe, it, expect, vi } from "vitest";
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import { Hono } from "hono";
 import { auth } from "../src/routes/auth";
 import type { Bindings } from "../src/index";
 import { adminHarness, makeKv } from "./helpers/admin-sqlite";
+import { installMockCaches, uninstallMockCaches } from "./helpers/mock-caches";
 
 const BLOG = "https://blog.example.com";
 
@@ -25,6 +26,7 @@ const setup = (extra: Record<string, unknown> = {}) => {
 		OAUTH_STATE: oauthState,
 		ANALYTICS: { writeDataPoint() {} },
 		JWT_SECRET: "test-jwt-secret",
+		IP_HASH_SECRET: "test-ip-hash-secret",
 		ENV: "dev",
 		GOOGLE_CLIENT_ID: "cid",
 		GOOGLE_CLIENT_SECRET: "csecret",
@@ -76,7 +78,12 @@ const runPage = (html: string) => {
 	return { posted, closes };
 };
 
+beforeEach(() => {
+	installMockCaches();
+});
+
 afterEach(() => {
+	uninstallMockCaches();
 	vi.unstubAllGlobals();
 });
 

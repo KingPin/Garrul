@@ -38,6 +38,47 @@ import {
 } from "../lib/session";
 import { writeEvent } from "../lib/analytics";
 import { log } from "../lib/log";
+import { requireIpHash } from "../lib/ip-hash";
+import { checkRateLimit, type LimitConfig } from "../lib/ratelimit";
+
+/**
+ * Burst limit for the three routes that can cost a KV delete per request.
+ * A reader signs out or signs in a handful of times a day; five per ten
+ * seconds and thirty per ten minutes is far above that and far below what
+ * it takes to drain the account-wide 1000 KV deletes/day. Each route has its
+ * own scope (ratelimit.ts requires it for any route with its own config), and
+ * that is also load-bearing: /callback and /session/exchange fire
+ * back-to-back from one IP, so a shared bucket at DEFAULTS (1 per 10 s)
+ * would block the exchange that completes every widget sign-in.
+ *
+ * The limiter is per colo and bounds the rate, not the total; an attacker
+ * spread across colos can still spend deletes. The delete itself stays:
+ * skipping it on a KV miss would leave a replayable session behind, because
+ * KV is eventually consistent and caches negative lookups.
+ */
+const AUTH_LIMITS: LimitConfig = {
+	short: { max: 5, windowSec: 10 },
+	long: { max: 30, windowSec: 600 },
+};
+
+/** 429 to hand back, or null when the caller is within budget. */
+const enforceAuthLimit = async (
+	c: {
+		req: { url: string; raw: Request };
+		env: Bindings;
+		json: (body: unknown, status: 429) => Response;
+	},
+	scope: "auth-signout" | "auth-exchange" | "auth-callback",
+): Promise<Response | null> => {
+	const ipHash = await requireIpHash(c);
+	if (typeof ipHash !== "string") return ipHash;
+	const rl = await checkRateLimit(c.req.url, ipHash, {
+		scope,
+		config: AUTH_LIMITS,
+		env: c.env,
+	});
+	return rl.ok ? null : c.json({ error: "ratelimited" }, 429);
+};
 
 // Per-flow cookie: holds the whole signed state payload (lib/oauth issueState).
 // The name's suffix is the first 8 hex chars of the (48-hex-char) state token,
@@ -244,6 +285,8 @@ ${ok ? "<script>setTimeout(function(){ window.close(); }, 250);</script>\n" : ""
 };
 
 auth.get("/:provider/callback", async (c) => {
+	const limited = await enforceAuthLimit(c, "auth-callback");
+	if (limited) return limited;
 	const provider = c.req.param("provider");
 	if (!isProvider(provider)) return c.text("unknown_provider", 404);
 
@@ -362,6 +405,8 @@ auth.get("/:provider/callback", async (c) => {
 });
 
 auth.post("/signout", async (c) => {
+	const limited = await enforceAuthLimit(c, "auth-signout");
+	if (limited) return limited;
 	await destroySession(c);
 	return c.json({ ok: true });
 });
@@ -371,6 +416,8 @@ auth.post("/signout", async (c) => {
 // Set-Cookie lands in that context's CHIPS partition — see the handoff
 // helpers in src/lib/oauth.ts for the rationale.
 auth.post("/session/exchange", async (c) => {
+	const limited = await enforceAuthLimit(c, "auth-exchange");
+	if (limited) return limited;
 	let parsed: unknown;
 	try {
 		parsed = await c.req.json();

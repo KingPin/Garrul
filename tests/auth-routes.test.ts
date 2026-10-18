@@ -15,7 +15,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { Hono } from "hono";
 import { auth } from "../src/routes/auth";
 import { issueHandoff } from "../src/lib/oauth";
-import { issueSession } from "../src/lib/session";
+import { issueSession, readSession } from "../src/lib/session";
+import { installMockCaches, uninstallMockCaches } from "./helpers/mock-caches";
 import type { Bindings } from "../src/index";
 
 const makeKv = () => {
@@ -41,15 +42,21 @@ let oauthState: ReturnType<typeof makeKv>;
 let env: Bindings;
 
 beforeEach(() => {
+	installMockCaches();
 	sessions = makeKv();
 	oauthState = makeKv();
 	env = {
 		SESSIONS: sessions,
 		OAUTH_STATE: oauthState,
 		JWT_SECRET: "test-jwt-secret",
+		IP_HASH_SECRET: "test-ip-hash-secret",
 		ENV: "prod",
 	} as unknown as Bindings;
 });
+
+afterEach(() => uninstallMockCaches());
+
+const IP = { "cf-connecting-ip": "203.0.113.7" };
 
 const app = () => new Hono<{ Bindings: Bindings }>().route("/", auth);
 
@@ -83,6 +90,7 @@ describe("POST /session/exchange", () => {
 			{
 				method: "POST",
 				headers: {
+					...IP,
 					"content-type": "application/json",
 					cookie: `__Host-garrul_sess=${oldSid}`,
 				},
@@ -111,7 +119,7 @@ describe("POST /session/exchange", () => {
 				"/session/exchange",
 				{
 					method: "POST",
-					headers: { "content-type": "application/json" },
+					headers: { ...IP, "content-type": "application/json" },
 					body: JSON.stringify({ token }),
 				},
 				env as unknown as Record<string, unknown>,
@@ -139,7 +147,7 @@ describe("GET /:provider/callback — state shape", () => {
 		it(`rejects ${JSON.stringify(state.slice(0, 24))} without emitting a cookie`, async () => {
 			const res = await app().request(
 				`/github/callback?code=x&state=${encodeURIComponent(state)}`,
-				{},
+				{ headers: IP },
 				env as unknown as Record<string, unknown>,
 			);
 			expect(res.status).toBe(400);
@@ -156,7 +164,7 @@ describe("GET /:provider/callback — state shape", () => {
 		const state = "ab".repeat(24);
 		const res = await app().request(
 			`/github/callback?code=x&state=${state}`,
-			{},
+			{ headers: IP },
 			env as unknown as Record<string, unknown>,
 		);
 		expect(res.status).toBe(400);
@@ -213,14 +221,14 @@ describe("auth routes — refusals and sign-out", () => {
 			path,
 			{
 				method: "POST",
-				headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) },
+				headers: { ...IP, "content-type": "application/json", ...(cookie ? { cookie } : {}) },
 				body,
 			},
 			env as unknown as Record<string, unknown>,
 		);
 
 	it("answers 503 for a provider with no client credentials", async () => {
-		const res = await app().request("/github/start", {}, env as unknown as Record<string, unknown>);
+		const res = await app().request("/github/start", { headers: IP }, env as unknown as Record<string, unknown>);
 		expect(res.status).toBe(503);
 		expect(await res.json()).toEqual({ error: "provider_not_configured" });
 	});
@@ -261,7 +269,7 @@ describe("GET /:provider/callback — token exchange failures", () => {
 
 	/** Run /start for real and return the callback path plus its flow cookie. */
 	const startFlow = async () => {
-		const res = await app().request("/github/start", {}, oauthEnv());
+		const res = await app().request("/github/start", { headers: IP }, oauthEnv());
 		const state = new URL(res.headers.get("location")!).searchParams.get("state")!;
 		const cookie = res.headers.get("set-cookie")!.split(";", 1)[0]!;
 		return { path: `/github/callback?code=the-code&state=${state}`, cookie };
@@ -284,7 +292,7 @@ describe("GET /:provider/callback — token exchange failures", () => {
 				headers: { "retry-after": "300" },
 			}),
 		);
-		const res = await app().request(path, { headers: { cookie } }, oauthEnv());
+		const res = await app().request(path, { headers: { ...IP, cookie } }, oauthEnv());
 		expect(res.status).toBe(503);
 		expect(res.headers.get("retry-after")).toBeNull();
 		const body = await res.text();
@@ -296,10 +304,96 @@ describe("GET /:provider/callback — token exchange failures", () => {
 	it("keeps internal failure codes off the page for other exchange errors", async () => {
 		const { path, cookie } = await startFlow();
 		vi.stubGlobal("fetch", async () => new Response("nope", { status: 500 }));
-		const res = await app().request(path, { headers: { cookie } }, oauthEnv());
+		const res = await app().request(path, { headers: { ...IP, cookie } }, oauthEnv());
 		expect(res.status).toBe(200);
 		const body = await res.text();
 		expect(body).toContain("<p>Sign-in failed.</p>");
 		expect(body).not.toContain("token_exchange_failed");
+	});
+});
+
+describe("auth routes - rate limits", () => {
+	it("signout answers 429 on the sixth hit in ten seconds", async () => {
+		const a = app();
+		const statuses: number[] = [];
+		for (let i = 0; i < 6; i++) {
+			const res = await a.request("/signout", { method: "POST", headers: IP }, env);
+			statuses.push(res.status);
+		}
+		expect(statuses).toEqual([200, 200, 200, 200, 200, 429]);
+		const last = await a.request("/signout", { method: "POST", headers: IP }, env);
+		expect(await last.json()).toEqual({ error: "ratelimited" });
+	});
+
+	it("exchange answers 429 on the sixth hit", async () => {
+		const a = app();
+		const statuses: number[] = [];
+		for (let i = 0; i < 6; i++) {
+			const token = await issueHandoff(oauthState as unknown as KVNamespace, USER);
+			const res = await a.request(
+				"/session/exchange",
+				{ method: "POST", headers: { ...IP, "content-type": "application/json" }, body: JSON.stringify({ token }) },
+				env,
+			);
+			statuses.push(res.status);
+		}
+		expect(statuses).toEqual([200, 200, 200, 200, 200, 429]);
+	});
+
+	it("signout and exchange keep separate buckets", async () => {
+		const a = app();
+		for (let i = 0; i < 5; i++) await a.request("/signout", { method: "POST", headers: IP }, env);
+		const token = await issueHandoff(oauthState as unknown as KVNamespace, USER);
+		const res = await a.request(
+			"/session/exchange",
+			{ method: "POST", headers: { ...IP, "content-type": "application/json" }, body: JSON.stringify({ token }) },
+			env,
+		);
+		expect(res.status).toBe(200);
+	});
+
+	it("callback is limited before the state check", async () => {
+		const a = app();
+		let last = 0;
+		for (let i = 0; i < 6; i++) {
+			const res = await a.request("/github/callback?code=x&state=junk", { headers: IP }, env);
+			last = res.status;
+		}
+		expect(last).toBe(429);
+	});
+});
+
+describe("auth routes - revocation stays unconditional and fail-closed", () => {
+	it("deletes a well-formed cookie's key even when KV reads it as missing", async () => {
+		const sid = "c".repeat(64);
+		const deletes: string[] = [];
+		sessions.delete = async (key: string) => {
+			deletes.push(key);
+		};
+		const res = await app().request(
+			"/signout",
+			{ method: "POST", headers: { ...IP, cookie: `__Host-garrul_sess=${sid}` } },
+			env,
+		);
+		expect(res.status).toBe(200);
+		expect(deletes).toEqual([`sess:${sid}`]);
+	});
+
+	it("a failing delete fails the signout instead of reporting success", async () => {
+		const sid = await seedSession();
+		sessions.delete = async () => {
+			throw new Error("KV delete cap");
+		};
+		const res = await app().request(
+			"/signout",
+			{ method: "POST", headers: { ...IP, cookie: `__Host-garrul_sess=${sid}` } },
+			env,
+		);
+		expect(res.status).toBeGreaterThanOrEqual(500);
+		const still = await readSession({
+			env: env as never,
+			req: { header: () => `__Host-garrul_sess=${sid}` },
+		} as never);
+		expect(still).not.toBeNull();
 	});
 });

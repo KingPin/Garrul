@@ -256,6 +256,24 @@ describe("session cookie roundtrip", () => {
 		expect(kv.store.has(key)).toBe(false);
 	});
 
+	it("readSession tolerates a failing cleanup delete on an expired record", async () => {
+		const { ctx: issueCtx, kv, setCookies } = makeCtx({});
+		await issueSession(issueCtx, userId);
+		const sidValue = extractCookieValue(setCookies[0]!);
+		const key = `sess:${sidValue}`;
+		kv.store.set(key, {
+			value: JSON.stringify({ user_id: userId, expires_at: Date.now() - 1000 }),
+			expiresAt: kv.store.get(key)!.expiresAt,
+		});
+		kv.delete = async () => {
+			throw new Error("KV delete cap");
+		};
+		const { ctx: readCtx } = makeCtxWithSameKv(kv, {
+			cookieHeader: `__Host-garrul_sess=${sidValue}`,
+		});
+		await expect(readSession(readCtx)).resolves.toBeNull();
+	});
+
 	it("malformed KV record is purged on read", async () => {
 		const { ctx: issueCtx, kv, setCookies } = makeCtx({});
 		await issueSession(issueCtx, userId);
