@@ -734,7 +734,9 @@ Triggers (events that produce a send):
   debouncing — a burst of replies coalesces into one email instead of N
   (see `src/lib/digest.ts`). Subscriptions are thread-scoped, so a
   subscriber hears about every new comment on the post, not only
-  direct replies to their own.
+  direct replies to their own. Fan-out is one SQL statement per approved
+  comment; a digest carries at most 50 notifications per subscriber per
+  tick.
 - **Moderator digest** — a comment lands in the moderation queue, or a
   reader files the first report on one. Also first-class built-in email,
   also no webhook required, and the exact inverse of the reply
