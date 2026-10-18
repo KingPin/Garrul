@@ -983,8 +983,8 @@ export const getThreadCreatedAt = async (
  *
  * `.first()`, not `.all()` plus LIMIT: one row by construction. The unary
  * `+` on status keeps it out of index selection, so SQLite uses
- * comments_pinned_idx instead of scanning every approved row via
- * comments_score_idx.
+ * comments_pinned_idx instead of an approved-row scan through
+ * comments_post_idx (the (post_slug, status, created_at) index from 0001).
  */
 export const getPinnedThreadRef = async (
 	db: D1Database,

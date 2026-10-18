@@ -450,9 +450,9 @@ describe("migration 0030 indexes (real SQLite)", () => {
 		const sqlite = new DatabaseSync(":memory:");
 		const files = migrationFiles();
 		applyMigrations(sqlite, files);
-		const last = files[files.length - 1] as string;
-		expect(last).toMatch(/^0030_/);
-		expect(() => applyMigrations(sqlite, [last])).not.toThrow();
+		const target = files.find((f) => f.startsWith("0030_")) as string;
+		expect(target).toBeDefined();
+		expect(() => applyMigrations(sqlite, [target])).not.toThrow();
 	});
 });
 
@@ -518,6 +518,10 @@ describe("listThreadRefsForPost seeks on the 0030 indexes (real SQLite)", () => 
 				const ids = await pageAll(sort, viewer);
 				expect(ids).toHaveLength(200);
 				expect(new Set(ids).size).toBe(200);
+				const reference = (
+					await listThreadRefsForPost(db, SLUG, { sort, limit: 1000, viewer_id: viewer })
+				).map((r) => r.id);
+				expect(ids).toEqual(reference);
 			}
 		});
 
@@ -525,6 +529,20 @@ describe("listThreadRefsForPost seeks on the 0030 indexes (real SQLite)", () => 
 			const ids = await pageAll("top", viewer);
 			expect(ids).toHaveLength(200);
 			expect(new Set(ids).size).toBe(200);
+			const reference = (
+				await listThreadRefsForPost(db, SLUG, { sort: "top", limit: 1000, viewer_id: viewer })
+			).map((r) => r.id);
+			expect(ids).toEqual(reference);
+		});
+
+		it(`the cursorless first page seeks and never temp-sorts (${who})`, async () => {
+			for (const sort of ["new", "old", "top"] as const) {
+				await listThreadRefsForPost(db, SLUG, { sort, limit: 26, viewer_id: viewer });
+				const plan = lastPlan(sqlite);
+				const idx = sort === "top" ? "comments_root_score_idx" : "comments_root_chrono_idx";
+				expect(plan).toContain(`USING INDEX ${idx} (post_slug=?)`);
+				expect(plan).not.toContain("TEMP B-TREE");
+			}
 		});
 
 		it(`seeks the chrono index for 'new' and 'old' (${who})`, async () => {
@@ -564,6 +582,10 @@ describe("listThreadRefsForPost seeks on the 0030 indexes (real SQLite)", () => 
 			const ids = await pageAll(sort, null);
 			expect(ids).toHaveLength(199);
 			expect(ids).not.toContain("R007");
+			const reference = (
+				await listThreadRefsForPost(db, SLUG, { sort, limit: 1000, viewer_id: null })
+			).map((r) => r.id);
+			expect(ids).toEqual(reference);
 		}
 	});
 });
