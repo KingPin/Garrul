@@ -20,6 +20,16 @@ import { hostExpr } from "./host-expr";
  */
 const IN_BATCH = 90;
 
+/**
+ * Most notification rows one digest may carry. `getCommentsByIds`,
+ * `getUsersByIds` and `markNotificationsSent` each bind one placeholder per
+ * id (the marker adds one for the timestamp), and D1 rejects a statement with
+ * more than 100 bound parameters. 50 keeps every consumer under the cap with
+ * room to spare and bounds the work one cron tick does for one subscriber;
+ * rows past the cap wait for the next tick.
+ */
+export const MAX_NOTIFICATIONS_PER_DIGEST = 50;
+
 const chunk = <T>(xs: readonly T[], size: number): T[][] => {
 	const out: T[][] = [];
 	for (let i = 0; i < xs.length; i += size) out.push(xs.slice(i, i + size));
@@ -2650,6 +2660,45 @@ export const enqueueNotification = async (
 		)
 		.bind(id, subscription_id, comment_id, now)
 		.run();
+};
+
+/**
+ * Enqueue one notification per eligible subscriber of a post, in one
+ * statement. Replaces the read-then-insert-per-row loop, which spent one D1
+ * query per subscriber inside `waitUntil` and silently stopped past ~35
+ * subscribers when the invocation hit D1's 50-query cap.
+ *
+ * `excludeEmail` is the author's lowercased address or null. The `?5 IS NULL
+ * OR` guard is load-bearing: `email <> NULL` is unknown for every row, so a
+ * bare `<>` would enqueue nothing for every anonymous comment.
+ *
+ * Ids are `<ulid>-<subscription_id>`: one ULID per fan-out keeps them
+ * time-prefixed like every other id, subscription ids make them unique, and
+ * nothing parses a notification id.
+ *
+ * Returns the number of rows inserted so the caller can log a count.
+ */
+export const enqueueNotificationsForPost = async (
+	db: D1Database,
+	post_slug: string,
+	comment_id: string,
+	excludeEmail: string | null,
+	now: number = Date.now(),
+): Promise<number> => {
+	const prefix = ulid();
+	const res = await db
+		.prepare(
+			`INSERT INTO notifications (id, subscription_id, comment_id, created_at, sent_at)
+			 SELECT ?1 || '-' || s.id, s.id, ?2, ?3, NULL
+			   FROM subscriptions s
+			  WHERE s.post_slug = ?4
+			    AND s.confirmed_at IS NOT NULL
+			    AND s.unsubscribed_at IS NULL
+			    AND (?5 IS NULL OR s.email <> ?5)`,
+		)
+		.bind(prefix, comment_id, now, post_slug, excludeEmail)
+		.run();
+	return res.meta?.changes ?? 0;
 };
 
 export type PendingDigest = {
