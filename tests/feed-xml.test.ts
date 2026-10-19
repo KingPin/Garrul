@@ -90,9 +90,9 @@ beforeEach(() => {
 		sqlite.exec(readFileSync(join(MIGRATIONS_DIR, file), "utf8"));
 	}
 	// The route resolves the operator's `default_locale` through loadStrings,
-	// which reads the settings cache. A miss on every call is what production
-	// looks like on a cold edge, so a KV stub that never hits is the honest
-	// stub here — the point of these tests is the XML the route serializes.
+	// which derives settings from D1 (memoized per isolate). The setup file
+	// busts the memo each test, so this stays a cold read; a KV stub that never
+	// hits is enough here — the point of these tests is the XML the route serializes.
 	const kv = {
 		get: async () => null,
 		put: async () => {},

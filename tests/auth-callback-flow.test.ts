@@ -7,11 +7,12 @@
  * one-time handoff posted to the allow-listed opener, and must turn every
  * failure (token, profile, banned) into a failed page with no session.
  */
-import { afterEach, describe, it, expect, vi } from "vitest";
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import { Hono } from "hono";
 import { auth } from "../src/routes/auth";
 import type { Bindings } from "../src/index";
 import { adminHarness, makeKv } from "./helpers/admin-sqlite";
+import { installMockCaches, uninstallMockCaches } from "./helpers/mock-caches";
 
 const BLOG = "https://blog.example.com";
 
@@ -25,6 +26,7 @@ const setup = (extra: Record<string, unknown> = {}) => {
 		OAUTH_STATE: oauthState,
 		ANALYTICS: { writeDataPoint() {} },
 		JWT_SECRET: "test-jwt-secret",
+		IP_HASH_SECRET: "test-ip-hash-secret",
 		ENV: "dev",
 		GOOGLE_CLIENT_ID: "cid",
 		GOOGLE_CLIENT_SECRET: "csecret",
@@ -37,17 +39,22 @@ const setup = (extra: Record<string, unknown> = {}) => {
 		app.request(path, { headers: cookie ? { cookie } : {} }, { ...env, ...override } as never);
 
 	// Run /start, then the callback with the cookie /start set.
-	const signIn = async (returnTo = BLOG, override: Record<string, unknown> = {}) => {
+	const signIn = async (
+		returnTo = BLOG,
+		override: Record<string, unknown> = {},
+		oldCookie = "",
+	) => {
 		const start = await call(`/google/start?return=${encodeURIComponent(returnTo)}`);
 		expect(start.status).toBe(302);
 		const state = new URL(start.headers.get("location") as string).searchParams.get("state");
-		const cookie = (start.headers.get("set-cookie") as string).split(";", 1)[0];
+		const startCookie = (start.headers.get("set-cookie") as string).split(";", 1)[0];
+		const cookie = oldCookie ? `${startCookie}; ${oldCookie}` : startCookie;
 		return call(`/google/callback?code=auth-code&state=${state}`, cookie, override);
 	};
 	const users = () =>
 		h.sqlite.prepare("SELECT provider_id, name, role FROM users WHERE provider = 'google'").all();
 	const sessionKeys = () => [...sessions.store.keys()].filter((k) => k.startsWith("sess:"));
-	return { ...h, oauthState, signIn, users, sessionKeys };
+	return { ...h, oauthState, sessions, signIn, users, sessionKeys };
 };
 
 // Token endpoint, then userinfo; each answer is [status, body].
@@ -76,7 +83,12 @@ const runPage = (html: string) => {
 	return { posted, closes };
 };
 
+beforeEach(() => {
+	installMockCaches();
+});
+
 afterEach(() => {
+	uninstallMockCaches();
 	vi.unstubAllGlobals();
 });
 
@@ -96,6 +108,27 @@ describe("GET /:provider/callback — full round trip", () => {
 		expect(html).toContain(`"${BLOG}"`);
 		const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
 		expect(String(init.body)).toContain("code=auth-code");
+	});
+
+	const OLD_COOKIE = `garrul_sess=${"d".repeat(64)}`;
+
+	it("fails closed when revoking the old session throws: no new session record", async () => {
+		provider([200, { access_token: "at" }], [200, PROFILE]);
+		const h = setup();
+		h.sessions.delete = async () => {
+			throw new Error("KV delete cap");
+		};
+		const res = await h.signIn(BLOG, {}, OLD_COOKIE);
+		expect(res.status).toBeGreaterThanOrEqual(500);
+		expect(h.sessionKeys()).toEqual([]);
+	});
+
+	it("never calls SESSIONS.delete when the request has no session cookie", async () => {
+		provider([200, { access_token: "at" }], [200, PROFILE]);
+		const h = setup();
+		const del = vi.spyOn(h.sessions, "delete");
+		await h.signIn();
+		expect(del).not.toHaveBeenCalled();
 	});
 
 	it("renders a static page with no postMessage target for an unlisted return origin", async () => {

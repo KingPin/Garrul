@@ -114,7 +114,7 @@ import { checkOutboundUrl } from "../lib/url-safety";
 import {
 	peekCachedLatestVersion,
 	peekCachedRecentReleases,
-	versionCheckMiddleware,
+	refreshVersionCache,
 	type UpdateInfo,
 } from "../lib/version-check";
 import { accessDeniedHtml, layout, type LayoutOpts } from "../admin-ui/layout";
@@ -274,6 +274,17 @@ const requireRole = async (
 		}
 		return c.json({ error: "not_authorized" }, 403);
 	}
+	// Only an accepted admin/mod session may cost a GitHub fetch or a KV write.
+	// Hono's `executionCtx` getter throws when the runtime supplied none
+	// (non-HTTP entry points, some test harnesses); skipping the refresh there
+	// is correct — the banner reads the cache and nothing else depends on it.
+	let ctx: Ctx["executionCtx"] | undefined;
+	try {
+		ctx = c.executionCtx;
+	} catch {
+		ctx = undefined;
+	}
+	ctx?.waitUntil(refreshVersionCache(c.env));
 	return user;
 };
 
@@ -306,8 +317,6 @@ admin.use("*", async (c, next) => {
 	}
 	await next();
 });
-
-admin.use("*", versionCheckMiddleware());
 
 // Unauthenticated by design: the single-use owner token is the credential.
 // Mounted after the guards above so Origin/CSP/no-store apply.
@@ -1053,8 +1062,8 @@ admin.post("/settings", async (c) => {
 	for (const [key, value] of Object.entries(writtenTexts)) {
 		await setSetting(c.env.DB, key, value);
 	}
-	// One cache entry holds all four groups, so a write to any of them
-	// invalidates it. Still conditional: a no-op save shouldn't spend a KV write.
+	// One memo holds all four groups, so a write to any of them
+	// invalidates it. Still conditional: a no-op save needn't bust it.
 	const wrote =
 		Object.keys(writtenFlags).length > 0 ||
 		Object.keys(writtenNumbers).length > 0 ||

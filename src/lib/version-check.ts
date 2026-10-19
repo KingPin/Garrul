@@ -1,19 +1,18 @@
 /**
  * Passive "update available" check for the admin UI.
  *
- * The Worker checks the GitHub releases API at most once per 24h, shared
+ * The Worker checks the GitHub releases API at most once per hour, shared
  * across all isolates via the TREE_CACHE KV namespace (key `meta:latest-
- * release`). The check is gated on /admin/* requests — public traffic
- * never triggers a GitHub fetch. The refresh runs through
- * `executionCtx.waitUntil` so an admin request is never blocked on the
- * network round-trip. Failures are logged via `log.warn`
+ * release`). The refresh runs only after `requireRole` has accepted an admin
+ * or mod session, so no anonymous request can trigger a GitHub fetch or a KV
+ * write. It runs through `executionCtx.waitUntil` so an admin request is
+ * never blocked on the network round-trip. Failures are logged via `log.warn`
  * (`version_check.failed` / `version_check.malformed`) and a `null`-marker
  * is cached for 1h so we don't hammer the API when it's unreachable.
  *
  * Optional GITHUB_TOKEN env var raises the unauth 60/hr rate limit if
  * shared Cloudflare egress IPs put us close to the cap.
  */
-import type { MiddlewareHandler } from "hono";
 import { CURRENT_VERSION, REPO_OWNER, REPO_NAME } from "./version.gen";
 import { renderMarkdown } from "./markdown";
 import { log } from "./log";
@@ -197,7 +196,7 @@ export const getCachedLatestVersion = async (
 
 /**
  * Cache-only read for downstream consumers (the admin layout). Never
- * triggers a GitHub fetch; the middleware refreshes asynchronously.
+ * triggers a GitHub fetch; `refreshVersionCache` runs asynchronously from authenticated admin requests.
  */
 export const peekCachedLatestVersion = async (
 	env: Env,
@@ -325,7 +324,7 @@ export const getCachedRecentReleases = async (
 
 /**
  * Cache-only read for the admin About page. Never triggers a GitHub fetch;
- * the middleware refreshes asynchronously.
+ * `refreshVersionCache` runs asynchronously from authenticated admin requests.
  */
 export const peekCachedRecentReleases = async (
 	env: Env,
@@ -336,31 +335,38 @@ export const peekCachedRecentReleases = async (
 };
 
 /**
- * Middleware that triggers a (cache-aware) refresh of the latest-release
- * info and the recent-releases list on admin requests, then proceeds. The
- * refresh is dispatched via `executionCtx.waitUntil` so we never block the
- * request on a GitHub fetch — the banner reads `peekCachedLatestVersion`
- * and the About page reads `peekCachedRecentReleases`; both surface fresh
- * info on the *next* admin hit. Wired in routes/admin.ts.
+ * Refresh the latest-release info and the recent-releases list, cache-aware
+ * (each half is a no-op while its KV entry is fresh). Dispatched from
+ * `requireRole` in routes/admin.ts via `executionCtx.waitUntil`, so only an
+ * authenticated admin or mod request can cause a GitHub fetch or a KV write —
+ * an anonymous `GET /admin/anything` used to trigger this on every hit.
+ *
+ * Concurrent callers share one in-flight refresh: on an expired entry, a
+ * burst of admin requests otherwise each fetched and each wrote. Module state
+ * is safe here for the same reason `inFlight` in settings.ts is — nothing
+ * request-scoped is stored and the promise clears itself on settle.
  */
-export const versionCheckMiddleware = (): MiddlewareHandler<{
-	Bindings: Env;
-}> => {
-	return async (c, next) => {
-		const refresh = async () => {
-			const [info] = await Promise.all([
-				getCachedLatestVersion(c.env),
-				getCachedRecentReleases(c.env),
-			]);
-			if (info && info.behind) {
-				log.warn("version_check.behind", {
-					current: info.current,
-					latest: info.latest,
-					url: info.url,
-				});
-			}
-		};
-		c.executionCtx.waitUntil(refresh());
-		await next();
-	};
+let inFlight: Promise<void> | null = null;
+/** The last `latest` we warned about, so the warning fires once per release. */
+let lastWarnedLatest: string | null = null;
+
+export const refreshVersionCache = (env: Env): Promise<void> => {
+	if (inFlight) return inFlight;
+	inFlight = (async () => {
+		const [info] = await Promise.all([
+			getCachedLatestVersion(env),
+			getCachedRecentReleases(env),
+		]);
+		if (info && info.behind && info.latest !== lastWarnedLatest) {
+			lastWarnedLatest = info.latest;
+			log.warn("version_check.behind", {
+				current: info.current,
+				latest: info.latest,
+				url: info.url,
+			});
+		}
+	})().finally(() => {
+		inFlight = null;
+	});
+	return inFlight;
 };

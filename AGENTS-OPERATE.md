@@ -282,8 +282,9 @@ DB settings row  >  env var  >  hardcoded default
 Operators flip them at runtime from the **admin Settings page** (`/admin`
 → Settings), which writes a row to the `settings` D1 table — no redeploy,
 no `wrangler` round-trip. "Reset to defaults" deletes the rows so the env
-var / default applies again. The resolved set is KV-cached and busted on save,
-so a toggle takes effect within seconds across the widget (`/api/v1/config`)
+var / default applies again. The resolved set is memoized per isolate and busted on save,
+so a toggle takes effect immediately in the isolate that saved and within 60
+seconds elsewhere, across the widget (`/api/v1/config`)
 and the server-side gates. Leaving a flag untouched in the admin UI writes no
 row, so existing installs that only set env vars are unaffected.
 Implementation: `src/lib/settings.ts`.
@@ -292,14 +293,13 @@ The reaction-kind lists (`comment_reaction_kinds`, `page_reaction_kinds`) are
 the one runtime setting with **no env var**. They live only in the `settings`
 table, and "Reset to defaults" restores the original six kinds.
 
-**Changing one of these by env var instead takes up to an hour.** The cache TTL
-is 1 hour (raised from 5 minutes: it's a fixed pair of KV keys that
-re-populate once per TTL window *per edge colo*, against a free-tier cap of 1000
-KV writes/day **account-wide** — at 5 minutes a handful of colos was spending
-most of that budget re-deriving settings that hadn't changed). Only the admin
-save path busts the cache; a `wrangler deploy` does not, so an edited
-`wrangler.toml` var can be masked by a warm entry for up to an hour. Use the
-Settings page for anything you want to take effect now, or accept the wait.
+**A change made by env var and redeploy lands within a minute.** Resolved
+settings are memoized per Worker isolate for 60 seconds (there is no KV layer
+in front of them any more — KV's 1000 writes/day account-wide cap made a
+read-through cache an outage primitive). The admin Settings page busts the
+memo in the isolate that handled the save immediately; every other isolate
+picks the change up within 60 seconds, as does a `wrangler deploy` that edits
+a `[vars]` value.
 
 ### Display & pagination: numeric settings (since v1.11.0)
 

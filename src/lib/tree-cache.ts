@@ -66,9 +66,9 @@ export const treeCacheKey = (
  * `reqUrl` (the mutation's `c.req.url`) keys the deletes on the same Worker
  * origin the GET reads used.
  *
- * `resolved` lets a caller that already holds the settings hand them over. Every
- * `load*` helper is its own `TREE_CACHE.get`, so without it a handler that
- * resolved settings for its own gates pays a second read here — on the write
+ * `resolved` lets a caller that already holds the settings hand them over. Without it a handler that
+ * resolved settings for its own gates may pay a second derive here once the
+ * memo window lapses — on the write
  * path, after the insert, where the user is waiting. Callers with nothing in
  * hand (the delete path, reactions, admin) omit it and take the read.
  */

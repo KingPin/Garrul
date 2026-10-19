@@ -9,8 +9,8 @@
  *   - numbers are validated, clamped into [min,max], and stored as text;
  *   - a non-numeric value is rejected 400 (`invalid_number:<key>`);
  *   - unknown keys are ignored (whitelist);
- *   - the numbers cache is busted but the flag cache is left alone when only
- *     numbers change (independent cache entries);
+ *   - the legacy settings KV key is still deleted on a save (the memo bust is
+ *     in-process);
  *   - the write is audited;
  *   - "reset" clears both flag AND number keys.
  *
@@ -28,7 +28,6 @@ import { describe, it, expect } from "vitest";
 import { Hono } from "hono";
 import { admin } from "../src/routes/admin";
 import {
-	loadSettings,
 	MAX_TEXT_SETTING_CHARS,
 	STAFF_BADGE_LABEL_MAX,
 } from "../src/lib/settings";
@@ -42,7 +41,7 @@ const ADMIN_ID = "01HADMIN0000000000000000AB";
 // D1 double: serves the admin user for the auth gate and captures every
 // .run() (setSetting INSERTs, deleteSettings DELETE, audit INSERT) so tests
 // can assert what was persisted.
-const makeDb = () => {
+const makeDb = (settingsRows: { key: string; value: string }[] = []) => {
 	const runs: { sql: string; binds: unknown[] }[] = [];
 	const chain = (sql: string) => ({
 		_binds: [] as unknown[],
@@ -68,7 +67,7 @@ const makeDb = () => {
 			return null;
 		},
 		async all() {
-			return { results: [] };
+			return { results: /FROM settings/i.test(sql) ? settingsRows : [] };
 		},
 		async run() {
 			runs.push({ sql, binds: this._binds });
@@ -99,8 +98,8 @@ const makeKv = (seed: Record<string, string> = {}) => {
 	};
 };
 
-const mkEnv = () => {
-	const { db, runs } = makeDb();
+const mkEnv = (settingsRows: { key: string; value: string }[] = []) => {
+	const { db, runs } = makeDb(settingsRows);
 	// Seed the version-check cache with a back-off entry so the admin
 	// middleware's fire-and-forget refresh never attempts a GitHub fetch.
 	const kv = makeKv({
@@ -509,44 +508,18 @@ describe("POST /admin/settings — reaction kind lists", () => {
 	});
 });
 
-describe("GET /admin/settings — a settings blob cached by the previous release", () => {
-	const getSettings = (env: Bindings) =>
-		new Hono<{ Bindings: Bindings }>().route("/admin", admin).request(
+describe("GET /admin/settings — reaction-list seed", () => {
+	// The page seeds Alpine from the lenient read (reactionKinds), not the raw
+	// row, so a junk entry cannot round-trip on save and 400 it.
+	it("seeds a reaction list from the lenient read, not the raw row", async () => {
+		const { env } = mkEnv([{ key: "comment_reaction_kinds", value: "rocket,bogus" }]);
+		const res = await new Hono<{ Bindings: Bindings }>().route("/admin", admin).request(
 			"/admin/settings",
 			{ headers: { cookie: `__Host-garrul_sess=${SID}` } },
 			env as unknown as Record<string, unknown>,
 			execCtx as unknown as ExecutionContext,
 		);
-
-	// Derive a real blob, then shape it like one cached before the new text
-	// keys existed (or with a junk row) and put it where the loader reads.
-	const seedBlob = async (texts: (t: Record<string, string>) => void) => {
-		const { env, kv } = mkEnv();
-		const blob = JSON.parse(JSON.stringify(await loadSettings(env)));
-		texts(blob.texts);
-		kv.store.set("settings:resolved", JSON.stringify(blob));
-		return env;
-	};
-
-	it("renders 200 and the loader fills the missing keys with defaults", async () => {
-		const env = await seedBlob((t) => {
-			delete t.staff_badge_label;
-			delete t.comment_reaction_kinds;
-			delete t.page_reaction_kinds;
-		});
-		const { texts } = await loadSettings(env);
-		expect(texts.staff_badge_label).toBe("");
-		expect(texts.comment_reaction_kinds).toBe("fire,love,wow,laugh,hmm,cry");
-		expect(texts.page_reaction_kinds).toBe("fire,love,wow,laugh,hmm,cry");
-		expect((await getSettings(env)).status).toBe(200);
-	});
-
-	// Seeding the raw row would round-trip `bogus` on every save and 400 it.
-	it("seeds a reaction list from the lenient read, not the raw row", async () => {
-		const env = await seedBlob((t) => {
-			t.comment_reaction_kinds = "rocket,bogus";
-		});
-		const html = await (await getSettings(env)).text();
+		const html = await res.text();
 		expect(html).toContain("&quot;comment_reaction_kinds&quot;:&quot;rocket&quot;");
 	});
 });

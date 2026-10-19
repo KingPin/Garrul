@@ -10,12 +10,14 @@
  *
  * No Miniflare: a small in-memory D1 that simulates the page_reactions /
  * page_votes / posts / users tables by matching on the SQL the query layer
- * issues, plus KV stubs for rate-limit + flag cache.
+ * issues, plus KV stubs for rate-limit; settings come from D1 rows.
  */
 import { describe, it, expect } from "vitest";
 import { Hono } from "hono";
 import type { TestApp, } from "./helpers/app";
 import { pageEngagement } from "../src/routes/api.page-engagement";
+import { bustSettingsCache } from "../src/lib/settings";
+import type { Bindings } from "../src/index";
 import { installMockCaches, uninstallMockCaches } from "./helpers/mock-caches";
 
 type Reaction = { post_slug: string; user_id: string; kind: string };
@@ -187,36 +189,22 @@ const mkApp = (flags: Record<string, boolean>, texts: Record<string, string> = {
 	const app = new Hono<{ Bindings: Record<string, unknown> }>();
 	app.route("/", pageEngagement);
 	const { db } = makeDb();
-	// Warm settings entry. Every group has to be present — the loader ignores a
-	// blob missing one rather than resolving that group to undefined — even
-	// though only the flags matter to these tests.
-	const flagCache = {
-		get: async (_k: string, type?: string) =>
-			type === "json"
-				? {
-						flags: {
-							comments_enabled: true,
-							reactions_enabled: true,
-							votes_enabled: true,
-							downvotes_enabled: true,
-							page_reactions_enabled: false,
-							page_votes_enabled: false,
-							...flags,
-						},
-						numbers: {},
-						strings: {},
-						// Every group the shape guard knows about has to be present
-						// or the blob is rejected as stale and the flags above are
-						// silently re-derived from the (empty) DB.
-						texts: { ...texts },
-					}
-				: null,
-		put: async () => {},
-		delete: async () => {},
+	// Settings come from `settings` rows served by the D1 stub, which is where
+	// the loader reads them. Defaults are applied by the loader.
+	// `texts` is read at query time so a test can edit it, then bust the memo.
+	const rows = () => [
+		...Object.entries(flags).map(([key, v]) => ({ key, value: String(v) })),
+		...Object.entries(texts).map(([key, value]) => ({ key, value })),
+	];
+	const settingsDb = {
+		prepare: (sql: string) =>
+			/FROM settings/i.test(sql)
+				? { all: async () => ({ results: rows() }) }
+				: db.prepare(sql),
 	};
 	const env = {
-		DB: db,
-		TREE_CACHE: flagCache,
+		DB: settingsDb,
+		TREE_CACHE: kvNull,
 		RATE_LIMITS: kvNull,
 		SESSIONS: kvNull,
 		IP_HASH_SECRET: "x".repeat(32),
@@ -421,6 +409,7 @@ describe("page reactions — only the operator's enabled kinds", () => {
 		const body = { slug: "p", kind: "rocket" };
 		expect((await post(app, env, "/reactions", body, "10.0.4.4")).status).toBe(200);
 		texts.page_reaction_kinds = "fire";
+		await bustSettingsCache(env as unknown as Bindings); // an admin save
 		const res = await post(app, env, "/reactions", body, "10.0.4.4");
 		expect(res.status).toBe(400);
 		expect(((await res.json()) as { error: string }).error).toBe("invalid_kind");

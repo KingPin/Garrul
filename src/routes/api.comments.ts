@@ -439,9 +439,8 @@ comments.post("/", async (c) => {
 	// below is rendered verbatim by the widget, so without this a German reader
 	// gets a German widget and an English "comment is too long".
 	const t = c.get("t") ?? tFor(FALLBACK_LOCALE);
-	// One read for all three groups this handler needs. They share a single KV
-	// entry but each `load*` helper is its own `get`, so the per-group helpers
-	// would spend three round trips here to fetch the same blob three times.
+	// One resolved-settings object for all three groups this handler needs;
+	// the per-group helpers are thin views over the same memoized load.
 	const { flags, numbers, texts } = await loadSettings(c.env);
 	if (!flags.comments_enabled) {
 		return c.json({ error: "comments_disabled" }, 403);
@@ -1260,7 +1259,7 @@ comments.get("/", async (c) => {
 
 	const session = await readSession(c);
 	// One read rather than three per-group ones: this route needs flags, numbers
-	// and strings, and they share a single cache entry.
+	// and strings, and they share one memoized load.
 	const { flags, numbers, strings } = await loadSettings(c.env);
 
 	// Settings first, then the sort — an absent `?sort=` means "whatever the
