@@ -101,6 +101,7 @@ export type Bindings = {
 	AKISMET_SITE_URL?: string;
 	AI?: Ai;
 	SPAM_LINK_THRESHOLD?: string;
+	SPAM_AI_THRESHOLD?: string;
 	SPAM_HONEYPOT_MIN_MS?: string;
 	SPAM_FIRST_COMMENT_MODERATE?: string;
 	SPAM_FORM_TS_SECRET?: string;

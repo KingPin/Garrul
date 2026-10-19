@@ -386,7 +386,7 @@ const evaluateSpam = async (
 			user_agent: userAgent,
 			post_url: postUrl,
 			is_first_comment: isFirst,
-		});
+		}, numbers.spam_ai_threshold);
 		if (classifierVerdict) {
 			const source: SpamVerdictSource =
 				env.SPAM_PROVIDER === "akismet" ? "akismet" : "workers-ai";

@@ -189,9 +189,9 @@ describe("akismet provider", () => {
 });
 
 describe("workers-ai provider", () => {
-	const makeAi = (response: string) => ({
-		// Cloudflare's Ai.run returns either a string or { response: string }.
-		run: vi.fn(async () => ({ response })),
+	// Clef-flash returns P(spam) as a "noul" answer under the question id.
+	const makeAi = (p: unknown) => ({
+		run: vi.fn(async () => ({ answers: { spam: { type: "noul", noul: p } } })),
 	});
 
 	class StubKV {
@@ -204,73 +204,81 @@ describe("workers-ai provider", () => {
 		}
 	}
 
-	it("returns spam=true when the model says SPAM", async () => {
-		const ai = makeAi("SPAM");
+	const envWith = (ai: unknown, kv?: StubKV) => ({
+		SPAM_PROVIDER: "workers-ai",
+		AI: ai as Ai,
+		...(kv && { RATE_LIMITS: kv as unknown as KVNamespace }),
+	});
+
+	it("calls Clef-flash with the comment as state and one yes/no question", async () => {
+		const ai = makeAi(0.1);
+		await checkSpam(envWith(ai), input);
+		expect(ai.run).toHaveBeenCalledWith(
+			"@cf/cloudflare/clef-flash",
+			expect.objectContaining({
+				model: "clef-flash",
+				state: expect.objectContaining({ comment: "Hello world" }),
+				questions: { spam: expect.objectContaining({ type: "noul" }) },
+			}),
+		);
+	});
+
+	it("flags spam at or above the threshold and records the probability as score", async () => {
 		const kv = new StubKV();
-		const v = await checkSpam(
-			{
-				SPAM_PROVIDER: "workers-ai",
-				AI: ai as unknown as Ai,
-				RATE_LIMITS: kv as unknown as KVNamespace,
-			},
-			input,
-		);
-		expect(v).toMatchObject({ spam: true, reason: "workers-ai.spam" });
-		expect(v?.raw).toMatchObject({ cached: false });
-		expect(ai.run).toHaveBeenCalledOnce();
-		// Caches the verdict so a second call short-circuits.
-		expect([...kv.map.values()]).toContain("spam");
+		const v = await checkSpam(envWith(makeAi(0.5), kv), input, 50);
+		expect(v).toMatchObject({ spam: true, reason: "workers-ai.spam", score: 0.5 });
+		expect(v?.raw).toMatchObject({ cached: false, threshold: 50 });
+		// Caches the probability, not the verdict, so a retuned threshold applies.
+		expect([...kv.map.values()]).toEqual(["0.5"]);
 	});
 
-	it("returns spam=false when the model says HAM", async () => {
-		const ai = makeAi("HAM");
-		const v = await checkSpam(
-			{ SPAM_PROVIDER: "workers-ai", AI: ai as unknown as Ai },
-			input,
-		);
-		expect(v).toMatchObject({ spam: false });
-		expect(v?.raw).toMatchObject({ cached: false });
+	it("passes as ham below the threshold", async () => {
+		const v = await checkSpam(envWith(makeAi(0.49)), input, 50);
+		expect(v).toMatchObject({ spam: false, score: 0.49 });
 	});
 
-	it("uses cached verdict without calling the model again", async () => {
-		const ai = makeAi("SPAM");
+	it("flags a score sitting exactly on the threshold, fresh and cached", async () => {
+		// 0.57 * 100 is 56.99999999999999, so a multiplied comparison misses this.
+		const ai = makeAi(0.57);
 		const kv = new StubKV();
-		await checkSpam(
-			{
-				SPAM_PROVIDER: "workers-ai",
-				AI: ai as unknown as Ai,
-				RATE_LIMITS: kv as unknown as KVNamespace,
-			},
-			input,
-		);
-		expect(ai.run).toHaveBeenCalledTimes(1);
+		expect(await checkSpam(envWith(ai, kv), input, 57)).toMatchObject({
+			spam: true,
+			raw: { cached: false },
+		});
+		expect(await checkSpam(envWith(ai, kv), input, 57)).toMatchObject({
+			spam: true,
+			raw: { cached: true },
+		});
+	});
 
-		await checkSpam(
-			{
-				SPAM_PROVIDER: "workers-ai",
-				AI: ai as unknown as Ai,
-				RATE_LIMITS: kv as unknown as KVNamespace,
-			},
-			input,
-		);
+	it("re-judges a cached probability against the current threshold", async () => {
+		const ai = makeAi(0.6);
+		const kv = new StubKV();
+		expect((await checkSpam(envWith(ai, kv), input, 50))?.spam).toBe(true);
+		const v = await checkSpam(envWith(ai, kv), input, 80);
+		expect(v).toMatchObject({ spam: false, score: 0.6, raw: { cached: true } });
 		expect(ai.run).toHaveBeenCalledTimes(1);
 	});
 
-	it("returns null when the model emits something unrecognized", async () => {
-		const ai = makeAi("maybe?");
-		const v = await checkSpam(
-			{ SPAM_PROVIDER: "workers-ai", AI: ai as unknown as Ai },
-			input,
-		);
-		expect(v).toBeNull();
+	it("treats a pre-Clef SPAM/HAM cache entry as a miss", async () => {
+		const ai = makeAi(0.2);
+		const kv = new StubKV();
+		await checkSpam(envWith(ai, kv), input);
+		const [key] = kv.map.keys();
+		kv.map.set(key as string, "spam");
+		const v = await checkSpam(envWith(ai, kv), input);
+		expect(v).toMatchObject({ spam: false, raw: { cached: false } });
+		expect(ai.run).toHaveBeenCalledTimes(2);
+	});
+
+	it("returns null when the answer is missing or not a probability", async () => {
+		expect(await checkSpam(envWith(makeAi(undefined)), input)).toBeNull();
+		expect(await checkSpam(envWith(makeAi(1.5)), input)).toBeNull();
+		expect(await checkSpam(envWith(makeAi("0.9")), input)).toBeNull();
 	});
 
 	it("returns null when the model call throws", async () => {
 		const ai = { run: vi.fn(async () => { throw new Error("ai down"); }) };
-		const v = await checkSpam(
-			{ SPAM_PROVIDER: "workers-ai", AI: ai as unknown as Ai },
-			input,
-		);
-		expect(v).toBeNull();
+		expect(await checkSpam(envWith(ai), input)).toBeNull();
 	});
 });
