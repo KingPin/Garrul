@@ -204,7 +204,7 @@ The rate limiter is a **cost-raiser, not a hard ceiling.** Treat the configured 
 | Anonymous comment POST | Turnstile — a fresh single-use token per comment |
 | Report | `UNIQUE(comment_id, reporter_ip_hash)` — one report per comment per network, full stop |
 | Vote / reaction / page vote | Idempotent toggle on a unique row — repeats flip a row, they don't accumulate |
-| `/auth/signout`, `/auth/session/exchange`, `/auth/:provider/callback` | **None.** The rate limit is the only control today, so it raises the cost of exhausting the 1,000/day account-wide KV delete quota but does not cap it (30 per 600 s is 4,320/day from one IP). If you see delete-quota pressure, add a Cloudflare WAF rate-limiting rule on `/api/v1/auth/signout`. Binding `RATE_LIMIT_DO` closes the concurrency and per-colo gaps, but one IP can still reach 4,320/day; only a WAF rule lowers that figure |
+| `/auth/signout`, `/auth/session/exchange`, `/auth/:provider/callback` | **None.** The rate limit is the only control today, so it raises the cost of exhausting the 1,000/day account-wide KV delete quota but does not cap it (30 per 600 s is 4,320/day from one IP). If you see delete-quota pressure, add the [WAF rule for sign-out](#waf-rule-for-sign-out). Binding `RATE_LIMIT_DO` closes the concurrency and per-colo gaps, but one IP can still reach 4,320/day; only a WAF rule on a Pro or higher plan lowers that figure |
 | Subscribe | A [global confirmation-email ceiling](#the-confirmation-email-ceiling), counted atomically in D1. `PENDING_PER_EMAIL_CAP` (5 unconfirmed rows per address) is also non-racy but binds *per address*, so it alone does not stop an attacker cycling addresses |
 
 **What the race actually buys an attacker.** Every second control in that table is unaffected by it, so what #2 loosens is a *rate*, not an action — it cannot buy a second report on the same comment, or a double-counted vote. The `/auth/*` row is the exception: it has no second control, so there the race lets concurrent requests spend extra KV deletes.
@@ -217,6 +217,50 @@ On the IP-keyed buckets it is the cheapest bypass currently available. It used n
 2. **Enable the Durable Object backend below.** It closes #1 and #2 inside Garrul, which is what you want for the buckets WAF can't express — the per-user-id ones especially.
 
 Garrul's limiter is the floor that ships in the box, not the ceiling you should rely on under active attack.
+
+### WAF rule for sign-out
+
+Use this when `wrangler tail` or the KV dashboard shows the daily delete count climbing toward 1,000, or you want the cover in place before that happens. It limits `POST /api/v1/auth/signout`, the one route that can spend a KV delete for a caller who never signed in. Plan limits are from Cloudflare's [rate limiting availability table](https://developers.cloudflare.com/waf/rate-limiting-rules/#availability).
+
+**Before you start**
+
+1. The rule protects your **custom domain** only (`comments.<yourdomain>`). It does not cover `<name>.<subdomain>.workers.dev`, which is a Cloudflare-owned hostname outside your zone. Once your custom domain works, set `workers_dev = false` in `wrangler.toml` and redeploy, or the `workers.dev` hostname stays an open way around the rule.
+2. Check your zone's plan. It decides how much the rule can do:
+
+| Plan | Rules | Counting period | Block duration | Effect on the sign-out route |
+| --- | --- | --- | --- | --- |
+| Free | 1 | 10 s only | 10 s only | Counts every request with no race and before the Worker runs, so blocked requests cost no Worker request. With the settings below one IP can still send two requests every 20 s (about 8,600 a day), more than Garrul's own limit allows, so it does **not** lower the daily figure. |
+| Pro | 2 | up to 1 min | up to 1 h | Lowers the daily figure: the settings below hold one IP to about 5 requests per hour. |
+| Business | 5 | up to 10 min | up to 1 day | Same settings as Pro, or longer blocks. |
+
+Counters are kept per Cloudflare data center and per IP on every plan, so an attacker spread across many data centers or many addresses still multiplies the figure. The rule raises the cost; it is not an account-wide cap.
+
+**Steps (Cloudflare dashboard)**
+
+1. Select your zone, then go to **Security rules**.
+2. Select **Create rule** > **Rate limiting rules**.
+3. **Rule name:** `garrul signout`.
+4. **If incoming requests match:** Field **URI Path**, Operator **equals**, Value `/api/v1/auth/signout`. (The Free plan offers only the path field, which is all this rule needs.)
+5. **With the same characteristics:** **IP**. Leave the default data center characteristic in place.
+6. **When rate exceeds:**
+   - Free: **2** requests per **10 seconds**.
+   - Pro or higher: **5** requests per **1 minute**.
+7. **Then take action:** **Block**. Do **not** pick a challenge action. The widget signs out with a `fetch` request, and a challenge page cannot be solved from `fetch`, so a challenge would only break sign-out for real readers.
+8. **Duration:** Free: **10 seconds** (the only option). Pro or higher: **1 hour**.
+9. Pro or higher, optional: set a custom response of type **Custom JSON** with body `{"error":"ratelimited"}`, so a blocked request matches what Garrul itself returns.
+10. Select **Deploy**.
+
+**What a real reader sees.** Nobody signs out twice in ten seconds, so a reader should never meet the rule. If one does, the widget ignores the failed response and shows them as signed out; the session cookie stays valid in the browser until they sign out again after the block ends.
+
+**Check it works.** From one machine, send three sign-outs within a few seconds to your custom domain:
+
+```bash
+for i in 1 2 3; do curl -s -o /dev/null -w "%{http_code}\n" -X POST \
+  -H "Origin: https://yourblog.example.com" -H "content-type: application/json" \
+  -d '{}' https://comments.example.com/api/v1/auth/signout; done
+```
+
+The first two print `200`; the third prints `429` from Cloudflare (Free plan threshold). Use an `Origin` listed in `ALLOWED_ORIGINS`, or Garrul answers `403` before the rule's effect is visible. Then confirm under **Security** > **Events** that the rule fired.
 
 ## The confirmation-email ceiling
 
