@@ -130,9 +130,24 @@ describe("POST /comments — anti-spam on create", () => {
 	});
 
 	it("applies the SPAM_AI_THRESHOLD cut-off to the classifier score", async () => {
+		// 0.6 is ham under the default of 70, so a pending row proves the env
+		// value reached the classifier.
 		const res = await post(
 			{ body: "borderline" },
-			{ ...aiSaying(0.6), SPAM_AI_THRESHOLD: "70" },
+			{ ...aiSaying(0.6), SPAM_AI_THRESHOLD: "50" },
+		);
+		expect(res.status).toBe(201);
+		expect(stored().map((c) => c.status)).toEqual(["pending"]);
+		expect(verdicts().map((v) => [v.source, v.verdict])).toEqual([["workers-ai", "spam"]]);
+	});
+
+	it("lets a stored spam_ai_threshold override SPAM_AI_THRESHOLD", async () => {
+		sqlite
+			.prepare("INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)")
+			.run("spam_ai_threshold", "90", 1_700_000_000_000);
+		const res = await post(
+			{ body: "borderline" },
+			{ ...aiSaying(0.6), SPAM_AI_THRESHOLD: "50" },
 		);
 		expect(res.status).toBe(201);
 		expect(stored().map((c) => c.status)).toEqual(["approved"]);
