@@ -63,12 +63,12 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.14",
-    "@cloudflare/workers-types": "^5.20261011.1",
+    "@cloudflare/workers-types": "^5.20261015.1",
     "@types/node": "^24.19.2",
     "esbuild": "^0.28.2",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
-    "vitest": "^5.0.1",
-    "wrangler": "^4.149.0"
+    "vitest": "^5.0.5",
+    "wrangler": "^4.151.0"
   }
 }
