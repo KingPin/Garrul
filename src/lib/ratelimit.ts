@@ -425,11 +425,14 @@ export const checkRateLimit = async (
 		// endpoint taking an unauthenticated caller: Turnstile on anonymous
 		// comment POST, UNIQUE(comment_id, reporter_ip_hash) on reports,
 		// idempotent toggles on votes and reactions, PENDING_PER_EMAIL_CAP on
-		// subscribe. Exception: /auth/signout, /auth/session/exchange and
-		// /auth/:provider/callback have no second control; see ANTISPAM.md.
-		// None of those is racy, so what this loosens is a *rate*, not
-		// an action — it cannot buy a second report on one comment or a
+		// subscribe. None of those is racy, so what this loosens is a *rate*,
+		// not an action — it cannot buy a second report on one comment or a
 		// double-counted vote.
+		//
+		// Exception: /auth/signout, /auth/session/exchange and
+		// /auth/:provider/callback have no second control. There the race
+		// loosens the only defense, so concurrent requests spend extra KV
+		// deletes. See ANTISPAM.md.
 		//
 		// It is NOT excused by "IPv6 rotation defeats per-IP limiting anyway".
 		// That held while `ip-hash.ts` hashed the full address, and stopped
