@@ -44,8 +44,12 @@ import { checkRateLimit, type LimitConfig } from "../lib/ratelimit";
 /**
  * Burst limit for the three routes that can cost a KV delete per request.
  * A reader signs out or signs in a handful of times a day; five per ten
- * seconds and thirty per ten minutes is far above that and far below what
- * it takes to drain the account-wide 1000 KV deletes/day. Each route has its
+ * seconds and thirty per ten minutes is far above that. The limit raises the
+ * cost of exhausting the account-wide 1000 KV deletes/day and stops casual
+ * floods. It does NOT cap the total: one sequential IP at one colo can still
+ * spend 4,320 deletes/day, concurrency undercounts on the Cache API backend,
+ * and an IPv6 identity is a /64. The full fix is an authenticated session id
+ * (follow-up). Each route has its
  * own scope (ratelimit.ts requires it for any route with its own config), and
  * that is also load-bearing: /callback and /session/exchange fire
  * back-to-back from one IP, so a shared bucket at DEFAULTS (1 per 10 s)

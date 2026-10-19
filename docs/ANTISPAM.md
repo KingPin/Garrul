@@ -197,13 +197,14 @@ The rate limiter is a **cost-raiser, not a hard ceiling.** Treat the configured 
 
 **2. Concurrent requests from one identity are undercounted.** Reading a bucket, deciding, and writing it back is not atomic, and the write replaces the entry rather than appending to it. So N requests held in flight at once all read the same pre-state, all pass the gate, and all write back a bucket grown by exactly one entry — the N-1 losers leave no trace. The effect is a sustained multiplier, not a one-off burst: a client keeping N requests in flight holds roughly N× the configured rate for as long as it likes. The shared envelope races the same way, so it multiplies rather than backstopping.
 
-**Why this is the default rather than fixed everywhere.** The Cache API has no compare-and-swap, so #2 cannot be closed on this backend at all — closing it needs the [Durable Object backend](#the-durable-object-backend-opt-in), which is opt-in because it adds a Cloudflare resource and a migration to your deploy. On the default backend it is still not the front line, because the limiter is deliberately not the only control on any endpoint that accepts an unauthenticated caller:
+**Why this is the default rather than fixed everywhere.** The Cache API has no compare-and-swap, so #2 cannot be closed on this backend at all — closing it needs the [Durable Object backend](#the-durable-object-backend-opt-in), which is opt-in because it adds a Cloudflare resource and a migration to your deploy. On the default backend it is still not the front line, because the limiter is deliberately not the only control on any endpoint that accepts an unauthenticated caller (the auth routes in the `/auth/*` row are the exception):
 
 | Endpoint | Second, non-racy control |
 | --- | --- |
 | Anonymous comment POST | Turnstile — a fresh single-use token per comment |
 | Report | `UNIQUE(comment_id, reporter_ip_hash)` — one report per comment per network, full stop |
 | Vote / reaction / page vote | Idempotent toggle on a unique row — repeats flip a row, they don't accumulate |
+| `/auth/signout`, `/auth/session/exchange`, `/auth/:provider/callback` | **None.** The rate limit is the only control today, so it raises the cost of exhausting the 1,000/day account-wide KV delete quota but does not cap it (30 per 600 s is 4,320/day from one IP). If you see delete-quota pressure, add a Cloudflare WAF rate-limiting rule on `/api/v1/auth/signout`, or bind `RATE_LIMIT_DO` |
 | Subscribe | A [global confirmation-email ceiling](#the-confirmation-email-ceiling), counted atomically in D1. `PENDING_PER_EMAIL_CAP` (5 unconfirmed rows per address) is also non-racy but binds *per address*, so it alone does not stop an attacker cycling addresses |
 
 **What the race actually buys an attacker.** Every control in that table is unaffected by it, so what #2 loosens is a *rate*, not an action — it cannot buy a second report on the same comment, or a double-counted vote.

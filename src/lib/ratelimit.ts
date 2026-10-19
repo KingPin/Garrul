@@ -425,7 +425,9 @@ export const checkRateLimit = async (
 		// endpoint taking an unauthenticated caller: Turnstile on anonymous
 		// comment POST, UNIQUE(comment_id, reporter_ip_hash) on reports,
 		// idempotent toggles on votes and reactions, PENDING_PER_EMAIL_CAP on
-		// subscribe. None of those is racy, so what this loosens is a *rate*, not
+		// subscribe. Exception: /auth/signout, /auth/session/exchange and
+		// /auth/:provider/callback have no second control; see ANTISPAM.md.
+		// None of those is racy, so what this loosens is a *rate*, not
 		// an action — it cannot buy a second report on one comment or a
 		// double-counted vote.
 		//
