@@ -18,7 +18,8 @@ happen on every pageview, engaged or not.
 
 Two patterns to defer it. The first is what we recommend.
 
-> **Since v2.15.0** the mount is one or two requests. It used to be four
+> **Since v2.15.0** a mount is one request, plus the form token on first composer focus when the
+> timing heuristic is on. It used to be four
 > (`/api/v1/config`, then `/api/v1/auth/me` and
 > `/api/v1/comments?slug=...`, plus the form token), or six with page
 > reactions/votes and thread subscriptions enabled. Deferring the script

@@ -210,8 +210,9 @@ that has already hit its cap — driving usage up, and recovery down,
 precisely when neither can afford it.
 
 `/api/v1/comments/form-token` is deliberately **not** folded in, which
-is why the mount is two requests and not one when the timing heuristic
-is on. Its signed timestamp feeds the anti-spam minimum-elapsed-time
+is why the form token is a separate request (made on first composer focus,
+a reply-form open, or at mount when a saved draft is restored) when the
+timing heuristic is on. Its signed timestamp feeds the anti-spam minimum-elapsed-time
 heuristic, and baking one into a shared payload would hand every reader
 the same start time. When the heuristic is off (no `SPAM_FORM_TS_SECRET`
 or `SPAM_HONEYPOT_MIN_MS` is `0`) the config payload carries
