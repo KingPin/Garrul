@@ -1,7 +1,7 @@
 /**
  * Passive "update available" check for the admin UI.
  *
- * The Worker checks the GitHub releases API at most once per 24h, shared
+ * The Worker checks the GitHub releases API at most once per hour, shared
  * across all isolates via the TREE_CACHE KV namespace (key `meta:latest-
  * release`). The refresh runs only after `requireRole` has accepted an admin
  * or mod session, so no anonymous request can trigger a GitHub fetch or a KV

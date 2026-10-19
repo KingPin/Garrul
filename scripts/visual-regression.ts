@@ -337,13 +337,6 @@ try {
 	log("migrating and seeding local D1 …");
 	run("npm", ["run", "migrate", "--", "--local"]);
 	run("npm", ["run", "seed-demo"]);
-	// The resolved-settings KV cache can go stale after settings-affecting
-	// changes; delete it defensively (ignore failure — it may not exist).
-	spawnSync(
-		"npx",
-		["wrangler", "kv", "key", "delete", "--binding", "TREE_CACHE", "--local", "settings:resolved"],
-		{ cwd: ROOT, stdio: "ignore" },
-	);
 
 	log("starting wrangler dev …");
 	const wranglerLog = openSync(join(runDir, "wrangler.log"), "w");
