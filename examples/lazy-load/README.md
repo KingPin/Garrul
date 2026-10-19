@@ -1,15 +1,16 @@
 # Garrul — lazy-loading the widget
 
 By default, the embed script runs as soon as the page parses, which
-fires one or two Worker requests per pageview before the reader has
+fires one Worker request per pageview before the reader has
 scrolled anywhere near the comments:
 
 - `/api/v1/bootstrap?slug=...` — the config, the session user and the
   first page of comments, together.
 - `/api/v1/comments/form-token` — a signed form-render timestamp for the
-  anti-spam timing check, fetched when the comment box renders. Only
-  sent when the Worker reports `form_token_enabled: true` (the timing
-  heuristic is on); the default install skips it.
+  anti-spam timing check, fetched on the reader's first focus of the
+  comment box (or when a reply form opens, or at mount when a saved draft
+  is restored). Only sent when the Worker reports `form_token_enabled: true`
+  (the timing heuristic is on); the default install skips it.
 
 On a busy blog where most visitors bounce without engaging, those
 requests are still the bulk of your Cloudflare Worker usage — they
@@ -17,7 +18,8 @@ happen on every pageview, engaged or not.
 
 Two patterns to defer it. The first is what we recommend.
 
-> **Since v2.15.0** the mount is one or two requests. It used to be four
+> **Since v2.15.0** a mount is one request, plus the form token on first composer focus when the
+> timing heuristic is on. It used to be four
 > (`/api/v1/config`, then `/api/v1/auth/me` and
 > `/api/v1/comments?slug=...`, plus the form token), or six with page
 > reactions/votes and thread subscriptions enabled. Deferring the script
@@ -145,15 +147,16 @@ A rough sketch — your real numbers will vary:
 
 | Pattern        | Worker requests per pageview                                                      |
 | -------------- | --------------------------------------------------------------------------------- |
-| Default        | **1** (bootstrap), **2** when the timing heuristic is on (adds the form token)    |
+| Default        | **1** (bootstrap), **+1** when the timing heuristic is on and the reader focuses the box |
 | Scroll-in-view | **1 or 2** for engaged readers, **0** for bouncers                                |
 | Click-to-load  | **0** unless the reader clicks                                                    |
 
-The Workers free tier allows 100,000 requests/day, so a one-request
-mount is roughly a 100k-pageview/day ceiling and a two-request mount
-roughly 50k before any deferral —
-`/embed.js` itself doesn't count against that, because it ships
-`s-maxage=86400` and the edge serves it. If your bounce rate at the
+The Workers free tier allows 100,000 requests/day, so a mount is one
+request, so the ceiling is roughly 100k pageviews/day, minus the readers
+who focus the composer when the timing heuristic is on, before any deferral —
+`/embed.js` itself doesn't count against that when `wrangler.toml` has
+the `[assets]` block (default since v2.38); without it, each browser-cache
+miss of the script is one more request. If your bounce rate at the
 comments section is high (typical for blog content), scroll-into-view
 still captures most of what's left of the savings without the UX cost —
 but it is now a smaller lever, and worth reaching for only when you're

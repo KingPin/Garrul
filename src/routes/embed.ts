@@ -7,9 +7,13 @@
  *      string export) so this route imports them as a normal module —
  *      no wrangler text-loader rule required of self-hosters.
  *
- * Cache: 1 hour browser, 1 day edge. The bundle changes only on deploy,
- * so the edge TTL is safe; we trade some hot-deploy lag for fewer Worker
- * invocations from cached embeds.
+ * Fallback route. Since v2.38 the template serves this file from Workers
+ * Static Assets (`[assets] directory = "./public"`, written by
+ * scripts/build-embed.ts) and this handler is never reached; it stays so a
+ * wrangler.toml without the block keeps working, at one Worker request per
+ * browser-cache miss. `s-maxage` is honored only by a cache in front of the
+ * Worker, which a bare Worker does not have; the cache and nosniff
+ * headers match public/_headers.
  *
  * **This asset is locale-free and must stay that way.** The widget carries the
  * English table and fetches any other language from /api/v1/config at runtime,

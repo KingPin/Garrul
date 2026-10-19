@@ -165,20 +165,22 @@ needs the resolved locale) before `/api/v1/auth/me` and
 `/api/v1/page-engagement` and `/api/v1/subscribe/mine` from their own
 surfaces.
 
-**Count the whole mount, not just this endpoint.** A post with the
-comment box rendered costs **one** Worker request on the default install
-(`/api/v1/bootstrap`) and **two** when the anti-spam timing heuristic
-is on (`SPAM_FORM_TS_SECRET` set and `SPAM_HONEYPOT_MIN_MS` above `0`):
-the widget then also prefetches `/api/v1/comments/form-token` when the
-composer renders. The Workers free tier allows 100,000 requests/day, so
-that is roughly a **100k** or **50k pageview/day** ceiling respectively
-— up from ~25k at the four requests a default install used to make, and
+**Count the whole mount, not just this endpoint.** A mount costs
+**one** Worker request (`/api/v1/bootstrap`). When the anti-spam timing
+heuristic is on (`SPAM_FORM_TS_SECRET` set and `SPAM_HONEYPOT_MIN_MS`
+above `0`), `/api/v1/comments/form-token` is one more request, made on the
+reader's first composer focus (or when a reply form opens, or at mount when
+a saved draft is restored); the minimum-elapsed-time clock starts at that
+mint. The Workers free tier allows 100,000 requests/day, so the ceiling is
+roughly **100k pageviews/day** minus the readers who focus the composer —
+up from ~25k at the four requests a default install used to make, and
 ~16k with page reactions/votes and subscriptions on.
 
-`/embed.js` is not in that count. It ships
-`Cache-Control: public, max-age=3600, s-maxage=86400`, so the
-Cloudflare edge serves it and the Worker sees it about once per colo per
-day rather than once per pageview.
+`/embed.js` is not in that count on an install whose `wrangler.toml` has
+the `[assets]` block (default since v2.38): Workers Static Assets serves it
+without invoking the Worker. Without the block the Hono route serves it and
+every browser-cache miss (`max-age=3600`) is one billed request — nothing
+caches in front of a Worker on its own, so `s-maxage` alone does not help.
 
 **Nothing was removed.** `/api/v1/config`, `/api/v1/auth/me`,
 `/api/v1/comments`, `/api/v1/page-engagement` and
@@ -208,8 +210,9 @@ that has already hit its cap — driving usage up, and recovery down,
 precisely when neither can afford it.
 
 `/api/v1/comments/form-token` is deliberately **not** folded in, which
-is why the mount is two requests and not one when the timing heuristic
-is on. Its signed timestamp feeds the anti-spam minimum-elapsed-time
+is why the form token is a separate request (made on first composer focus,
+a reply-form open, or at mount when a saved draft is restored) when the
+timing heuristic is on. Its signed timestamp feeds the anti-spam minimum-elapsed-time
 heuristic, and baking one into a shared payload would hand every reader
 the same start time. When the heuristic is off (no `SPAM_FORM_TS_SECRET`
 or `SPAM_HONEYPOT_MIN_MS` is `0`) the config payload carries
@@ -220,13 +223,13 @@ server) keeps requesting the token.
 
 ### Lazy-loading (recommended for read-heavy hosts)
 
-The eager `<script defer>` snippet above triggers one or two Worker
-requests per pageview on mount (`/api/v1/bootstrap?slug=…`, plus
-`/api/v1/comments/form-token` only when config reports
-`form_token_enabled: true`) before the reader has scrolled. On a blog
-or docs site where most visitors bounce above the comments section, that
-is the bulk of Cloudflare Worker usage — one or two requests instead of
-the pre-v2.15.0 four to six, but still at least one per bouncer.
+The eager `<script defer>` snippet above triggers one Worker
+request per pageview on mount (`/api/v1/bootstrap?slug=…`) before the
+reader has scrolled; `/api/v1/comments/form-token` is one more, only when
+config reports `form_token_enabled: true` and the reader focuses the
+composer. On a blog or docs site where most visitors bounce above the
+comments section, that is the bulk of Cloudflare Worker usage — one request
+instead of the pre-v2.15.0 four to six, but still one per bouncer.
 
 Turnstile is **not** in that list. The anti-spam iframe
 (`/embed/turnstile-frame`, which in turn pulls Cloudflare's `api.js` and

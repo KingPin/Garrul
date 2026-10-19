@@ -31,6 +31,13 @@ subdomain (free), then re-run `npm run deploy`, or `npm run setup`, which
 keeps everything already configured. For a custom domain, uncomment
 `[[routes]]` instead.
 
+### `wrangler deploy` says `The directory specified by the "assets.directory" field in your configuration file does not exist`
+
+`wrangler.toml` has the `[assets]` block, which serves `/embed.js` from
+`public/`, and `public/` is generated, not committed. Run `npm run deploy`
+(its `predeploy` step builds `public/`), or run `npm run build:embed`
+first and then `wrangler deploy`.
+
 ### `npm run upgrade` says every secret is missing and every migration is pending
 
 A plan that lists **all** required secrets as missing and **all**

@@ -159,3 +159,14 @@ describe("parseTomlVars values", () => {
 		).toEqual({ ENV: "production" });
 	});
 });
+
+describe("parseWranglerToml hasAssets", () => {
+	it("is true when a top-level [assets] table exists", () => {
+		const dir = withToml(['name = "garrul"', "", "[assets]", 'directory = "./public"', ""].join("\n"));
+		expect(parseWranglerToml(dir).hasAssets).toBe(true);
+	});
+	it("is false without the table, and a commented one does not count", () => {
+		expect(parseWranglerToml(withToml('name = "garrul"\n')).hasAssets).toBe(false);
+		expect(parseWranglerToml(withToml('name = "garrul"\n# [assets]\n')).hasAssets).toBe(false);
+	});
+});

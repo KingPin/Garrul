@@ -41,6 +41,16 @@ preview_urls = false
 #   { pattern = "comments.example.com", custom_domain = true }
 # ]
 
+# Serves /embed.js from Workers Static Assets. Asset requests do not run the
+# Worker and do not count toward the Worker request quota; every other path
+# falls through to the Worker (Wrangler defaults: run_worker_first = false,
+# not_found_handling = "none"). The directory is written by
+# `npm run build:embed` (also run by `predeploy`); do not commit `public/`.
+# Keep this table below the top-level keys above (routes, workers_dev, ...):
+# in TOML every key after a table header belongs to that table.
+[assets]
+directory = "./public"
+
 # Used for build-time embed.js inlining of the API base URL.
 [vars]
 ENV = "production"

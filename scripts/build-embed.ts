@@ -77,3 +77,22 @@ export const EMBED_JS = ${JSON.stringify(js)};
 `,
 );
 console.log(`[build-embed] wrote ${EMBED_TS}`);
+
+// Static Assets copy. With `[assets] directory = "./public"` in wrangler.toml
+// Cloudflare serves this path before the Worker runs, so a browser-cache miss
+// on embed.js is not a billed Worker request. The Hono route in
+// src/routes/embed.ts stays as the fallback for a wrangler.toml without the
+// block. Same bytes, same two headers — scripts/check-bundle-size.ts enforces it.
+const PUBLIC_DIR = join(ROOT, "public");
+mkdirSync(PUBLIC_DIR, { recursive: true });
+writeFileSync(join(PUBLIC_DIR, "embed.js"), js);
+writeFileSync(
+	join(PUBLIC_DIR, "_headers"),
+	[
+		"/embed.js",
+		"  Cache-Control: public, max-age=3600, s-maxage=86400",
+		"  X-Content-Type-Options: nosniff",
+		"",
+	].join("\n"),
+);
+console.log(`[build-embed] wrote ${join(PUBLIC_DIR, "embed.js")} and _headers`);

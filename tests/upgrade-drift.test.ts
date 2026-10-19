@@ -418,6 +418,13 @@ describe("hasMutations + blocksAutoApply", () => {
 		migrations: { pending: [], diverged: [] },
 		renderer: { current: 1, target: 1, bumped: false, eager: false },
 		breakingChanges: [],
+		assetsMissing: false,
+	});
+
+	it("assetsMissing is informational: no mutation, no auto-apply block", () => {
+		const p = { ...empty(), assetsMissing: true };
+		expect(hasMutations(p)).toBe(false);
+		expect(blocksAutoApply(p)).toEqual([]);
 	});
 
 	it("hasMutations false on empty plan", () => {
