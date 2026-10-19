@@ -17,6 +17,8 @@ const serve = (answers: Record<"workers" | "d1" | "kv", [number, unknown] | Erro
 		const { query, variables } = JSON.parse(String(init.body));
 		expect(variables.accountTag).toBe(ACCOUNT);
 		const key = query.includes("workersInvocations") ? "workers" : query.includes("d1Analytics") ? "d1" : "kv";
+		// The free-tier ceilings count rows; query counts are not billed.
+		if (key === "d1") expect(query).toMatch(/rowsRead[\s\S]*rowsWritten/);
 		const answer = answers[key as keyof typeof answers];
 		if (answer instanceof Error) throw answer;
 		return new Response(typeof answer[1] === "string" ? answer[1] : JSON.stringify(answer[1]), {
@@ -47,8 +49,8 @@ describe("fetchUsageSnapshot", () => {
 				200,
 				account({
 					d1AnalyticsAdaptiveGroups: [
-						{ sum: { readQueries: 7, writeQueries: 2 } },
-						{ sum: { readQueries: 3, writeQueries: 5 } },
+						{ sum: { rowsRead: 7, rowsWritten: 2 } },
+						{ sum: { rowsRead: 3, rowsWritten: 5 } },
 					],
 				}),
 			],

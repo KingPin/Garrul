@@ -254,8 +254,8 @@ const fetchD1 = async (
         limit: 1000
       ) {
         sum {
-          readQueries
-          writeQueries
+          rowsRead
+          rowsWritten
         }
       }
     }
@@ -265,7 +265,7 @@ const fetchD1 = async (
 		viewer: {
 			accounts: {
 				d1AnalyticsAdaptiveGroups: {
-					sum: { readQueries: number; writeQueries: number };
+					sum: { rowsRead: number; rowsWritten: number };
 				}[];
 			}[];
 		};
@@ -277,8 +277,10 @@ const fetchD1 = async (
 	const account = data.viewer.accounts[0];
 	if (!account) return { ok: false, error: "account_not_found" };
 	const rows = account.d1AnalyticsAdaptiveGroups;
-	const reads = rows.reduce((a, r) => a + (r.sum?.readQueries ?? 0), 0);
-	const writes = rows.reduce((a, r) => a + (r.sum?.writeQueries ?? 0), 0);
+	// Rows, not queries: the free-tier ceilings (and billing) count rows
+	// scanned and written. `readQueries` undercounts by the rows per query.
+	const reads = rows.reduce((a, r) => a + (r.sum?.rowsRead ?? 0), 0);
+	const writes = rows.reduce((a, r) => a + (r.sum?.rowsWritten ?? 0), 0);
 	// Storage size is not exposed via the analytics API; the dashboard
 	// shows null and links to the Cloudflare console for that metric.
 	return {
