@@ -1,7 +1,7 @@
 /**
  * fetchUsageSnapshot with the Cloudflare GraphQL API a stubbed fetch.
  *
- * Three panels are fetched in parallel and each fails on its own, so one
+ * Four panels are fetched in parallel and each fails on its own, so one
  * broken dataset still leaves the others on the /admin/usage page. The
  * snapshot is cached for five minutes; a failed cache write never blocks.
  */
@@ -12,14 +12,21 @@ import { makeKv } from "./helpers/admin-sqlite";
 const ACCOUNT = "0123456789abcdef0123456789abcdef";
 
 // Answer by dataset name found in the query: [status, body] or a thrown error.
-const serve = (answers: Record<"workers" | "d1" | "kv", [number, unknown] | Error>) => {
+type Answer = [number, unknown] | Error;
+const serve = (answers: Record<"workers" | "d1" | "kv", Answer> & { ai?: Answer }) => {
 	const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
 		const { query, variables } = JSON.parse(String(init.body));
 		expect(variables.accountTag).toBe(ACCOUNT);
-		const key = query.includes("workersInvocations") ? "workers" : query.includes("d1Analytics") ? "d1" : "kv";
+		const key = query.includes("workersInvocations")
+			? "workers"
+			: query.includes("d1Analytics")
+				? "d1"
+				: query.includes("aiInference")
+					? "ai"
+					: "kv";
 		// The free-tier ceilings count rows; query counts are not billed.
 		if (key === "d1") expect(query).toMatch(/rowsRead[\s\S]*rowsWritten/);
-		const answer = answers[key as keyof typeof answers];
+		const answer = answers[key as keyof typeof answers] ?? [200, account({ aiInferenceAdaptiveGroups: [] })];
 		if (answer instanceof Error) throw answer;
 		return new Response(typeof answer[1] === "string" ? answer[1] : JSON.stringify(answer[1]), {
 			status: answer[0],
@@ -66,21 +73,36 @@ describe("fetchUsageSnapshot", () => {
 					],
 				}),
 			],
+			ai: [
+				200,
+				account({
+					aiInferenceAdaptiveGroups: [
+						{ count: 3, sum: { totalNeurons: 5 } },
+						{ count: 1, sum: { totalNeurons: 2.5 } },
+					],
+				}),
+			],
 		});
 		const env = { CF_API_TOKEN: "tok", CF_ACCOUNT_ID: ACCOUNT, TREE_CACHE: makeKv() as unknown as KVNamespace };
 		const snap = await fetchUsageSnapshot(env);
 		expect(snap.workers).toEqual({ ok: true, data: { today: 9, last30d: 98 } });
 		expect(snap.d1).toEqual({ ok: true, data: { reads_today: 10, writes_today: 7, storage_bytes: null } });
 		expect(snap.kv).toEqual({ ok: true, data: { reads_today: 15, writes_today: 4, storage_bytes: null } });
+		expect(snap.ai).toEqual({ ok: true, data: { neurons_today: 7.5, inferences_today: 4 } });
 
 		expect(await fetchUsageSnapshot(env)).toEqual(snap);
-		expect(fetchMock).toHaveBeenCalledTimes(3);
+		expect(fetchMock).toHaveBeenCalledTimes(4);
 		await fetchUsageSnapshot(env, { skipCache: true });
-		expect(fetchMock).toHaveBeenCalledTimes(6);
+		expect(fetchMock).toHaveBeenCalledTimes(8);
 	});
 
 	it("reports each failing panel on its own and survives a failed cache write", async () => {
-		serve({ workers: [403, {}], d1: [200, { errors: [{ message: "bad scope" }, { message: "x" }] }], kv: [200, "not json"] });
+		serve({
+			workers: [403, {}],
+			d1: [200, { errors: [{ message: "bad scope" }, { message: "x" }] }],
+			kv: [200, "not json"],
+			ai: new Error("offline"),
+		});
 		const kv = makeKv();
 		kv.put = async () => {
 			throw new Error("kv quota");
@@ -90,6 +112,7 @@ describe("fetchUsageSnapshot", () => {
 		expect(snap.workers).toEqual({ ok: false, error: "http_403" });
 		expect(snap.d1).toEqual({ ok: false, error: "bad scope; x" });
 		expect(snap.kv).toEqual({ ok: false, error: "invalid_json" });
+		expect(snap.ai).toEqual({ ok: false, error: "Error: offline" });
 	});
 
 	it("keeps a healthy panel's data next to two broken ones", async () => {

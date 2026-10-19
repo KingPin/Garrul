@@ -1035,7 +1035,7 @@ Pages (top nav):
 | `/admin/webhooks` | Outbound webhook endpoints: add/pause/delete, per-endpoint secret + event filter, adapter (`generic` / `slack` / `discord` / `telegram`), failure counts and retry status. |
 | `/admin/telegram` | **Admin-only.** Telegram operator bot: shows whether the bot token/webhook secret are set, links your personal Telegram account (one-time code or deep link), toggles the daily digest, and unlinks. See `docs/telegram.md`. |
 | `/admin/saved-replies` | Moderator saved replies: create/edit canned responses, private or shared scope. Presets are a *prefill* for the reply composer, not the only way to reply — see **Replying from the admin panel** below. |
-| `/admin/usage` | Cloudflare analytics (requests, comments by domain). Requires `CF_API_TOKEN` + `CF_ACCOUNT_ID`; renders setup instructions when unset. |
+| `/admin/usage` | Cloudflare analytics (Workers requests, D1 rows, KV operations, Workers AI neurons, comments by domain). Requires `CF_API_TOKEN` + `CF_ACCOUNT_ID`; renders setup instructions when unset. |
 
 State-changing endpoints (all under `/admin/api/...`, all require admin
 session + Origin allowlist, all write an `audit_log` row before

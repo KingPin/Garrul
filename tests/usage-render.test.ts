@@ -93,15 +93,38 @@ const okSnapshot = (
 			storage_bytes: null,
 		},
 	},
+	ai: { ok: true, data: { neurons_today: 2_500, inferences_today: 1_000 } },
 	...over,
 });
 
 describe("renderUsageDashboard", () => {
-	it("renders all three panels when all queries succeed", () => {
+	it("renders all four panels when all queries succeed", () => {
 		const html = renderUsageDashboard(okSnapshot());
 		expect(html).toContain("Workers requests");
 		expect(html).toContain("D1 database");
 		expect(html).toContain("KV namespaces");
+		expect(html).toContain("Workers AI");
+	});
+
+	it("shows neurons against the daily allowance and the average per call", () => {
+		const html = renderUsageDashboard(okSnapshot());
+		expect(html).toContain("2,500 / 10,000");
+		expect(html).toContain("<strong>2.50</strong> neurons per call");
+		expect(html).toContain("1,000 calls today");
+	});
+
+	it("says so when there were no Workers AI calls today", () => {
+		const html = renderUsageDashboard(
+			okSnapshot({ ai: { ok: true, data: { neurons_today: 0, inferences_today: 0 } } }),
+		);
+		expect(html).toContain("No Workers AI calls today.");
+	});
+
+	it("skips the AI panel for a snapshot cached before it existed", () => {
+		const { ai: _, ...legacy } = okSnapshot();
+		const html = renderUsageDashboard(legacy as UsageSnapshot);
+		expect(html).toContain("KV namespaces");
+		expect(html).not.toContain("Neurons (today)");
 	});
 
 	it("shows the cached-snapshot timestamp", () => {

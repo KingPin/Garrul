@@ -1,14 +1,14 @@
 /**
  * Cloudflare GraphQL Analytics API client for the usage dashboard.
  *
- * The dashboard surfaces today's Workers / D1 / KV usage vs the
+ * The dashboard surfaces today's Workers / D1 / KV / Workers AI usage vs the
  * free-tier ceilings. The API is queried server-side with a token
  * stored in CF_API_TOKEN; results are cached in TREE_CACHE under
  * `cfusage:*` for CACHE_TTL_SEC so a tab-flapping admin can't drive
  * up our per-account analytics quota.
  *
- * Failure semantics: every panel is independent. If one of the three
- * sub-queries (workers / d1 / kv) returns an error, the others still
+ * Failure semantics: every panel is independent. If one of the four
+ * sub-queries (workers / d1 / kv / ai) returns an error, the others still
  * render — the caller gets `{ ok: false, error }` for the failing
  * panel only. This keeps the page useful even when one of Cloudflare's
  * APIs is intermittently down or the token is missing one scope.
@@ -51,6 +51,7 @@ export type UsageSnapshot = {
 		writes_today: number;
 		storage_bytes: number | null;
 	}>;
+	ai: Panel<AiData>;
 };
 
 type UsageEnv = {
@@ -345,6 +346,54 @@ const fetchKv = async (
 	};
 };
 
+// -- Workers AI --------------------------------------------------------------
+
+type AiData = { neurons_today: number; inferences_today: number };
+
+const fetchAi = async (
+	token: string,
+	accountId: string,
+): Promise<Panel<AiData>> => {
+	const today = isoDay(0);
+	const query = `query ($accountTag: String!, $today: Date!) {
+  viewer {
+    accounts(filter: { accountTag: $accountTag }) {
+      aiInferenceAdaptiveGroups(
+        filter: { date: $today }
+        limit: 1000
+      ) {
+        count
+        sum { totalNeurons }
+      }
+    }
+  }
+}`;
+	const data = await graphql<{
+		viewer: {
+			accounts: {
+				aiInferenceAdaptiveGroups: {
+					count: number;
+					sum: { totalNeurons: number };
+				}[];
+			}[];
+		};
+	}>(token, {
+		query,
+		variables: { accountTag: accountId, today },
+	});
+	if (isError(data)) return { ok: false, error: data.__error };
+	const account = data.viewer.accounts[0];
+	if (!account) return { ok: false, error: "account_not_found" };
+	const rows = account.aiInferenceAdaptiveGroups;
+	return {
+		ok: true,
+		data: {
+			neurons_today: rows.reduce((a, r) => a + (r.sum?.totalNeurons ?? 0), 0),
+			inferences_today: rows.reduce((a, r) => a + (r.count ?? 0), 0),
+		},
+	};
+};
+
 // -- public entry ------------------------------------------------------------
 
 export const fetchUsageSnapshot = async (
@@ -360,16 +409,18 @@ export const fetchUsageSnapshot = async (
 		);
 		if (cached) return cached as UsageSnapshot;
 	}
-	const [workers, d1, kv] = await Promise.all([
+	const [workers, d1, kv, ai] = await Promise.all([
 		fetchWorkers(env.CF_API_TOKEN, env.CF_ACCOUNT_ID),
 		fetchD1(env.CF_API_TOKEN, env.CF_ACCOUNT_ID),
 		fetchKv(env.CF_API_TOKEN, env.CF_ACCOUNT_ID),
+		fetchAi(env.CF_API_TOKEN, env.CF_ACCOUNT_ID),
 	]);
 	const snapshot: UsageSnapshot = {
 		asOf: Date.now(),
 		workers,
 		d1,
 		kv,
+		ai,
 	};
 	// Best-effort cache write — never let a KV failure block the page.
 	await env.TREE_CACHE.put(CACHE_KEY, JSON.stringify(snapshot), {
