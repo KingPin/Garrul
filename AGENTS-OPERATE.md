@@ -734,7 +734,9 @@ Triggers (events that produce a send):
   debouncing — a burst of replies coalesces into one email instead of N
   (see `src/lib/digest.ts`). Subscriptions are thread-scoped, so a
   subscriber hears about every new comment on the post, not only
-  direct replies to their own.
+  direct replies to their own. Fan-out is one SQL statement per approved
+  comment; a digest carries at most 50 notifications per subscriber per
+  tick.
 - **Moderator digest** — a comment lands in the moderation queue, or a
   reader files the first report on one. Also first-class built-in email,
   also no webhook required, and the exact inverse of the reply
@@ -2084,6 +2086,8 @@ The 12 steps (each prints `→ name… OK`):
 10. **Migrate** (`npm run migrate -- --remote`) — idempotent, forward-only
 11. **Deploy** (`npm run deploy`)
 12. **Post-deploy** — optional rerender; append a line to `.garrul-upgrade-log.json` (gitignored, operator-local)
+
+v2.38: migration 0030 adds paging and retention indexes; run `npm run migrate`.
 
 ### Release manifest
 

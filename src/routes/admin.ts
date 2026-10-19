@@ -52,7 +52,7 @@ import {
 	deleteSettings,
 	deleteTelegramLinkByUser,
 	deleteWebhookEndpoint,
-	enqueueNotification,
+	enqueueNotificationsForPost,
 	exportUserData,
 	getComment,
 	getTelegramLinkByUser,
@@ -70,7 +70,6 @@ import {
 	isUserRole,
 	isWebhookAdapter,
 	deleteModeratorNote,
-	listActiveSubscriptionsForPost,
 	listModeratorNotes,
 	listSavedRepliesForUser,
 	listWebhookEndpoints,
@@ -206,6 +205,7 @@ import {
 import { runSeedDemo } from "../db/seed-demo";
 import { renderConfirmEmailHtml } from "../lib/digest";
 import { sendEmail } from "../lib/email";
+import { log } from "../lib/log";
 import { fillSubject, subjectTitle } from "../lib/post-title";
 import { FALLBACK_LOCALE, tFor } from "../i18n";
 
@@ -1945,17 +1945,15 @@ admin.post("/api/comments/:id/reply", async (c) => {
 
 	if (notify) {
 		const fanout = (async () => {
-			const subs = await listActiveSubscriptionsForPost(
-				c.env.DB,
-				target.post_slug,
-			);
 			// Skip our own address for the same reason the widget path does: being
 			// emailed about your own comment reads as a bug.
-			const selfEmail = user.email?.toLowerCase() ?? null;
-			for (const sub of subs) {
-				if (selfEmail && sub.email === selfEmail) continue;
-				await enqueueNotification(c.env.DB, sub.id, inserted.id);
-			}
+			const count = await enqueueNotificationsForPost(
+				c.env.DB,
+				target.post_slug,
+				inserted.id,
+				user.email?.toLowerCase() ?? null,
+			);
+			log.info("notify.enqueued", { count, post_slug: target.post_slug });
 		})();
 		// Always wait for the enqueue to finish — same reasoning as the widget
 		// fan-out in routes/api.comments.ts: without an executionCtx the runtime

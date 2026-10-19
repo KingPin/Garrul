@@ -5,7 +5,7 @@
  * signed-in caller fell straight through to the insert with no ceiling at all,
  * and PATCH/DELETE never called it. One throwaway OAuth account was therefore
  * enough to drain D1's 100k daily row-writes: each accepted comment costs
- * upsertPost + insertComment + bustTreeCache plus one enqueueNotification write
+ * upsertPost + insertComment + bustTreeCache plus one notification row
  * per confirmed subscriber, and each edit/delete costs a write, a cache bust and
  * an outbound webhook.
  *
