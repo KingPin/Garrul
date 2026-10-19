@@ -23,11 +23,17 @@ import {
 	softDeleteComment,
 	updateCommentStatus,
 } from "../src/db/queries";
+import { sweepExpiredIpHashes } from "../src/db/ip-retention";
 
 const MIGRATIONS_DIR = join(__dirname, "../src/db/migrations");
 
+/** Every prepare+bind the code under test issued, oldest first. */
+const captured: { sql: string; binds: unknown[] }[] = [];
+
 // Minimal D1Database adapter over node:sqlite. Covers the surface the comment
-// write/read queries use: prepare().bind().run()/first()/all().
+// write/read queries use: prepare().bind().run()/first()/all(). Records each
+// bound statement so a test can EXPLAIN the exact SQL + parameters the code
+// ran, rather than a hand-typed copy of it.
 const makeD1 = (db: DatabaseSync): any => ({
 	prepare(sql: string) {
 		const stmt = db.prepare(sql);
@@ -35,6 +41,7 @@ const makeD1 = (db: DatabaseSync): any => ({
 		return {
 			bind(...args: unknown[]) {
 				bound = args;
+				captured.push({ sql, binds: args });
 				return this;
 			},
 			async run() {
@@ -50,6 +57,17 @@ const makeD1 = (db: DatabaseSync): any => ({
 		};
 	},
 });
+
+/** EXPLAIN QUERY PLAN for the last captured statement, one detail per line. */
+const lastPlan = (sqlite: DatabaseSync): string => {
+	const last = captured[captured.length - 1];
+	if (!last) throw new Error("nothing captured");
+	return (sqlite
+		.prepare(`EXPLAIN QUERY PLAN ${last.sql}`)
+		.all(...(last.binds as never[])) as { detail: string }[])
+		.map((r) => r.detail)
+		.join("\n");
+};
 
 const migrationFiles = (): string[] =>
 	readdirSync(MIGRATIONS_DIR)
@@ -408,5 +426,185 @@ describe("migration 0015 depth backfill (real SQLite)", () => {
 			(sqlite.prepare("SELECT depth FROM comments WHERE id = 'a'").get() as { depth: number })
 				.depth,
 		).toBe(1);
+	});
+});
+
+describe("migration 0030 indexes (real SQLite)", () => {
+	const indexNames = (sqlite: DatabaseSync): string[] =>
+		(sqlite
+			.prepare("SELECT name FROM sqlite_master WHERE type = 'index' ORDER BY name")
+			.all() as { name: string }[]).map((r) => r.name);
+
+	it("adds the root, score and retention indexes and drops comments_score_idx", () => {
+		const sqlite = new DatabaseSync(":memory:");
+		applyMigrations(sqlite, migrationFiles());
+		const names = indexNames(sqlite);
+		expect(names).toContain("comments_root_chrono_idx");
+		expect(names).toContain("comments_root_score_idx");
+		expect(names).toContain("comments_ip_retention_idx");
+		expect(names).toContain("reports_ip_retention_idx");
+		expect(names).not.toContain("comments_score_idx");
+	});
+
+	it("is idempotent", () => {
+		const sqlite = new DatabaseSync(":memory:");
+		const files = migrationFiles();
+		applyMigrations(sqlite, files);
+		const target = files.find((f) => f.startsWith("0030_")) as string;
+		expect(target).toBeDefined();
+		expect(() => applyMigrations(sqlite, [target])).not.toThrow();
+	});
+});
+
+describe("listThreadRefsForPost seeks on the 0030 indexes (real SQLite)", () => {
+	const SLUG = "seek";
+	let sqlite: DatabaseSync;
+	let db: D1Database;
+
+	// 200 roots over 5 shared timestamps and 5 shared scores. Ids are NOT in
+	// time order (imports do this), so a bare-id cursor would misorder them.
+	const seed = (): void => {
+		sqlite.prepare("INSERT INTO posts (slug, created_at) VALUES (?, 1)").run(SLUG);
+		sqlite
+			.prepare("INSERT INTO users (id, provider, name, created_at) VALUES ('u1', 'anon', 'A', 1)")
+			.run();
+		const ins = sqlite.prepare(
+			`INSERT INTO comments (id, post_slug, user_id, body_md, body_html, status, created_at, score_up)
+			 VALUES (?, ?, 'u1', 'b', '<p>b</p>', 'approved', ?, ?)`,
+		);
+		for (let i = 0; i < 200; i++) {
+			const id = `R${String((i * 37) % 200).padStart(3, "0")}`;
+			ins.run(id, SLUG, 1_000 + (i % 5), i % 5);
+		}
+	};
+
+	const pageAll = async (
+		sort: "new" | "old" | "top",
+		viewer_id: string | null,
+	): Promise<string[]> => {
+		const seen: string[] = [];
+		let cursor: { score?: number; created_at?: number; id: string } | null = null;
+		for (let guard = 0; guard < 20; guard++) {
+			const page = await listThreadRefsForPost(db, SLUG, {
+				sort,
+				limit: 26,
+				cursor,
+				viewer_id,
+			});
+			if (page.length === 0) break;
+			for (const r of page) seen.push(r.id);
+			const last = page[page.length - 1] as { id: string; score: number; created_at: number };
+			cursor =
+				sort === "top"
+					? { score: last.score, id: last.id }
+					: { created_at: last.created_at, id: last.id };
+		}
+		return seen;
+	};
+
+	beforeEach(() => {
+		sqlite = new DatabaseSync(":memory:");
+		applyMigrations(sqlite, migrationFiles());
+		captured.length = 0;
+		db = makeD1(sqlite);
+		seed();
+	});
+
+	for (const viewer of [null, "u1"] as const) {
+		const who = viewer ? "authenticated" : "anonymous";
+
+		it(`pages 'new' and 'old' through tied timestamps with no skip or repeat (${who})`, async () => {
+			for (const sort of ["new", "old"] as const) {
+				const ids = await pageAll(sort, viewer);
+				expect(ids).toHaveLength(200);
+				expect(new Set(ids).size).toBe(200);
+				const reference = (
+					await listThreadRefsForPost(db, SLUG, { sort, limit: 1000, viewer_id: viewer })
+				).map((r) => r.id);
+				expect(ids).toEqual(reference);
+			}
+		});
+
+		it(`pages 'top' through tied scores with no skip or repeat (${who})`, async () => {
+			const ids = await pageAll("top", viewer);
+			expect(ids).toHaveLength(200);
+			expect(new Set(ids).size).toBe(200);
+			const reference = (
+				await listThreadRefsForPost(db, SLUG, { sort: "top", limit: 1000, viewer_id: viewer })
+			).map((r) => r.id);
+			expect(ids).toEqual(reference);
+		});
+
+		it(`the cursorless first page seeks and never temp-sorts (${who})`, async () => {
+			for (const sort of ["new", "old", "top"] as const) {
+				await listThreadRefsForPost(db, SLUG, { sort, limit: 26, viewer_id: viewer });
+				const plan = lastPlan(sqlite);
+				const idx = sort === "top" ? "comments_root_score_idx" : "comments_root_chrono_idx";
+				expect(plan).toContain(`USING INDEX ${idx} (post_slug=?)`);
+				expect(plan).not.toContain("TEMP B-TREE");
+			}
+		});
+
+		it(`seeks the chrono index for 'new' and 'old' (${who})`, async () => {
+			await listThreadRefsForPost(db, SLUG, {
+				sort: "new", limit: 26, viewer_id: viewer,
+				cursor: { created_at: 1_002, id: "R100" },
+			});
+			let plan = lastPlan(sqlite);
+			expect(plan).toContain("USING INDEX comments_root_chrono_idx (post_slug=? AND (created_at,id)<(?,?))");
+			expect(plan).not.toContain("TEMP B-TREE");
+
+			await listThreadRefsForPost(db, SLUG, {
+				sort: "old", limit: 26, viewer_id: viewer,
+				cursor: { created_at: 1_002, id: "R100" },
+			});
+			plan = lastPlan(sqlite);
+			expect(plan).toContain("USING INDEX comments_root_chrono_idx (post_slug=? AND (created_at,id)>(?,?))");
+			expect(plan).not.toContain("TEMP B-TREE");
+		});
+
+		it(`seeks the score index for 'top', not just names it (${who})`, async () => {
+			await listThreadRefsForPost(db, SLUG, {
+				sort: "top", limit: 26, viewer_id: viewer,
+				cursor: { score: 2, id: "R100" },
+			});
+			const plan = lastPlan(sqlite);
+			// The `<expr><?` fragment is the seek. A bare tuple predicate also
+			// names this index but plans as `(post_slug=?)` — a full scan.
+			expect(plan).toContain("USING INDEX comments_root_score_idx (post_slug=? AND <expr><?)");
+			expect(plan).not.toContain("TEMP B-TREE");
+		});
+	}
+
+	it("never returns the approved pinned root on any page of any sort", async () => {
+		sqlite.prepare("UPDATE comments SET pinned_at = 5 WHERE id = 'R007'").run();
+		for (const sort of ["new", "old", "top"] as const) {
+			const ids = await pageAll(sort, null);
+			expect(ids).toHaveLength(199);
+			expect(ids).not.toContain("R007");
+			const reference = (
+				await listThreadRefsForPost(db, SLUG, { sort, limit: 1000, viewer_id: null })
+			).map((r) => r.id);
+			expect(ids).toEqual(reference);
+		}
+	});
+});
+
+describe("IP-retention sweep uses the 0030 partial indexes (real SQLite)", () => {
+	it("seeks both subqueries instead of scanning", async () => {
+		const sqlite = new DatabaseSync(":memory:");
+		applyMigrations(sqlite, migrationFiles());
+		captured.length = 0;
+		const db = makeD1(sqlite);
+		await sweepExpiredIpHashes(db, 30, 1_700_000_000_000);
+		expect(captured).toHaveLength(2);
+		const plan = (i: number): string =>
+			(sqlite
+				.prepare(`EXPLAIN QUERY PLAN ${captured[i]!.sql}`)
+				.all(...(captured[i]!.binds as never[])) as { detail: string }[])
+				.map((r) => r.detail)
+				.join("\n");
+		expect(plan(0)).toContain("USING INDEX comments_ip_retention_idx (<expr><?)");
+		expect(plan(1)).toContain("USING INDEX reports_ip_retention_idx (created_at<?)");
 	});
 });
