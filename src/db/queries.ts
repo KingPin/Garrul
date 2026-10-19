@@ -879,6 +879,15 @@ const THREAD_SCORE =
  * `top` orders on `(THREAD_SCORE DESC, id DESC)`: the net score for an
  * approved root, 0 for any other.
  *
+ * Cursors are row-value comparisons, `(created_at, id) < (?, ?)`, not the
+ * expanded `a < ? OR (a = ? AND b < ?)`. D1 binds positional `?`, so SQLite
+ * cannot see that the two `a` placeholders carry the same value and plans the
+ * OR form as a scan plus a temp sort; the row-value form seeks on
+ * comments_root_chrono_idx (migration 0030). `top` adds a redundant scalar
+ * bound on THREAD_SCORE because SQLite will not seek an expression-index
+ * column through a row-value comparison. tests/queries-comments-realdb.test.ts
+ * pins the plans.
+ *
  * A hidden root (spam, or someone else's pending) is a thread when it has a
  * live direct child, so its approved replies stay reachable under a
  * placeholder. Known ceiling: a hidden root whose live descendants all sit
@@ -910,16 +919,21 @@ export const listThreadRefsForPost = async (
 	if (opts.cursor) {
 		if (opts.sort === "top") {
 			const score = opts.cursor.score ?? 0;
-			cursorSql =
-				`AND (${THREAD_SCORE} < ? OR (${THREAD_SCORE} = ? AND id < ?))`;
+			// Scalar bound first, tuple second. The tuple is the exact boundary;
+			// the scalar is what SQLite actually seeks on, because it will not
+			// seek an expression-index column through a row-value comparison
+			// (plans as `(post_slug=?)` without it, a full scan of the slug's
+			// roots). Within one score value the index is still walked from the
+			// top of that score group.
+			cursorSql = `AND ${THREAD_SCORE} <= ? AND (${THREAD_SCORE}, id) < (?, ?)`;
 			cursorBinds.push(score, score, opts.cursor.id);
 		} else if (typeof opts.cursor.created_at === "number") {
 			const ts = opts.cursor.created_at;
 			cursorSql =
 				opts.sort === "old"
-					? "AND (created_at > ? OR (created_at = ? AND id > ?))"
-					: "AND (created_at < ? OR (created_at = ? AND id < ?))";
-			cursorBinds.push(ts, ts, opts.cursor.id);
+					? "AND (created_at, id) > (?, ?)"
+					: "AND (created_at, id) < (?, ?)";
+			cursorBinds.push(ts, opts.cursor.id);
 		}
 		// A chronological cursor without created_at is not a position we can
 		// name; the route resolves legacy bare-id cursors before calling here
@@ -979,8 +993,8 @@ export const getThreadCreatedAt = async (
  *
  * `.first()`, not `.all()` plus LIMIT: one row by construction. The unary
  * `+` on status keeps it out of index selection, so SQLite uses
- * comments_pinned_idx instead of scanning every approved row via
- * comments_score_idx.
+ * comments_pinned_idx instead of an approved-row scan through
+ * comments_post_idx (the (post_slug, status, created_at) index from 0001).
  */
 export const getPinnedThreadRef = async (
 	db: D1Database,
