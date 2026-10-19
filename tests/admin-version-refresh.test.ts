@@ -9,7 +9,7 @@ import { describe, expect, it, vi } from "vitest";
 import { ADMIN_SID, MOD_SID, adminHarness } from "./helpers/admin-sqlite";
 
 describe("admin version refresh placement", () => {
-	it("an anonymous admin request touches KV zero times", async () => {
+	it("an anonymous admin request never reads the version cache", async () => {
 		const { env, request } = adminHarness();
 		const get = vi.spyOn(env.TREE_CACHE, "get");
 		const put = vi.spyOn(env.TREE_CACHE, "put");
@@ -17,6 +17,31 @@ describe("admin version refresh placement", () => {
 		expect(res.status).toBe(401);
 		expect(get).not.toHaveBeenCalled();
 		expect(put).not.toHaveBeenCalled();
+	});
+
+	it("a signed-in plain user gets 403 and never reads the version cache", async () => {
+		const { env, request, sqlite } = adminHarness();
+		sqlite
+			.prepare(
+				`INSERT INTO users (id, provider, provider_id, name, is_admin, role, created_at)
+				 VALUES ('01HUSER00000000000000000US', 'github', '3', 'Reader', 0, 'user', ?)`,
+			)
+			.run(Date.now());
+		const sid = "c".repeat(64);
+		await env.SESSIONS.put(
+			`sess:${sid}`,
+			JSON.stringify({
+				user_id: "01HUSER00000000000000000US",
+				issued_at: 1_700_000_000_000,
+				expires_at: 4_102_444_800_000,
+			}),
+		);
+		const get = vi.spyOn(env.TREE_CACHE, "get");
+		const res = await request("/admin", { sid });
+		expect(res.status).toBe(403);
+		expect(
+			get.mock.calls.filter((c) => String(c[0]).startsWith("meta:")),
+		).toEqual([]);
 	});
 
 	it("an admin request reads both version keys (the refresh ran)", async () => {

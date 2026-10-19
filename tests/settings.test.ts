@@ -292,6 +292,63 @@ describe("loadSettings — memo, no KV", () => {
 		expect(db.reads()).toBe(reads + 1);
 	});
 
+	it("a rejected derive does not wedge inFlight: the next call retries", async () => {
+		const { env, db } = mkEnv({ votes_enabled: "0" });
+		const realPrepare = db.prepare.bind(db);
+		let fail = true;
+		db.prepare = (sql: string) =>
+			fail
+				? {
+						async all() {
+							fail = false;
+							throw new Error("D1 down");
+						},
+					}
+				: realPrepare(sql);
+		await expect(loadSettings(env)).rejects.toThrow("D1 down");
+		const reads = db.reads();
+		expect((await loadSettings(env)).flags.votes_enabled).toBe(false);
+		expect(db.reads()).toBe(reads + 1);
+	});
+
+	it("a stale derive's rejection does not clear a newer derive's inFlight", async () => {
+		const { env, db } = mkEnv({ votes_enabled: "0" });
+		const realPrepare = db.prepare.bind(db);
+		let rejectA!: (e: Error) => void;
+		let first = true;
+		db.prepare = (sql: string) =>
+			first
+				? {
+						all() {
+							first = false;
+							return new Promise((_, rej) => {
+								rejectA = rej;
+							});
+						},
+					}
+				: realPrepare(sql);
+		const a = loadSettings(env);
+		const aSettled = a.catch(() => {});
+		await bustSettingsCache(env);
+		let releaseB!: () => void;
+		db.holdNextRead(
+			new Promise<void>((r) => {
+				releaseB = r;
+			}),
+		);
+		const b = loadSettings(env);
+		rejectA(new Error("A failed"));
+		await expect(a).rejects.toThrow("A failed");
+		await aSettled;
+		const reads = db.reads();
+		const c = loadSettings(env); // must join B, not start a third read
+		expect(db.reads()).toBe(reads);
+		releaseB();
+		await expect(b).resolves.toBeDefined();
+		await expect(c).resolves.toBeDefined();
+		expect(db.reads()).toBe(reads);
+	});
+
 	it("a derive started before a save cannot repopulate the memo with old values", async () => {
 		const { env, db } = mkEnv({ votes_enabled: "0" });
 		// Park the first D1 read so a save can land while it is in flight.

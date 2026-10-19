@@ -109,6 +109,35 @@ describe("POST /session/exchange", () => {
 		expect(sids[0]).not.toBe(`sess:${oldSid}`);
 	});
 
+	it("fails closed when revoking the old session throws: no new cookie", async () => {
+		const oldSid = await seedSession();
+		sessions.delete = async () => {
+			throw new Error("KV delete cap");
+		};
+		const token = await issueHandoff(
+			oauthState as unknown as KVNamespace,
+			USER,
+		);
+		const res = await app().request(
+			"/session/exchange",
+			{
+				method: "POST",
+				headers: {
+					...IP,
+					"content-type": "application/json",
+					cookie: `__Host-garrul_sess=${oldSid}`,
+				},
+				body: JSON.stringify({ token }),
+			},
+			env as unknown as Record<string, unknown>,
+		);
+		expect(res.status).toBeGreaterThanOrEqual(500);
+		const cookies = res.headers.getSetCookie();
+		expect(
+			cookies.filter((c) => /^__Host-garrul_sess=[^;]+/.test(c)),
+		).toEqual([]);
+	});
+
 	it("rejects a token that was already spent", async () => {
 		const token = await issueHandoff(
 			oauthState as unknown as KVNamespace,
