@@ -237,6 +237,20 @@ describe("workers-ai provider", () => {
 		expect(v).toMatchObject({ spam: false, score: 0.49 });
 	});
 
+	it("flags a score sitting exactly on the threshold, fresh and cached", async () => {
+		// 0.57 * 100 is 56.99999999999999, so a multiplied comparison misses this.
+		const ai = makeAi(0.57);
+		const kv = new StubKV();
+		expect(await checkSpam(envWith(ai, kv), input, 57)).toMatchObject({
+			spam: true,
+			raw: { cached: false },
+		});
+		expect(await checkSpam(envWith(ai, kv), input, 57)).toMatchObject({
+			spam: true,
+			raw: { cached: true },
+		});
+	});
+
 	it("re-judges a cached probability against the current threshold", async () => {
 		const ai = makeAi(0.6);
 		const kv = new StubKV();

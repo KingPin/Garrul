@@ -21,7 +21,7 @@ import type { SpamCheckInput, SpamVerdict } from "./index";
 type WorkersAiConfig = {
 	ai: Ai;
 	cache: KVNamespace | null;
-	// Percent, 1–100: flag when P(spam) * 100 >= this.
+	// Percent, 1–100: flag when P(spam) >= this / 100.
 	threshold: number;
 };
 
@@ -65,7 +65,9 @@ const verdict = (
 	threshold: number,
 	cached: boolean,
 ): SpamVerdict => {
-	const spam = p * 100 >= threshold;
+	// Divide the threshold, never multiply p: 0.57 * 100 is 56.99999999999999,
+	// which would pass a score sitting exactly on the cut-off as ham.
+	const spam = p >= threshold / 100;
 	const raw = { cached, model: MODEL, threshold };
 	return spam
 		? {
