@@ -441,14 +441,17 @@ const printPlan = (current: Manifest, target: Manifest, plan: Plan): void => {
 		}
 	}
 	if (plan.assetsMissing) {
-		console.log("Recommended: serve embed.js as a static asset (add to wrangler.toml by hand):");
+		console.log("Recommended: serve embed.js as a static asset (add to the end of wrangler.toml by hand):");
 		console.log("");
 		console.log("  [assets]");
 		console.log('  directory = "./public"');
 		console.log("");
-		console.log("  Asset requests do not run the Worker and are not billed as Worker");
-		console.log("  requests. Without it, /embed.js keeps working from the Worker at one");
-		console.log("  request per browser-cache miss. `npm run build:embed` fills public/.");
+		console.log("  Keep it below the top-level keys (name, main, routes, workers_dev): in");
+		console.log("  TOML a key below a table header belongs to that table. Asset requests");
+		console.log("  do not run the Worker and are not billed as Worker requests. Without it,");
+		console.log("  /embed.js keeps working from the Worker at one request per browser-cache");
+		console.log("  miss. `npm run deploy` fills public/; if you add the block after this");
+		console.log("  run has deployed, run `npm run deploy` once more.");
 	}
 	if (plan.migrations.pending.length > 0) {
 		console.log(`Pending migrations: ${plan.migrations.pending.length}`);
