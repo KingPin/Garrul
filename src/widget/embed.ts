@@ -3911,9 +3911,9 @@ const loadOnce = async (
 	}
 	if (acceptingComments) {
 		if (authBlock) wrap.appendChild(authBlock);
-		// Mint the timing token now so the honeypot-timing heuristic has
-		// real elapsed seconds to measure when the user eventually submits.
-		prefetchFormToken(apiBase);
+		// The form-timing token is minted on first composer focus (see the
+		// focusin listener below), not here: almost nobody who loads a page
+		// comments, and the request was the second of a two-request mount.
 		wrap.append(form);
 	} else {
 		wrap.appendChild(el("p", "gr-empty", closedNotice(closedReason)));
@@ -4101,6 +4101,26 @@ const loadOnce = async (
 		revealHashTarget(root);
 	}
 
+	// Mint the form-timing token on the reader's first focus anywhere in the
+	// composer. Deliberately its own listener, not a rider on the Turnstile
+	// one below: that block exists only when a Turnstile slot does, and a
+	// signed-in reader on an install without `turnstile_always` has none —
+	// their token would be minted at submit, elapsed ≈ network latency, and
+	// `evaluateSpam` would flag every one of their comments `form_ts.too_fast`.
+	// The server still measures from this mint, so each reader keeps their own
+	// start time (CLAUDE.md: never fold form-token into bootstrap).
+	if (acceptingComments) {
+		const tokenSubmit = form.querySelector("button[type=submit]");
+		const onTokenFocus = (e: Event): void => {
+			// Same submit-button exclusion as the Turnstile listener: a submit
+			// with no prior focus mints at submit and is flagged — that is the
+			// heuristic working, not something to paper over here.
+			if (e.target === tokenSubmit) return;
+			prefetchFormToken(apiBase);
+			form.removeEventListener("focusin", onTokenFocus);
+		};
+		form.addEventListener("focusin", onTokenFocus);
+	}
 	// Turnstile mounts on the visitor's first composer focus, not here. api.js
 	// plus the challenge platform it pulls in is larger than this entire widget,
 	// and almost nobody who loads a page comments — so a reader who never
