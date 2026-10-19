@@ -4108,8 +4108,12 @@ const loadOnce = async (
 	// their token would be minted at submit, elapsed ≈ network latency, and
 	// `evaluateSpam` would flag every one of their comments `form_ts.too_fast`.
 	// The server still measures from this mint, so each reader keeps their own
-	// start time (CLAUDE.md: never fold form-token into bootstrap).
-	if (acceptingComments) {
+	// start time (CLAUDE.md: never fold form-token into bootstrap). A draft
+	// restored by attachDraft fires no focusin and the submit button is excluded,
+	// so a pre-filled composer mints now instead of waiting for a focus.
+	if (acceptingComments && composer?.value) {
+		prefetchFormToken(apiBase);
+	} else if (acceptingComments) {
 		const tokenSubmit = form.querySelector("button[type=submit]");
 		const onTokenFocus = (e: Event): void => {
 			// Same submit-button exclusion as the Turnstile listener: a submit
