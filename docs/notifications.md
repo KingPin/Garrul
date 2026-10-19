@@ -93,6 +93,7 @@ D1 `notifications` queue and returns; the cron flushes them:
   That's what the cron buys you; it is not a "daily roundup" — the send is
   caused by the comment.
 - **Up to 50 digests per tick**, so one busy post can't monopolize a run.
+- **At most 50 notifications per digest**; a subscriber with more queued replies gets the rest on the next tick.
 - **Failures stay pending.** A send that fails leaves its rows unmarked and the
   next tick retries. A slow or failing Resend never delays or fails a reader's
   comment.

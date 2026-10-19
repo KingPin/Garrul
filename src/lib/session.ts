@@ -309,12 +309,16 @@ export const readSession = async (
 	try {
 		record = JSON.parse(raw) as SessionRecord;
 	} catch {
-		await c.env.SESSIONS.delete(sessionKey(sid));
+		// Best-effort: the record is already proven invalid, and this runs
+		// before any route rate limit, so a KV delete-cap failure must not turn
+		// a *read* into a 500. revokeSession's delete is deliberately not
+		// wrapped: there the delete is the whole point.
+		await c.env.SESSIONS.delete(sessionKey(sid)).catch(() => {});
 		return null;
 	}
 	const now = Date.now();
 	if (record.expires_at < now) {
-		await c.env.SESSIONS.delete(sessionKey(sid));
+		await c.env.SESSIONS.delete(sessionKey(sid)).catch(() => {}); // best-effort, see above
 		return null;
 	}
 	// Revocation, checked before the TTL slide below so a dead session is never
@@ -327,7 +331,7 @@ export const readSession = async (
 		// everything: it can only come from our own write, and failing closed on
 		// a ban is the safe direction.
 		if (!Number.isFinite(epoch) || (record.issued_at ?? 0) <= epoch) {
-			await c.env.SESSIONS.delete(sessionKey(sid));
+			await c.env.SESSIONS.delete(sessionKey(sid)).catch(() => {}); // best-effort, see above
 			return null;
 		}
 	}

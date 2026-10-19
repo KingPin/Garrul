@@ -19,25 +19,13 @@ afterEach(() => uninstallMockCaches());
 // bustTreeCache and the treeCacheKey assertions line up on the same origin.
 const REQ_URL = "http://localhost/";
 
-// Settings KV double: loadNumbers() reads `settings:resolved` first; returning a
-// warm value keeps the bust path off D1. All three groups have to be present —
-// the loader ignores a blob missing one rather than resolving it to undefined.
-// DB is a stub for the fallback path.
+// Settings come from D1 rows (the loader reads nothing from KV). The stub
+// returns `comments_per_page` so `pageSize` is live. The settings memo is
+// module-level; the setup file busts it before each test.
 const env = (pageSize = 25): Bindings =>
 	({
 		TREE_CACHE: {
-			get: async (k: string) =>
-				k === "settings:resolved"
-					? {
-							flags: {},
-							numbers: {
-								comments_per_page: pageSize,
-								replies_per_thread: 3,
-								auto_collapse_depth: 3,
-							},
-							strings: {},
-						}
-					: null,
+			get: async () => null,
 			put: async () => {},
 			delete: async () => {},
 		},
@@ -46,7 +34,9 @@ const env = (pageSize = 25): Bindings =>
 				bind() {
 					return this;
 				},
-				all: async () => ({ results: [] }),
+				all: async () => ({
+					results: [{ key: "comments_per_page", value: String(pageSize) }],
+				}),
 			}),
 		},
 	}) as unknown as Bindings;

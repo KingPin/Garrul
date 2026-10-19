@@ -17,6 +17,7 @@ export default defineConfig({
 	test: {
 		include: ["tests/**/*.test.ts"],
 		environment: "node",
+		setupFiles: ["tests/helpers/reset-settings-memo.ts"],
 		coverage: {
 			provider: "v8",
 			include: ["src/**/*.ts"],

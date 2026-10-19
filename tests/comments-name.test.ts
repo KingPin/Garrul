@@ -45,7 +45,7 @@ const makeD1 = (db: DatabaseSync): any => ({
 	},
 });
 
-// loadFlags reads and writes the resolved-settings entry on TREE_CACHE.
+// General KV double; settings are read from D1 and memoized, not from KV.
 const makeKv = () => {
 	const store = new Map<string, string>();
 	return {

@@ -52,7 +52,7 @@ import {
 	deleteSettings,
 	deleteTelegramLinkByUser,
 	deleteWebhookEndpoint,
-	enqueueNotification,
+	enqueueNotificationsForPost,
 	exportUserData,
 	getComment,
 	getTelegramLinkByUser,
@@ -70,7 +70,6 @@ import {
 	isUserRole,
 	isWebhookAdapter,
 	deleteModeratorNote,
-	listActiveSubscriptionsForPost,
 	listModeratorNotes,
 	listSavedRepliesForUser,
 	listWebhookEndpoints,
@@ -115,7 +114,7 @@ import { checkOutboundUrl } from "../lib/url-safety";
 import {
 	peekCachedLatestVersion,
 	peekCachedRecentReleases,
-	versionCheckMiddleware,
+	refreshVersionCache,
 	type UpdateInfo,
 } from "../lib/version-check";
 import { accessDeniedHtml, layout, type LayoutOpts } from "../admin-ui/layout";
@@ -206,6 +205,7 @@ import {
 import { runSeedDemo } from "../db/seed-demo";
 import { renderConfirmEmailHtml } from "../lib/digest";
 import { sendEmail } from "../lib/email";
+import { log } from "../lib/log";
 import { fillSubject, subjectTitle } from "../lib/post-title";
 import { FALLBACK_LOCALE, tFor } from "../i18n";
 
@@ -274,6 +274,17 @@ const requireRole = async (
 		}
 		return c.json({ error: "not_authorized" }, 403);
 	}
+	// Only an accepted admin/mod session may cost a GitHub fetch or a KV write.
+	// Hono's `executionCtx` getter throws when the runtime supplied none
+	// (non-HTTP entry points, some test harnesses); skipping the refresh there
+	// is correct — the banner reads the cache and nothing else depends on it.
+	let ctx: Ctx["executionCtx"] | undefined;
+	try {
+		ctx = c.executionCtx;
+	} catch {
+		ctx = undefined;
+	}
+	ctx?.waitUntil(refreshVersionCache(c.env));
 	return user;
 };
 
@@ -306,8 +317,6 @@ admin.use("*", async (c, next) => {
 	}
 	await next();
 });
-
-admin.use("*", versionCheckMiddleware());
 
 // Unauthenticated by design: the single-use owner token is the credential.
 // Mounted after the guards above so Origin/CSP/no-store apply.
@@ -1053,8 +1062,8 @@ admin.post("/settings", async (c) => {
 	for (const [key, value] of Object.entries(writtenTexts)) {
 		await setSetting(c.env.DB, key, value);
 	}
-	// One cache entry holds all four groups, so a write to any of them
-	// invalidates it. Still conditional: a no-op save shouldn't spend a KV write.
+	// One memo holds all four groups, so a write to any of them
+	// invalidates it. Still conditional: a no-op save needn't bust it.
 	const wrote =
 		Object.keys(writtenFlags).length > 0 ||
 		Object.keys(writtenNumbers).length > 0 ||
@@ -1936,17 +1945,15 @@ admin.post("/api/comments/:id/reply", async (c) => {
 
 	if (notify) {
 		const fanout = (async () => {
-			const subs = await listActiveSubscriptionsForPost(
-				c.env.DB,
-				target.post_slug,
-			);
 			// Skip our own address for the same reason the widget path does: being
 			// emailed about your own comment reads as a bug.
-			const selfEmail = user.email?.toLowerCase() ?? null;
-			for (const sub of subs) {
-				if (selfEmail && sub.email === selfEmail) continue;
-				await enqueueNotification(c.env.DB, sub.id, inserted.id);
-			}
+			const count = await enqueueNotificationsForPost(
+				c.env.DB,
+				target.post_slug,
+				inserted.id,
+				user.email?.toLowerCase() ?? null,
+			);
+			log.info("notify.enqueued", { count, post_slug: target.post_slug });
 		})();
 		// Always wait for the enqueue to finish — same reasoning as the widget
 		// fan-out in routes/api.comments.ts: without an executionCtx the runtime

@@ -25,7 +25,7 @@ import {
 	adminInsertSpamVerdict,
 	countDirectReplies,
 	enqueueModeratorNotification,
-	enqueueNotification,
+	enqueueNotificationsForPost,
 	getComment,
 	getOrCreateCommentGhost,
 	getPinnedThreadRef,
@@ -37,7 +37,6 @@ import {
 	isIpHashBarred,
 	isNameClaimed,
 	isUserRole,
-	listActiveSubscriptionsForPost,
 	listCommentsForThreads,
 	listReactionsForComments,
 	listThreadRefsForPost,
@@ -440,9 +439,8 @@ comments.post("/", async (c) => {
 	// below is rendered verbatim by the widget, so without this a German reader
 	// gets a German widget and an English "comment is too long".
 	const t = c.get("t") ?? tFor(FALLBACK_LOCALE);
-	// One read for all three groups this handler needs. They share a single KV
-	// entry but each `load*` helper is its own `get`, so the per-group helpers
-	// would spend three round trips here to fetch the same blob three times.
+	// One resolved-settings object for all three groups this handler needs;
+	// the per-group helpers are thin views over the same memoized load.
 	const { flags, numbers, texts } = await loadSettings(c.env);
 	if (!flags.comments_enabled) {
 		return c.json({ error: "comments_disabled" }, 403);
@@ -488,8 +486,8 @@ comments.post("/", async (c) => {
 	// siteverify call. Two consequences: a signed-in caller fell straight
 	// through to the insert unthrottled, so one throwaway OAuth account could
 	// burn D1's 100k daily row-writes in minutes (every accepted comment costs
-	// upsertPost + insertComment + bustTreeCache plus one enqueueNotification
-	// write *per confirmed subscriber*); and the unauthenticated siteverify was
+	// upsertPost + insertComment + bustTreeCache plus one notification
+	// row *per confirmed subscriber*); and the unauthenticated siteverify was
 	// an unmetered outbound-fetch amplifier. Authentication raises the cost of
 	// an attack; it doesn't remove the need for a ceiling.
 	const enforceWriteBudget = async (): Promise<Response | null> => {
@@ -791,12 +789,13 @@ comments.post("/", async (c) => {
 	// Pending comments don't notify subscribers — admins approve first.
 	if (verdict.status === "approved") {
 		const fanout = (async () => {
-			const subs = await listActiveSubscriptionsForPost(c.env.DB, slug);
-			const authorEmail = author.email?.toLowerCase() ?? null;
-			for (const sub of subs) {
-				if (authorEmail && sub.email === authorEmail) continue;
-				await enqueueNotification(c.env.DB, sub.id, inserted.id);
-			}
+			const count = await enqueueNotificationsForPost(
+				c.env.DB,
+				slug,
+				inserted.id,
+				author.email?.toLowerCase() ?? null,
+			);
+			log.info("notify.enqueued", { count, post_slug: slug });
 		})();
 		// Always wait for the enqueue to finish. With executionCtx, it
 		// runs after the response is sent; without (vanishingly rare —
@@ -1260,7 +1259,7 @@ comments.get("/", async (c) => {
 
 	const session = await readSession(c);
 	// One read rather than three per-group ones: this route needs flags, numbers
-	// and strings, and they share a single cache entry.
+	// and strings, and they share one memoized load.
 	const { flags, numbers, strings } = await loadSettings(c.env);
 
 	// Settings first, then the sort — an absent `?sort=` means "whatever the

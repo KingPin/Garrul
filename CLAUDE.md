@@ -5,7 +5,7 @@ Self-hosted comment system on Cloudflare Workers + D1 + KV + Turnstile. Conventi
 ## Stack
 
 - **Runtime**: Cloudflare Workers (not Pages Functions). **Framework**: Hono (TypeScript). **Database**: D1 (SQLite).
-- **KV**: sessions, OAuth state, resolved settings, version checks, CF usage snapshots, optional Workers-AI spam verdict cache. **Never put a per-request write on KV** — the free tier allows 1000 writes/day *account-wide*, so an unauthenticated endpoint that writes KV per request is an account-wide outage primitive. Counters and response caches belong on the Cache API.
+- **KV**: sessions, OAuth state, version checks, CF usage snapshots, optional Workers-AI spam verdict cache. **Never put a per-request write on KV** — the free tier allows 1000 writes/day *account-wide*, so an unauthenticated endpoint that writes KV per request is an account-wide outage primitive. Counters and response caches belong on the Cache API.
 - **Edge cache**: the comment-tree response cache and the rate limiter use the Cache API (`caches.default`) — `src/lib/response-cache.ts`, `src/lib/ratelimit.ts`. The `TREE_CACHE` / `RATE_LIMITS` KV namespaces are still bound for historical reasons only.
 - **Anti-spam**: Turnstile, plus `src/lib/spam/` (heuristics, blocklist, Akismet, Workers AI).
 - **Email**: Resend is the sole adapter (`src/lib/email.ts`). `EMAIL_PROVIDER` leaves room for more; none exist yet.

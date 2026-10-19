@@ -1,16 +1,14 @@
 /**
- * Version-check cache and behind-detection logic. The middleware is gated
- * to /admin/* so the cache stays warm between admin hits; tests drive the
- * exported pure functions directly with a KV stub and a mocked fetch.
+ * Version-check cache and behind-detection logic. Tests drive the exported
+ * functions directly with a KV stub and a mocked fetch.
  */
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
-import { Hono } from "hono";
 import {
 	getCachedLatestVersion,
 	getCachedRecentReleases,
 	peekCachedLatestVersion,
 	peekCachedRecentReleases,
-	versionCheckMiddleware,
+	refreshVersionCache,
 } from "../src/lib/version-check";
 
 vi.mock("../src/lib/version.gen", () => ({
@@ -31,10 +29,12 @@ vi.mock("../src/lib/log", () => ({
 
 class StubKV {
 	store = new Map<string, string>();
+	puts = 0;
 	async get(key: string): Promise<string | null> {
 		return this.store.get(key) ?? null;
 	}
 	async put(key: string, value: string): Promise<void> {
+		this.puts++;
 		this.store.set(key, value);
 	}
 }
@@ -200,7 +200,7 @@ describe("getCachedRecentReleases", () => {
 	});
 });
 
-describe("version-check — token, corrupt cache, peek and middleware", () => {
+describe("version-check — token, corrupt cache, peek and refresh", () => {
 	const originalFetch = globalThis.fetch;
 	afterEach(() => {
 		globalThis.fetch = originalFetch;
@@ -261,21 +261,45 @@ describe("version-check — token, corrupt cache, peek and middleware", () => {
 		expect((await peekCachedRecentReleases(env))?.map((r) => r.tag)).toEqual(["v0.0.2"]);
 	});
 
-	it("middleware refreshes in waitUntil and warns when the install is behind", async () => {
+	it("refreshVersionCache fills both keys with two fetches and two writes on a cold cache", async () => {
+		const env = makeEnv();
+		const fetchMock = vi.fn();
+		globalThis.fetch = fetchMock as unknown as typeof fetch;
+		fetchMock
+			.mockResolvedValueOnce(okResponse({ tag_name: "v0.0.2", html_url: "u" }))
+			.mockResolvedValueOnce(okResponse([{ tag_name: "v0.0.2", name: "x", html_url: "u", published_at: "", body: "" }]));
 		warnSpy.mockClear();
-		serve();
-		const pending: Promise<unknown>[] = [];
-		const ctx = { waitUntil: (p: Promise<unknown>) => pending.push(p), passThroughOnException() {} };
-		const app = new Hono<{ Bindings: ReturnType<typeof makeEnv> }>()
-			.use(versionCheckMiddleware())
-			.get("/", (c) => c.text("ok"));
-		const res = await app.request("/", {}, makeEnv(), ctx as unknown as ExecutionContext);
-		expect(await res.text()).toBe("ok");
-		await Promise.all(pending);
-		expect(warnSpy).toHaveBeenCalledWith("version_check.behind", {
-			current: "0.0.1",
-			latest: "v0.0.2",
-			url: "https://github.com/kingpin/garrul/releases/tag/v0.0.2",
-		});
+		await refreshVersionCache(env);
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+		expect((env.TREE_CACHE as unknown as StubKV).puts).toBe(2);
+		expect(await peekCachedLatestVersion(env)).toMatchObject({ latest: "v0.0.2", behind: true });
+		expect(warnSpy).toHaveBeenCalledWith("version_check.behind", expect.objectContaining({ latest: "v0.0.2" }));
+	});
+
+	it("shares one refresh across concurrent callers", async () => {
+		const env = makeEnv();
+		const fetchMock = vi.fn();
+		globalThis.fetch = fetchMock as unknown as typeof fetch;
+		fetchMock
+			.mockResolvedValueOnce(okResponse({ tag_name: "v0.0.3", html_url: "u" }))
+			.mockResolvedValueOnce(okResponse([]));
+		await Promise.all(Array.from({ length: 10 }, () => refreshVersionCache(env)));
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+		expect((env.TREE_CACHE as unknown as StubKV).puts).toBe(2);
+	});
+
+	it("warns about being behind once per latest version, not per refresh", async () => {
+		const env = makeEnv();
+		const fetchMock = vi.fn();
+		globalThis.fetch = fetchMock as unknown as typeof fetch;
+		fetchMock
+			.mockResolvedValueOnce(okResponse({ tag_name: "v0.0.4", html_url: "u" }))
+			.mockResolvedValueOnce(okResponse([]));
+		warnSpy.mockClear();
+		await refreshVersionCache(env);
+		// Warm cache: no fetch, but the refresh still evaluates `behind`.
+		await refreshVersionCache(env);
+		const behindCalls = warnSpy.mock.calls.filter((c) => c[0] === "version_check.behind");
+		expect(behindCalls).toHaveLength(1);
 	});
 });
