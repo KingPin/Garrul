@@ -181,9 +181,15 @@ Add an AI binding to `wrangler.toml`:
 binding = "AI"
 ```
 
-**Privacy posture.** Inference runs on Cloudflare's edge via your AI binding — no third-party API call leaves CF infrastructure. The classifier prompt is Llama-3.1-8b-Instruct asking SPAM/HAM. Verdicts are cached in the `RATE_LIMITS` KV namespace for 6 hours keyed on a SHA-256 hash of the body, so identical resubmissions don't re-bill.
+**How it decides.** The classifier is Cloudflare's [Clef-flash](https://developers.cloudflare.com/workers-ai/models/clef-flash/) (`@cf/cloudflare/clef-flash`), a decision model rather than a chat model. Garrul sends it the comment body (first 2,000 characters), the author's display name, whether this is their first comment, and the page URL, and asks one yes/no question: is this spam? Clef returns a probability, not free text.
 
-Tradeoff vs. Akismet: slower per check, generally pricier per inference, less spam-specific signal, but no third-party data egress. Good fit if your audience cares about that, or if you don't want to manage another vendor.
+A comment is queued when that probability is at or above the **AI spam threshold**: `SPAM_AI_THRESHOLD` (percent, `1`–`100`, default `70`), also editable on **Admin → Settings → Anti-spam**. The probability is stored as the verdict's score and shown on each comment's detail page, so you can tune the threshold against your real traffic. Lower it to catch more spam at the cost of more real comments in the queue; raise it for the reverse.
+
+**Privacy posture.** Inference runs on Cloudflare's edge via your AI binding — no third-party API call leaves CF infrastructure. The probability is cached in the `RATE_LIMITS` KV namespace for 6 hours keyed on a SHA-256 hash of the body, so identical resubmissions don't re-bill. The cache holds the probability, not the verdict, so a threshold change also applies to cached bodies.
+
+**Cost.** Clef-flash bills input tokens only ($0.038 per million at the time of writing). A 2,000-character comment is well under a thousand tokens.
+
+Tradeoff vs. Akismet: no shared cross-site spam reputation, but no third-party data egress. Good fit if your audience cares about that, or if you don't want to manage another vendor.
 
 ### Combining
 

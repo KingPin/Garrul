@@ -162,7 +162,8 @@ you submit or cancel the comment.
   [Enable only if SPAM_PROVIDER=akismet.]
 
 - **Cloudflare Workers AI** classifies comments as spam or not. Your
-  comment text is sent to it. This stays inside Cloudflare, who already
+  comment text, your display name and the page address are sent to it.
+  Your email address and IP address are not. This stays inside Cloudflare, who already
   host the comment system.
   [Enable only if SPAM_PROVIDER=workers-ai.]
 
