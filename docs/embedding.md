@@ -121,9 +121,9 @@ translated, and how timestamps render: [`i18n.md`](i18n.md).
 
 ## Lazy-loading
 
-The widget fires one Worker request on page load (two when the anti-spam
-timing heuristic is on — the second only once the reader focuses the comment box), before the reader has
-scrolled. On a read-heavy blog that's most of your Cloudflare usage, spent
+The widget fires one Worker request on page load, before the reader has
+scrolled. (When the anti-spam timing heuristic is on, the form token is one
+more request, made only once the reader focuses the comment box.) On a read-heavy blog that's most of your Cloudflare usage, spent
 on bouncers. [`../examples/lazy-load`](../examples/lazy-load/README.md) has
 two deferred-loading patterns, a scroll-into-view loader (recommended) and
 a click-to-load button, with the trade-offs of each.

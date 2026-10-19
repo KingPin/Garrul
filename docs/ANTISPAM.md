@@ -73,10 +73,10 @@ All four heuristics + the classifier adapter flip a flagged comment to `status='
 
 ### 1. Honeypot timing (`SPAM_HONEYPOT_MIN_MS`)
 
-Bots typically POST immediately. Humans take seconds. The widget asks the server for a signed timestamp when the form loads; the server checks that enough wall-clock time passed before accepting.
+Bots typically POST immediately. Humans take seconds. The widget asks the server for a signed timestamp when the reader first focuses the comment box (or opens a reply form, or at mount when a saved draft is restored); the server checks that enough wall-clock time passed since that mint before accepting. Measure `SPAM_HONEYPOT_MIN_MS` from first focus, not page load.
 
 ```toml
-SPAM_HONEYPOT_MIN_MS = "1500"   # flag if submit happens within 1.5s of form load
+SPAM_HONEYPOT_MIN_MS = "1500"   # flag if submit happens within 1.5s of the timestamp mint (first focus)
 ```
 
 `0` (or unset) turns the check off. Tunable at runtime as **Minimum fill time (ms)**.

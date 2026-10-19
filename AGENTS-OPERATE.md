@@ -538,7 +538,9 @@ them there while watching what the queue catches. `SPAM_PROVIDER` and
 its credentials stay deploy-time.
 
 - `SPAM_HONEYPOT_MIN_MS` + `SPAM_FORM_TS_SECRET` — flag submissions
-  that arrive faster than wall-clock `N` ms after the form rendered.
+  that arrive faster than wall-clock `N` ms after the form-timing token
+  was minted (first composer focus, a reply form opening, or mount when a
+  saved draft is restored), not after page load.
   `0`/unset = off. Without the secret the timestamp is unsigned and the
   check is skipped.
 - `SPAM_LINK_THRESHOLD` — flag comments containing more than `N`
@@ -1734,8 +1736,8 @@ rendered:
   round-trip count stays constant per query regardless of how many
   chunks a page needs.
 - `GET /api/v1/comments/form-token` — the signed form-render timestamp
-  behind the anti-spam timing heuristic, prefetched when the composer
-  renders. It stays a separate call on purpose: a shared timestamp would
+  behind the anti-spam timing heuristic, minted on first composer focus
+  (or when a reply form opens, or at mount when a saved draft is restored). It stays a separate call on purpose: a shared timestamp would
   hand every reader the same start time and defeat the check. The widget
   skips it when `/api/v1/config` reports `form_token_enabled: false`
   (heuristic off), so on the default install a mount is one request.
@@ -1751,7 +1753,9 @@ running every surface went from ~16k.
 the `[assets]` block (Workers Static Assets serves it); without the block
 each browser-cache miss is one billed request. Add the `[assets]` block from
 `wrangler.example.toml` to take `/embed.js` out of the Worker request count;
-`npm run upgrade` prints it when missing.
+`npm run upgrade` prints it when missing. With `[assets]` configured,
+`/embed.js` loads no longer appear in `wrangler tail` or request logs because
+they never reach the Worker; that is expected, not a traffic loss.
 
 Two consequences worth planning around:
 

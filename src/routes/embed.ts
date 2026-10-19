@@ -12,8 +12,8 @@
  * scripts/build-embed.ts) and this handler is never reached; it stays so a
  * wrangler.toml without the block keeps working, at one Worker request per
  * browser-cache miss. `s-maxage` is honored only by a cache in front of the
- * Worker, which a bare Worker does not have; the headers here mirror
- * public/_headers so both paths serve identical responses.
+ * Worker, which a bare Worker does not have; the cache and nosniff
+ * headers match public/_headers.
  *
  * **This asset is locale-free and must stay that way.** The widget carries the
  * English table and fetches any other language from /api/v1/config at runtime,
