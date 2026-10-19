@@ -25,7 +25,7 @@ import {
 	adminInsertSpamVerdict,
 	countDirectReplies,
 	enqueueModeratorNotification,
-	enqueueNotification,
+	enqueueNotificationsForPost,
 	getComment,
 	getOrCreateCommentGhost,
 	getPinnedThreadRef,
@@ -37,7 +37,6 @@ import {
 	isIpHashBarred,
 	isNameClaimed,
 	isUserRole,
-	listActiveSubscriptionsForPost,
 	listCommentsForThreads,
 	listReactionsForComments,
 	listThreadRefsForPost,
@@ -488,8 +487,8 @@ comments.post("/", async (c) => {
 	// siteverify call. Two consequences: a signed-in caller fell straight
 	// through to the insert unthrottled, so one throwaway OAuth account could
 	// burn D1's 100k daily row-writes in minutes (every accepted comment costs
-	// upsertPost + insertComment + bustTreeCache plus one enqueueNotification
-	// write *per confirmed subscriber*); and the unauthenticated siteverify was
+	// upsertPost + insertComment + bustTreeCache plus one notification
+	// row *per confirmed subscriber*); and the unauthenticated siteverify was
 	// an unmetered outbound-fetch amplifier. Authentication raises the cost of
 	// an attack; it doesn't remove the need for a ceiling.
 	const enforceWriteBudget = async (): Promise<Response | null> => {
@@ -791,12 +790,13 @@ comments.post("/", async (c) => {
 	// Pending comments don't notify subscribers — admins approve first.
 	if (verdict.status === "approved") {
 		const fanout = (async () => {
-			const subs = await listActiveSubscriptionsForPost(c.env.DB, slug);
-			const authorEmail = author.email?.toLowerCase() ?? null;
-			for (const sub of subs) {
-				if (authorEmail && sub.email === authorEmail) continue;
-				await enqueueNotification(c.env.DB, sub.id, inserted.id);
-			}
+			const count = await enqueueNotificationsForPost(
+				c.env.DB,
+				slug,
+				inserted.id,
+				author.email?.toLowerCase() ?? null,
+			);
+			log.info("notify.enqueued", { count, post_slug: slug });
 		})();
 		// Always wait for the enqueue to finish. With executionCtx, it
 		// runs after the response is sent; without (vanishingly rare —

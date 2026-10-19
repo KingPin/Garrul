@@ -443,7 +443,7 @@ describe("POST /admin/api/comments/:id/reply — notification fan-out", () => {
 	});
 
 	it("skips unconfirmed and unsubscribed subscriptions", async () => {
-		// Asserts we inherited listActiveSubscriptionsForPost's filtering rather
+		// Asserts we inherited enqueueNotificationsForPost's filtering rather
 		// than re-rolling the WHERE clause in the admin route.
 		seedSubscription({ id: "sub_live", email: "live@example.com" });
 		seedSubscription({

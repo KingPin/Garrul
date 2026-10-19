@@ -20,6 +20,16 @@ import { hostExpr } from "./host-expr";
  */
 const IN_BATCH = 90;
 
+/**
+ * Most notification rows one digest may carry. `getCommentsByIds`,
+ * `getUsersByIds` and `markNotificationsSent` each bind one placeholder per
+ * id (the marker adds one for the timestamp), and D1 rejects a statement with
+ * more than 100 bound parameters. 50 keeps every consumer under the cap with
+ * room to spare and bounds the work one cron tick does for one subscriber;
+ * rows past the cap wait for the next tick.
+ */
+export const MAX_NOTIFICATIONS_PER_DIGEST = 50;
+
 const chunk = <T>(xs: readonly T[], size: number): T[][] => {
 	const out: T[][] = [];
 	for (let i = 0; i < xs.length; i += size) out.push(xs.slice(i, i + size));
@@ -2529,6 +2539,18 @@ export const markSubscriptionUnsubscribed = async (
 		.prepare(`UPDATE subscriptions SET unsubscribed_at = ? WHERE id = ?`)
 		.bind(now, id)
 		.run();
+	// Pending rows for a cancelled subscription would otherwise sit in the
+	// digest's JOIN every tick forever. `sent_at` here means "nothing left to
+	// do", the same sentinel the digest writes when every comment in a group
+	// was moderated away. Subscriptions first, then notifications: a failure
+	// in between leaves today's behavior, never an unsent notification.
+	await db
+		.prepare(
+			`UPDATE notifications SET sent_at = ?
+			  WHERE subscription_id = ? AND sent_at IS NULL`,
+		)
+		.bind(now, id)
+		.run();
 };
 
 /**
@@ -2550,15 +2572,26 @@ export const markAllSubscriptionsUnsubscribedForEmail = async (
 	email: string,
 ): Promise<number> => {
 	const now = Date.now();
+	// Lowercased for the same reason as everywhere else in this file:
+	// `subscriptions.email` is always written through `.toLowerCase()`,
+	// while `users.email` keeps whatever casing the provider returned.
+	const normalized = email.toLowerCase();
 	const res = await db
 		.prepare(
 			`UPDATE subscriptions SET unsubscribed_at = ?
 			  WHERE email = ? AND unsubscribed_at IS NULL`,
 		)
-		// Lowercased for the same reason as everywhere else in this file:
-		// `subscriptions.email` is always written through `.toLowerCase()`,
-		// while `users.email` keeps whatever casing the provider returned.
-		.bind(now, email.toLowerCase())
+		.bind(now, normalized)
+		.run();
+	// No single id to bind on this path; stamp by address. Same sentinel and
+	// same ordering argument as markSubscriptionUnsubscribed.
+	await db
+		.prepare(
+			`UPDATE notifications SET sent_at = ?
+			  WHERE sent_at IS NULL
+			    AND subscription_id IN (SELECT id FROM subscriptions WHERE email = ?)`,
+		)
+		.bind(now, normalized)
 		.run();
 	return res.meta?.changes ?? 0;
 };
@@ -2650,20 +2683,43 @@ export const listActiveSubscriptionsForPost = async (
 	return result.results ?? [];
 };
 
-export const enqueueNotification = async (
+/**
+ * Enqueue one notification per eligible subscriber of a post, in one
+ * statement. Replaces the read-then-insert-per-row loop, which spent one D1
+ * query per subscriber inside `waitUntil` and silently stopped past ~35
+ * subscribers when the invocation hit D1's 50-query cap.
+ *
+ * `excludeEmail` is the author's lowercased address or null. The `?5 IS NULL
+ * OR` guard is load-bearing: `email <> NULL` is unknown for every row, so a
+ * bare `<>` would enqueue nothing for every anonymous comment.
+ *
+ * Ids are `<ulid>-<subscription_id>`: one ULID per fan-out keeps them
+ * time-prefixed like every other id, subscription ids make them unique, and
+ * nothing parses a notification id.
+ *
+ * Returns the number of rows inserted so the caller can log a count.
+ */
+export const enqueueNotificationsForPost = async (
 	db: D1Database,
-	subscription_id: string,
+	post_slug: string,
 	comment_id: string,
-): Promise<void> => {
-	const id = ulid();
-	const now = Date.now();
-	await db
+	excludeEmail: string | null,
+	now: number = Date.now(),
+): Promise<number> => {
+	const prefix = ulid();
+	const res = await db
 		.prepare(
 			`INSERT INTO notifications (id, subscription_id, comment_id, created_at, sent_at)
-			 VALUES (?, ?, ?, ?, NULL)`,
+			 SELECT ?1 || '-' || s.id, s.id, ?2, ?3, NULL
+			   FROM subscriptions s
+			  WHERE s.post_slug = ?4
+			    AND s.confirmed_at IS NOT NULL
+			    AND s.unsubscribed_at IS NULL
+			    AND (?5 IS NULL OR s.email <> ?5)`,
 		)
-		.bind(id, subscription_id, comment_id, now)
+		.bind(prefix, comment_id, now, post_slug, excludeEmail)
 		.run();
+	return res.meta?.changes ?? 0;
 };
 
 export type PendingDigest = {
@@ -2681,7 +2737,9 @@ export type PendingDigest = {
  * Group pending notifications by subscription. Returns one digest per
  * subscriber with their queued notifications. Each digest is the
  * cron job's atomic unit: send the email, then mark the listed
- * notification_ids as sent.
+ * notification_ids as sent. A subscriber's rows are never split across
+ * the `limit`, and a group holds at most `MAX_NOTIFICATIONS_PER_DIGEST`
+ * rows; the rest go out on the next tick.
  *
  * `older_than` filters out notifications newer than the debounce window
  * so a burst of replies coalesces into the next cron tick.
@@ -2706,7 +2764,8 @@ export const listPendingDigests = async (
 			    AND n.created_at < ?
 			    AND s.unsubscribed_at IS NULL
 			    AND s.confirmed_at IS NOT NULL
-			  ORDER BY n.created_at ASC`,
+			  -- Fan-out gives all rows of one comment the same created_at, so ties are normal; n.id starts with a ULID, so the tiebreaker stays time-ordered and makes the per-tick caps deterministic.
+			  ORDER BY n.created_at ASC, n.id ASC`,
 		)
 		.bind(older_than)
 		.all<{
@@ -2722,6 +2781,10 @@ export const listPendingDigests = async (
 	for (const row of result.results ?? []) {
 		let g = groups.get(row.subscription_id);
 		if (!g) {
+			// A new subscriber past the limit is skipped, never `break`: rows
+			// are sorted by time across subscribers, so breaking mid-scan split
+			// a subscriber already in the map into two digests.
+			if (groups.size >= limit) continue;
 			g = {
 				subscription_id: row.subscription_id,
 				email: row.email,
@@ -2733,9 +2796,11 @@ export const listPendingDigests = async (
 			};
 			groups.set(row.subscription_id, g);
 		}
+		// See MAX_NOTIFICATIONS_PER_DIGEST: the consumers bind one parameter
+		// per id, and the overflow waits for the next tick.
+		if (g.notification_ids.length >= MAX_NOTIFICATIONS_PER_DIGEST) continue;
 		g.notification_ids.push(row.notification_id);
 		g.comment_ids.push(row.comment_id);
-		if (groups.size >= limit) break;
 	}
 	return Array.from(groups.values());
 };
