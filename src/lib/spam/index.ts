@@ -44,6 +44,8 @@ export type SpamEnv = {
 export const checkSpam = async (
 	env: SpamEnv,
 	input: SpamCheckInput,
+	// The resolved `spam_ai_threshold` setting; 70 mirrors its default.
+	aiThreshold = 70,
 ): Promise<SpamVerdict | null> => {
 	const provider = env.SPAM_PROVIDER;
 	if (!provider) return null;
@@ -57,7 +59,7 @@ export const checkSpam = async (
 	if (provider === "workers-ai") {
 		if (!env.AI) return null;
 		return checkWorkersAi(
-			{ ai: env.AI, cache: env.RATE_LIMITS ?? null },
+			{ ai: env.AI, cache: env.RATE_LIMITS ?? null, threshold: aiThreshold },
 			input,
 		);
 	}

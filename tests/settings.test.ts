@@ -416,6 +416,7 @@ describe("loadNumbers — defaults", () => {
 			edit_window_minutes: 15,
 			spam_link_threshold: -1,
 			spam_honeypot_min_ms: 0,
+			spam_ai_threshold: 70,
 			// 0 = retention off. This default is load-bearing: a non-zero value
 			// here would start irreversibly erasing ip_hash / user_agent on the
 			// first cron tick after an upgrade, on instances that never asked for

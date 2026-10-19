@@ -237,6 +237,7 @@ between the two is a build error, not a silent misclassification.
 | `SPAM_BLOCKLIST` | var | Optional. Muted-words list, one term per line. A term matches whole words only (`ass` does not flag "class"); wrap it in `*` to match anywhere (`*casino*`), or trail one for a prefix (`t.me/*`). Matching is case-insensitive, folds Unicode lookalike forms (fullwidth `ｖｉａｇｒａ` matches `viagra`) and ignores zero-width characters. Accents are *not* stripped and leetspeak is *not* decoded. Lines starting with `#` are comments. Not a regex — `.` and `(` are literal text. Checked against the comment body, author name and page URL; a hit routes the comment to the admin queue, never a silent drop. Usually maintained on the Settings page rather than here — this is the default a fresh deploy starts with. | `casino\n*viagra*\nt.me/*` | `wrangler.toml` default; **Admin → Settings** overrides |
 | `SPAM_LINK_THRESHOLD` | var | Optional. Flag a comment to `pending` when it contains more than N URLs. Unset (or `-1`) = off; `0` flags any comment containing a link. Tripped signals never silently drop a comment — they route it to the admin queue. | `3` | `wrangler.toml` default; **Admin → Settings** overrides |
 | `SPAM_HONEYPOT_MIN_MS` | var | Optional. Flag a comment to `pending` when the form was submitted faster than N milliseconds. Pair with `SPAM_FORM_TS_SECRET` — without it the timestamp is unsigned and the check is skipped. Unset or `0` = off. | `1500` | `wrangler.toml` default; **Admin → Settings** overrides |
+| `SPAM_AI_THRESHOLD` | var | Optional. With `SPAM_PROVIDER=workers-ai`, flag a comment to `pending` when the Clef-flash classifier rates it at least N percent likely to be spam. `1`–`100`; unset = `70`. Ignored for other providers. | `70` | `wrangler.toml` default; **Admin → Settings** overrides |
 | `SPAM_FIRST_COMMENT_MODERATE` | var | Optional. Route a new author's comments to `pending` until one is approved. Unset = off. | `true` | `wrangler.toml` default; **Admin → Settings** overrides |
 | `CF_ACCOUNT_ID` | var | Optional. Cloudflare account ID; paired with `CF_API_TOKEN` to enable the `/admin/usage` analytics page. | `0123abcd...` | `wrangler.toml` (or `wrangler secret put` — the in-app setup guide uses the secret form; both work) |
 | `CF_API_TOKEN` | secret | Optional. Cloudflare API token for `/admin/usage`. Least-privilege scopes: Account.Analytics:Read, Account.D1:Read, Account.Workers KV Storage:Read. The page renders setup instructions when either value is unset. | `...` | `wrangler secret put` / `.dev.vars` |
@@ -392,6 +393,11 @@ default, server-side clamped), edited from **Settings → Moderation**.
   a link. The sentinel exists because this signal has always had three states —
   collapsing "off" onto `0` would have redefined what `0` does for anyone
   already running it.
+- `SPAM_AI_THRESHOLD` — clamped to `1`–`100`, default `70`. Percent spam
+  probability at which the `workers-ai` classifier (Clef-flash) queues a
+  comment. No `0`: that would queue everything. Ignored for other providers.
+  The probability lands in `spam_verdicts.score`, and the KV cache stores the
+  probability rather than the verdict, so a retune also re-judges cached bodies.
 - `SPAM_HONEYPOT_MIN_MS` — clamped to `0`–`60000`; `0` (default) = off. Still
   requires `SPAM_FORM_TS_SECRET`, which stays a secret: without it the form
   timestamp is unsigned and forgeable, so `evaluateSpam` skips the check, the

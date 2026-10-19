@@ -52,6 +52,7 @@ export type NumberKey =
 	| "edit_window_minutes"
 	| "spam_link_threshold"
 	| "spam_honeypot_min_ms"
+	| "spam_ai_threshold"
 	| "ip_hash_retention_days"
 	| "audit_log_retention_days"
 	| "confirm_send_burst_max"
@@ -238,6 +239,16 @@ const NUMBERS: Record<
 		default: 0,
 		min: 0,
 		max: 60_000,
+	},
+	// Queue a comment when the Workers AI classifier (Clef-flash) puts its spam
+	// probability at or above this percent. Only read when
+	// SPAM_PROVIDER=workers-ai. min is 1, not 0: 0 would queue every comment,
+	// which is first-comment moderation for everyone, not a classifier.
+	spam_ai_threshold: {
+		env: "SPAM_AI_THRESHOLD",
+		default: 70,
+		min: 1,
+		max: 100,
 	},
 	// Clear `comments.ip_hash` / `user_agent` and `reports.reporter_ip_hash`
 	// once the row is this many days old. 0 = disabled (the default, so an

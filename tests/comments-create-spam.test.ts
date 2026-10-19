@@ -107,21 +107,33 @@ const verdicts = () =>
 		raw: string;
 	}>;
 
-const aiSaying = (answer: string) => ({
+// Clef-flash answers with P(spam) for the "spam" question.
+const clef = (p: number) => ({ answers: { spam: { type: "noul", noul: p } } });
+const aiSaying = (p: number) => ({
 	SPAM_PROVIDER: "workers-ai",
-	AI: { run: async () => ({ response: answer }) },
+	AI: { run: async () => clef(p) },
 });
 
 describe("POST /comments — anti-spam on create", () => {
 	it("holds a comment the Workers AI classifier calls spam, recording its verdict", async () => {
-		const res = await post({ body: "cheap pills here" }, aiSaying("SPAM"));
+		const res = await post({ body: "cheap pills here" }, aiSaying(0.97));
 		expect(res.status).toBe(201);
 		expect(stored().map((c) => c.status)).toEqual(["pending"]);
 		expect(verdicts().map((v) => [v.source, v.verdict])).toEqual([["workers-ai", "spam"]]);
 	});
 
 	it("publishes a comment the classifier calls ham", async () => {
-		const res = await post({ body: "nice write-up" }, aiSaying("HAM"));
+		const res = await post({ body: "nice write-up" }, aiSaying(0.03));
+		expect(res.status).toBe(201);
+		expect(stored().map((c) => c.status)).toEqual(["approved"]);
+		expect(verdicts().map((v) => [v.source, v.verdict])).toEqual([["workers-ai", "ham"]]);
+	});
+
+	it("applies the SPAM_AI_THRESHOLD cut-off to the classifier score", async () => {
+		const res = await post(
+			{ body: "borderline" },
+			{ ...aiSaying(0.6), SPAM_AI_THRESHOLD: "70" },
+		);
 		expect(res.status).toBe(201);
 		expect(stored().map((c) => c.status)).toEqual(["approved"]);
 		expect(verdicts().map((v) => [v.source, v.verdict])).toEqual([["workers-ai", "ham"]]);
@@ -134,7 +146,7 @@ describe("POST /comments — anti-spam on create", () => {
 			{
 				SPAM_FIRST_COMMENT_MODERATE: "true",
 				SPAM_PROVIDER: "workers-ai",
-				AI: { run: async () => { aiCalls++; return { response: "HAM" }; } },
+				AI: { run: async () => { aiCalls++; return clef(0.03); } },
 			},
 		);
 		expect(res.status).toBe(201);
@@ -196,7 +208,7 @@ describe("POST /comments — who hears about a new comment", () => {
 		subscribe("s-other", "other@example.com", 1);
 		const res = await post(
 			{ body: "cheap pills here" },
-			{ ...aiSaying("SPAM"), MODERATOR_EMAIL_ENABLED: "true" },
+			{ ...aiSaying(0.97), MODERATOR_EMAIL_ENABLED: "true" },
 		);
 		expect(res.status).toBe(201);
 		await Promise.all(pending);
@@ -207,7 +219,7 @@ describe("POST /comments — who hears about a new comment", () => {
 	});
 
 	it("writes no moderator row for a held comment when moderator email is off", async () => {
-		await post({ body: "cheap pills here" }, aiSaying("SPAM"));
+		await post({ body: "cheap pills here" }, aiSaying(0.97));
 		await Promise.all(pending);
 		expect(sqlite.prepare("SELECT COUNT(*) AS n FROM moderator_notifications").get()).toEqual({ n: 0 });
 	});

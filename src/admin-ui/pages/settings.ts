@@ -237,8 +237,8 @@ const EMAIL_NUMBER_META: { key: NumberKey; label: string; help: string }[] = [
 	},
 ];
 
-// Anti-spam heuristic dials. The classifier provider and its credentials stay
-// deploy-time (see the Configuration tab) — these three are the ones worth
+// Anti-spam dials. The classifier provider and its credentials stay
+// deploy-time (see the Configuration tab) — these are the ones worth
 // retuning while watching the queue fill up.
 const SPAM_NUMBER_META: { key: NumberKey; label: string; help: string }[] = [
 	{
@@ -250,6 +250,11 @@ const SPAM_NUMBER_META: { key: NumberKey; label: string; help: string }[] = [
 		key: "spam_honeypot_min_ms",
 		label: "Minimum fill time (ms)",
 		help: "Queue a comment submitted faster than this after the form loaded — bots post instantly, people don't. 0 = check off.",
+	},
+	{
+		key: "spam_ai_threshold",
+		label: "AI spam threshold (%)",
+		help: "Only used when SPAM_PROVIDER is workers-ai. Queue a comment when the classifier rates it at least this likely to be spam. Lower catches more spam and queues more real comments. Each comment's detail page shows the classifier score (0–1), so you can tune this against real traffic.",
 	},
 ];
 

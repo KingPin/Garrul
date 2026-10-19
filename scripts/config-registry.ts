@@ -632,6 +632,18 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
 		addedIn: "1.1.1",
 	},
 	{
+		name: "SPAM_AI_THRESHOLD",
+		kind: "var",
+		required: false,
+		group: "Anti-spam",
+		adminEditable: true,
+		hint: "flag if the Workers AI spam probability is at least N percent",
+		description:
+			"Optional. With `SPAM_PROVIDER=workers-ai`, flag a comment to `pending` when the Clef-flash classifier rates it at least N percent likely to be spam. `1`–`100`; unset = `70`. Ignored for other providers.",
+		example: "70",
+		addedIn: "2.38.0",
+	},
+	{
 		name: "SPAM_FIRST_COMMENT_MODERATE",
 		kind: "var",
 		required: false,

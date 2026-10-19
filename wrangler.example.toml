@@ -199,6 +199,10 @@ OAUTH_CALLBACK_BASE = "https://comments.example.com"
 # t.me/*
 # """
 #
+# Workers AI only: queue a comment when the classifier's spam probability is
+# at least this percent (1-100). Also editable on /admin/settings.
+# SPAM_AI_THRESHOLD = "70"
+#
 # For SPAM_PROVIDER = "workers-ai", also add this binding:
 # [ai]
 # binding = "AI"
