@@ -233,6 +233,21 @@ EMAIL_PROVIDER = "resend"                          # remove if you don't want em
 EMAIL_FROM     = "Garrul <comments@example.com>"   # ships empty (email off); must be a verified Resend sender
 ```
 
+`wrangler.example.toml` also carries an `[assets]` block:
+
+```toml
+[assets]
+directory = "./public"
+```
+
+It goes after the top-level keys (`name`, `main`, `routes`, …) and before
+`[vars]`, as in `wrangler.example.toml`. It serves `/embed.js` from Workers
+Static Assets, so the script tag on your pages is not a billed Worker
+request. `npm run deploy` runs `predeploy`, which fills `public/`; nothing
+else to do. An existing `wrangler.toml` from before v2.38 does not have the
+block — `npm run upgrade` prints it — and keeps working without it at one
+Worker request per browser-cache miss of the script.
+
 Then pick where the Worker answers requests. Both options are real
 deployments on the same free tier; the only difference is sign-in.
 

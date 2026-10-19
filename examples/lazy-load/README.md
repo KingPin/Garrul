@@ -152,8 +152,9 @@ A rough sketch — your real numbers will vary:
 The Workers free tier allows 100,000 requests/day, so a one-request
 mount is roughly a 100k-pageview/day ceiling and a two-request mount
 roughly 50k before any deferral —
-`/embed.js` itself doesn't count against that, because it ships
-`s-maxage=86400` and the edge serves it. If your bounce rate at the
+`/embed.js` itself doesn't count against that when `wrangler.toml` has
+the `[assets]` block (default since v2.38); without it, each browser-cache
+miss of the script is one more request. If your bounce rate at the
 comments section is high (typical for blog content), scroll-into-view
 still captures most of what's left of the savings without the UX cost —
 but it is now a smaller lever, and worth reaching for only when you're

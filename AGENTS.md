@@ -175,10 +175,11 @@ that is roughly a **100k** or **50k pageview/day** ceiling respectively
 — up from ~25k at the four requests a default install used to make, and
 ~16k with page reactions/votes and subscriptions on.
 
-`/embed.js` is not in that count. It ships
-`Cache-Control: public, max-age=3600, s-maxage=86400`, so the
-Cloudflare edge serves it and the Worker sees it about once per colo per
-day rather than once per pageview.
+`/embed.js` is not in that count on an install whose `wrangler.toml` has
+the `[assets]` block (default since v2.38): Workers Static Assets serves it
+without invoking the Worker. Without the block the Hono route serves it and
+every browser-cache miss (`max-age=3600`) is one billed request — nothing
+caches in front of a Worker on its own, so `s-maxage` alone does not help.
 
 **Nothing was removed.** `/api/v1/config`, `/api/v1/auth/me`,
 `/api/v1/comments`, `/api/v1/page-engagement` and

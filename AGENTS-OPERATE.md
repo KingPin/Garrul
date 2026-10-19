@@ -1747,8 +1747,11 @@ subscriptions enabled. Against the 100,000 requests/day allowance,
 roughly: ~25k pageviews/day of headroom became ~50k, and an install
 running every surface went from ~16k.
 
-`/embed.js` is not in that count — it ships `s-maxage=86400`, so the
-edge serves it and the Worker sees it about once per colo per day.
+`/embed.js` is not in that count on an install whose `wrangler.toml` has
+the `[assets]` block (Workers Static Assets serves it); without the block
+each browser-cache miss is one billed request. Add the `[assets]` block from
+`wrangler.example.toml` to take `/embed.js` out of the Worker request count;
+`npm run upgrade` prints it when missing.
 
 Two consequences worth planning around:
 

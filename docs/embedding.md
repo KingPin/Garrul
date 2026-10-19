@@ -84,7 +84,8 @@ It renders the same page-level reactions/votes bar that sits atop a
 thread — same slug, same counts — and nothing else: no composer, no
 comments. The mount costs **one** Worker request
 (`/api/v1/bootstrap?slug=…&view=engagement`); the form-token call is
-never made because there is no form.
+never made because there is no form. The script itself is a static asset,
+not a Worker request, on installs with the `[assets]` block.
 
 - Turn on `PAGE_REACTIONS_ENABLED` and/or `PAGE_VOTES_ENABLED` (env or
   admin Settings). With both off the element stays empty and the
@@ -121,7 +122,7 @@ translated, and how timestamps render: [`i18n.md`](i18n.md).
 ## Lazy-loading
 
 The widget fires one Worker request on page load (two when the anti-spam
-timing heuristic is on), before the reader has
+timing heuristic is on — the second only once the reader focuses the comment box), before the reader has
 scrolled. On a read-heavy blog that's most of your Cloudflare usage, spent
 on bouncers. [`../examples/lazy-load`](../examples/lazy-load/README.md) has
 two deferred-loading patterns, a scroll-into-view loader (recommended) and
