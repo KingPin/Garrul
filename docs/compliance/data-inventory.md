@@ -63,7 +63,7 @@ writing a name in it.
 
 | Namespace | Key | Contents | TTL |
 | --- | --- | --- | --- |
-| `SESSIONS` | `sess:<32 random bytes, hex>` | `{user_id, expires_at}` — no name, no email | 30 days, slid forward at most once a day (`src/lib/session.ts:55`) |
+| `SESSIONS` | `sess:<32 random bytes, hex>` | `{user_id, expires_at}` — no name, no email | 30 days, slid forward once less than 15 days remain (`src/lib/session.ts`) |
 | `OAUTH_STATE` | widget handoff / `tg:link:<token>` | `{user_id}` | 60 s (`src/lib/oauth.ts:395`) / 600 s (`src/routes/telegram.ts:65`) |
 | `RATE_LIMITS` | `spamcache:<first 32 hex of SHA-256(body_md)>` | The Workers-AI spam probability for that body (a number, 0–1). Only written when `SPAM_PROVIDER=workers-ai`. | 6 h (`src/lib/spam/workers-ai.ts:35`) |
 | `TREE_CACHE` | `meta:latest-release` (resolved settings no longer cached here; they live in a 60 s per-isolate memo) | The version check — no personal data | 1 h (`src/lib/version-check.ts:57`) |

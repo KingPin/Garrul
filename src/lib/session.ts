@@ -7,8 +7,8 @@
  *    Safari ITP / Chrome 3PC-deprecation don't evict it)
  * - Dev fallback (ENV=dev): SameSite=Lax + no Secure, so plain HTTP
  *   wrangler dev works without HTTPS
- * - 30-day TTL in KV; slid forward (at most once a day) while the user is
- *   active so an active user keeps their session forever
+ * - 30-day TTL in KV and cookie; both slid forward once less than half is
+ *   left, so a user who returns at least every 15 days stays signed in
  *
  * The cookie value IS the session id. The KV value is the user_id +
  * expiry. To revoke a session, delete the KV entry; the cookie becomes
@@ -53,11 +53,14 @@ const LEGACY_COOKIE_NAME = "garrul_sess";
 const cookieName = (env: Pick<Env, "ENV">): string =>
 	env.ENV === "dev" ? LEGACY_COOKIE_NAME : COOKIE_NAME_PROD;
 const SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
-// Slide the TTL at most once a day rather than on every read: a KV write per
-// authenticated request would burn the (account-wide) write quota, and the
-// rarer the refresh the smaller the window in which a concurrent refresh could
-// resurrect a session that signout just deleted.
-const SESSION_REFRESH_SECONDS = 24 * 60 * 60;
+// Slide the TTL only once less than this much lifetime is left, not on every
+// read: KV writes are capped at 1000/day *account-wide*. A once-a-day slide
+// cost one write per signed-in reader per day, so ~1000 daily readers alone
+// hit the cap. Half the TTL is ≤ 2 writes per reader per month, and anyone
+// who returns at least every 15 days stays signed in. The rarer the refresh,
+// the smaller the window in which a concurrent refresh could resurrect a
+// session that signout just deleted.
+const SESSION_REFRESH_BELOW_SECONDS = SESSION_TTL_SECONDS / 2;
 // Session ids are exactly 64 lowercase hex chars (32 random bytes). Reject
 // anything else before it reaches a KV op — an oversized cookie would blow the
 // 512-byte KV key limit and throw, turning every request (and signout) into a
@@ -335,13 +338,17 @@ export const readSession = async (
 			return null;
 		}
 	}
-	// Sliding TTL, but only re-write once the record has aged past the refresh
-	// interval — avoids a KV write on every authenticated request.
-	const ageSeconds = SESSION_TTL_SECONDS - (record.expires_at - now) / 1000;
-	if (ageSeconds >= SESSION_REFRESH_SECONDS) {
+	// Sliding TTL, but only re-write once the remaining lifetime drops below
+	// the refresh threshold — avoids a KV write on every authenticated request.
+	// The cookie is re-sent too: it carries its own Max-Age from login, so
+	// sliding KV alone still lets the browser drop it at day 30.
+	if ((record.expires_at - now) / 1000 < SESSION_REFRESH_BELOW_SECONDS) {
 		record.expires_at = now + SESSION_TTL_SECONDS * 1000;
 		await c.env.SESSIONS.put(sessionKey(sid), JSON.stringify(record), {
 			expirationTtl: SESSION_TTL_SECONDS,
+		});
+		c.header("Set-Cookie", buildSetCookie(sid, SESSION_TTL_SECONDS, c.env), {
+			append: true,
 		});
 	}
 	return { sid, user_id: record.user_id };
