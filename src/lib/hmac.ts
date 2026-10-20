@@ -39,8 +39,11 @@ export const importHmacKey = (
 			false,
 			usages,
 		);
-		// A failed import must not stay cached.
-		key.catch(() => keys.delete(id));
+		// A failed import must not stay cached, nor evict a newer entry.
+		const pending = key;
+		pending.catch(() => {
+			if (keys.get(id) === pending) keys.delete(id);
+		});
 		keys.set(id, key);
 	}
 	return key;

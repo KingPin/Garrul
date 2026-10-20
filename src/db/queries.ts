@@ -1834,8 +1834,10 @@ export const adminListHosts = (db: D1Database): Promise<string[]> => {
 		.prepare(sql)
 		.all<{ host: string }>()
 		.then((result) => (result.results ?? []).map((r) => r.host));
-	// A failed read must not stay memoized.
-	hosts.catch(() => hostsMemo.delete(db));
+	// A failed read must not stay memoized, nor evict a newer entry.
+	hosts.catch(() => {
+		if (hostsMemo.get(db)?.hosts === hosts) hostsMemo.delete(db);
+	});
 	hostsMemo.set(db, { at: now, hosts });
 	return hosts;
 };

@@ -145,3 +145,18 @@ describe("adminListHosts memo", () => {
 		expect(await adminListHosts(db)).toEqual(["one.example", "two.example"]);
 	});
 });
+
+describe("adminListHosts memo eviction", () => {
+	it("a failed read drops only its own entry", async () => {
+		let fail = true;
+		const flaky = {
+			prepare: (sql: string) => {
+				if (!fail) return (db as unknown as { prepare(s: string): unknown }).prepare(sql);
+				return { all: () => Promise.reject(new Error("d1 down")) };
+			},
+		} as unknown as D1Database;
+		await expect(adminListHosts(flaky)).rejects.toThrow("d1 down");
+		fail = false;
+		expect(await adminListHosts(flaky)).toEqual([]);
+	});
+});

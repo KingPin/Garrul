@@ -356,8 +356,10 @@ const loadDashboardData = (db: D1Database): Promise<DashboardData> => {
 			by_host: byHost,
 		}),
 	);
-	// A failed read must not stay memoized.
-	data.catch(() => dashboardMemo.delete(db));
+	// A failed read must not stay memoized, nor evict a newer entry.
+	data.catch(() => {
+		if (dashboardMemo.get(db)?.data === data) dashboardMemo.delete(db);
+	});
 	dashboardMemo.set(db, { at: now, data });
 	return data;
 };
