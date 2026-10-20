@@ -52,10 +52,19 @@ entirely.
 
 ```html
 <iframe
-  src="https://comments.example.com/embed/my-post-slug"
+  src="https://comments.example.com/embed/?slug=my-post-slug"
   style="width:100%;border:0;min-height:400px"
 ></iframe>
 ```
+
+`/embed/?slug=` is a static page: on an install with the `[assets]` block
+and `ALLOWED_ORIGINS` in `wrangler.toml`'s `[vars]`, Static Assets serves
+it and an iframe pageview costs the same Worker requests as a script-tag
+embed. The older `/embed/my-post-slug` form still works, but the Worker
+renders it, so every pageview is one more billed request. The build bakes
+`ALLOWED_ORIGINS` into the page's `frame-ancestors`, so redeploy after
+changing it; without it in `[vars]` the Worker serves `/embed/?slug=`
+itself.
 
 The iframe has no `data-*` attributes of its own, so the post metadata
 travels as query parameters instead: `?title=`, `?url=` and
@@ -94,7 +103,7 @@ not a Worker request, on installs with the `[assets]` block.
   `min-height` of about `4.5em` if the row must not shift the page.
 - One `#garrul` per page, so a page carries the bar *or* the thread.
   The thread already includes the bar.
-- Iframe: `/embed/my-post-slug?mode=reactions`.
+- Iframe: `/embed/?slug=my-post-slug&mode=reactions`.
 
 ## Language
 

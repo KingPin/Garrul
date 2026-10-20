@@ -1765,6 +1765,18 @@ each browser-cache miss is one billed request. Add the `[assets]` block from
 `/embed.js` loads no longer appear in `wrangler tail` or request logs because
 they never reach the Worker; that is expected, not a traffic loss.
 
+The iframe embed's static page, `/embed/?slug=…`, works the same way and
+has one more input: `npm run build:embed` (run by `predeploy`) reads
+`ALLOWED_ORIGINS` from the top-level `[vars]` of `wrangler.toml` and writes
+it into the page's `frame-ancestors` CSP in `public/_headers`. So:
+
+1. Change `ALLOWED_ORIGINS` in `wrangler.toml` and redeploy, not in the
+   dashboard alone; the static page keeps the list it was built with.
+2. With `ALLOWED_ORIGINS` missing from top-level `[vars]` (for example only
+   under `[env.<name>.vars]`), the build skips the static page and the
+   Worker serves `/embed/?slug=` at one request per pageview.
+3. `/embed/<slug>` stays a Worker route for existing embeds.
+
 Two consequences worth planning around:
 
 - **Enabling page reactions, page votes or subscriptions no longer

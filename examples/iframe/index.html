@@ -45,7 +45,8 @@
 	<script>
 		(function () {
 			var f = document.getElementById("garrul-iframe");
-			var src = new URL("http://localhost:8787/embed/welcome");
+			var src = new URL("http://localhost:8787/embed/");
+			src.searchParams.set("slug", "welcome");
 			src.searchParams.set("title", "Iframe demo");
 			src.searchParams.set("url", window.location.href);
 			src.searchParams.set("published", "2026-09-11T12:00:00Z");
