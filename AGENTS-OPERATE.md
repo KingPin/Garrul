@@ -2113,7 +2113,7 @@ The 12 steps (each prints `→ name… OK`):
 9. **Apply infra drift** — create missing KV/D1 and append blocks to `wrangler.toml`; prompt for missing secrets via `wrangler secret put NAME`. Missing required `[vars]` block auto-apply: they must be added to `wrangler.toml` by hand
 10. **Migrate** (`npm run migrate -- --remote`) — idempotent, forward-only
 11. **Deploy** (`npm run deploy`)
-12. **Post-deploy** — optional rerender; append a line to `.garrul-upgrade-log.json` (gitignored, operator-local)
+12. **Post-deploy** — for each migration applied in step 10 that has an idempotent `src/db/post-deploy/<same name>.sql`, run it (`wrangler d1 execute DB --remote --file …`) so state the old Worker left stale between steps 10 and 11 is recounted; optional rerender; append a line to `.garrul-upgrade-log.json` (gitignored, operator-local)
 
 v2.38: migration 0030 adds paging and retention indexes; run `npm run migrate`.
 
@@ -2283,6 +2283,8 @@ git checkout vX.Y.Z
 npm ci
 npm run migrate -- --remote
 npm run deploy
+# for each migration you just applied that has a file in src/db/post-deploy/:
+npx wrangler d1 execute DB --remote --file src/db/post-deploy/<name>.sql
 npm run rerender -- --remote   # only if the renderer version bumped
 ```
 
