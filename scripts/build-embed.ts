@@ -1,6 +1,8 @@
 #!/usr/bin/env tsx
 /**
- * Bundles src/widget/embed.ts → dist/embed.js (minified, sourcemap'd).
+ * Bundles src/widget/embed.ts → dist/embed.js (minified). The source map goes
+ * to dist/embed.js.map for local debugging only: nothing serves it, so the
+ * bundle carries no sourceMappingURL that would 404 in every reader's devtools.
  *
  * The Worker reads dist/embed.js at module-load via a Wrangler text rule
  * and serves it under GET /embed.js (see src/routes/embed.ts).
@@ -36,7 +38,7 @@ const result = await build({
 	format: "iife",
 	platform: "browser",
 	target: ["es2020"],
-	sourcemap: true,
+	sourcemap: "external",
 	legalComments: "none",
 	metafile: true,
 	logLevel: "info",
