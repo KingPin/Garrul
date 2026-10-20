@@ -4,7 +4,7 @@
  * matter more than its happy path — every rejection below is a case where
  * accepting the token would be a real vulnerability.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
 	base64UrlDecode,
 	base64UrlEncode,
@@ -22,6 +22,17 @@ describe("hmacHex", () => {
 		const b = await hmacHex(SECRET, "message");
 		expect(a).toBe(b);
 		expect(a).toMatch(/^[0-9a-f]{64}$/);
+	});
+
+	it("imports each secret once, and keys stay separate", async () => {
+		const importKey = vi.spyOn(crypto.subtle, "importKey");
+		const secret = "cache-probe-secret";
+		const a = await hmacHex(secret, "m");
+		await hmacHex(secret, "m");
+		expect(importKey).toHaveBeenCalledTimes(1);
+		expect(await hmacHex(`${secret}-2`, "m")).not.toBe(a);
+		expect(importKey).toHaveBeenCalledTimes(2);
+		importKey.mockRestore();
 	});
 
 	it("changes with the key and with the message", async () => {

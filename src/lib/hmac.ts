@@ -20,17 +20,31 @@
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
+// Imported keys, per isolate. Every IP hash, signed token and webhook
+// signature would otherwise re-import the same few secrets. Bounded by the
+// number of distinct secrets the install holds.
+const keys = new Map<string, Promise<CryptoKey>>();
+
 export const importHmacKey = (
 	secret: string,
 	usages: ("sign" | "verify")[] = ["sign"],
-): Promise<CryptoKey> =>
-	crypto.subtle.importKey(
-		"raw",
-		encoder.encode(secret),
-		{ name: "HMAC", hash: "SHA-256" },
-		false,
-		usages,
-	);
+): Promise<CryptoKey> => {
+	const id = `${usages.join(",")}:${secret}`;
+	let key = keys.get(id);
+	if (!key) {
+		key = crypto.subtle.importKey(
+			"raw",
+			encoder.encode(secret),
+			{ name: "HMAC", hash: "SHA-256" },
+			false,
+			usages,
+		);
+		// A failed import must not stay cached.
+		key.catch(() => keys.delete(id));
+		keys.set(id, key);
+	}
+	return key;
+};
 
 export const hexEncode = (buf: ArrayBuffer): string =>
 	Array.from(new Uint8Array(buf), (b) => b.toString(16).padStart(2, "0")).join(
