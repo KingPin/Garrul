@@ -73,10 +73,19 @@ describe("frameShellCsp", () => {
 		expect(staticAncestors).toEqual(workerAncestors);
 	});
 
-	it("scopes the header block to /embed/ and /embed/frame.js", () => {
+	it("puts the CSP on every path the shell can be served at", () => {
 		const lines = frameShellHeaders({ allowed: ["https://a.example"] });
-		expect(lines[0]).toBe("/embed/");
-		expect(lines).toContain("/embed/frame.js");
-		expect(lines.filter((l) => !l.startsWith("  ")).length).toBe(2);
+		const blocks = new Map<string, string[]>();
+		let path = "";
+		for (const l of lines) {
+			if (!l.startsWith("  ")) blocks.set((path = l), []);
+			else blocks.get(path)!.push(l.trim());
+		}
+		expect([...blocks.keys()]).toEqual(["/embed/", "/embed", "/embed/index.html", "/embed/frame.js"]);
+		for (const p of ["/embed/", "/embed", "/embed/index.html"]) {
+			expect(blocks.get(p)!.some((h) => h.startsWith("Content-Security-Policy: ") && h.includes("frame-ancestors 'self' https://a.example"))).toBe(true);
+		}
+		// Carries the baked allowlist, so it expires with the page.
+		expect(blocks.get("/embed/frame.js")).toContain("Cache-Control: public, max-age=300");
 	});
 });

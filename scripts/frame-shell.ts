@@ -60,15 +60,28 @@ export const frameShellCsp = ({ allowed }: FrameBuildEnv): string => {
 	].join("; ");
 };
 
-/** `_headers` lines for /embed/ and /embed/frame.js. */
+/**
+ * Every path Static Assets may serve index.html at. With the default
+ * html_handling only `/embed/` answers, but an operator who changes it would
+ * otherwise get a copy with no frame-ancestors, frameable by any site.
+ */
+const SHELL_PATHS = ["/embed/", "/embed", "/embed/index.html"];
+
+/**
+ * `_headers` lines for the shell and /embed/frame.js. frame.js carries the
+ * baked allowlist, so it gets the page's 5-minute lifetime: an hour would
+ * keep a just-added blog's parent_origin refused that long after a deploy.
+ */
 export const frameShellHeaders = (env: FrameBuildEnv): string[] => [
-	"/embed/",
-	`  Content-Security-Policy: ${frameShellCsp(env)}`,
-	"  Referrer-Policy: no-referrer",
-	"  X-Content-Type-Options: nosniff",
-	"  Cache-Control: public, max-age=300, no-transform",
+	...SHELL_PATHS.flatMap((path) => [
+		path,
+		`  Content-Security-Policy: ${frameShellCsp(env)}`,
+		"  Referrer-Policy: no-referrer",
+		"  X-Content-Type-Options: nosniff",
+		"  Cache-Control: public, max-age=300, no-transform",
+	]),
 	"/embed/frame.js",
-	"  Cache-Control: public, max-age=3600, s-maxage=86400",
+	"  Cache-Control: public, max-age=300",
 	"  X-Content-Type-Options: nosniff",
 ];
 
