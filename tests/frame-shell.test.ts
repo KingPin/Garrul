@@ -78,8 +78,12 @@ describe("frameShellCsp", () => {
 		const blocks = new Map<string, string[]>();
 		let path = "";
 		for (const l of lines) {
-			if (!l.startsWith("  ")) blocks.set((path = l), []);
-			else blocks.get(path)!.push(l.trim());
+			if (l.startsWith("  ")) {
+				blocks.get(path)!.push(l.trim());
+			} else {
+				path = l;
+				blocks.set(path, []);
+			}
 		}
 		expect([...blocks.keys()]).toEqual(["/embed/", "/embed", "/embed/index.html", "/embed/frame.js"]);
 		for (const p of ["/embed/", "/embed", "/embed/index.html"]) {
