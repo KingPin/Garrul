@@ -72,7 +72,7 @@ const makeDb = (seed: {
 						})),
 					} as { results: T[] };
 				}
-				if (sql.includes("FROM page_votes")) {
+				if (sql.includes("page_votes_up")) {
 					const up = new Map<string, number>();
 					const down = new Map<string, number>();
 					for (const v of votes) {
@@ -90,7 +90,7 @@ const makeDb = (seed: {
 						})),
 					} as { results: T[] };
 				}
-				if (sql.includes("FROM page_reactions")) {
+				if (sql.includes("FROM page_reaction_totals")) {
 					const byKey = new Map<string, number>();
 					for (const r of reactions) {
 						if (!want.has(r.post_slug)) continue;

@@ -22,6 +22,7 @@ import { Hono } from "hono";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { togglePageReaction } from "../src/db/queries";
 import { bootstrap } from "../src/routes/api.bootstrap";
 import { comments } from "../src/routes/api.comments";
 import { config } from "../src/routes/api.config";
@@ -45,6 +46,7 @@ const makeD1 = (db: DatabaseSync): any => ({
 		const stmt = db.prepare(sql);
 		let bound: unknown[] = [];
 		return {
+			sql,
 			bind(...args: unknown[]) {
 				bound = args;
 				return this;
@@ -61,8 +63,13 @@ const makeD1 = (db: DatabaseSync): any => ({
 			},
 		};
 	},
-	async batch(stmts: { all: () => Promise<{ results: unknown[] }> }[]) {
-		return Promise.all(stmts.map((s) => s.all()));
+	// Reads answer with rows, writes with meta.changes, as D1 does.
+	async batch(stmts: { sql: string; all(): Promise<unknown>; run(): Promise<unknown> }[]) {
+		const out = [];
+		for (const s of stmts) {
+			out.push(await (/^\s*(INSERT|UPDATE|DELETE)/i.test(s.sql) ? s.run() : s.all()));
+		}
+		return out;
 	},
 });
 
@@ -289,12 +296,7 @@ describe("bootstrap — engagement section", () => {
 
 	it("matches GET /page-engagement when reactions are on", async () => {
 		env = { ...env, PAGE_REACTIONS_ENABLED: "true" } as unknown as Bindings;
-		sqlite
-			.prepare(
-				`INSERT INTO page_reactions (post_slug, user_id, kind, created_at)
-				 VALUES (?, ?, 'fire', ?)`,
-			)
-			.run(SLUG, USER, 1_700_000_000_000);
+		await togglePageReaction(env.DB, SLUG, USER, "fire");
 
 		const boot = await json(`/api/v1/bootstrap?slug=${SLUG}`, SID);
 		const standalone = await json(`/api/v1/page-engagement?slug=${SLUG}`, SID);
@@ -314,12 +316,7 @@ describe("bootstrap — engagement section", () => {
 
 	it("gives an anonymous reader totals but no personal state", async () => {
 		env = { ...env, PAGE_REACTIONS_ENABLED: "true" } as unknown as Bindings;
-		sqlite
-			.prepare(
-				`INSERT INTO page_reactions (post_slug, user_id, kind, created_at)
-				 VALUES (?, ?, 'fire', ?)`,
-			)
-			.run(SLUG, USER, 1_700_000_000_000);
+		await togglePageReaction(env.DB, SLUG, USER, "fire");
 
 		const boot = await json(`/api/v1/bootstrap?slug=${SLUG}`);
 		expect(boot.engagement.reactions).toEqual({ fire: 1 });
@@ -511,12 +508,7 @@ describe("bootstrap — view=engagement", () => {
 
 	it("serves config, user and engagement byte-identical to their endpoints", async () => {
 		env = bothOn();
-		sqlite
-			.prepare(
-				`INSERT INTO page_reactions (post_slug, user_id, kind, created_at)
-				 VALUES (?, ?, 'fire', ?)`,
-			)
-			.run(SLUG, USER, 1_700_000_000_000);
+		await togglePageReaction(env.DB, SLUG, USER, "fire");
 		const boot = await json(VIEW, SID);
 		expect(boot.config).toEqual(await json("/api/v1/config"));
 		expect(boot.user).toEqual((await json("/api/v1/auth/me", SID)).user);

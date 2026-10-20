@@ -51,7 +51,8 @@ writing a name in it.
 
 | Table | Contents |
 | --- | --- |
-| `posts` | `slug`, `title`, `url` — page metadata |
+| `posts` | `slug`, `title`, `url` — page metadata, plus `page_votes_up` / `page_votes_down` totals |
+| `page_reaction_totals` | `post_slug`, `kind`, `count` — per-page reaction totals, no user link |
 | `spam_verdicts` | `comment_id`, `source`, `verdict`, `score`, `raw`. `raw` is adapter metadata only: `{response, pro_tip}` for Akismet (`src/lib/spam/akismet.ts:86`), `{cached, model, threshold}` for Workers AI, whose spam probability goes in `score` (`src/lib/spam/workers-ai.ts:69`). It does **not** echo comment content. |
 | `webhook_endpoints` | Operator config: `url`, `secret`, `events` |
 | `saved_replies` | Canned moderator text, `owner_id`. Staff-authored, not subject data. |
