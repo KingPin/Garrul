@@ -1,0 +1,81 @@
+/**
+ * The static iframe shell's files (public/embed/index.html + _headers block),
+ * kept pure so tests can check them without running a build.
+ *
+ * The CSP is what the Worker route sends for `/embed/<slug>`, with two
+ * differences that follow from being static. The origin list is the whole
+ * ALLOWED_ORIGINS set plus 'self', because no request-time `?api=` is known.
+ * And there is no 'unsafe-inline' for scripts: the shell's logic is
+ * /embed/frame.js, not an inline block.
+ */
+import { parseTomlVars } from "./upgrade/toml-vars";
+
+const TURNSTILE_ORIGIN = "https://challenges.cloudflare.com";
+
+export type FrameBuildEnv = { allowed: string[]; dev: boolean };
+
+/**
+ * ALLOWED_ORIGINS and ENV from wrangler.toml's top-level [vars], or null when
+ * there is no usable allowlist. Null means "do not emit the static shell": the
+ * Worker route keeps serving `/embed/?slug=…`, at the old cost. Entries that
+ * are not bare http(s) origins are dropped, so nothing odd reaches a header.
+ */
+export const readFrameEnv = (wranglerToml: string | null): FrameBuildEnv | null => {
+	if (wranglerToml === null) return null;
+	const vars = parseTomlVars(wranglerToml);
+	const allowed = (vars.ALLOWED_ORIGINS ?? "")
+		.split(",")
+		.map((s) => s.trim())
+		.filter((s) => {
+			try {
+				return /^https?:\/\//.test(s) && new URL(s).origin === s;
+			} catch {
+				return false;
+			}
+		});
+	if (allowed.length === 0) return null;
+	return { allowed, dev: vars.ENV === "dev" };
+};
+
+export const frameShellCsp = ({ allowed, dev }: FrameBuildEnv): string => {
+	const origins = ["'self'", ...allowed].join(" ");
+	return [
+		"default-src 'none'",
+		`script-src ${origins} ${TURNSTILE_ORIGIN}`,
+		`connect-src ${origins} ${TURNSTILE_ORIGIN}`,
+		`frame-src ${origins} ${TURNSTILE_ORIGIN}`,
+		"style-src 'unsafe-inline'",
+		"img-src data: https:",
+		"font-src data:",
+		dev ? "frame-ancestors *" : `frame-ancestors ${origins}`,
+	].join("; ");
+};
+
+/** `_headers` lines for /embed/ and /embed/frame.js. */
+export const frameShellHeaders = (env: FrameBuildEnv): string[] => [
+	"/embed/",
+	`  Content-Security-Policy: ${frameShellCsp(env)}`,
+	"  Referrer-Policy: no-referrer",
+	"  X-Content-Type-Options: nosniff",
+	"  Cache-Control: public, max-age=300, no-transform",
+	"/embed/frame.js",
+	"  Cache-Control: public, max-age=3600, s-maxage=86400",
+	"  X-Content-Type-Options: nosniff",
+];
+
+export const FRAME_SHELL_HTML = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Comments</title>
+<style>
+  html, body { margin: 0; padding: 0; background: transparent; }
+  body { font-family: system-ui, -apple-system, Segoe UI, sans-serif; }
+</style>
+</head>
+<body>
+<script src="/embed/frame.js"></script>
+</body>
+</html>
+`;

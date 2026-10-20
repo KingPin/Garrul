@@ -295,3 +295,20 @@ describe("GET /embed/:slug", () => {
 		expect(body).toContain(`data-api="${SELF}"`);
 	});
 });
+
+describe("GET /embed/?slug= (the static shell's URL, served by the Worker as fallback)", () => {
+	it("renders the same page as /embed/<slug>", async () => {
+		const q = "theme=dark&preset=soft&lang=de-AT&parent_origin=https%3A%2F%2Fblog.example.com";
+		const viaPath = await fetchPage(`/embed/my-post?${q}`);
+		const viaQuery = await fetchPage(`/embed/?slug=my-post&${q}`);
+		expect(viaQuery.status).toBe(200);
+		expect(await viaQuery.text()).toBe(await viaPath.text());
+		expect(viaQuery.headers.get("content-security-policy")).toBe(
+			viaPath.headers.get("content-security-policy"),
+		);
+	});
+
+	it("400s without a slug", async () => {
+		expect((await fetchPage("/embed/")).status).toBe(400);
+	});
+});
