@@ -309,6 +309,10 @@ type SessionRead = { sid: string; user_id: string } | null;
 // read would.
 const sessionReads = new WeakMap<SessionCtx, Promise<SessionRead>>();
 
+// The Set-Cookie a slide issued, per request, for sessionMiddleware to
+// re-attach after the handler (see there).
+const slidCookies = new WeakMap<SessionCtx, string>();
+
 export const readSession = (c: SessionCtx): Promise<SessionRead> => {
 	let read = sessionReads.get(c);
 	if (!read) {
@@ -365,9 +369,9 @@ const loadSession = async (c: SessionCtx): Promise<SessionRead> => {
 		await c.env.SESSIONS.put(sessionKey(sid), JSON.stringify(record), {
 			expirationTtl: SESSION_TTL_SECONDS,
 		});
-		c.header("Set-Cookie", buildSetCookie(sid, SESSION_TTL_SECONDS, c.env), {
-			append: true,
-		});
+		const cookie = buildSetCookie(sid, SESSION_TTL_SECONDS, c.env);
+		c.header("Set-Cookie", cookie, { append: true });
+		slidCookies.set(c, cookie);
 	}
 	return { sid, user_id: record.user_id };
 };
@@ -380,5 +384,17 @@ export const sessionMiddleware = (): MiddlewareHandler<{ Bindings: Env }> => {
 		c.set("userId" as never, session?.user_id ?? null);
 		c.set("sessionId" as never, session?.sid ?? null);
 		await next();
+		// A slide's Set-Cookie is set before the handler runs, and a handler that
+		// returns a raw Response (a cached tree page, /counts) replaces the
+		// headers it was set on. Without the cookie the browser keeps its old
+		// Max-Age and drops the session at day 30 however far KV was slid.
+		// The response carries a session id, so no shared cache may keep it,
+		// whatever the handler asked for.
+		const cookie = slidCookies.get(c);
+		if (!cookie) return;
+		if (!c.res.headers.getSetCookie().includes(cookie)) {
+			c.header("Set-Cookie", cookie, { append: true });
+		}
+		c.header("Cache-Control", "private, no-store");
 	};
 };
