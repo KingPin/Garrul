@@ -442,36 +442,41 @@ admin.get("/queue", async (c) => {
 	const nextCursor =
 		rows.length > 50 && last ? `${last.created_at}|${last.id}` : null;
 
-	const latestAudit = await adminLatestAuditByTarget(
-		c.env.DB,
-		"comment",
-		trimmed.map((r) => r.id),
-	);
-
-	// Open-report counts for the visible rows → queue badges. Operator-only;
-	// never surfaced in the public payload (avoids a brigading signal).
-	const reportCounts = await countOpenReportsByComment(
-		c.env.DB,
-		trimmed.map((r) => r.id),
-	);
-
-	// Note badges. Two counts per row — the comment and the account that wrote
-	// it — deduped to one lookup each, since a queue page is routinely one
-	// account posting fifty times.
-	const [commentNoteCounts, userNoteCounts] = await Promise.all([
-		countModeratorNotesByTarget(
-			c.env.DB,
-			"comment",
-			trimmed.map((r) => r.id),
-		),
+	// Everything below is independent of everything else, so it runs as one
+	// round of concurrent reads rather than seven sequential ones.
+	const ids = trimmed.map((r) => r.id);
+	const [
+		latestAudit,
+		// Open-report counts for the visible rows → queue badges. Operator-only;
+		// never surfaced in the public payload (avoids a brigading signal).
+		reportCounts,
+		// Note badges. Two counts per row — the comment and the account that
+		// wrote it — deduped to one lookup each, since a queue page is routinely
+		// one account posting fifty times.
+		commentNoteCounts,
+		userNoteCounts,
+		hosts,
+		updateInfo,
+		// Surface the per-post close toggle only when the queue is scoped to a
+		// single post. A post row may not exist yet (no comments) — treat absent
+		// as open so the operator can still pre-close it.
+		postState,
+	] = await Promise.all([
+		adminLatestAuditByTarget(c.env.DB, "comment", ids),
+		countOpenReportsByComment(c.env.DB, ids),
+		countModeratorNotesByTarget(c.env.DB, "comment", ids),
 		countModeratorNotesByTarget(c.env.DB, "user", [
 			...new Set(trimmed.map((r) => r.user_id)),
 		]),
+		adminListHosts(c.env.DB),
+		peekCachedLatestVersion(c.env),
+		postSlug
+			? getPost(c.env.DB, postSlug).then((p) => ({
+					slug: postSlug,
+					closed: p?.closed ?? false,
+				}))
+			: null,
 	]);
-
-	const hosts = await adminListHosts(c.env.DB);
-
-	const updateInfo = await peekCachedLatestVersion(c.env);
 	const filters: QueueFilters = {
 		status,
 		q,
@@ -482,15 +487,6 @@ admin.get("/queue", async (c) => {
 		host,
 		reported,
 	};
-	// Surface the per-post close toggle only when the queue is scoped to a
-	// single post. A post row may not exist yet (no comments) — treat absent
-	// as open so the operator can still pre-close it.
-	const postState = postSlug
-		? await getPost(c.env.DB, postSlug).then((p) => ({
-				slug: postSlug,
-				closed: p?.closed ?? false,
-			}))
-		: null;
 	return c.html(
 		renderPage(c,
 			"Queue",

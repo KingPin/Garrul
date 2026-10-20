@@ -1786,15 +1786,33 @@ export const adminListComments = async (
 	return (result.results ?? []).map(toAdminComment);
 };
 
+// Host lists per D1 binding, for HOSTS_MEMO_MS. Keyed on the binding so a
+// test's fresh database never sees another's list.
+const hostsMemo = new WeakMap<D1Database, { at: number; hosts: Promise<string[]> }>();
+const HOSTS_MEMO_MS = 60_000;
+
 /**
  * Distinct page hosts (derived from posts.url) used by every admin surface
  * that filters by domain. Includes the NO_URL_BUCKET sentinel when posts
  * without a url exist.
+ *
+ * The DISTINCT scans every post, and the queue, audit and subscriptions pages
+ * each ask on every load, so the list is memoized per isolate for a minute. A
+ * site that starts embedding Garrul shows up in the filter that much later.
  */
-export const adminListHosts = async (db: D1Database): Promise<string[]> => {
+export const adminListHosts = (db: D1Database): Promise<string[]> => {
+	const now = Date.now();
+	const hit = hostsMemo.get(db);
+	if (hit && now - hit.at < HOSTS_MEMO_MS) return hit.hosts;
 	const sql = `SELECT DISTINCT ${hostExpr("url")} AS host FROM posts ORDER BY host`;
-	const result = await db.prepare(sql).all<{ host: string }>();
-	return (result.results ?? []).map((r) => r.host);
+	const hosts = db
+		.prepare(sql)
+		.all<{ host: string }>()
+		.then((result) => (result.results ?? []).map((r) => r.host));
+	// A failed read must not stay memoized.
+	hosts.catch(() => hostsMemo.delete(db));
+	hostsMemo.set(db, { at: now, hosts });
+	return hosts;
 };
 
 export const updateCommentStatus = async (

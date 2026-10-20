@@ -15,6 +15,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import {
 	adminListComments,
+	adminListHosts,
 	adminListSubscriptions,
 	adminListUsers,
 	adminOldestPending,
@@ -109,5 +110,29 @@ describe("public reads the status index must not capture", () => {
 		await isNameClaimed(db, "ann");
 		expect(plan()).toContain("idx_users_name_key (name_key=?)");
 		expect(plan()).not.toContain("comments_status_created_idx");
+	});
+});
+
+describe("adminListHosts memo", () => {
+	const insertPost = (slug: string, url: string) =>
+		sqlite
+			.prepare("INSERT INTO posts (slug, title, url, created_at) VALUES (?, ?, ?, ?)")
+			.run(slug, slug, url, 1_700_000_000_000);
+
+	it("reads posts once a minute per database", async () => {
+		insertPost("a", "https://one.example/a");
+		let reads = 0;
+		const counting = {
+			prepare: (sql: string) => {
+				reads++;
+				return (db as unknown as { prepare(s: string): unknown }).prepare(sql);
+			},
+		} as unknown as D1Database;
+		expect(await adminListHosts(counting)).toEqual(["one.example"]);
+		insertPost("b", "https://two.example/b");
+		expect(await adminListHosts(counting)).toEqual(["one.example"]);
+		expect(reads).toBe(1);
+		// Another binding is another list.
+		expect(await adminListHosts(db)).toEqual(["one.example", "two.example"]);
 	});
 });
