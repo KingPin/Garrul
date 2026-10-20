@@ -25,6 +25,7 @@
  * `<html lang>` is frequently untouched theme boilerplate, while an operator
  * who opened the settings page and picked a language meant it.
  */
+import { matchLocaleIn } from "../widget/locale-match";
 import { FALLBACK_LOCALE, LOCALES, isAutoSelectable } from "./index";
 
 /**
@@ -34,81 +35,20 @@ import { FALLBACK_LOCALE, LOCALES, isAutoSelectable } from "./index";
 export const AUTO_LOCALE = "auto";
 
 /**
- * Case-insensitive tag → canonical registry key.
- *
- * Scanned rather than memoized into a Map. The registry holds a handful of
- * entries, so the scan is free next to the KV read that resolves the operator's
- * default — and a Map built at module load is a snapshot that silently goes
- * stale for anything that registers a locale afterwards, which is exactly what
- * a test harness does. A lookup that can disagree with the registry it is
- * derived from is not worth the microseconds.
- */
-const canonical = (tag: string): string | undefined => {
-	for (const key of Object.keys(LOCALES)) {
-		if (key.toLowerCase() === tag) return key;
-	}
-	return undefined;
-};
-
-/** BCP-47's practical ceiling; anything longer is junk, not a language tag. */
-const MAX_TAG_LENGTH = 35;
-
-/**
- * Macrolanguage → the shipped table that serves it. `no` and `nb` are sibling
- * primary subtags, so the primary-subtag hop below can't bridge them the way it
- * bridges `pt-BR` → `pt`; without this a host page tagged `<html lang="no">`
- * gets English. Only the primary subtag is aliased, so `no-NO` lands here too.
- * If Nynorsk ever ships as `nn`, `no` stays on Bokmål — that is what the
- * macrolanguage tag means in practice on the web.
- */
-const MACROLANGUAGE_ALIASES: Record<string, string> = { no: "nb" };
-
-/** Chinese regions that use Traditional Chinese when no script is specified. */
-const TRADITIONAL_CHINESE_REGIONS = new Set(["tw", "hk", "mo"]);
-
-/**
- * Resolve Chinese script and region subtags without reading BCP 47 extensions.
- * An explicit script wins over the region: `zh-Hans-TW` must not become
- * Traditional Chinese just because its region is Taiwan.
- */
-const traditionalChineseLocale = (subtags: string[]): string | undefined => {
-	if (subtags[0] !== "zh") return undefined;
-
-	// Extension sequences begin with a singleton (`u`, `x`, etc.). Their values
-	// are opaque and must not be mistaken for script or region subtags.
-	const extensionStart = subtags.findIndex(
-		(subtag, index) => index > 0 && /^[a-z0-9]$/.test(subtag),
-	);
-	const languageSubtags = extensionStart < 0 ? subtags : subtags.slice(0, extensionStart);
-
-	const second = languageSubtags[1];
-	const hasScript = second !== undefined && /^[a-z]{4}$/.test(second);
-	if (hasScript) {
-		if (second !== "hant") return undefined;
-		return canonical("zh-hant");
-	}
-
-	return TRADITIONAL_CHINESE_REGIONS.has(second ?? "") ? canonical("zh-hant") : undefined;
-};
-
-/**
  * Match a raw tag against the registry: exact first, then the primary subtag,
- * so `de-DE` and `de-AT` both land on `de`.
+ * so `de-DE` and `de-AT` both land on `de`. The matching itself lives in
+ * src/widget/locale-match.ts so the static iframe shell can run the same rules
+ * in the browser.
+ *
+ * The registry is read on every call rather than snapshotted: a test harness
+ * registers locales after module load, and a lookup that can disagree with
+ * the registry it is derived from is not worth the microseconds.
  *
  * Returns undefined rather than a default so callers can tell "no match" from
  * "matched English" — negotiation needs that distinction to fall through.
  */
-export const matchLocale = (raw: string | null | undefined): string | undefined => {
-	if (typeof raw !== "string") return undefined;
-	const tag = raw.trim().toLowerCase();
-	if (!tag || tag.length > MAX_TAG_LENGTH) return undefined;
-	const exact = canonical(tag);
-	if (exact) return exact;
-	const traditionalChinese = traditionalChineseLocale(tag.split("-"));
-	if (traditionalChinese) return traditionalChinese;
-	const primary = tag.split("-")[0];
-	return primary ? canonical(MACROLANGUAGE_ALIASES[primary] ?? primary) : undefined;
-};
+export const matchLocale = (raw: string | null | undefined): string | undefined =>
+	matchLocaleIn(Object.keys(LOCALES), raw);
 
 export interface LocaleSources {
 	/** `?lang=` — explicit per-embed choice. */
