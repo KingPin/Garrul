@@ -508,6 +508,10 @@ export const NAME_CLAIM_WINDOW_MS = 365 * 24 * 60 * 60 * 1000;
  * later sign-up can't take an anonymous regular's name, and a name nobody has
  * used for a year is free again.
  *
+ * The unary `+` on c.status keeps comments_status_created_idx out of index
+ * selection: without it SQLite walks every approved comment on the site
+ * instead of starting from idx_users_name_key.
+ *
  * Only approved, live comments count, on both sides. Matching every account
  * would let anyone probe which names have signed in, and matching staff would
  * reveal who is staff; a name that shows on the page is already public, and so
@@ -526,7 +530,7 @@ export const isNameClaimed = async (
 			 FROM (SELECT u.provider, MIN(c.created_at) AS first
 			       FROM users u JOIN comments c ON c.user_id = u.id
 			       WHERE u.name_key = ? AND u.erased_at IS NULL AND u.is_banned = 0
-			         AND c.status = 'approved' AND c.deleted_at IS NULL
+			         AND +c.status = 'approved' AND c.deleted_at IS NULL
 			       GROUP BY u.id
 			       HAVING MAX(c.created_at) >= ?)`,
 		)
@@ -1167,7 +1171,9 @@ export const listCommentsForThreads = async (
 
 /**
  * Latest N approved comments for a post, joined with author name, for
- * the per-post RSS feed.
+ * the per-post RSS feed. The unary `+` on c.status keeps SQLite on
+ * comments_post_idx: given comments_status_created_idx it would walk every
+ * approved comment on the site, newest first, to find this post's 50.
  */
 export const listLatestApprovedComments = async (
 	db: D1Database,
@@ -1182,7 +1188,7 @@ export const listLatestApprovedComments = async (
 			        u.name AS author_name
 			   FROM comments c
 			   JOIN users u ON u.id = c.user_id
-			  WHERE c.post_slug = ? AND c.status = 'approved'
+			  WHERE c.post_slug = ? AND +c.status = 'approved'
 			  ORDER BY c.created_at DESC, c.id DESC
 			  LIMIT ?`,
 		)

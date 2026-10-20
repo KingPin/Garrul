@@ -405,7 +405,8 @@
     "0027_oauth_email_names.sql",
     "0028_user_name_key.sql",
     "0029_owner_login.sql",
-    "0030_thread_and_retention_indexes.sql"
+    "0030_thread_and_retention_indexes.sql",
+    "0031_admin_list_indexes.sql"
   ],
   "breakingChanges": [
     {

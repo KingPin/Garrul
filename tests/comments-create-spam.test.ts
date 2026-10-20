@@ -98,7 +98,7 @@ const post = (body: Record<string, unknown>, extraEnv: Record<string, unknown> =
 		);
 
 const stored = () =>
-	sqlite.prepare("SELECT id, status FROM comments").all() as Array<{ id: string; status: string }>;
+	sqlite.prepare("SELECT id, status FROM comments ORDER BY rowid").all() as Array<{ id: string; status: string }>;
 
 const verdicts = () =>
 	sqlite.prepare("SELECT source, verdict, raw FROM spam_verdicts").all() as Array<{
