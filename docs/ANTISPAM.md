@@ -185,7 +185,7 @@ binding = "AI"
 
 A comment is queued when that probability is at or above the **AI spam threshold**: `SPAM_AI_THRESHOLD` (percent, `1`–`100`, default `70`), also editable on **Admin → Settings → Anti-spam**. The probability is stored as the verdict's score and shown on each comment's detail page, so you can tune the threshold against your real traffic. Lower it to catch more spam at the cost of more real comments in the queue; raise it for the reverse.
 
-**Privacy posture.** Inference runs on Cloudflare's edge via your AI binding — no third-party API call leaves CF infrastructure. The probability is cached in the `RATE_LIMITS` KV namespace for 6 hours keyed on a SHA-256 hash of the body, so identical resubmissions don't re-bill. The cache holds the probability, not the verdict, so a threshold change also applies to cached bodies.
+**Privacy posture.** Inference runs on Cloudflare's edge via your AI binding — no third-party API call leaves CF infrastructure. The probability is cached in the edge Cache API for 6 hours keyed on a SHA-256 hash of the body, so identical resubmissions through the same Cloudflare location don't re-bill. It is not KV: anonymous comment POSTs reach this path, and KV's free-tier write cap is account-wide. The cache holds the probability, not the verdict, so a threshold change also applies to cached bodies.
 
 **Cost.** Clef-flash bills input tokens only ($0.038 per million at the time of writing). A 2,000-character comment is well under a thousand tokens.
 

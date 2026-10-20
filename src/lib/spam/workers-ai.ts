@@ -11,16 +11,23 @@
  * `spam_ai_threshold` setting, applied here rather than baked into the cache,
  * so retuning it on /admin/settings also re-judges cached bodies.
  *
- * We cache the probability in KV (RATE_LIMITS namespace) keyed on a short
- * hash of body_md so identical resubmissions don't re-bill.
+ * We cache the probability in the Cache API keyed on a short hash of
+ * body_md so identical resubmissions don't re-bill. Not KV: an anonymous POST
+ * reaches this, and KV's 1,000 writes/day are account-wide. The Cache API is
+ * per-colo, so a resubmission through another colo re-bills; that is the
+ * accepted cost.
  */
 
+import { hexEncode } from "../hmac";
 import { log } from "../log";
+import { cacheKey, edgeCache } from "../response-cache";
 import type { SpamCheckInput, SpamVerdict } from "./index";
 
 type WorkersAiConfig = {
 	ai: Ai;
-	cache: KVNamespace | null;
+	// The handling request's URL; the cache key must sit on the Worker's own
+	// origin (see response-cache.ts). Null disables the cache.
+	cacheUrl: string | null;
 	// Percent, 1–100: flag when P(spam) >= this / 100.
 	threshold: number;
 };
@@ -37,12 +44,9 @@ const MAX_BODY_FOR_PROMPT = 2_000; // truncate for cost / latency
 
 const encoder = new TextEncoder();
 
-const cacheKey = async (bodyMd: string): Promise<string> => {
+const bodyHash = async (bodyMd: string): Promise<string> => {
 	const digest = await crypto.subtle.digest("SHA-256", encoder.encode(bodyMd));
-	const hex = Array.from(new Uint8Array(digest), (b) =>
-		b.toString(16).padStart(2, "0"),
-	).join("");
-	return `spamcache:${hex.slice(0, 32)}`;
+	return hexEncode(digest).slice(0, 32);
 };
 
 const QUESTIONS = {
@@ -83,13 +87,15 @@ export const checkWorkersAi = async (
 	cfg: WorkersAiConfig,
 	input: SpamCheckInput,
 ): Promise<SpamVerdict | null> => {
-	const key = await cacheKey(input.body_md);
-	if (cfg.cache) {
-		// Pre-Clef entries hold "spam"/"ham"; they parse to NaN and fall
-		// through to a fresh call. A miss is null, which Number() would turn
-		// into 0 — a confident "ham" — so it is screened out first.
-		const hit = await cfg.cache.get(key);
-		const cached = hit === null ? Number.NaN : Number(hit);
+	const cache = cfg.cacheUrl ? edgeCache() : null;
+	const key =
+		cache && cfg.cacheUrl
+			? cacheKey(cfg.cacheUrl, "spam-ai", { h: await bodyHash(input.body_md) })
+			: null;
+	if (cache && key) {
+		// parseFloat, not Number(): Number("") is 0, a confident "ham".
+		const hit = await cache.match(key).catch(() => undefined);
+		const cached = hit ? Number.parseFloat(await hit.text()) : Number.NaN;
 		if (isProbability(cached)) return verdict(cached, cfg.threshold, true);
 	}
 
@@ -113,10 +119,16 @@ export const checkWorkersAi = async (
 			});
 			return null;
 		}
-		if (cfg.cache) {
-			await cfg.cache.put(key, String(p), {
-				expirationTtl: CACHE_TTL_SECONDS,
-			});
+		if (cache && key) {
+			// Best-effort: a cache failure must not discard a good verdict.
+			await cache
+				.put(
+					key,
+					new Response(String(p), {
+						headers: { "cache-control": `public, max-age=${CACHE_TTL_SECONDS}` },
+					}),
+				)
+				.catch(() => {});
 		}
 		return verdict(p, cfg.threshold, false);
 	} catch (err) {

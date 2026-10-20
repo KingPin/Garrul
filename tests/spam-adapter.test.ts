@@ -6,6 +6,11 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { checkSpam, type SpamCheckInput } from "../src/lib/spam";
+import {
+	installMockCaches,
+	type MockCache,
+	uninstallMockCaches,
+} from "./helpers/mock-caches";
 
 const input: SpamCheckInput = {
 	body_md: "Hello world",
@@ -194,21 +199,17 @@ describe("workers-ai provider", () => {
 		run: vi.fn(async () => ({ answers: { spam: { type: "noul", noul: p } } })),
 	});
 
-	class StubKV {
-		map = new Map<string, string>();
-		async get(key: string) {
-			return this.map.get(key) ?? null;
-		}
-		async put(key: string, value: string) {
-			this.map.set(key, value);
-		}
-	}
-
-	const envWith = (ai: unknown, kv?: StubKV) => ({
+	const envWith = (ai: unknown) => ({
 		SPAM_PROVIDER: "workers-ai",
 		AI: ai as Ai,
-		...(kv && { RATE_LIMITS: kv as unknown as KVNamespace }),
 	});
+	const URL_ = "https://comments.example.com/api/v1/comments";
+
+	let cache: MockCache;
+	beforeEach(() => {
+		cache = installMockCaches();
+	});
+	afterEach(uninstallMockCaches);
 
 	it("calls Clef-flash with the comment as state and one yes/no question", async () => {
 		const ai = makeAi(0.1);
@@ -224,12 +225,13 @@ describe("workers-ai provider", () => {
 	});
 
 	it("flags spam at or above the threshold and records the probability as score", async () => {
-		const kv = new StubKV();
-		const v = await checkSpam(envWith(makeAi(0.5), kv), input, 50);
+		const v = await checkSpam(envWith(makeAi(0.5)), input, 50, URL_);
 		expect(v).toMatchObject({ spam: true, reason: "workers-ai.spam", score: 0.5 });
 		expect(v?.raw).toMatchObject({ cached: false, threshold: 50 });
 		// Caches the probability, not the verdict, so a retuned threshold applies.
-		expect([...kv.map.values()]).toEqual(["0.5"]);
+		const [key, res] = [...cache.store][0]!;
+		expect(key).toMatch(/^https:\/\/comments\.example\.com\/__cache\/spam-ai\?h=[0-9a-f]{32}$/);
+		expect(await res!.text()).toBe("0.5");
 	});
 
 	it("passes as ham below the threshold", async () => {
@@ -240,12 +242,11 @@ describe("workers-ai provider", () => {
 	it("flags a score sitting exactly on the threshold, fresh and cached", async () => {
 		// 0.57 * 100 is 56.99999999999999, so a multiplied comparison misses this.
 		const ai = makeAi(0.57);
-		const kv = new StubKV();
-		expect(await checkSpam(envWith(ai, kv), input, 57)).toMatchObject({
+		expect(await checkSpam(envWith(ai), input, 57, URL_)).toMatchObject({
 			spam: true,
 			raw: { cached: false },
 		});
-		expect(await checkSpam(envWith(ai, kv), input, 57)).toMatchObject({
+		expect(await checkSpam(envWith(ai), input, 57, URL_)).toMatchObject({
 			spam: true,
 			raw: { cached: true },
 		});
@@ -253,22 +254,36 @@ describe("workers-ai provider", () => {
 
 	it("re-judges a cached probability against the current threshold", async () => {
 		const ai = makeAi(0.6);
-		const kv = new StubKV();
-		expect((await checkSpam(envWith(ai, kv), input, 50))?.spam).toBe(true);
-		const v = await checkSpam(envWith(ai, kv), input, 80);
+		expect((await checkSpam(envWith(ai), input, 50, URL_))?.spam).toBe(true);
+		const v = await checkSpam(envWith(ai), input, 80, URL_);
 		expect(v).toMatchObject({ spam: false, score: 0.6, raw: { cached: true } });
 		expect(ai.run).toHaveBeenCalledTimes(1);
 	});
 
-	it("treats a pre-Clef SPAM/HAM cache entry as a miss", async () => {
+	it("treats a cache entry that is not a probability as a miss", async () => {
 		const ai = makeAi(0.2);
-		const kv = new StubKV();
-		await checkSpam(envWith(ai, kv), input);
-		const [key] = kv.map.keys();
-		kv.map.set(key as string, "spam");
-		const v = await checkSpam(envWith(ai, kv), input);
+		await checkSpam(envWith(ai), input, 70, URL_);
+		const [key] = cache.store.keys();
+		cache.store.set(key as string, new Response(""));
+		const v = await checkSpam(envWith(ai), input, 70, URL_);
 		expect(v).toMatchObject({ spam: false, raw: { cached: false } });
 		expect(ai.run).toHaveBeenCalledTimes(2);
+	});
+
+	it("runs uncached without a request URL", async () => {
+		const ai = makeAi(0.2);
+		await checkSpam(envWith(ai), input);
+		await checkSpam(envWith(ai), input);
+		expect(ai.run).toHaveBeenCalledTimes(2);
+		expect(cache.store.size).toBe(0);
+	});
+
+	it("keeps a fresh verdict when the cache write fails", async () => {
+		cache.put = async () => {
+			throw new Error("cache down");
+		};
+		const v = await checkSpam(envWith(makeAi(0.9)), input, 50, URL_);
+		expect(v).toMatchObject({ spam: true, score: 0.9 });
 	});
 
 	it("returns null when the answer is missing or not a probability", async () => {

@@ -65,13 +65,7 @@ writing a name in it.
 | --- | --- | --- | --- |
 | `SESSIONS` | `sess:<32 random bytes, hex>` | `{user_id, expires_at}` — no name, no email | 30 days, slid forward once less than 15 days remain (`src/lib/session.ts`) |
 | `OAUTH_STATE` | widget handoff / `tg:link:<token>` | `{user_id}` | 60 s (`src/lib/oauth.ts:395`) / 600 s (`src/routes/telegram.ts:65`) |
-| `RATE_LIMITS` | `spamcache:<first 32 hex of SHA-256(body_md)>` | The Workers-AI spam probability for that body (a number, 0–1). Only written when `SPAM_PROVIDER=workers-ai`. | 6 h (`src/lib/spam/workers-ai.ts:35`) |
 | `TREE_CACHE` | `meta:latest-release` (resolved settings no longer cached here; they live in a 60 s per-isolate memo) | The version check — no personal data | 1 h (`src/lib/version-check.ts:57`) |
-
-The spam cache key is **derived from the comment text**. It is a truncated hash,
-not the text, and it expires in six hours — but if the same body is submitted
-twice inside that window, the key's existence reveals that. Worth knowing; not
-worth a policy paragraph.
 
 OAuth *state* is a signed cookie, not a KV row, despite the namespace name
 (`src/lib/oauth.ts`). The namespace is reused for the two short-lived tokens
@@ -81,7 +75,7 @@ above.
 
 ## Edge Cache API (`caches.default`)
 
-Not KV, and never backed up. Two users:
+Not KV, and never backed up. Three users:
 
 - **Comment tree pages** — the first page of a thread, including public comment
   bodies and author display names. Short `max-age`
@@ -91,6 +85,12 @@ Not KV, and never backed up. Two users:
 - **Rate-limit counters** — keyed by identity: `user:<id>` for a signed-in
   author, otherwise the `ip_hash` (`src/routes/api.comments.ts:433-436`). Just
   timestamps, expiring with the window.
+- **Workers-AI spam probability** — keyed on the first 32 hex of
+  SHA-256(`body_md`), holding a number from 0 to 1, for 6 h
+  (`src/lib/spam/workers-ai.ts`). Only written when `SPAM_PROVIDER=workers-ai`.
+  The key is **derived from the comment text**. It is a truncated hash, not
+  the text, but if the same body is submitted twice inside the window, the
+  key's existence reveals that. Worth knowing; not worth a policy paragraph.
 
 ---
 

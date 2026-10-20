@@ -1829,9 +1829,9 @@ picks a conforming name for you. The script runs under `umask 077`, so the
 dump is created owner-read/write only (`0600`) rather than the shell's
 usual world-readable default; `chmod` it yourself if you copy it elsewhere.
 
-**KV considerations.** Don't bother backing up KV: `RATE_LIMITS` only
-holds the optional Workers-AI spam verdict cache (rate limiting itself
-runs on the Cache API, or on the Durable Object if you bound one);
+**KV considerations.** Don't bother backing up KV: `RATE_LIMITS` holds
+nothing today (rate limiting and the Workers-AI spam verdict cache run on
+the Cache API, or rate limiting on the Durable Object if you bound one);
 `OAUTH_STATE` holds 60-second widget handoff
 tokens (OAuth state is a signed cookie, not a KV row); `SESSIONS` loss
 just forces re-sign-in; `TREE_CACHE` rebuilds on next read.
