@@ -1747,7 +1747,10 @@ export const adminListComments = async (
 	}
 	const status = filter.status ?? "all";
 	if (status !== "all") {
-		where.push("c.status = ?");
+		// Scoped to one post or account, the unary + keeps SQLite on
+		// comments_post_idx / comments_user_idx; given the status index it walks
+		// every comment on the site with this status and filters row by row.
+		where.push(filter.post_slug || filter.user_id ? "+c.status = ?" : "c.status = ?");
 		binds.push(status);
 	}
 	if (filter.q) {

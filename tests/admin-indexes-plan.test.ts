@@ -78,6 +78,15 @@ describe("0031 admin indexes", () => {
 		expect(plan()).toContain("comments_status_created_idx (status=? AND (created_at,id)<(?,?))");
 	});
 
+	it("a post- or account-scoped status tab starts from that post or account", async () => {
+		await adminListComments(db, { status: "approved", post_slug: "hello" }, 51, null, null);
+		expect(plan()).toContain("comments_post_idx (post_slug=?)");
+		expect(plan()).not.toContain("comments_status_created_idx");
+		await adminListComments(db, { status: "pending", user_id: "u1" }, 51, null, null);
+		expect(plan()).toContain("comments_user_idx (user_id=?)");
+		expect(plan()).not.toContain("comments_status_created_idx");
+	});
+
 	it("queue 'all' walks the created index, no sort", async () => {
 		await adminListComments(db, { status: "all" }, 51, null, null);
 		expect(plan()).toContain("comments_created_idx");
