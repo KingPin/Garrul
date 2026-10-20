@@ -347,7 +347,13 @@ app.route("/c", permalink);
 app.route("/", embed);
 app.route("/", agents);
 app.route("/", wellKnown);
-app.get("/embed", renderShellFromQuery);
+// `/embed` would miss the `/embed/` prefix the header middleware above keys
+// X-Frame-Options off, so send it to `/embed/` (as Static Assets does) rather
+// than serve a page that carries both XFO DENY and frame-ancestors.
+app.get("/embed", (c) => {
+	const u = new URL(c.req.url);
+	return c.redirect(`/embed/${u.search}`, 307);
+});
 app.get("/embed/", renderShellFromQuery);
 app.route("/embed", iframe);
 app.route("/admin", admin);

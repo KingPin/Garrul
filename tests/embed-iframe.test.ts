@@ -312,3 +312,18 @@ describe("GET /embed/?slug= (the static shell's URL, served by the Worker as fal
 		expect((await fetchPage("/embed/")).status).toBe(400);
 	});
 });
+
+describe("GET /embed (no slash)", () => {
+	it("redirects to /embed/ with the query, like Static Assets", async () => {
+		const res = await fetchPage("/embed?slug=my-post&theme=dark");
+		expect(res.status).toBe(307);
+		expect(res.headers.get("location")).toBe("/embed/?slug=my-post&theme=dark");
+	});
+
+	it("serves /embed/ framable: frame-ancestors, no X-Frame-Options", async () => {
+		const res = await fetchPage("/embed/?slug=my-post");
+		expect(res.status).toBe(200);
+		expect(res.headers.get("x-frame-options")).toBeNull();
+		expect(directive(res, "frame-ancestors")).toBeDefined();
+	});
+});
