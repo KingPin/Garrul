@@ -53,7 +53,7 @@ writing a name in it.
 | --- | --- |
 | `posts` | `slug`, `title`, `url` — page metadata, plus `page_votes_up` / `page_votes_down` totals |
 | `page_reaction_totals` | `post_slug`, `kind`, `count` — per-page reaction totals, no user link |
-| `spam_verdicts` | `comment_id`, `source`, `verdict`, `score`, `raw`. `raw` is adapter metadata only: `{response, pro_tip}` for Akismet (`src/lib/spam/akismet.ts:86`), `{cached, model, threshold}` for Workers AI, whose spam probability goes in `score` (`src/lib/spam/workers-ai.ts:69`). It does **not** echo comment content. |
+| `spam_verdicts` | `comment_id`, `source`, `verdict`, `score`, `raw`. `raw` is adapter metadata only: `{response, pro_tip}` for Akismet (`src/lib/spam/akismet.ts:86`), `{model, threshold}` for Workers AI, whose spam probability goes in `score` (`src/lib/spam/workers-ai.ts:72`); older verdicts also carry `cached`. It does **not** echo comment content. |
 | `webhook_endpoints` | Operator config: `url`, `secret`, `events` |
 | `saved_replies` | Canned moderator text, `owner_id`. Staff-authored, not subject data. |
 | `settings`, `email_send_budget`, `_migrations` | Instance configuration and counters |
@@ -76,7 +76,7 @@ above.
 
 ## Edge Cache API (`caches.default`)
 
-Not KV, and never backed up. Five users:
+Not KV, and never backed up. Four users:
 
 - **Comment tree pages** — the first page of a thread, including public comment
   bodies and author display names. Short `max-age`
@@ -92,12 +92,6 @@ Not KV, and never backed up. Five users:
 - **Rate-limit counters** — keyed by identity: `user:<id>` for a signed-in
   author, otherwise the `ip_hash` (`src/routes/api.comments.ts:433-436`). Just
   timestamps, expiring with the window.
-- **Workers-AI spam probability** — keyed on the first 32 hex of
-  SHA-256(`body_md`), holding a number from 0 to 1, for 6 h
-  (`src/lib/spam/workers-ai.ts`). Only written when `SPAM_PROVIDER=workers-ai`.
-  The key is **derived from the comment text**. It is a truncated hash, not
-  the text, but if the same body is submitted twice inside the window, the
-  key's existence reveals that. Worth knowing; not worth a policy paragraph.
 
 ---
 

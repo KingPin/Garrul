@@ -301,7 +301,7 @@ const evaluateSpam = async (
 	// freshly-rendered form and therefore no token to verify, and a *missing*
 	// token flags — so on that path the check has to be skipped rather than
 	// silently marking every edit as a bot.
-	opts: { skipFormTs?: boolean; reqUrl?: string } = {},
+	opts: { skipFormTs?: boolean } = {},
 ): Promise<SpamEvaluation> => {
 	if (author.is_admin) return { status: "approved", reasons: [], verdicts: [] };
 	const reasons: string[] = [];
@@ -386,7 +386,7 @@ const evaluateSpam = async (
 			user_agent: userAgent,
 			post_url: postUrl,
 			is_first_comment: isFirst,
-		}, numbers.spam_ai_threshold, opts.reqUrl);
+		}, numbers.spam_ai_threshold);
 		if (classifierVerdict) {
 			const source: SpamVerdictSource =
 				env.SPAM_PROVIDER === "akismet" ? "akismet" : "workers-ai";
@@ -731,7 +731,6 @@ comments.post("/", async (c) => {
 		postUrl,
 		userAgent,
 		body.form_ts,
-		{ reqUrl: c.req.url },
 	);
 	if (verdict.reasons.length > 0) {
 		log.info("spam.flagged", {
@@ -1404,7 +1403,7 @@ comments.patch("/:id", async (c) => {
 		post?.url ?? null,
 		c.req.header("user-agent") ?? null,
 		undefined,
-		{ skipFormTs: true, reqUrl: c.req.url },
+		{ skipFormTs: true },
 	);
 	// An edit can send a comment back to the queue but never pull one out of it:
 	// approving is a moderator's call.

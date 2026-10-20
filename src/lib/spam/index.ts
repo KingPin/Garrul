@@ -45,9 +45,6 @@ export const checkSpam = async (
 	input: SpamCheckInput,
 	// The resolved `spam_ai_threshold` setting; 70 mirrors its default.
 	aiThreshold = 70,
-	// The handling request's URL, which keys the Workers-AI verdict cache.
-	// Omitted, the classifier runs uncached.
-	reqUrl?: string,
 ): Promise<SpamVerdict | null> => {
 	const provider = env.SPAM_PROVIDER;
 	if (!provider) return null;
@@ -61,7 +58,7 @@ export const checkSpam = async (
 	if (provider === "workers-ai") {
 		if (!env.AI) return null;
 		return checkWorkersAi(
-			{ ai: env.AI, cacheUrl: reqUrl ?? null, threshold: aiThreshold },
+			{ ai: env.AI, threshold: aiThreshold },
 			input,
 		);
 	}

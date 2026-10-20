@@ -396,8 +396,7 @@ default, server-side clamped), edited from **Settings → Moderation**.
 - `SPAM_AI_THRESHOLD` — clamped to `1`–`100`, default `70`. Percent spam
   probability at which the `workers-ai` classifier (Clef-flash) queues a
   comment. No `0`: that would queue everything. Ignored for other providers.
-  The probability lands in `spam_verdicts.score`, and the KV cache stores the
-  probability rather than the verdict, so a retune also re-judges cached bodies.
+  The probability lands in `spam_verdicts.score`.
 - `SPAM_HONEYPOT_MIN_MS` — clamped to `0`–`60000`; `0` (default) = off. Still
   requires `SPAM_FORM_TS_SECRET`, which stays a secret: without it the form
   timestamp is unsigned and forgeable, so `evaluateSpam` skips the check, the
@@ -1845,8 +1844,8 @@ dump is created owner-read/write only (`0600`) rather than the shell's
 usual world-readable default; `chmod` it yourself if you copy it elsewhere.
 
 **KV considerations.** Don't bother backing up KV: `RATE_LIMITS` holds
-nothing today (rate limiting and the Workers-AI spam verdict cache run on
-the Cache API, or rate limiting on the Durable Object if you bound one);
+nothing today (rate limiting runs on the Cache API, or on the Durable
+Object if you bound one);
 `OAUTH_STATE` holds 60-second widget handoff
 tokens (OAuth state is a signed cookie, not a KV row); `SESSIONS` loss
 just forces re-sign-in; `TREE_CACHE` rebuilds on next read.
