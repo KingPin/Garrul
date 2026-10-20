@@ -112,14 +112,18 @@ if (frameEnv) {
 		target: ["es2020"],
 		legalComments: "none",
 		define: {
-			__GARRUL_FRAME_ENV__: JSON.stringify({ ...frameEnv, locales: Object.keys(LOCALES) }),
+			__GARRUL_FRAME_ENV__: JSON.stringify({
+				allowed: frameEnv.allowed,
+				locales: Object.keys(LOCALES),
+				dev: false,
+			}),
 		},
 		logLevel: "warning",
 	});
 	console.log(`[build-embed] wrote static iframe shell to ${SHELL_DIR}`);
 } else {
 	console.log(
-		"[build-embed] no ALLOWED_ORIGINS in wrangler.toml [vars]: skipping the static iframe shell; /embed/?slug= stays on the Worker",
+		"[build-embed] no usable ALLOWED_ORIGINS in wrangler.toml (missing, [env.*] tables, or ENV=dev): skipping the static iframe shell; /embed/?slug= stays on the Worker",
 	);
 }
 

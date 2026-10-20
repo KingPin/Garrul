@@ -12,17 +12,26 @@ import { parseTomlVars } from "./upgrade/toml-vars";
 
 const TURNSTILE_ORIGIN = "https://challenges.cloudflare.com";
 
-export type FrameBuildEnv = { allowed: string[]; dev: boolean };
+export type FrameBuildEnv = { allowed: string[] };
 
 /**
- * ALLOWED_ORIGINS and ENV from wrangler.toml's top-level [vars], or null when
- * there is no usable allowlist. Null means "do not emit the static shell": the
- * Worker route keeps serving `/embed/?slug=…`, at the old cost. Entries that
- * are not bare http(s) origins are dropped, so nothing odd reaches a header.
+ * ALLOWED_ORIGINS from wrangler.toml's top-level [vars], or null. Null means
+ * "do not emit the static shell": the Worker route keeps serving
+ * `/embed/?slug=…`, at the old cost, and reads the deployed env at request
+ * time. Entries that are not bare http(s) origins are dropped, so nothing odd
+ * reaches a header.
+ *
+ * Also null when the file has any `[env.<name>]` table or sets ENV = "dev".
+ * The build cannot know which environment `wrangler deploy --env` will pick,
+ * and top-level [vars] baked into a production deploy could publish a dev
+ * `frame-ancestors *` (any site may frame the comment page) or a staging
+ * allowlist that leaves the real blogs out.
  */
 export const readFrameEnv = (wranglerToml: string | null): FrameBuildEnv | null => {
 	if (wranglerToml === null) return null;
+	if (/^\s*\[\[?env\./m.test(wranglerToml)) return null;
 	const vars = parseTomlVars(wranglerToml);
+	if (vars.ENV === "dev") return null;
 	const allowed = (vars.ALLOWED_ORIGINS ?? "")
 		.split(",")
 		.map((s) => s.trim())
@@ -34,10 +43,10 @@ export const readFrameEnv = (wranglerToml: string | null): FrameBuildEnv | null 
 			}
 		});
 	if (allowed.length === 0) return null;
-	return { allowed, dev: vars.ENV === "dev" };
+	return { allowed };
 };
 
-export const frameShellCsp = ({ allowed, dev }: FrameBuildEnv): string => {
+export const frameShellCsp = ({ allowed }: FrameBuildEnv): string => {
 	const origins = ["'self'", ...allowed].join(" ");
 	return [
 		"default-src 'none'",
@@ -47,7 +56,7 @@ export const frameShellCsp = ({ allowed, dev }: FrameBuildEnv): string => {
 		"style-src 'unsafe-inline'",
 		"img-src data: https:",
 		"font-src data:",
-		dev ? "frame-ancestors *" : `frame-ancestors ${origins}`,
+		`frame-ancestors ${origins}`,
 	].join("; ");
 };
 

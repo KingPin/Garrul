@@ -5,6 +5,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { frameShellCsp, frameShellHeaders, readFrameEnv } from "../scripts/frame-shell";
+import worker from "../src/index";
 
 const toml = (vars: string) => `name = "garrul"\n[assets]\ndirectory = "./public"\n[vars]\n${vars}\n[[d1_databases]]\nbinding = "DB"\n`;
 
@@ -19,11 +20,17 @@ describe("readFrameEnv", () => {
 		const env = readFrameEnv(
 			toml('ALLOWED_ORIGINS = "https://a.example, https://b.example/path, javascript:x, *, http://c.example:8080"'),
 		);
-		expect(env).toEqual({ allowed: ["https://a.example", "http://c.example:8080"], dev: false });
+		expect(env).toEqual({ allowed: ["https://a.example", "http://c.example:8080"] });
 	});
 
-	it("reads ENV=dev", () => {
-		expect(readFrameEnv(toml('ENV = "dev"\nALLOWED_ORIGINS = "https://a.example"'))?.dev).toBe(true);
+	it("skips under ENV=dev, which would bake frame-ancestors *", () => {
+		expect(readFrameEnv(toml('ENV = "dev"\nALLOWED_ORIGINS = "https://a.example"'))).toBeNull();
+	});
+
+	it("skips when the file has [env.*] tables: the deployed env is unknown at build time", () => {
+		const base = toml('ALLOWED_ORIGINS = "https://a.example"');
+		expect(readFrameEnv(`${base}[env.production.vars]\nALLOWED_ORIGINS = "https://b.example"\n`)).toBeNull();
+		expect(readFrameEnv(`${base}  [[env.staging.d1_databases]]\nbinding = "DB"\n`)).toBeNull();
 	});
 });
 
@@ -32,7 +39,7 @@ describe("frameShellCsp", () => {
 		csp.split(";").map((d) => d.trim()).find((d) => d.startsWith(`${name} `));
 
 	it("pins framing to self and the allowlist, and allows no inline script", () => {
-		const csp = frameShellCsp({ allowed: ["https://a.example"], dev: false });
+		const csp = frameShellCsp({ allowed: ["https://a.example"] });
 		expect(directive(csp, "frame-ancestors")).toBe("frame-ancestors 'self' https://a.example");
 		expect(directive(csp, "script-src")).toBe(
 			"script-src 'self' https://a.example https://challenges.cloudflare.com",
@@ -40,13 +47,34 @@ describe("frameShellCsp", () => {
 		expect(csp).toContain("default-src 'none'");
 	});
 
-	it("lets anything frame it under ENV=dev, as the Worker route does", () => {
-		const csp = frameShellCsp({ allowed: ["https://a.example"], dev: true });
-		expect(directive(csp, "frame-ancestors")).toBe("frame-ancestors *");
+	it("lets the same origins frame it as the Worker route does", async () => {
+		const self = "https://comments.example.com";
+		const res = await worker.fetch(
+			new Request(`${self}/embed/post`),
+			{
+				ALLOWED_ORIGINS: "https://a.example, https://b.example",
+				IP_HASH_SECRET: "x",
+				JWT_SECRET: "y",
+			} as unknown as Record<string, unknown>,
+			{} as ExecutionContext,
+		);
+		const workerAncestors = directive(res.headers.get("content-security-policy") ?? "", "frame-ancestors")
+			?.split(" ")
+			.slice(1)
+			.map((o) => (o === self ? "'self'" : o))
+			.sort();
+		const staticAncestors = directive(
+			frameShellCsp({ allowed: ["https://a.example", "https://b.example"] }),
+			"frame-ancestors",
+		)
+			?.split(" ")
+			.slice(1)
+			.sort();
+		expect(staticAncestors).toEqual(workerAncestors);
 	});
 
 	it("scopes the header block to /embed/ and /embed/frame.js", () => {
-		const lines = frameShellHeaders({ allowed: ["https://a.example"], dev: false });
+		const lines = frameShellHeaders({ allowed: ["https://a.example"] });
 		expect(lines[0]).toBe("/embed/");
 		expect(lines).toContain("/embed/frame.js");
 		expect(lines.filter((l) => !l.startsWith("  ")).length).toBe(2);

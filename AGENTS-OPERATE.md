@@ -1772,9 +1772,12 @@ it into the page's `frame-ancestors` CSP in `public/_headers`. So:
 
 1. Change `ALLOWED_ORIGINS` in `wrangler.toml` and redeploy, not in the
    dashboard alone; the static page keeps the list it was built with.
-2. With `ALLOWED_ORIGINS` missing from top-level `[vars]` (for example only
-   under `[env.<name>.vars]`), the build skips the static page and the
-   Worker serves `/embed/?slug=` at one request per pageview.
+2. The build skips the static page, and the Worker serves `/embed/?slug=`
+   at one request per pageview, when `ALLOWED_ORIGINS` is missing from
+   top-level `[vars]`, when `ENV = "dev"`, or when the file has any
+   `[env.<name>]` table. With environments the build cannot know which one
+   `wrangler deploy --env` will use, and baking the wrong one could let any
+   site frame the page or block your real blogs.
 3. `/embed/<slug>` stays a Worker route for existing embeds.
 
 Two consequences worth planning around:
