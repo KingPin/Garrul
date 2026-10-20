@@ -1024,7 +1024,7 @@ Pages (top nav):
 
 | Path | Purpose |
 | --- | --- |
-| `/admin` | Dashboard: counts, 30-day comments-per-day sparkline, oldest pending, spam-rate, top posts/commenters. |
+| `/admin` | Dashboard: counts, 30-day comments-per-day sparkline, oldest pending, spam-rate, top posts/commenters. Figures are reused for up to 60 s, so they can trail a moderation action by a minute; the queue is always live. |
 | `/admin/queue` | Moderation queue. Status tabs (incl. a **Reported** tab — comments with open reader reports, with a count badge) + filter bar (body search, post slug, date range, scoped-by-user). Per-row + bulk actions (Approve/Spam/Delete/Restore). When filtered to a single post slug, a **Close / Open comments for this post** toggle appears. Rows also offer one-click **Ban author**. Each row shows author identity (avatar + provider + admin/banned pills), a `✎ n` badge when the comment or the account carries moderator notes, and the latest audit footer. Fully keyboard-drivable — see **Keyboard shortcuts** below. |
 | `/admin/comments/:id` | Single-comment view: parent + replies, raw markdown, spam-verdicts per source, full audit history for that comment, author block with their last 5 comments, and the **Moderator notes** card. |
 | `/admin/users` | User search + ban toggle. |

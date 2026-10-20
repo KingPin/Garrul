@@ -322,21 +322,22 @@ admin.use("*", async (c, next) => {
 // Mounted after the guards above so Origin/CSP/no-store apply.
 admin.route("/owner", ownerLogin);
 
-admin.get("/", async (c) => {
-	const user = await requireMod(c);
-	if (user instanceof Response) return user;
-	const db = c.env.DB;
-	const [
-		stats,
-		timeline,
-		topPosts,
-		topCommenters,
-		oldestPending,
-		spamRate,
-		byHost,
-		updateInfo,
-		{ flags, numbers },
-	] = await Promise.all([
+// The dashboard's seven aggregates, per D1 binding, for DASHBOARD_MEMO_MS.
+// Several still count whole tables (totals, per-host breakdown), so a refresh
+// loop would otherwise re-read every comment each time. Counts lag a
+// moderation action by up to a minute; the queue itself is never memoized.
+const DASHBOARD_MEMO_MS = 60_000;
+const dashboardMemo = new WeakMap<
+	D1Database,
+	{ at: number; data: Promise<DashboardData> }
+>();
+type DashboardData = Parameters<typeof renderDashboard>[0];
+
+const loadDashboardData = (db: D1Database): Promise<DashboardData> => {
+	const now = Date.now();
+	const hit = dashboardMemo.get(db);
+	if (hit && now - hit.at < DASHBOARD_MEMO_MS) return hit.data;
+	const data = Promise.all([
 		adminStats(db),
 		adminTimeline(db, 30),
 		adminTopPosts(db, 30, 5),
@@ -344,13 +345,8 @@ admin.get("/", async (c) => {
 		adminOldestPending(db),
 		adminSpamRate(db, 30),
 		adminCommentsByHost(db),
-		peekCachedLatestVersion(c.env),
-		// The anti-spam summary line reports the resolved heuristic dials, so it
-		// has to read them the same way evaluateSpam does.
-		loadSettings(c.env),
-	]);
-	const body = renderDashboard(
-		{
+	]).then(
+		([stats, timeline, topPosts, topCommenters, oldestPending, spamRate, byHost]) => ({
 			stats,
 			timeline,
 			top_posts: topPosts,
@@ -358,7 +354,26 @@ admin.get("/", async (c) => {
 			oldest_pending: oldestPending,
 			spam_rate: spamRate,
 			by_host: byHost,
-		},
+		}),
+	);
+	// A failed read must not stay memoized.
+	data.catch(() => dashboardMemo.delete(db));
+	dashboardMemo.set(db, { at: now, data });
+	return data;
+};
+
+admin.get("/", async (c) => {
+	const user = await requireMod(c);
+	if (user instanceof Response) return user;
+	const [data, updateInfo, { flags, numbers }] = await Promise.all([
+		loadDashboardData(c.env.DB),
+		peekCachedLatestVersion(c.env),
+		// The anti-spam summary line reports the resolved heuristic dials, so it
+		// has to read them the same way evaluateSpam does.
+		loadSettings(c.env),
+	]);
+	const body = renderDashboard(
+		data,
 		c.env,
 		flags,
 		numbers,
