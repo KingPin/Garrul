@@ -109,6 +109,7 @@ describe("bustTreeCache", () => {
 	it("skips the drop when the page size can't be resolved", async () => {
 		const cache = installMockCaches();
 		cache.store.set(treeCacheKey(REQ_URL, "hello", "new", 25).url, new Response("{}"));
+		cache.store.set(feedCacheKey(REQ_URL, "hello").url, new Response("<feed/>"));
 		const badEnv = {
 			TREE_CACHE: {
 				get: async () => {
@@ -129,7 +130,8 @@ describe("bustTreeCache", () => {
 		} as unknown as Bindings;
 
 		await expect(bustTreeCache(badEnv, REQ_URL, "hello")).resolves.toBeUndefined();
-		// Page size unknown → nothing dropped.
+		// Page size unknown → no tree page dropped; the feed key needs none.
 		expect(cache.store.has(treeCacheKey(REQ_URL, "hello", "new", 25).url)).toBe(true);
+		expect(cache.store.has(feedCacheKey(REQ_URL, "hello").url)).toBe(false);
 	});
 });

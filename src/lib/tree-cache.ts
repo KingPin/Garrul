@@ -82,8 +82,14 @@ export const bustTreeCache = async (
 	slug: string,
 	resolved?: ResolvedNumbers,
 ): Promise<void> => {
+	// The feed key has no page size, so it is dropped even when the settings
+	// read below fails.
+	const feed = dropCache(feedCacheKey(reqUrl, slug));
 	const numbers = resolved ?? (await loadNumbers(env).catch(() => null));
-	if (!numbers) return;
+	if (!numbers) {
+		await feed;
+		return;
+	}
 	const pageSize = numbers.comments_per_page;
 	// Driven off COMMENT_SORTS rather than a hand-written list: a sort added
 	// without a matching drop here would serve a stale first page for a full TTL
@@ -96,6 +102,6 @@ export const bustTreeCache = async (
 		...COMMENT_SORTS.map((sort) =>
 			dropCache(treeCacheKey(reqUrl, slug, sort, pageSize)),
 		),
-		dropCache(feedCacheKey(reqUrl, slug)),
+		feed,
 	]);
 };
