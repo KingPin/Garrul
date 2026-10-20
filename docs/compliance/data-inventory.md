@@ -75,13 +75,19 @@ above.
 
 ## Edge Cache API (`caches.default`)
 
-Not KV, and never backed up. Three users:
+Not KV, and never backed up. Five users:
 
 - **Comment tree pages** — the first page of a thread, including public comment
   bodies and author display names. Short `max-age`
   (`src/lib/response-cache.ts:133`), and busted per slug on write, on
   moderation, and on erasure (`src/lib/moderation.ts:224-226`). Nothing here is
   more exposed than the page a reader already sees.
+- **Atom feeds** — the latest 50 approved comments per post, with bodies and
+  author display names, for 5 minutes (`src/routes/feed.ts`). Dropped with the
+  slug's tree pages by the same bust, so erasure and moderation clear it in
+  the handling colo.
+- **Comment permalinks** — the `/c/:id` redirect target (the post URL plus an
+  anchor), for 5 minutes (`src/routes/permalink.ts`). No personal data.
 - **Rate-limit counters** — keyed by identity: `user:<id>` for a signed-in
   author, otherwise the `ip_hash` (`src/routes/api.comments.ts:433-436`). Just
   timestamps, expiring with the window.

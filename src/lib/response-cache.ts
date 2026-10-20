@@ -121,15 +121,28 @@ export const putCache = async (
 	ttlSec: number,
 	waitUntil?: (p: Promise<unknown>) => void,
 ): Promise<void> => {
-	const cache = edgeCache();
-	if (!cache) return;
 	const stored = new Response(json, {
 		headers: {
 			"content-type": "application/json; charset=UTF-8",
 			"cache-control": `public, max-age=${ttlSec}`,
 		},
 	});
-	const put = cache.put(key, stored).catch(() => {});
+	await putResponse(key, stored, waitUntil);
+};
+
+/**
+ * Store a copy of a whole Response under `key`. It must carry its own
+ * `public, max-age` and no Set-Cookie, or the Cache API drops it. Best-effort,
+ * with the same `waitUntil` rule as `putCache`.
+ */
+export const putResponse = async (
+	key: Request,
+	res: Response,
+	waitUntil?: (p: Promise<unknown>) => void,
+): Promise<void> => {
+	const cache = edgeCache();
+	if (!cache) return;
+	const put = cache.put(key, res.clone()).catch(() => {});
 	if (waitUntil) waitUntil(put);
 	else await put;
 };

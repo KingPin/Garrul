@@ -8,7 +8,7 @@
  * the user-visible path.
  */
 import { describe, it, expect, afterEach } from "vitest";
-import { bustTreeCache, treeCacheKey } from "../src/lib/tree-cache";
+import { bustTreeCache, feedCacheKey, treeCacheKey } from "../src/lib/tree-cache";
 import { COMMENT_SORTS } from "../src/db/queries";
 import { installMockCaches, uninstallMockCaches } from "./helpers/mock-caches";
 import type { Bindings } from "../src/index";
@@ -60,6 +60,15 @@ describe("bustTreeCache", () => {
 			expect(cache.store.has(treeCacheKey(REQ_URL, "hello", sort, 25).url)).toBe(false);
 		}
 		expect(cache.store.has(treeCacheKey(REQ_URL, "hello", "new", 10).url)).toBe(true);
+	});
+
+	it("drops the slug's feed too, and only that slug's", async () => {
+		const cache = installMockCaches();
+		cache.store.set(feedCacheKey(REQ_URL, "hello").url, new Response("<feed/>"));
+		cache.store.set(feedCacheKey(REQ_URL, "other").url, new Response("<feed/>"));
+		await bustTreeCache(env(25), REQ_URL, "hello");
+		expect(cache.store.has(feedCacheKey(REQ_URL, "hello").url)).toBe(false);
+		expect(cache.store.has(feedCacheKey(REQ_URL, "other").url)).toBe(true);
 	});
 
 	it("keys each sort separately so one sort's page never serves another's", () => {
