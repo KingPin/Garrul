@@ -261,6 +261,40 @@ describe("session cookie roundtrip", () => {
 		);
 	});
 
+	it("reads KV and slides at most once per request however many times it is called", async () => {
+		const { ctx: issueCtx, kv, setCookies } = makeCtx({});
+		await issueSession(issueCtx, userId);
+		const sidValue = extractCookieValue(setCookies[0]!);
+		ageRecord(kv, sidValue, 20);
+		const putsBefore = kv.puts;
+		const get = vi.spyOn(kv, "get");
+
+		const { ctx, setCookies: readCookies } = makeCtxWithSameKv(kv, {
+			cookieHeader: `__Host-garrul_sess=${sidValue}`,
+		});
+		// Middleware plus a handler, concurrently and then again after.
+		const [a, b] = await Promise.all([readSession(ctx), readSession(ctx)]);
+		const c = await readSession(ctx);
+		for (const s of [a, b, c]) expect(s?.user_id).toBe(userId);
+		// Session record + revocation stamp, once.
+		expect(get).toHaveBeenCalledTimes(2);
+		expect(kv.puts).toBe(putsBefore + 1);
+		expect(readCookies).toHaveLength(1);
+	});
+
+	it("re-reads after the request revokes its own session", async () => {
+		const { ctx: issueCtx, kv, setCookies } = makeCtx({});
+		await issueSession(issueCtx, userId);
+		const sidValue = extractCookieValue(setCookies[0]!);
+
+		const { ctx } = makeCtxWithSameKv(kv, {
+			cookieHeader: `__Host-garrul_sess=${sidValue}`,
+		});
+		expect((await readSession(ctx))?.user_id).toBe(userId);
+		await revokeSession(ctx);
+		expect(await readSession(ctx)).toBeNull();
+	});
+
 	it("expired session record is purged on read", async () => {
 		const { ctx: issueCtx, kv, setCookies } = makeCtx({});
 		await issueSession(issueCtx, userId);

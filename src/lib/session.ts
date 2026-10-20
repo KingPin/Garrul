@@ -219,6 +219,7 @@ const mintSession = async (
 	userId: string,
 	issuedAt: number,
 ): Promise<string> => {
+	sessionReads.delete(c);
 	const sid = newSessionId();
 	const record: SessionRecord = {
 		user_id: userId,
@@ -247,6 +248,7 @@ export const issueSession = (
  * session never orphans a still-replayable record.
  */
 export const revokeSession = async (c: SessionCtx): Promise<void> => {
+	sessionReads.delete(c);
 	const sid = parseCookie(c.req.header("cookie"), cookieName(c.env));
 	if (sid && SESSION_ID_RE.test(sid)) {
 		await c.env.SESSIONS.delete(sessionKey(sid));
@@ -298,9 +300,25 @@ export const destroySession = async (c: SessionCtx): Promise<void> => {
 	clearLegacyCookie(c);
 };
 
-export const readSession = async (
-	c: SessionCtx,
-): Promise<{ sid: string; user_id: string } | null> => {
+type SessionRead = { sid: string; user_id: string } | null;
+
+// The middleware reads the session and most handlers read it again, and each
+// read is two KV gets plus a possible slide write. Memoize per request, keyed
+// on the context object so the entry dies with it. mintSession and
+// revokeSession drop the entry so a re-read after either sees what a fresh
+// read would.
+const sessionReads = new WeakMap<SessionCtx, Promise<SessionRead>>();
+
+export const readSession = (c: SessionCtx): Promise<SessionRead> => {
+	let read = sessionReads.get(c);
+	if (!read) {
+		read = loadSession(c);
+		sessionReads.set(c, read);
+	}
+	return read;
+};
+
+const loadSession = async (c: SessionCtx): Promise<SessionRead> => {
 	// Deliberately only the current name: accepting LEGACY_COOKIE_NAME as a
 	// fallback would keep the sibling-subdomain fixation path open, which is the
 	// whole reason for the prefix.
