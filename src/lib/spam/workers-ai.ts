@@ -41,6 +41,23 @@ type ClefRunner = {
 const MODEL = "@cf/cloudflare/clef-flash";
 const CACHE_TTL_SECONDS = 60 * 60 * 6; // 6h — body hash is content-addressed
 const MAX_BODY_FOR_PROMPT = 2_000; // truncate for cost / latency
+// The comment POST waits on this; past it the check is "no opinion". AI.run
+// takes no AbortSignal, so the call is raced rather than cancelled.
+const TIMEOUT_MS = 5_000;
+
+const withTimeout = async <T>(p: Promise<T>, ms: number): Promise<T> => {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	try {
+		return await Promise.race([
+			p,
+			new Promise<never>((_, reject) => {
+				timer = setTimeout(() => reject(new Error(`timed out after ${ms} ms`)), ms);
+			}),
+		]);
+	} finally {
+		clearTimeout(timer);
+	}
+};
 
 const encoder = new TextEncoder();
 
@@ -101,16 +118,19 @@ export const checkWorkersAi = async (
 
 	try {
 		// biome-ignore lint/suspicious/noExplicitAny: the response is probed defensively below.
-		const out: any = await (cfg.ai as unknown as ClefRunner).run(MODEL, {
-			model: "clef-flash",
-			state: {
-				author: input.author_name,
-				first_time_commenter: input.is_first_comment,
-				page: input.post_url,
-				comment: input.body_md.slice(0, MAX_BODY_FOR_PROMPT),
-			},
-			questions: QUESTIONS,
-		});
+		const out: any = await withTimeout(
+			(cfg.ai as unknown as ClefRunner).run(MODEL, {
+				model: "clef-flash",
+				state: {
+					author: input.author_name,
+					first_time_commenter: input.is_first_comment,
+					page: input.post_url,
+					comment: input.body_md.slice(0, MAX_BODY_FOR_PROMPT),
+				},
+				questions: QUESTIONS,
+			}),
+			TIMEOUT_MS,
+		);
 		const p = out?.answers?.spam?.noul;
 		if (!isProbability(p)) {
 			log.warn("spam.adapter.error", {
