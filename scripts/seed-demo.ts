@@ -12,6 +12,7 @@
  * production deployment that already has real traffic.
  */
 import { execFileSync } from "node:child_process";
+import { pathToFileURL } from "node:url";
 
 import {
 	CURRENT_RENDERER_VERSION,
@@ -24,13 +25,6 @@ import { ulid } from "../src/lib/ulid";
 const DB_BINDING = "DB";
 const isRemote = process.argv.includes("--remote");
 const remoteFlag = isRemote ? "--remote" : "--local";
-if (!isRemote) {
-	console.warn(
-		"[seed-demo] running against LOCAL D1 (Miniflare). " +
-			"Pass --remote to seed the deployed instance (intended for the " +
-			"maintainer's demo only — wipes existing welcome-post comments).",
-	);
-}
 const POST_SLUG = "welcome";
 const POST_TITLE = "Welcome to Garrul";
 const POST_URL = "https://garrul.com/welcome";
@@ -104,8 +98,24 @@ const upsertPost = (slug: string, title: string, url: string, now: number) => {
 	d1Execute(sql);
 };
 
-const wipeExistingComments = (slug: string) => {
-	d1Execute(`DELETE FROM comments WHERE post_slug = '${sqlEsc(slug)}'`);
+// Every table with a plain (non-cascading) FK to comments(id). Clicking around
+// the demo thread leaves votes, reactions, reports and digest rows behind, and
+// any one of them fails the comments DELETE on the next re-seed. spam_verdicts
+// is ON DELETE CASCADE and needs no entry.
+export const COMMENT_CHILD_TABLES = [
+	"votes",
+	"reactions",
+	"reports",
+	"notifications",
+	"moderator_notifications",
+];
+
+export const wipeCommentsSql = (slug: string): string => {
+	const ids = `SELECT id FROM comments WHERE post_slug = '${sqlEsc(slug)}'`;
+	return [
+		...COMMENT_CHILD_TABLES.map((t) => `DELETE FROM ${t} WHERE comment_id IN (${ids})`),
+		`DELETE FROM comments WHERE post_slug = '${sqlEsc(slug)}'`,
+	].join(";\n");
 };
 
 const insertSeedUser = (name: string, now: number): string => {
@@ -197,7 +207,7 @@ const main = () => {
 	console.log(`[seed-demo] target ${remoteFlag}, post '${POST_SLUG}'`);
 	const now = Date.now();
 	upsertPost(POST_SLUG, POST_TITLE, POST_URL, now);
-	wipeExistingComments(POST_SLUG);
+	d1Execute(wipeCommentsSql(POST_SLUG));
 	const counter = { n: 0 };
 	for (const thread of SEED) {
 		seedThread(thread, null, POST_SLUG, now, counter);
@@ -205,9 +215,20 @@ const main = () => {
 	console.log(`[seed-demo] done (${counter.n} comments)`);
 };
 
-try {
-	main();
-} catch (err) {
-	console.error("[seed-demo] failed:", err);
-	process.exit(1);
+// Guarded so tests/seed-demo.test.ts can import the cleanup SQL without
+// shelling out to wrangler.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+	if (!isRemote) {
+		console.warn(
+			"[seed-demo] running against LOCAL D1 (Miniflare). " +
+				"Pass --remote to seed the deployed instance (intended for the " +
+				"maintainer's demo only — wipes existing welcome-post comments).",
+		);
+	}
+	try {
+		main();
+	} catch (err) {
+		console.error("[seed-demo] failed:", err);
+		process.exit(1);
+	}
 }
