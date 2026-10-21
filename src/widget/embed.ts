@@ -166,6 +166,21 @@ const apiUrl = (base: string, path: string): string =>
 		? base + path
 		: `${base + path + (path.indexOf("?") < 0 ? "?" : "&")}lang=${encodeURIComponent(locale)}`;
 
+/**
+ * Every widget request rides the session cookie, and every JSON request has the
+ * same method/header/body shape. Two helpers instead of the same options object
+ * at twenty call sites, and one place to look when the fetch contract changes.
+ */
+const apiFetch = (base: string, path: string, init?: RequestInit): Promise<Response> =>
+	fetch(apiUrl(base, path), { credentials: "include", ...init });
+
+const apiJson = (base: string, path: string, body: unknown, method = "POST"): Promise<Response> =>
+	apiFetch(base, path, {
+		method,
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify(body),
+	});
+
 // Mark a vote button with its state: set/unset data-mine to highlight it visually,
 // and set aria-pressed so screen readers know whether the user's vote is cast.
 const markVote = (btn: HTMLElement, on: boolean): void => {
@@ -592,12 +607,7 @@ const buildWritePreview = (
 		}
 		pane.textContent = s("w.preview.loading");
 		try {
-			const res = await fetch(apiUrl(apiBase, "/api/v1/preview"), {
-				method: "POST",
-				credentials: "include",
-				headers: { "content-type": "application/json" },
-				body: JSON.stringify({ body }),
-			});
+			const res = await apiJson(apiBase, "/api/v1/preview", { body });
 			if (!res.ok) throw new Error(String(res.status));
 			const data = (await res.json()) as { html?: string };
 			pane.textContent = "";
@@ -805,9 +815,7 @@ const prefetchFormToken = (apiBase: string): void => {
 	}
 	formTokenPromise = (async () => {
 		try {
-			const res = await fetch(apiUrl(apiBase, "/api/v1/comments/form-token"), {
-				credentials: "include",
-			});
+			const res = await apiFetch(apiBase, "/api/v1/comments/form-token");
 			if (!res.ok) return "";
 			const json = (await res.json()) as { token?: string };
 			return json.token ?? "";
@@ -1044,12 +1052,7 @@ const buildVotes = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 		up.disabled = true;
 		down.disabled = true;
 		try {
-			const res = await fetch(apiUrl(ctx.apiBase, "/api/v1/votes"), {
-				method: "POST",
-				credentials: "include",
-				headers: { "content-type": "application/json" },
-				body: JSON.stringify({ comment_id: n.id, value }),
-			});
+			const res = await apiJson(ctx.apiBase, "/api/v1/votes", { comment_id: n.id, value });
 			if (!res.ok) return;
 			const body = (await res.json()) as VoteResponse;
 			// Mutate the node so a later re-render (Load more, reload) reflects
@@ -1143,12 +1146,11 @@ const buildReactions = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 		btn.addEventListener("click", async () => {
 			btn.disabled = true;
 			try {
-				const res = await fetch(apiUrl(ctx.apiBase, "/api/v1/reactions"), {
-					method: "POST",
-					credentials: "include",
-					headers: { "content-type": "application/json" },
-					body: JSON.stringify({ comment_id: n.id, kind }),
-				});
+				const res = await apiJson(
+					ctx.apiBase,
+					"/api/v1/reactions",
+					{ comment_id: n.id, kind },
+				);
 				if (!res.ok) return;
 				const body = (await res.json()) as ReactionResponse;
 				// No counts to patch from means an API older than this bundle;
@@ -1250,14 +1252,10 @@ const buildPageEngagement = (ctx: WidgetCtx): HTMLElement => {
 	): Promise<void> => {
 		cell.btn.disabled = true;
 		try {
-			const res = await fetch(
-				apiUrl(ctx.apiBase, "/api/v1/page-engagement/reactions"),
-				{
-					method: "POST",
-					credentials: "include",
-					headers: { "content-type": "application/json" },
-					body: JSON.stringify({ slug: ctx.slug, kind }),
-				},
+			const res = await apiJson(
+				ctx.apiBase,
+				"/api/v1/page-engagement/reactions",
+				{ slug: ctx.slug, kind },
 			);
 			if (!res.ok) return;
 			const body = (await res.json()) as {
@@ -1299,12 +1297,11 @@ const buildPageEngagement = (ctx: WidgetCtx): HTMLElement => {
 		up.disabled = true;
 		down.disabled = true;
 		try {
-			const res = await fetch(apiUrl(ctx.apiBase, "/api/v1/page-engagement/votes"), {
-				method: "POST",
-				credentials: "include",
-				headers: { "content-type": "application/json" },
-				body: JSON.stringify({ slug: ctx.slug, value }),
-			});
+			const res = await apiJson(
+				ctx.apiBase,
+				"/api/v1/page-engagement/votes",
+				{ slug: ctx.slug, value },
+			);
 			if (!res.ok) return;
 			setVote((await res.json()) as PageVoteState);
 		} catch {
@@ -1355,12 +1352,9 @@ const buildPageEngagement = (ctx: WidgetCtx): HTMLElement => {
 	} else {
 		void (async () => {
 			try {
-				const res = await fetch(
-					apiUrl(
-						ctx.apiBase,
-						`/api/v1/page-engagement?slug=${encodeURIComponent(ctx.slug)}`,
-					),
-					{ credentials: "include" },
+				const res = await apiFetch(
+					ctx.apiBase,
+					`/api/v1/page-engagement?slug=${encodeURIComponent(ctx.slug)}`,
 				);
 				if (!res.ok) return;
 				apply((await res.json()) as EngagementSection);
@@ -1511,12 +1505,9 @@ const buildSubscribeBell = (
 
 	const loadState = async (): Promise<void> => {
 		try {
-			const res = await fetch(
-				apiUrl(
-					apiBase,
-					`/api/v1/subscribe/mine?post_slug=${encodeURIComponent(slug)}`,
-				),
-				{ credentials: "include" },
+			const res = await apiFetch(
+				apiBase,
+				`/api/v1/subscribe/mine?post_slug=${encodeURIComponent(slug)}`,
 			);
 			if (!res.ok) return;
 			applyState((await res.json()) as SubscriptionSection);
@@ -1533,9 +1524,10 @@ const buildSubscribeBell = (
 		inFlight = true;
 		setBusy(true);
 		try {
-			const res = await fetch(
-				apiUrl(apiBase, `/api/v1/subscribe/mine/${encodeURIComponent(id)}`),
-				{ method: "DELETE", credentials: "include" },
+			const res = await apiFetch(
+				apiBase,
+				`/api/v1/subscribe/mine/${encodeURIComponent(id)}`,
+				{ method: "DELETE" },
 			);
 			if (!res.ok) {
 				say(
@@ -1599,9 +1591,7 @@ const buildSubscribeBell = (
 	const loadPanel = async (): Promise<void> => {
 		panelLoaded = true;
 		try {
-			const res = await fetch(apiUrl(apiBase, "/api/v1/subscribe/mine"), {
-				credentials: "include",
-			});
+			const res = await apiFetch(apiBase, "/api/v1/subscribe/mine");
 			if (!res.ok) throw new Error(String(res.status));
 			const body = (await res.json()) as { subscriptions?: PanelRow[] };
 			renderPanel(body.subscriptions ?? []);
@@ -1640,12 +1630,11 @@ const buildSubscribeBell = (
 		inFlight = true;
 		setBusy(true);
 		try {
-			const res = await fetch(apiUrl(apiBase, "/api/v1/subscribe"), {
-				method: "POST",
-				credentials: "include",
-				headers: { "content-type": "application/json" },
-				body: JSON.stringify(email ? { post_slug: slug, email } : { post_slug: slug }),
-			});
+			const res = await apiJson(
+				apiBase,
+				"/api/v1/subscribe",
+				email ? { post_slug: slug, email } : { post_slug: slug },
+			);
 			const body = (await res.json().catch(() => null)) as {
 				message?: string;
 			} | null;
@@ -1935,9 +1924,10 @@ const buildActions = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): HTMLEleme
 				yes.disabled = true;
 				no.disabled = true;
 				try {
-					const res = await fetch(
-						apiUrl(ctx.apiBase, `/api/v1/comments/${encodeURIComponent(n.id)}`),
-						{ method: "DELETE", credentials: "include" },
+					const res = await apiFetch(
+						ctx.apiBase,
+						`/api/v1/comments/${encodeURIComponent(n.id)}`,
+						{ method: "DELETE" },
 					);
 					if (res.ok) {
 						// Focus only, no announcement: the row usually survives as a
@@ -1977,17 +1967,10 @@ const buildActions = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): HTMLEleme
 				// never discloses which (anti-enumeration), so a 2xx is the only
 				// success signal we get — and the only one we need. fetch does NOT
 				// reject on a 4xx/5xx, so we must inspect res.ok explicitly.
-				const res = await fetch(
-					apiUrl(
-						ctx.apiBase,
-						`/api/v1/comments/${encodeURIComponent(n.id)}/report`,
-					),
-					{
-						method: "POST",
-						credentials: "include",
-						headers: { "content-type": "application/json" },
-						body: "{}",
-					},
+				const res = await apiJson(
+					ctx.apiBase,
+					`/api/v1/comments/${encodeURIComponent(n.id)}/report`,
+					{},
 				);
 				ok = res.ok;
 			} catch {
@@ -2132,14 +2115,11 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 		save.disabled = true;
 		clearStatus(errBox);
 		try {
-			const res = await fetch(
-				apiUrl(ctx.apiBase, `/api/v1/comments/${encodeURIComponent(n.id)}`),
-				{
-					method: "PATCH",
-					credentials: "include",
-					headers: { "content-type": "application/json" },
-					body: JSON.stringify({ body: ta.value }),
-				},
+			const res = await apiJson(
+				ctx.apiBase,
+				`/api/v1/comments/${encodeURIComponent(n.id)}`,
+				{ body: ta.value },
+				"PATCH",
 			);
 			if (res.ok) {
 				// Focus only, no announcement: focusing the article makes
@@ -2351,21 +2331,16 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 				notice(s("w.ts.interactive"));
 				return;
 			}
-			const res = await fetch(apiUrl(ctx.apiBase, "/api/v1/comments"), {
-				method: "POST",
-				credentials: "include",
-				headers: { "content-type": "application/json" },
-				body: JSON.stringify({
-					slug: ctx.slug,
-					name: nameInput?.value ?? "",
-					body: ta.value,
-					parent_id: parent.id,
-					turnstile_token: turnstileToken,
-					website: honey.value,
-					form_ts: formTs,
-					...asStaffField(wrap),
-					...postMetaFromDataset(ctx.host.dataset),
-				}),
+			const res = await apiJson(ctx.apiBase, "/api/v1/comments", {
+				slug: ctx.slug,
+				name: nameInput?.value ?? "",
+				body: ta.value,
+				parent_id: parent.id,
+				turnstile_token: turnstileToken,
+				website: honey.value,
+				form_ts: formTs,
+				...asStaffField(wrap),
+				...postMetaFromDataset(ctx.host.dataset),
 			});
 			const json = (await res.json()) as {
 				error?: string;
@@ -2754,12 +2729,7 @@ const buildAuthBlock = (
 		out.addEventListener("click", async () => {
 			out.disabled = true;
 			try {
-				await fetch(apiUrl(apiBase, "/api/v1/auth/signout"), {
-					method: "POST",
-					credentials: "include",
-					headers: { "content-type": "application/json" },
-					body: "{}",
-				});
+				await apiJson(apiBase, "/api/v1/auth/signout", {});
 			} catch {
 				// signout is best-effort; the cookie clears server-side and
 				// reload will pick up the new state regardless.
@@ -2969,12 +2939,7 @@ const startOauth = (
 			onSuccess();
 			return;
 		}
-		void fetch(apiUrl(apiBase, "/api/v1/auth/session/exchange"), {
-			method: "POST",
-			credentials: "include",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ token: handoff }),
-		})
+		void apiJson(apiBase, "/api/v1/auth/session/exchange", { token: handoff })
 			.then((res) => {
 				if (!res.ok) return;
 				stopRecovery();
@@ -3171,9 +3136,7 @@ const fetchPage = async (
 	const qs = new URLSearchParams({ slug });
 	if (cursor) qs.set("before", cursor);
 	if (sort) qs.set("sort", sort);
-	const res = await fetch(apiUrl(apiBase, `/api/v1/comments?${qs.toString()}`), {
-		credentials: "include",
-	});
+	const res = await apiFetch(apiBase, `/api/v1/comments?${qs.toString()}`);
 	if (!res.ok) throw new Error(`HTTP ${res.status}`);
 	return (await res.json()) as ListResponse;
 };
@@ -3229,9 +3192,7 @@ const appendThreads = (
 
 const fetchMe = async (apiBase: string): Promise<Me> => {
 	try {
-		const res = await fetch(apiUrl(apiBase, "/api/v1/auth/me"), {
-			credentials: "include",
-		});
+		const res = await apiFetch(apiBase, "/api/v1/auth/me");
 		if (!res.ok) return null;
 		const json = (await res.json()) as { user: Me };
 		return json.user;
@@ -4298,20 +4259,15 @@ const submit = async (
 			notice(s("w.ts.interactive"));
 			return;
 		}
-		const res = await fetch(apiUrl(apiBase, "/api/v1/comments"), {
-			method: "POST",
-			credentials: "include",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify({
-				slug,
-				name,
-				body,
-				turnstile_token: turnstileToken,
-				website: honeypot,
-				form_ts: formTs,
-				...asStaffField(form),
-				...postMetaFromDataset(host.dataset),
-			}),
+		const res = await apiJson(apiBase, "/api/v1/comments", {
+			slug,
+			name,
+			body,
+			turnstile_token: turnstileToken,
+			website: honeypot,
+			form_ts: formTs,
+			...asStaffField(form),
+			...postMetaFromDataset(host.dataset),
 		});
 		const json = (await res.json()) as {
 			error?: string;
@@ -4345,14 +4301,11 @@ const submit = async (
 			// silent no-op for every signed-in reader.
 			const email = emailInput?.value.trim() ?? "";
 			if (email || !emailInput) {
-				void fetch(apiUrl(apiBase, "/api/v1/subscribe"), {
-					method: "POST",
-					credentials: "include",
-					headers: { "content-type": "application/json" },
-					body: JSON.stringify(
-						email ? { post_slug: slug, email } : { post_slug: slug },
-					),
-				}).catch(() => {});
+				void apiJson(
+					apiBase,
+					"/api/v1/subscribe",
+					email ? { post_slug: slug, email } : { post_slug: slug },
+				).catch(() => {});
 			}
 		}
 
