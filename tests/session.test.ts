@@ -207,22 +207,43 @@ describe("session cookie roundtrip", () => {
 		expect(kv.store.get(`sess:${sidValue}`)!.value).toBe(before);
 	});
 
-	it("slides the TTL once the record has aged past the refresh interval", async () => {
+	// Rewrites the record so it expires `ageDays` sooner than a fresh one.
+	const ageRecord = (kv: StubKV, sid: string, ageDays: number): void => {
+		const key = `sess:${sid}`;
+		const row = kv.store.get(key)!;
+		kv.store.set(key, {
+			value: JSON.stringify({
+				user_id: userId,
+				expires_at: Date.now() + (30 - ageDays) * 24 * 60 * 60 * 1000,
+			}),
+			expiresAt: row.expiresAt,
+		});
+	};
+
+	it("does not slide a session with more than half its lifetime left", async () => {
+		const { ctx: issueCtx, kv, setCookies } = makeCtx({});
+		await issueSession(issueCtx, userId);
+		const sidValue = extractCookieValue(setCookies[0]!);
+		// Two days old: the old once-a-day slide would have written here.
+		ageRecord(kv, sidValue, 2);
+		const putsBefore = kv.puts;
+
+		const { ctx, setCookies: readCookies } = makeCtxWithSameKv(kv, {
+			cookieHeader: `__Host-garrul_sess=${sidValue}`,
+		});
+		expect((await readSession(ctx))?.user_id).toBe(userId);
+		expect(kv.puts).toBe(putsBefore);
+		expect(readCookies).toHaveLength(0);
+	});
+
+	it("slides the TTL and re-sends the cookie once under half the lifetime is left", async () => {
 		const { ctx: issueCtx, kv, setCookies } = makeCtx({});
 		await issueSession(issueCtx, userId);
 		const sidValue = extractCookieValue(setCookies[0]!);
 		const key = `sess:${sidValue}`;
-		const row = kv.store.get(key)!;
-		// Age the record two days (expires_at two days closer than a fresh one).
-		kv.store.set(key, {
-			value: JSON.stringify({
-				user_id: userId,
-				expires_at: Date.now() + (30 - 2) * 24 * 60 * 60 * 1000,
-			}),
-			expiresAt: row.expiresAt,
-		});
+		ageRecord(kv, sidValue, 20);
 
-		const { ctx } = makeCtxWithSameKv(kv, {
+		const { ctx, setCookies: readCookies } = makeCtxWithSameKv(kv, {
 			cookieHeader: `__Host-garrul_sess=${sidValue}`,
 		});
 		expect((await readSession(ctx))?.user_id).toBe(userId);
@@ -233,6 +254,45 @@ describe("session cookie roundtrip", () => {
 		expect(refreshed.expires_at).toBeGreaterThan(
 			Date.now() + (30 - 1) * 24 * 60 * 60 * 1000,
 		);
+		// The browser cookie carries its own Max-Age from login. Without a fresh
+		// one the browser drops it at day 30 however far KV was slid.
+		expect(readCookies[0]).toBe(
+			`__Host-garrul_sess=${sidValue}; Path=/; Max-Age=${30 * 24 * 60 * 60}; HttpOnly; SameSite=None; Secure; Partitioned`,
+		);
+	});
+
+	it("reads KV and slides at most once per request however many times it is called", async () => {
+		const { ctx: issueCtx, kv, setCookies } = makeCtx({});
+		await issueSession(issueCtx, userId);
+		const sidValue = extractCookieValue(setCookies[0]!);
+		ageRecord(kv, sidValue, 20);
+		const putsBefore = kv.puts;
+		const get = vi.spyOn(kv, "get");
+
+		const { ctx, setCookies: readCookies } = makeCtxWithSameKv(kv, {
+			cookieHeader: `__Host-garrul_sess=${sidValue}`,
+		});
+		// Middleware plus a handler, concurrently and then again after.
+		const [a, b] = await Promise.all([readSession(ctx), readSession(ctx)]);
+		const c = await readSession(ctx);
+		for (const s of [a, b, c]) expect(s?.user_id).toBe(userId);
+		// Session record + revocation stamp, once.
+		expect(get).toHaveBeenCalledTimes(2);
+		expect(kv.puts).toBe(putsBefore + 1);
+		expect(readCookies).toHaveLength(1);
+	});
+
+	it("re-reads after the request revokes its own session", async () => {
+		const { ctx: issueCtx, kv, setCookies } = makeCtx({});
+		await issueSession(issueCtx, userId);
+		const sidValue = extractCookieValue(setCookies[0]!);
+
+		const { ctx } = makeCtxWithSameKv(kv, {
+			cookieHeader: `__Host-garrul_sess=${sidValue}`,
+		});
+		expect((await readSession(ctx))?.user_id).toBe(userId);
+		await revokeSession(ctx);
+		expect(await readSession(ctx)).toBeNull();
 	});
 
 	it("expired session record is purged on read", async () => {
@@ -468,8 +528,8 @@ describe("session revocation epoch", () => {
 		kv.store.set(key, {
 			value: JSON.stringify({
 				user_id: userId,
-				issued_at: Date.now() - 2 * 24 * 60 * 60 * 1000,
-				expires_at: Date.now() + (30 - 2) * 24 * 60 * 60 * 1000,
+				issued_at: Date.now() - 20 * 24 * 60 * 60 * 1000,
+				expires_at: Date.now() + (30 - 20) * 24 * 60 * 60 * 1000,
 			}),
 			expiresAt: row.expiresAt,
 		});

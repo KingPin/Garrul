@@ -8,11 +8,12 @@
  * it, so it gets its own case below rather than living only in a comment.
  */
 import { Hono } from "hono";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { permalink } from "../src/routes/permalink";
 import { commentAnchorId } from "../src/widget/permalink";
 import { asD1 } from "./helpers/d1";
 import type { TestEnv } from "./helpers/app";
+import { installMockCaches, uninstallMockCaches } from "./helpers/mock-caches";
 
 const ID = "01JQZ8X4M2NPQRSTUVWXYZ0123";
 
@@ -150,5 +151,28 @@ describe("GET /c/:id", () => {
 		expect(res.headers.get("location")).toBe(
 			`https://blog.example.com/Post/#${commentAnchorId(ID)}`,
 		);
+	});
+});
+
+describe("GET /c/:id edge cache", () => {
+	afterEach(uninstallMockCaches);
+
+	it("serves a cached redirect without touching D1", async () => {
+		installMockCaches();
+		const first = await get(ID, aComment(), aPost("https://blog.example.com/post/"));
+		expect(first.status).toBe(302);
+		// Both rows gone: only the cache can answer 302 now.
+		const second = await get(ID, null, null);
+		expect(second.status).toBe(302);
+		expect(second.headers.get("location")).toBe(first.headers.get("location"));
+	});
+
+	it("does not cache a 404, so a comment approved later is reachable", async () => {
+		const cache = installMockCaches();
+		const pending = await get(ID, aComment({ status: "pending" }), aPost("https://blog.example.com/post/"));
+		expect(pending.status).toBe(404);
+		expect(cache.store.size).toBe(0);
+		const approved = await get(ID, aComment(), aPost("https://blog.example.com/post/"));
+		expect(approved.status).toBe(302);
 	});
 });

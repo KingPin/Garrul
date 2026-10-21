@@ -11,13 +11,14 @@
  *
  * Real SQLite so the rows are the ones the route actually serves.
  */
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { Hono } from "hono";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { feed } from "../src/routes/feed";
 import type { Bindings } from "../src/index";
+import { installMockCaches, uninstallMockCaches } from "./helpers/mock-caches";
 
 const MIGRATIONS_DIR = join(__dirname, "../src/db/migrations");
 
@@ -201,5 +202,20 @@ describe("GET /feed/:slug — locale", () => {
 		(env as unknown as Record<string, unknown>).DEFAULT_LOCALE = "kl";
 		const xml = await (await fetchFeed()).text();
 		expect(xml).toContain('xml:lang="en"');
+	});
+});
+
+describe("GET /feed/:slug — edge cache", () => {
+	afterEach(uninstallMockCaches);
+
+	it("serves the second read from the edge cache, not D1", async () => {
+		installMockCaches();
+		seedPost("https://blog.example/post");
+		seedComment("Ann", "<p>first</p>");
+		const first = await (await fetchFeed()).text();
+		seedComment("Bob", "<p>second</p>");
+		const second = await fetchFeed();
+		expect(second.headers.get("content-type")).toContain("application/atom+xml");
+		expect(await second.text()).toBe(first);
 	});
 });

@@ -1,6 +1,8 @@
 #!/usr/bin/env tsx
 /**
- * Bundles src/widget/embed.ts → dist/embed.js (minified, sourcemap'd).
+ * Bundles src/widget/embed.ts → dist/embed.js (minified). The source map goes
+ * to dist/embed.js.map for local debugging only: nothing serves it, so the
+ * bundle carries no sourceMappingURL that would 404 in every reader's devtools.
  *
  * The Worker reads dist/embed.js at module-load via a Wrangler text rule
  * and serves it under GET /embed.js (see src/routes/embed.ts).
@@ -15,9 +17,11 @@
  * "what is actually big" before anyone starts optimizing on a hunch.
  */
 import { build } from "esbuild";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { LOCALES } from "../src/i18n";
+import { FRAME_SHELL_HTML, frameShellHeaders, readFrameEnv } from "./frame-shell";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, "..");
@@ -36,7 +40,7 @@ const result = await build({
 	format: "iife",
 	platform: "browser",
 	target: ["es2020"],
-	sourcemap: true,
+	sourcemap: "external",
 	legalComments: "none",
 	metafile: true,
 	logLevel: "info",
@@ -86,12 +90,50 @@ console.log(`[build-embed] wrote ${EMBED_TS}`);
 const PUBLIC_DIR = join(ROOT, "public");
 mkdirSync(PUBLIC_DIR, { recursive: true });
 writeFileSync(join(PUBLIC_DIR, "embed.js"), js);
+
+// Static iframe shell at /embed/?slug=…. Its frame-ancestors CSP must list the
+// operator's ALLOWED_ORIGINS, which only wrangler.toml knows at build time, so
+// it is emitted only when that file has them. Otherwise any stale copy is
+// removed and the Worker's `/embed/` route answers instead, at the old cost.
+const SHELL_DIR = join(PUBLIC_DIR, "embed");
+const tomlPath = join(ROOT, "wrangler.toml");
+const frameEnv = readFrameEnv(existsSync(tomlPath) ? readFileSync(tomlPath, "utf8") : null);
+rmSync(SHELL_DIR, { recursive: true, force: true });
+if (frameEnv) {
+	mkdirSync(SHELL_DIR, { recursive: true });
+	writeFileSync(join(SHELL_DIR, "index.html"), FRAME_SHELL_HTML);
+	await build({
+		entryPoints: [join(ROOT, "src/widget/frame.ts")],
+		outfile: join(SHELL_DIR, "frame.js"),
+		bundle: true,
+		minify: true,
+		format: "iife",
+		platform: "browser",
+		target: ["es2020"],
+		legalComments: "none",
+		define: {
+			__GARRUL_FRAME_ENV__: JSON.stringify({
+				allowed: frameEnv.allowed,
+				locales: Object.keys(LOCALES),
+				dev: false,
+			}),
+		},
+		logLevel: "warning",
+	});
+	console.log(`[build-embed] wrote static iframe shell to ${SHELL_DIR}`);
+} else {
+	console.log(
+		"[build-embed] no usable ALLOWED_ORIGINS in wrangler.toml (missing, [env.*] tables, or ENV=dev): skipping the static iframe shell; /embed/?slug= stays on the Worker",
+	);
+}
+
 writeFileSync(
 	join(PUBLIC_DIR, "_headers"),
 	[
 		"/embed.js",
 		"  Cache-Control: public, max-age=3600, s-maxage=86400",
 		"  X-Content-Type-Options: nosniff",
+		...(frameEnv ? frameShellHeaders(frameEnv) : []),
 		"",
 	].join("\n"),
 );

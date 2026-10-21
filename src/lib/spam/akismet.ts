@@ -20,6 +20,9 @@
 import { log } from "../log";
 import type { SpamCheckInput, SpamVerdict } from "./index";
 
+// The comment POST waits on this; past it the check is "no opinion".
+const TIMEOUT_MS = 3_000;
+
 type AkismetConfig = {
 	apiKey: string;
 	siteUrl: string;
@@ -66,6 +69,7 @@ export const checkAkismet = async (
 					"user-agent": "Garrul/1 | Akismet/1.1",
 				},
 				body: form.toString(),
+				signal: AbortSignal.timeout(TIMEOUT_MS),
 			},
 		);
 		if (!res.ok) {

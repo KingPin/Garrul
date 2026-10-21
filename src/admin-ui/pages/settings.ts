@@ -129,12 +129,12 @@ const MOD_FLAG_META: { key: FlagKey; label: string; help: string }[] = [
 	{
 		key: "spam_first_comment_moderate",
 		label: "Hold every author's first comment",
-		help: "Route each author's comments to the moderation queue until you approve one of them. Nothing is dropped — you approve or reject it.",
+		help: "Route each author's comments to the moderation queue until you approve one of them. Nothing is dropped — you approve or reject it. Cost: one indexed D1 read per comment.",
 	},
 	{
 		key: "turnstile_always",
 		label: "Challenge signed-in commenters too",
-		help: "Require a Turnstile challenge on every comment, not just anonymous ones. Off by default — a signed-in reader posts without one. Needs TURNSTILE_SITE_KEY and TURNSTILE_SECRET configured; without them this does nothing.",
+		help: "Require a Turnstile challenge on every comment, not just anonymous ones. Off by default — a signed-in reader posts without one. Needs TURNSTILE_SITE_KEY and TURNSTILE_SECRET configured; without them this does nothing. Cost: Turnstile itself is free. Each challenge adds one Worker request for the challenge frame and one siteverify call when the comment posts.",
 	},
 	{
 		key: "moderator_email_enabled",
@@ -244,17 +244,17 @@ const SPAM_NUMBER_META: { key: NumberKey; label: string; help: string }[] = [
 	{
 		key: "spam_link_threshold",
 		label: "Link threshold",
-		help: "Queue a comment carrying more than this many links. -1 = check off; 0 = queue anything with a link at all.",
+		help: "Queue a comment carrying more than this many links. -1 = check off; 0 = queue anything with a link at all. Cost: none — it counts links in memory.",
 	},
 	{
 		key: "spam_honeypot_min_ms",
 		label: "Minimum fill time (ms)",
-		help: "Queue a comment submitted faster than this after the form loaded — bots post instantly, people don't. 0 = check off.",
+		help: "Queue a comment submitted faster than this after the form loaded — bots post instantly, people don't. 0 = check off. Cost: one extra Worker request per reader who starts writing, to fetch the signed form token.",
 	},
 	{
 		key: "spam_ai_threshold",
 		label: "AI spam threshold (%)",
-		help: "Only used when SPAM_PROVIDER is workers-ai. Queue a comment when the classifier rates it at least this likely to be spam. Lower catches more spam and queues more real comments. Each comment's detail page shows the classifier score (0–1), so you can tune this against real traffic.",
+		help: "Only used when SPAM_PROVIDER is workers-ai. Queue a comment when the classifier rates it at least this likely to be spam. Lower catches more spam and queues more real comments. Each comment's detail page shows the classifier score (0–1), so you can tune this against real traffic. Cost: one Workers AI call per comment, roughly 1–3 neurons (an estimate; Usage shows the measured average per call). The 10,000 free neurons a day cover a few thousand comments. The threshold does not change the cost.",
 	},
 ];
 
@@ -421,7 +421,8 @@ export const renderSettings = (
 		and page URL. A hit sends the comment to the queue; nothing is ever
 		silently dropped. Up to ${MAX_TERMS} terms, ${MAX_TERM_CHARS} characters
 		and ${MAX_WILDCARDS} wildcards each — a term over those limits is skipped,
-		the rest of the list still applies.`,
+		the rest of the list still applies. Cost: none — the list is matched in
+		memory and adds no database or KV traffic.`,
 		rows: 10,
 		maxlength: MAX_TEXT_SETTING_CHARS,
 		placeholder: "viagra\n*casino*\nt.me/*",
@@ -657,11 +658,16 @@ export const renderSettings = (
 
     <div class="card" x-show="tab === 'moderation'" x-cloak>
       <h2>Anti-spam heuristics</h2>
-      <p class="muted">Cheap local checks that run before the (optional, paid)
+      <p class="muted">Cheap local checks that run before the optional
       classifier. A tripped check never drops a comment — it routes it to the
       queue, so tune these while watching what lands there. The classifier
       provider and its API keys stay in <code>wrangler.toml</code>; see the
       Configuration tab.</p>
+      <p class="muted">Each hint below names what the check costs per comment.
+      On top of that, any check that runs writes one verdict row to D1 (about
+      three rows written with its indexes, against 100,000 a day on the free
+      tier). The classifier is skipped when a check has already queued the
+      comment. <a href="/admin/usage">Usage</a> shows today's totals.</p>
       ${modToggles}
       ${spamNumberInputs}
       <p class="muted" x-show="nums.spam_honeypot_min_ms > 0 && !hasFormTsSecret" x-cloak>

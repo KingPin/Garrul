@@ -8,7 +8,7 @@
  * the user-visible path.
  */
 import { describe, it, expect, afterEach } from "vitest";
-import { bustTreeCache, treeCacheKey } from "../src/lib/tree-cache";
+import { bustTreeCache, feedCacheKey, treeCacheKey } from "../src/lib/tree-cache";
 import { COMMENT_SORTS } from "../src/db/queries";
 import { installMockCaches, uninstallMockCaches } from "./helpers/mock-caches";
 import type { Bindings } from "../src/index";
@@ -62,6 +62,15 @@ describe("bustTreeCache", () => {
 		expect(cache.store.has(treeCacheKey(REQ_URL, "hello", "new", 10).url)).toBe(true);
 	});
 
+	it("drops the slug's feed too, and only that slug's", async () => {
+		const cache = installMockCaches();
+		cache.store.set(feedCacheKey(REQ_URL, "hello").url, new Response("<feed/>"));
+		cache.store.set(feedCacheKey(REQ_URL, "other").url, new Response("<feed/>"));
+		await bustTreeCache(env(25), REQ_URL, "hello");
+		expect(cache.store.has(feedCacheKey(REQ_URL, "hello").url)).toBe(false);
+		expect(cache.store.has(feedCacheKey(REQ_URL, "other").url)).toBe(true);
+	});
+
 	it("keys each sort separately so one sort's page never serves another's", () => {
 		const urls = COMMENT_SORTS.map((s) => treeCacheKey(REQ_URL, "hello", s, 25).url);
 		expect(new Set(urls).size).toBe(COMMENT_SORTS.length);
@@ -100,6 +109,7 @@ describe("bustTreeCache", () => {
 	it("skips the drop when the page size can't be resolved", async () => {
 		const cache = installMockCaches();
 		cache.store.set(treeCacheKey(REQ_URL, "hello", "new", 25).url, new Response("{}"));
+		cache.store.set(feedCacheKey(REQ_URL, "hello").url, new Response("<feed/>"));
 		const badEnv = {
 			TREE_CACHE: {
 				get: async () => {
@@ -120,7 +130,8 @@ describe("bustTreeCache", () => {
 		} as unknown as Bindings;
 
 		await expect(bustTreeCache(badEnv, REQ_URL, "hello")).resolves.toBeUndefined();
-		// Page size unknown → nothing dropped.
+		// Page size unknown → no tree page dropped; the feed key needs none.
 		expect(cache.store.has(treeCacheKey(REQ_URL, "hello", "new", 25).url)).toBe(true);
+		expect(cache.store.has(feedCacheKey(REQ_URL, "hello").url)).toBe(false);
 	});
 });

@@ -26,7 +26,11 @@
  * fake hostname (`example.com`); callers in dev pass that as
  * expectedHostname so the check stays exercised.
  */
+import { log } from "./log";
+
 const ENDPOINT = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
+// The comment POST waits on this; a hung siteverify must not hold it open.
+const TIMEOUT_MS = 5_000;
 
 /**
  * Whether a *signed-in* comment also has to carry a Turnstile token.
@@ -80,20 +84,24 @@ export const verifyTurnstile = async (
 	form.set("response", token);
 	if (opts.clientIp) form.set("remoteip", opts.clientIp);
 
-	const res = await fetch(ENDPOINT, {
-		method: "POST",
-		body: form,
-		headers: { "content-type": "application/x-www-form-urlencoded" },
-	});
-	if (!res.ok) return false;
 	try {
+		// Fail closed on a timeout or network error: the reader gets the
+		// invalid-token message and can retry, rather than a 500.
+		const res = await fetch(ENDPOINT, {
+			method: "POST",
+			body: form,
+			headers: { "content-type": "application/x-www-form-urlencoded" },
+			signal: AbortSignal.timeout(TIMEOUT_MS),
+		});
+		if (!res.ok) return false;
 		const data = (await res.json()) as SiteverifyResponse;
 		if (data.success !== true) return false;
 		if (!data.hostname || data.hostname !== opts.expectedHostname) {
 			return false;
 		}
 		return true;
-	} catch {
+	} catch (err) {
+		log.warn("turnstile.verify.error", { error: String(err) });
 		return false;
 	}
 };

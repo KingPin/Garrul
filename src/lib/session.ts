@@ -7,8 +7,8 @@
  *    Safari ITP / Chrome 3PC-deprecation don't evict it)
  * - Dev fallback (ENV=dev): SameSite=Lax + no Secure, so plain HTTP
  *   wrangler dev works without HTTPS
- * - 30-day TTL in KV; slid forward (at most once a day) while the user is
- *   active so an active user keeps their session forever
+ * - 30-day TTL in KV and cookie; both slid forward once less than half is
+ *   left, so a user who returns at least every 15 days stays signed in
  *
  * The cookie value IS the session id. The KV value is the user_id +
  * expiry. To revoke a session, delete the KV entry; the cookie becomes
@@ -53,11 +53,14 @@ const LEGACY_COOKIE_NAME = "garrul_sess";
 const cookieName = (env: Pick<Env, "ENV">): string =>
 	env.ENV === "dev" ? LEGACY_COOKIE_NAME : COOKIE_NAME_PROD;
 const SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
-// Slide the TTL at most once a day rather than on every read: a KV write per
-// authenticated request would burn the (account-wide) write quota, and the
-// rarer the refresh the smaller the window in which a concurrent refresh could
-// resurrect a session that signout just deleted.
-const SESSION_REFRESH_SECONDS = 24 * 60 * 60;
+// Slide the TTL only once less than this much lifetime is left, not on every
+// read: KV writes are capped at 1000/day *account-wide*. A once-a-day slide
+// cost one write per signed-in reader per day, so ~1000 daily readers alone
+// hit the cap. Half the TTL is ≤ 2 writes per reader per month, and anyone
+// who returns at least every 15 days stays signed in. The rarer the refresh,
+// the smaller the window in which a concurrent refresh could resurrect a
+// session that signout just deleted.
+const SESSION_REFRESH_BELOW_SECONDS = SESSION_TTL_SECONDS / 2;
 // Session ids are exactly 64 lowercase hex chars (32 random bytes). Reject
 // anything else before it reaches a KV op — an oversized cookie would blow the
 // 512-byte KV key limit and throw, turning every request (and signout) into a
@@ -216,6 +219,7 @@ const mintSession = async (
 	userId: string,
 	issuedAt: number,
 ): Promise<string> => {
+	sessionReads.delete(c);
 	const sid = newSessionId();
 	const record: SessionRecord = {
 		user_id: userId,
@@ -244,6 +248,7 @@ export const issueSession = (
  * session never orphans a still-replayable record.
  */
 export const revokeSession = async (c: SessionCtx): Promise<void> => {
+	sessionReads.delete(c);
 	const sid = parseCookie(c.req.header("cookie"), cookieName(c.env));
 	if (sid && SESSION_ID_RE.test(sid)) {
 		await c.env.SESSIONS.delete(sessionKey(sid));
@@ -295,9 +300,29 @@ export const destroySession = async (c: SessionCtx): Promise<void> => {
 	clearLegacyCookie(c);
 };
 
-export const readSession = async (
-	c: SessionCtx,
-): Promise<{ sid: string; user_id: string } | null> => {
+type SessionRead = { sid: string; user_id: string } | null;
+
+// The middleware reads the session and most handlers read it again, and each
+// read is two KV gets plus a possible slide write. Memoize per request, keyed
+// on the context object so the entry dies with it. mintSession and
+// revokeSession drop the entry so a re-read after either sees what a fresh
+// read would.
+const sessionReads = new WeakMap<SessionCtx, Promise<SessionRead>>();
+
+// The Set-Cookie a slide issued, per request, for sessionMiddleware to
+// re-attach after the handler (see there).
+const slidCookies = new WeakMap<SessionCtx, string>();
+
+export const readSession = (c: SessionCtx): Promise<SessionRead> => {
+	let read = sessionReads.get(c);
+	if (!read) {
+		read = loadSession(c);
+		sessionReads.set(c, read);
+	}
+	return read;
+};
+
+const loadSession = async (c: SessionCtx): Promise<SessionRead> => {
 	// Deliberately only the current name: accepting LEGACY_COOKIE_NAME as a
 	// fallback would keep the sibling-subdomain fixation path open, which is the
 	// whole reason for the prefix.
@@ -335,14 +360,18 @@ export const readSession = async (
 			return null;
 		}
 	}
-	// Sliding TTL, but only re-write once the record has aged past the refresh
-	// interval — avoids a KV write on every authenticated request.
-	const ageSeconds = SESSION_TTL_SECONDS - (record.expires_at - now) / 1000;
-	if (ageSeconds >= SESSION_REFRESH_SECONDS) {
+	// Sliding TTL, but only re-write once the remaining lifetime drops below
+	// the refresh threshold — avoids a KV write on every authenticated request.
+	// The cookie is re-sent too: it carries its own Max-Age from login, so
+	// sliding KV alone still lets the browser drop it at day 30.
+	if ((record.expires_at - now) / 1000 < SESSION_REFRESH_BELOW_SECONDS) {
 		record.expires_at = now + SESSION_TTL_SECONDS * 1000;
 		await c.env.SESSIONS.put(sessionKey(sid), JSON.stringify(record), {
 			expirationTtl: SESSION_TTL_SECONDS,
 		});
+		const cookie = buildSetCookie(sid, SESSION_TTL_SECONDS, c.env);
+		c.header("Set-Cookie", cookie, { append: true });
+		slidCookies.set(c, cookie);
 	}
 	return { sid, user_id: record.user_id };
 };
@@ -355,5 +384,17 @@ export const sessionMiddleware = (): MiddlewareHandler<{ Bindings: Env }> => {
 		c.set("userId" as never, session?.user_id ?? null);
 		c.set("sessionId" as never, session?.sid ?? null);
 		await next();
+		// A slide's Set-Cookie is set before the handler runs, and a handler that
+		// returns a raw Response (a cached tree page, /counts) replaces the
+		// headers it was set on. Without the cookie the browser keeps its old
+		// Max-Age and drops the session at day 30 however far KV was slid.
+		// The response carries a session id, so no shared cache may keep it,
+		// whatever the handler asked for.
+		const cookie = slidCookies.get(c);
+		if (!cookie) return;
+		if (!c.res.headers.getSetCookie().includes(cookie)) {
+			c.header("Set-Cookie", cookie, { append: true });
+		}
+		c.header("Cache-Control", "private, no-store");
 	};
 };

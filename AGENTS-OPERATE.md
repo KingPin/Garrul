@@ -396,8 +396,7 @@ default, server-side clamped), edited from **Settings → Moderation**.
 - `SPAM_AI_THRESHOLD` — clamped to `1`–`100`, default `70`. Percent spam
   probability at which the `workers-ai` classifier (Clef-flash) queues a
   comment. No `0`: that would queue everything. Ignored for other providers.
-  The probability lands in `spam_verdicts.score`, and the KV cache stores the
-  probability rather than the verdict, so a retune also re-judges cached bodies.
+  The probability lands in `spam_verdicts.score`.
 - `SPAM_HONEYPOT_MIN_MS` — clamped to `0`–`60000`; `0` (default) = off. Still
   requires `SPAM_FORM_TS_SECRET`, which stays a secret: without it the form
   timestamp is unsigned and forgeable, so `evaluateSpam` skips the check, the
@@ -1024,7 +1023,7 @@ Pages (top nav):
 
 | Path | Purpose |
 | --- | --- |
-| `/admin` | Dashboard: counts, 30-day comments-per-day sparkline, oldest pending, spam-rate, top posts/commenters. |
+| `/admin` | Dashboard: counts, 30-day comments-per-day sparkline, oldest pending, spam-rate, top posts/commenters. Figures are reused for up to 60 s, so they can trail a moderation action by a minute; the queue is always live. |
 | `/admin/queue` | Moderation queue. Status tabs (incl. a **Reported** tab — comments with open reader reports, with a count badge) + filter bar (body search, post slug, date range, scoped-by-user). Per-row + bulk actions (Approve/Spam/Delete/Restore). When filtered to a single post slug, a **Close / Open comments for this post** toggle appears. Rows also offer one-click **Ban author**. Each row shows author identity (avatar + provider + admin/banned pills), a `✎ n` badge when the comment or the account carries moderator notes, and the latest audit footer. Fully keyboard-drivable — see **Keyboard shortcuts** below. |
 | `/admin/comments/:id` | Single-comment view: parent + replies, raw markdown, spam-verdicts per source, full audit history for that comment, author block with their last 5 comments, and the **Moderator notes** card. |
 | `/admin/users` | User search + ban toggle. |
@@ -1036,7 +1035,7 @@ Pages (top nav):
 | `/admin/webhooks` | Outbound webhook endpoints: add/pause/delete, per-endpoint secret + event filter, adapter (`generic` / `slack` / `discord` / `telegram`), failure counts and retry status. |
 | `/admin/telegram` | **Admin-only.** Telegram operator bot: shows whether the bot token/webhook secret are set, links your personal Telegram account (one-time code or deep link), toggles the daily digest, and unlinks. See `docs/telegram.md`. |
 | `/admin/saved-replies` | Moderator saved replies: create/edit canned responses, private or shared scope. Presets are a *prefill* for the reply composer, not the only way to reply — see **Replying from the admin panel** below. |
-| `/admin/usage` | Cloudflare analytics (requests, comments by domain). Requires `CF_API_TOKEN` + `CF_ACCOUNT_ID`; renders setup instructions when unset. |
+| `/admin/usage` | Cloudflare analytics (Workers requests, D1 rows, KV operations, Workers AI neurons, comments by domain). Requires `CF_API_TOKEN` + `CF_ACCOUNT_ID`; renders setup instructions when unset. |
 
 State-changing endpoints (all under `/admin/api/...`, all require admin
 session + Origin allowlist, all write an `audit_log` row before
@@ -1765,6 +1764,21 @@ each browser-cache miss is one billed request. Add the `[assets]` block from
 `/embed.js` loads no longer appear in `wrangler tail` or request logs because
 they never reach the Worker; that is expected, not a traffic loss.
 
+The iframe embed's static page, `/embed/?slug=…`, works the same way and
+has one more input: `npm run build:embed` (run by `predeploy`) reads
+`ALLOWED_ORIGINS` from the top-level `[vars]` of `wrangler.toml` and writes
+it into the page's `frame-ancestors` CSP in `public/_headers`. So:
+
+1. Change `ALLOWED_ORIGINS` in `wrangler.toml` and redeploy, not in the
+   dashboard alone; the static page keeps the list it was built with.
+2. The build skips the static page, and the Worker serves `/embed/?slug=`
+   at one request per pageview, when `ALLOWED_ORIGINS` is missing from
+   top-level `[vars]`, when `ENV = "dev"`, or when the file has any
+   `[env.<name>]` table. With environments the build cannot know which one
+   `wrangler deploy --env` will use, and baking the wrong one could let any
+   site frame the page or block your real blogs.
+3. `/embed/<slug>` stays a Worker route for existing embeds.
+
 Two consequences worth planning around:
 
 - **Enabling page reactions, page votes or subscriptions no longer
@@ -1829,9 +1843,9 @@ picks a conforming name for you. The script runs under `umask 077`, so the
 dump is created owner-read/write only (`0600`) rather than the shell's
 usual world-readable default; `chmod` it yourself if you copy it elsewhere.
 
-**KV considerations.** Don't bother backing up KV: `RATE_LIMITS` only
-holds the optional Workers-AI spam verdict cache (rate limiting itself
-runs on the Cache API, or on the Durable Object if you bound one);
+**KV considerations.** Don't bother backing up KV: `RATE_LIMITS` holds
+nothing today (rate limiting runs on the Cache API, or on the Durable
+Object if you bound one);
 `OAUTH_STATE` holds 60-second widget handoff
 tokens (OAuth state is a signed cookie, not a KV row); `SESSIONS` loss
 just forces re-sign-in; `TREE_CACHE` rebuilds on next read.
@@ -2098,7 +2112,7 @@ The 12 steps (each prints `→ name… OK`):
 9. **Apply infra drift** — create missing KV/D1 and append blocks to `wrangler.toml`; prompt for missing secrets via `wrangler secret put NAME`. Missing required `[vars]` block auto-apply: they must be added to `wrangler.toml` by hand
 10. **Migrate** (`npm run migrate -- --remote`) — idempotent, forward-only
 11. **Deploy** (`npm run deploy`)
-12. **Post-deploy** — optional rerender; append a line to `.garrul-upgrade-log.json` (gitignored, operator-local)
+12. **Post-deploy** — for each migration applied in step 10 that has an idempotent `src/db/post-deploy/<same name>.sql`, run it (`wrangler d1 execute DB --remote --file …`) so state the old Worker left stale between steps 10 and 11 is recounted; optional rerender; append a line to `.garrul-upgrade-log.json` (gitignored, operator-local)
 
 v2.38: migration 0030 adds paging and retention indexes; run `npm run migrate`.
 
@@ -2268,6 +2282,8 @@ git checkout vX.Y.Z
 npm ci
 npm run migrate -- --remote
 npm run deploy
+# for each migration you just applied that has a file in src/db/post-deploy/:
+npx wrangler d1 execute DB --remote --file src/db/post-deploy/<name>.sql
 npm run rerender -- --remote   # only if the renderer version bumped
 ```
 

@@ -508,6 +508,10 @@ export const NAME_CLAIM_WINDOW_MS = 365 * 24 * 60 * 60 * 1000;
  * later sign-up can't take an anonymous regular's name, and a name nobody has
  * used for a year is free again.
  *
+ * The unary `+` on c.status keeps comments_status_created_idx out of index
+ * selection: without it SQLite walks every approved comment on the site
+ * instead of starting from idx_users_name_key.
+ *
  * Only approved, live comments count, on both sides. Matching every account
  * would let anyone probe which names have signed in, and matching staff would
  * reveal who is staff; a name that shows on the page is already public, and so
@@ -526,7 +530,7 @@ export const isNameClaimed = async (
 			 FROM (SELECT u.provider, MIN(c.created_at) AS first
 			       FROM users u JOIN comments c ON c.user_id = u.id
 			       WHERE u.name_key = ? AND u.erased_at IS NULL AND u.is_banned = 0
-			         AND c.status = 'approved' AND c.deleted_at IS NULL
+			         AND +c.status = 'approved' AND c.deleted_at IS NULL
 			       GROUP BY u.id
 			       HAVING MAX(c.created_at) >= ?)`,
 		)
@@ -1167,7 +1171,9 @@ export const listCommentsForThreads = async (
 
 /**
  * Latest N approved comments for a post, joined with author name, for
- * the per-post RSS feed.
+ * the per-post RSS feed. The unary `+` on c.status keeps SQLite on
+ * comments_post_idx: given comments_status_created_idx it would walk every
+ * approved comment on the site, newest first, to find this post's 50.
  */
 export const listLatestApprovedComments = async (
 	db: D1Database,
@@ -1182,7 +1188,7 @@ export const listLatestApprovedComments = async (
 			        u.name AS author_name
 			   FROM comments c
 			   JOIN users u ON u.id = c.user_id
-			  WHERE c.post_slug = ? AND c.status = 'approved'
+			  WHERE c.post_slug = ? AND +c.status = 'approved'
 			  ORDER BY c.created_at DESC, c.id DESC
 			  LIMIT ?`,
 		)
@@ -1452,6 +1458,30 @@ export const listUserReactionsOnComments = async (
 // posts(slug). The caller must ensure the post row exists (upsertPost) before
 // inserting, since both tables FK to posts(slug). Identity is the same
 // ghost-by-ip_hash model as comments.
+//
+// Totals are read from posts.page_votes_up/down and page_reaction_totals
+// (migration 0032), never counted at read time: bootstrap reads them on
+// every pageview. Each write recounts its own slice in the same batch, the
+// castVote model, so a counter is always recomputed from the source rows.
+
+const recountPageReaction = (db: D1Database, post_slug: string, kind: string) =>
+	db
+		.prepare(
+			`INSERT INTO page_reaction_totals (post_slug, kind, count)
+			 VALUES (?1, ?2, (SELECT COUNT(*) FROM page_reactions WHERE post_slug = ?1 AND kind = ?2))
+			 ON CONFLICT(post_slug, kind) DO UPDATE SET count = excluded.count`,
+		)
+		.bind(post_slug, kind);
+
+const recountPageVotes = (db: D1Database, post_slug: string) =>
+	db
+		.prepare(
+			`UPDATE posts SET
+			   page_votes_up   = (SELECT COUNT(*) FROM page_votes WHERE post_slug = ?1 AND value =  1),
+			   page_votes_down = (SELECT COUNT(*) FROM page_votes WHERE post_slug = ?1 AND value = -1)
+			 WHERE slug = ?1`,
+		)
+		.bind(post_slug);
 
 /**
  * Toggle a page reaction. Returns whether the row was added (true) or removed
@@ -1464,24 +1494,28 @@ export const togglePageReaction = async (
 	kind: string,
 ): Promise<{ added: boolean }> => {
 	const now = Date.now();
-	const ins = await db
-		.prepare(
-			`INSERT INTO page_reactions (post_slug, user_id, kind, created_at)
-			 VALUES (?, ?, ?, ?)
-			 ON CONFLICT(post_slug, user_id, kind) DO NOTHING`,
-		)
-		.bind(post_slug, user_id, kind, now)
-		.run();
-	if (ins.meta.changes && ins.meta.changes > 0) {
+	const [ins] = await db.batch([
+		db
+			.prepare(
+				`INSERT INTO page_reactions (post_slug, user_id, kind, created_at)
+				 VALUES (?, ?, ?, ?)
+				 ON CONFLICT(post_slug, user_id, kind) DO NOTHING`,
+			)
+			.bind(post_slug, user_id, kind, now),
+		recountPageReaction(db, post_slug, kind),
+	]);
+	if (ins?.meta.changes && ins.meta.changes > 0) {
 		return { added: true };
 	}
-	await db
-		.prepare(
-			`DELETE FROM page_reactions
-			 WHERE post_slug = ? AND user_id = ? AND kind = ?`,
-		)
-		.bind(post_slug, user_id, kind)
-		.run();
+	await db.batch([
+		db
+			.prepare(
+				`DELETE FROM page_reactions
+				 WHERE post_slug = ? AND user_id = ? AND kind = ?`,
+			)
+			.bind(post_slug, user_id, kind),
+		recountPageReaction(db, post_slug, kind),
+	]);
 	return { added: false };
 };
 
@@ -1494,10 +1528,9 @@ export const listPageReactions = async (
 ): Promise<PageReactionSummary[]> => {
 	const result = await db
 		.prepare(
-			`SELECT kind, COUNT(*) AS count
-			   FROM page_reactions
-			  WHERE post_slug = ?
-			  GROUP BY kind`,
+			`SELECT kind, count
+			   FROM page_reaction_totals
+			  WHERE post_slug = ? AND count > 0`,
 		)
 		.bind(post_slug)
 		.all<{ kind: string; count: number }>();
@@ -1536,8 +1569,8 @@ const reselectPageVote = async (
 	const row = await db
 		.prepare(
 			`SELECT
-			   (SELECT COUNT(*) FROM page_votes WHERE post_slug = ?1 AND value =  1) AS score_up,
-			   (SELECT COUNT(*) FROM page_votes WHERE post_slug = ?1 AND value = -1) AS score_down,
+			   COALESCE((SELECT page_votes_up   FROM posts WHERE slug = ?1), 0) AS score_up,
+			   COALESCE((SELECT page_votes_down FROM posts WHERE slug = ?1), 0) AS score_down,
 			   COALESCE((SELECT value FROM page_votes
 			              WHERE post_slug = ?1 AND user_id = ?2), 0) AS my_vote`,
 		)
@@ -1550,9 +1583,7 @@ const reselectPageVote = async (
 
 /**
  * Cast (value=±1) or clear (value=0) the caller's page vote, then return the
- * recomputed tally and their now-vote. Unlike comment votes there's no
- * denormalized counter on `posts`, so the tally is computed on read — page
- * votes are far lower-volume than per-comment votes.
+ * recomputed tally and their now-vote.
  */
 export const castPageVote = async (
 	db: D1Database,
@@ -1560,23 +1591,21 @@ export const castPageVote = async (
 	user_id: string,
 	value: VoteValue,
 ): Promise<PageVoteResult> => {
-	if (value === 0) {
-		await db
-			.prepare(`DELETE FROM page_votes WHERE post_slug = ? AND user_id = ?`)
-			.bind(post_slug, user_id)
-			.run();
-	} else {
-		await db
-			.prepare(
-				`INSERT INTO page_votes (post_slug, user_id, value, created_at)
-				 VALUES (?, ?, ?, ?)
-				 ON CONFLICT(post_slug, user_id) DO UPDATE SET
-				   value      = excluded.value,
-				   created_at = excluded.created_at`,
-			)
-			.bind(post_slug, user_id, value, Date.now())
-			.run();
-	}
+	const write =
+		value === 0
+			? db
+					.prepare(`DELETE FROM page_votes WHERE post_slug = ? AND user_id = ?`)
+					.bind(post_slug, user_id)
+			: db
+					.prepare(
+						`INSERT INTO page_votes (post_slug, user_id, value, created_at)
+						 VALUES (?, ?, ?, ?)
+						 ON CONFLICT(post_slug, user_id) DO UPDATE SET
+						   value      = excluded.value,
+						   created_at = excluded.created_at`,
+					)
+					.bind(post_slug, user_id, value, Date.now());
+	await db.batch([write, recountPageVotes(db, post_slug)]);
 	return reselectPageVote(db, post_slug, user_id);
 };
 
@@ -1603,12 +1632,12 @@ export const countPageVotesBySlugs = async (
 	const placeholders = slugs.map(() => "?").join(",");
 	const result = await db
 		.prepare(
-			`SELECT post_slug,
-			        SUM(CASE WHEN value =  1 THEN 1 ELSE 0 END) AS score_up,
-			        SUM(CASE WHEN value = -1 THEN 1 ELSE 0 END) AS score_down
-			   FROM page_votes
-			  WHERE post_slug IN (${placeholders})
-			  GROUP BY post_slug`,
+			`SELECT slug AS post_slug,
+			        page_votes_up   AS score_up,
+			        page_votes_down AS score_down
+			   FROM posts
+			  WHERE slug IN (${placeholders})
+			    AND (page_votes_up > 0 OR page_votes_down > 0)`,
 		)
 		.bind(...slugs)
 		.all<{ post_slug: string; score_up: number; score_down: number }>();
@@ -1635,10 +1664,9 @@ export const countPageReactionsBySlugs = async (
 	const placeholders = slugs.map(() => "?").join(",");
 	const result = await db
 		.prepare(
-			`SELECT post_slug, kind, COUNT(*) AS count
-			   FROM page_reactions
-			  WHERE post_slug IN (${placeholders})
-			  GROUP BY post_slug, kind`,
+			`SELECT post_slug, kind, count
+			   FROM page_reaction_totals
+			  WHERE post_slug IN (${placeholders}) AND count > 0`,
 		)
 		.bind(...slugs)
 		.all<{ post_slug: string; kind: string; count: number }>();
@@ -1719,7 +1747,10 @@ export const adminListComments = async (
 	}
 	const status = filter.status ?? "all";
 	if (status !== "all") {
-		where.push("c.status = ?");
+		// Scoped to one post or account, the unary + keeps SQLite on
+		// comments_post_idx / comments_user_idx; given the status index it walks
+		// every comment on the site with this status and filters row by row.
+		where.push(filter.post_slug || filter.user_id ? "+c.status = ?" : "c.status = ?");
 		binds.push(status);
 	}
 	if (filter.q) {
@@ -1780,15 +1811,35 @@ export const adminListComments = async (
 	return (result.results ?? []).map(toAdminComment);
 };
 
+// Host lists per D1 binding, for HOSTS_MEMO_MS. Keyed on the binding so a
+// test's fresh database never sees another's list.
+const hostsMemo = new WeakMap<D1Database, { at: number; hosts: Promise<string[]> }>();
+const HOSTS_MEMO_MS = 60_000;
+
 /**
  * Distinct page hosts (derived from posts.url) used by every admin surface
  * that filters by domain. Includes the NO_URL_BUCKET sentinel when posts
  * without a url exist.
+ *
+ * The DISTINCT scans every post, and the queue, audit and subscriptions pages
+ * each ask on every load, so the list is memoized per isolate for a minute. A
+ * site that starts embedding Garrul shows up in the filter that much later.
  */
-export const adminListHosts = async (db: D1Database): Promise<string[]> => {
+export const adminListHosts = (db: D1Database): Promise<string[]> => {
+	const now = Date.now();
+	const hit = hostsMemo.get(db);
+	if (hit && now - hit.at < HOSTS_MEMO_MS) return hit.hosts;
 	const sql = `SELECT DISTINCT ${hostExpr("url")} AS host FROM posts ORDER BY host`;
-	const result = await db.prepare(sql).all<{ host: string }>();
-	return (result.results ?? []).map((r) => r.host);
+	const hosts = db
+		.prepare(sql)
+		.all<{ host: string }>()
+		.then((result) => (result.results ?? []).map((r) => r.host));
+	// A failed read must not stay memoized, nor evict a newer entry.
+	hosts.catch(() => {
+		if (hostsMemo.get(db)?.hosts === hosts) hostsMemo.delete(db);
+	});
+	hostsMemo.set(db, { at: now, hosts });
+	return hosts;
 };
 
 export const updateCommentStatus = async (

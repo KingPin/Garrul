@@ -1,10 +1,10 @@
 /**
- * Cloudflare usage dashboard — renders today's Workers / D1 / KV usage
+ * Cloudflare usage dashboard — renders today's Workers / D1 / KV / Workers AI usage
  * against the free-tier ceilings. Two render modes:
  *
  *   renderUsageSetup()    — token absent. Shows the wrangler secret put
  *                           commands and the required token scopes.
- *   renderUsageDashboard() — token present. Shows three usage panels,
+ *   renderUsageDashboard() — token present. Shows four usage panels,
  *                           each with its own success/error state.
  *
  * Chart strategy: each panel emits a tiny inline SVG bar with the
@@ -24,6 +24,7 @@ const LIMITS = {
 	d1_storage_bytes: 5 * 1024 * 1024 * 1024,
 	kv_reads_per_day: 100_000,
 	kv_writes_per_day: 1_000,
+	ai_neurons_per_day: 10_000,
 } as const;
 
 const fmt = (n: number): string => n.toLocaleString("en-US");
@@ -116,6 +117,29 @@ const kvPanel = (
 </div>`;
 };
 
+const aiPanel = (
+	a: Panel<{ neurons_today: number; inferences_today: number }>,
+): string => {
+	if (!a.ok) return panelError("Workers AI", a.error);
+	const { neurons_today: neurons, inferences_today: calls } = a.data;
+	const avg = calls > 0
+		? `Average: <strong>${(neurons / calls).toFixed(2)}</strong> neurons per call
+    across ${fmt(calls)} call${calls === 1 ? "" : "s"} today.`
+		: "No Workers AI calls today.";
+	return `
+<div class="card">
+  <h3 style="margin-top:0">Workers AI</h3>
+  ${usageBar(Math.round(neurons), LIMITS.ai_neurons_per_day, "Neurons (today)")}
+  <p class="muted" style="margin-top:0.6rem">${avg}</p>
+  <p class="muted" style="font-size:0.8rem;margin-top:0.6rem">
+    Includes every Worker on the account. Garrul calls Workers AI once per
+    new comment when <code>SPAM_PROVIDER</code> is <code>workers-ai</code>.
+    Both Workers plans include 10,000 neurons a day (reset 00:00 UTC). On the
+    Free plan, calls past that fail and comments are posted without an AI check.
+  </p>
+</div>`;
+};
+
 const HOSTS_VISIBLE = 10;
 
 const byHostPanel = (rows: CommentsByHostRow[]): string => {
@@ -153,6 +177,8 @@ export const renderUsageDashboard = (
 	byHost: CommentsByHostRow[] = [],
 ): string => {
 	const asOf = new Date(snapshot.asOf).toISOString().replace("T", " ").slice(0, 16);
+	// A snapshot cached before the AI panel shipped has no `ai` for up to 5 minutes.
+	const ai = snapshot.ai ? aiPanel(snapshot.ai) : "";
 	return `
 <div class="card">
   <h2 style="margin-top:0">Cloudflare usage</h2>
@@ -166,6 +192,7 @@ export const renderUsageDashboard = (
 ${workersPanel(snapshot.workers)}
 ${d1Panel(snapshot.d1)}
 ${kvPanel(snapshot.kv)}
+${ai}
 ${byHostPanel(byHost)}`;
 };
 
@@ -173,7 +200,7 @@ export const renderUsageSetup = (byHost: CommentsByHostRow[] = []): string => `
 <div class="card">
   <h2 style="margin-top:0">Cloudflare usage — not configured</h2>
   <p>
-    This page surfaces today's Workers, D1, and KV usage against the
+    This page surfaces today's Workers, D1, KV and Workers AI usage against the
     free-tier ceilings so you can see headroom before you hit a limit.
     It's fully optional — the rest of the admin works without it.
   </p>

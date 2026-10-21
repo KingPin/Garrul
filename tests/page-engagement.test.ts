@@ -8,9 +8,8 @@
  *   - vote tally + clear,
  *   - input validation (bad slug, bad kind, bad value).
  *
- * No Miniflare: a small in-memory D1 that simulates the page_reactions /
- * page_votes / posts / users tables by matching on the SQL the query layer
- * issues, plus KV stubs for rate-limit; settings come from D1 rows.
+ * No Miniflare: real SQLite for the tables, KV stubs for rate-limit;
+ * settings come from rows the wrapper below serves.
  */
 import { describe, it, expect } from "vitest";
 import { Hono } from "hono";
@@ -19,164 +18,21 @@ import { pageEngagement } from "../src/routes/api.page-engagement";
 import { bustSettingsCache } from "../src/lib/settings";
 import type { Bindings } from "../src/index";
 import { installMockCaches, uninstallMockCaches } from "./helpers/mock-caches";
+import { makeD1 } from "./helpers/admin-sqlite";
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
-type Reaction = { post_slug: string; user_id: string; kind: string };
-type Vote = { post_slug: string; user_id: string; value: number };
+const MIGRATIONS_DIR = join(__dirname, "../src/db/migrations");
 
+// Real SQLite with every migration applied, so the totals the routes return
+// come from the same write-time recounts production runs.
 const makeDb = () => {
-	const posts = new Set<string>();
-	const ghosts = new Map<string, string>(); // ip_hash -> user_id
-	const reactions: Reaction[] = [];
-	const votes: Vote[] = [];
-	let ghostSeq = 0;
-
-	const stmt = (sql: string) => {
-		let binds: unknown[] = [];
-		const api = {
-			bind(...args: unknown[]) {
-				binds = args;
-				return api;
-			},
-			async run() {
-				if (sql.includes("INSERT INTO posts")) {
-					posts.add(String(binds[0]));
-					return { meta: { changes: 1 } };
-				}
-				if (sql.includes("INSERT INTO users")) {
-					// getOrCreateGhost: (id, provider_id, name, created_at)
-					ghosts.set(String(binds[1]), String(binds[0]));
-					return { meta: { changes: 1 } };
-				}
-				if (sql.includes("INSERT INTO page_reactions")) {
-					const [post_slug, user_id, kind] = binds as [string, string, string];
-					const dup = reactions.some(
-						(r) =>
-							r.post_slug === post_slug &&
-							r.user_id === user_id &&
-							r.kind === kind,
-					);
-					if (dup) return { meta: { changes: 0 } };
-					reactions.push({ post_slug, user_id, kind });
-					return { meta: { changes: 1 } };
-				}
-				if (sql.includes("DELETE FROM page_reactions")) {
-					const [post_slug, user_id, kind] = binds as [string, string, string];
-					for (let i = reactions.length - 1; i >= 0; i--) {
-						const r = reactions[i]!;
-						if (
-							r.post_slug === post_slug &&
-							r.user_id === user_id &&
-							r.kind === kind
-						)
-							reactions.splice(i, 1);
-					}
-					return { meta: { changes: 1 } };
-				}
-				if (sql.includes("DELETE FROM page_votes")) {
-					const [post_slug, user_id] = binds as string[];
-					for (let i = votes.length - 1; i >= 0; i--) {
-						const v = votes[i]!;
-						if (v.post_slug === post_slug && v.user_id === user_id)
-							votes.splice(i, 1);
-					}
-					return { meta: { changes: 1 } };
-				}
-				if (sql.includes("INSERT INTO page_votes")) {
-					const [post_slug, user_id, value] = binds as [string, string, number];
-					const existing = votes.find(
-						(v) => v.post_slug === post_slug && v.user_id === user_id,
-					);
-					if (existing) existing.value = value;
-					else votes.push({ post_slug, user_id, value });
-					return { meta: { changes: 1 } };
-				}
-				return { meta: { changes: 0 } };
-			},
-			async first<T>() {
-				// The IP-wide ban check (isIpHashBarred): no ghost on this IP is barred.
-				if (sql.includes("SELECT 1 AS hit FROM users")) return null;
-				if (sql.includes("FROM users")) {
-					// getOrCreateGhost lookup by ip_hash
-					const ip = String(binds[0]);
-					const id = ghosts.get(ip);
-					if (!id) return null;
-					return {
-						id,
-						provider: "anon",
-						provider_id: ip,
-						name: "anon",
-						email: null,
-						avatar_url: null,
-						is_admin: 0,
-						is_banned: 0,
-						role: "user",
-						created_at: 1,
-						// `USER_COLS` selects erased_at, so real D1 returns null here.
-						// Omitting it makes the row `undefined` after `toUser`, and the
-						// active-user gate compares against null — a stub that drops the
-						// column reads as an erased user and refuses every anonymous
-						// caller.
-						erased_at: null,
-					} as T;
-				}
-				if (sql.includes("FROM posts")) {
-					return {
-						slug: String(binds[0]),
-						title: null,
-						url: null,
-						created_at: 1,
-					} as T;
-				}
-				if (sql.includes("page_votes")) {
-					// reselectPageVote: bind(post_slug, user_id)
-					const [post_slug, user_id] = binds as string[];
-					const up = votes.filter(
-						(v) => v.post_slug === post_slug && v.value === 1,
-					).length;
-					const down = votes.filter(
-						(v) => v.post_slug === post_slug && v.value === -1,
-					).length;
-					const mine =
-						votes.find(
-							(v) => v.post_slug === post_slug && v.user_id === user_id,
-						)?.value ?? 0;
-					return { score_up: up, score_down: down, my_vote: mine } as T;
-				}
-				return null;
-			},
-			async all<T>() {
-				if (sql.includes("GROUP BY kind")) {
-					const post_slug = String(binds[0]);
-					const byKind = new Map<string, number>();
-					for (const r of reactions) {
-						if (r.post_slug === post_slug)
-							byKind.set(r.kind, (byKind.get(r.kind) ?? 0) + 1);
-					}
-					return {
-						results: [...byKind].map(([kind, count]) => ({ kind, count })),
-					} as { results: T[] };
-				}
-				if (sql.includes("SELECT kind FROM page_reactions")) {
-					const [post_slug, user_id] = binds as string[];
-					return {
-						results: reactions
-							.filter(
-								(r) => r.post_slug === post_slug && r.user_id === user_id,
-							)
-							.map((r) => ({ kind: r.kind })),
-					} as { results: T[] };
-				}
-				return { results: [] as T[] };
-			},
-		};
-		return api;
-	};
-
-	return {
-		db: { prepare: (sql: string) => stmt(sql) },
-		state: { posts, reactions, votes },
-		nextGhost: () => `ghost-${ghostSeq++}`,
-	};
+	const sqlite = new DatabaseSync(":memory:");
+	for (const f of readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith(".sql")).sort()) {
+		sqlite.exec(readFileSync(join(MIGRATIONS_DIR, f), "utf8"));
+	}
+	return { db: makeD1(sqlite) };
 };
 
 const kvNull = {
@@ -201,6 +57,7 @@ const mkApp = (flags: Record<string, boolean>, texts: Record<string, string> = {
 			/FROM settings/i.test(sql)
 				? { all: async () => ({ results: rows() }) }
 				: db.prepare(sql),
+		batch: (stmts: never) => db.batch(stmts),
 	};
 	const env = {
 		DB: settingsDb,

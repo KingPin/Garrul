@@ -58,8 +58,12 @@ export const treeCacheKey = (
 		...(cursor ? { cursor } : {}),
 	});
 
+/** Cache-key Request for a post's Atom feed (routes/feed.ts). */
+export const feedCacheKey = (reqUrl: string, slug: string): Request =>
+	cacheKey(reqUrl, "feed", { slug });
+
 /**
- * Drop a slug's cached first pages (every sort, current page size) in the
+ * Drop a slug's cached first pages and its feed (every sort, current page size) in the
  * handling colo. Best-effort: never rejects, because every comment mutation
  * awaits it on the user-visible path. Resolving the page size needs a settings
  * read; if that fails we skip the drop and let the TTL expire the entry.
@@ -78,8 +82,14 @@ export const bustTreeCache = async (
 	slug: string,
 	resolved?: ResolvedNumbers,
 ): Promise<void> => {
+	// The feed key has no page size, so it is dropped even when the settings
+	// read below fails.
+	const feed = dropCache(feedCacheKey(reqUrl, slug));
 	const numbers = resolved ?? (await loadNumbers(env).catch(() => null));
-	if (!numbers) return;
+	if (!numbers) {
+		await feed;
+		return;
+	}
 	const pageSize = numbers.comments_per_page;
 	// Driven off COMMENT_SORTS rather than a hand-written list: a sort added
 	// without a matching drop here would serve a stale first page for a full TTL
@@ -88,9 +98,10 @@ export const bustTreeCache = async (
 	// `old` is dropped for the same reasons the others are even though a *new*
 	// comment lands on its last page, never its first — an edit, delete or
 	// moderation action changes page one in any order.
-	await Promise.all(
-		COMMENT_SORTS.map((sort) =>
+	await Promise.all([
+		...COMMENT_SORTS.map((sort) =>
 			dropCache(treeCacheKey(reqUrl, slug, sort, pageSize)),
 		),
-	);
+		feed,
+	]);
 };

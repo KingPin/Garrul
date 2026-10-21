@@ -547,7 +547,7 @@ writing a comment. Both surfaces default **off** and are server-gated:
   thread — for pages that want reactions but no comments. Same slug, same
   counts as the bar atop that slug's thread. One `#garrul` per page, so a
   page carries either the bar or the thread (which already includes it).
-  Iframe: `/embed/<slug>?mode=reactions`.
+  Iframe: `/embed/?slug=<slug>&mode=reactions`.
 
 ### Configurable reaction kinds (since v2.30.0)
 
@@ -959,8 +959,8 @@ fills the composer card, notice boxes, and now code as well.
 ## 6. Iframe fallback
 
 For hosts where you cannot inject `<script>` (strict CSP, locked-down
-CMS, sandboxed editor), point an iframe at the Worker's per-slug embed
-route and listen for height messages:
+CMS, sandboxed editor), point an iframe at the Worker's embed page and
+listen for height messages:
 
 ```html
 <iframe
@@ -973,7 +973,8 @@ route and listen for height messages:
 <script>
   (function () {
     var f = document.getElementById("garrul-iframe");
-    var src = new URL("{{INSTANCE_URL}}/embed/post-slug-here");
+    var src = new URL("{{INSTANCE_URL}}/embed/");
+    src.searchParams.set("slug", "post-slug-here");
     src.searchParams.set("title", document.title);
     src.searchParams.set("url", window.location.href);
     src.searchParams.set("published", "2026-09-11T12:00:00Z"); // optional
@@ -992,8 +993,14 @@ route and listen for height messages:
 </script>
 ```
 
-Route: `{{INSTANCE_URL}}/embed/:slug`. Pass `parent_origin` so the
-Worker `postMessage`s height updates to a known target instead of `"*"`.
+Route: `{{INSTANCE_URL}}/embed/?slug=…`. It is a static page (Workers
+Static Assets) when the operator's `wrangler.toml` has the `[assets]`
+block and `ALLOWED_ORIGINS` in `[vars]`, so an iframe pageview runs the
+Worker only for the widget's own API calls. The older
+`{{INSTANCE_URL}}/embed/:slug` form takes the same query parameters and
+still works, but the Worker renders it on every pageview. Pass
+`parent_origin` so the frame `postMessage`s height updates to a known
+target instead of `"*"`.
 **The origin you pass must be listed in the Worker's `ALLOWED_ORIGINS`**
 — anything else gets no `postMessage` at all, and there is no
 `document.referrer` fallback. That same list is what the page's CSP

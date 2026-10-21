@@ -103,6 +103,7 @@ const makeWranglerMock = (): typeof wranglerModule => ({
 	appendKvBlock: vi.fn(),
 	appendD1Block: vi.fn(),
 	npmRun: vi.fn(),
+	executeD1File: vi.fn(),
 	npmCi: vi.fn(),
 	appendUpgradeLog: vi.fn(),
 });

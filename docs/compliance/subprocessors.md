@@ -87,9 +87,8 @@ not enable it, so if you turn it on, edit the policy.
 | --- | --- |
 | **Role** | Content-scoring, inside Cloudflare |
 | **When** | `SPAM_PROVIDER=workers-ai`. Off by default. |
-| **Receives** | The comment body truncated to 2000 characters, the author's display name, whether this is their first comment, and the page URL, sent to the `@cf/cloudflare/clef-flash` decision model (`src/lib/spam/workers-ai.ts:34-36`, `:98`) |
+| **Receives** | The comment body truncated to 2000 characters, the author's display name, whether this is their first comment, and the page URL, sent to the `@cf/cloudflare/clef-flash` decision model (`src/lib/spam/workers-ai.ts:33-34`, `:85`) |
 | **New subprocessor?** | **No.** It stays within Cloudflare, already your processor. That makes it the low-transfer choice if you want machine classification but not a US vendor relationship. |
-| **Note** | The spam probability is cached in KV for 6 h under a key derived from a truncated SHA-256 of the body. |
 
 ### Telegram — operator notifications
 

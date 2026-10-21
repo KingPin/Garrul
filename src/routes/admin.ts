@@ -322,21 +322,22 @@ admin.use("*", async (c, next) => {
 // Mounted after the guards above so Origin/CSP/no-store apply.
 admin.route("/owner", ownerLogin);
 
-admin.get("/", async (c) => {
-	const user = await requireMod(c);
-	if (user instanceof Response) return user;
-	const db = c.env.DB;
-	const [
-		stats,
-		timeline,
-		topPosts,
-		topCommenters,
-		oldestPending,
-		spamRate,
-		byHost,
-		updateInfo,
-		{ flags, numbers },
-	] = await Promise.all([
+// The dashboard's seven aggregates, per D1 binding, for DASHBOARD_MEMO_MS.
+// Several still count whole tables (totals, per-host breakdown), so a refresh
+// loop would otherwise re-read every comment each time. Counts lag a
+// moderation action by up to a minute; the queue itself is never memoized.
+const DASHBOARD_MEMO_MS = 60_000;
+const dashboardMemo = new WeakMap<
+	D1Database,
+	{ at: number; data: Promise<DashboardData> }
+>();
+type DashboardData = Parameters<typeof renderDashboard>[0];
+
+const loadDashboardData = (db: D1Database): Promise<DashboardData> => {
+	const now = Date.now();
+	const hit = dashboardMemo.get(db);
+	if (hit && now - hit.at < DASHBOARD_MEMO_MS) return hit.data;
+	const data = Promise.all([
 		adminStats(db),
 		adminTimeline(db, 30),
 		adminTopPosts(db, 30, 5),
@@ -344,13 +345,8 @@ admin.get("/", async (c) => {
 		adminOldestPending(db),
 		adminSpamRate(db, 30),
 		adminCommentsByHost(db),
-		peekCachedLatestVersion(c.env),
-		// The anti-spam summary line reports the resolved heuristic dials, so it
-		// has to read them the same way evaluateSpam does.
-		loadSettings(c.env),
-	]);
-	const body = renderDashboard(
-		{
+	]).then(
+		([stats, timeline, topPosts, topCommenters, oldestPending, spamRate, byHost]) => ({
 			stats,
 			timeline,
 			top_posts: topPosts,
@@ -358,7 +354,28 @@ admin.get("/", async (c) => {
 			oldest_pending: oldestPending,
 			spam_rate: spamRate,
 			by_host: byHost,
-		},
+		}),
+	);
+	// A failed read must not stay memoized, nor evict a newer entry.
+	data.catch(() => {
+		if (dashboardMemo.get(db)?.data === data) dashboardMemo.delete(db);
+	});
+	dashboardMemo.set(db, { at: now, data });
+	return data;
+};
+
+admin.get("/", async (c) => {
+	const user = await requireMod(c);
+	if (user instanceof Response) return user;
+	const [data, updateInfo, { flags, numbers }] = await Promise.all([
+		loadDashboardData(c.env.DB),
+		peekCachedLatestVersion(c.env),
+		// The anti-spam summary line reports the resolved heuristic dials, so it
+		// has to read them the same way evaluateSpam does.
+		loadSettings(c.env),
+	]);
+	const body = renderDashboard(
+		data,
 		c.env,
 		flags,
 		numbers,
@@ -442,36 +459,41 @@ admin.get("/queue", async (c) => {
 	const nextCursor =
 		rows.length > 50 && last ? `${last.created_at}|${last.id}` : null;
 
-	const latestAudit = await adminLatestAuditByTarget(
-		c.env.DB,
-		"comment",
-		trimmed.map((r) => r.id),
-	);
-
-	// Open-report counts for the visible rows → queue badges. Operator-only;
-	// never surfaced in the public payload (avoids a brigading signal).
-	const reportCounts = await countOpenReportsByComment(
-		c.env.DB,
-		trimmed.map((r) => r.id),
-	);
-
-	// Note badges. Two counts per row — the comment and the account that wrote
-	// it — deduped to one lookup each, since a queue page is routinely one
-	// account posting fifty times.
-	const [commentNoteCounts, userNoteCounts] = await Promise.all([
-		countModeratorNotesByTarget(
-			c.env.DB,
-			"comment",
-			trimmed.map((r) => r.id),
-		),
+	// Everything below is independent of everything else, so it runs as one
+	// round of concurrent reads rather than seven sequential ones.
+	const ids = trimmed.map((r) => r.id);
+	const [
+		latestAudit,
+		// Open-report counts for the visible rows → queue badges. Operator-only;
+		// never surfaced in the public payload (avoids a brigading signal).
+		reportCounts,
+		// Note badges. Two counts per row — the comment and the account that
+		// wrote it — deduped to one lookup each, since a queue page is routinely
+		// one account posting fifty times.
+		commentNoteCounts,
+		userNoteCounts,
+		hosts,
+		updateInfo,
+		// Surface the per-post close toggle only when the queue is scoped to a
+		// single post. A post row may not exist yet (no comments) — treat absent
+		// as open so the operator can still pre-close it.
+		postState,
+	] = await Promise.all([
+		adminLatestAuditByTarget(c.env.DB, "comment", ids),
+		countOpenReportsByComment(c.env.DB, ids),
+		countModeratorNotesByTarget(c.env.DB, "comment", ids),
 		countModeratorNotesByTarget(c.env.DB, "user", [
 			...new Set(trimmed.map((r) => r.user_id)),
 		]),
+		adminListHosts(c.env.DB),
+		peekCachedLatestVersion(c.env),
+		postSlug
+			? getPost(c.env.DB, postSlug).then((p) => ({
+					slug: postSlug,
+					closed: p?.closed ?? false,
+				}))
+			: null,
 	]);
-
-	const hosts = await adminListHosts(c.env.DB);
-
-	const updateInfo = await peekCachedLatestVersion(c.env);
 	const filters: QueueFilters = {
 		status,
 		q,
@@ -482,15 +504,6 @@ admin.get("/queue", async (c) => {
 		host,
 		reported,
 	};
-	// Surface the per-post close toggle only when the queue is scoped to a
-	// single post. A post row may not exist yet (no comments) — treat absent
-	// as open so the operator can still pre-close it.
-	const postState = postSlug
-		? await getPost(c.env.DB, postSlug).then((p) => ({
-				slug: postSlug,
-				closed: p?.closed ?? false,
-			}))
-		: null;
 	return c.html(
 		renderPage(c,
 			"Queue",

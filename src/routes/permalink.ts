@@ -13,11 +13,22 @@
  * once the widget is mounted. Shipping the permalink as a redirect (not
  * a JSON lookup) means a single link works in emails, Slack previews,
  * RSS feeds, etc.
+ *
+ * The redirect is cached at the edge for 5 minutes, so a hit skips both D1
+ * reads. Nothing busts it: a comment deleted inside that window still
+ * redirects to the post, where its anchor no longer exists. 404s are not
+ * cached, so a comment approved after a miss is reachable at once.
  */
 import { Hono } from "hono";
 import type { Bindings } from "../index";
 import { getComment, getPost } from "../db/queries";
 import { allowedPostUrl } from "../lib/cors";
+import {
+	cacheKey,
+	matchCache,
+	putResponse,
+	tryWaitUntil,
+} from "../lib/response-cache";
 // The anchor id has one source of truth, in the widget that stamps it onto each
 // thread node. Server-imports-widget is the established direction here (see
 // routes/api.reactions.ts pulling from ../widget/reactions) — the widget cannot
@@ -29,6 +40,10 @@ const permalink = new Hono<{ Bindings: Bindings }>();
 permalink.get("/:id", async (c) => {
 	const id = c.req.param("id");
 	if (!id || id.length > 26) return c.text("invalid id", 400);
+
+	const key = cacheKey(c.req.url, "permalink", { id });
+	const hit = await matchCache(key);
+	if (hit) return hit;
 
 	const comment = await getComment(c.env.DB, id);
 	if (!comment) return c.text("not found", 404);
@@ -61,8 +76,15 @@ permalink.get("/:id", async (c) => {
 	// instead, the same rule the widget's own resolver follows
 	// (`withAnchor` in src/widget/permalink.ts).
 	parsed.hash = commentAnchorId(id);
-	c.header("cache-control", "public, max-age=300");
-	return c.redirect(parsed.toString(), 302);
+	const res = new Response(null, {
+		status: 302,
+		headers: {
+			location: parsed.toString(),
+			"cache-control": "public, max-age=300",
+		},
+	});
+	await putResponse(key, res, tryWaitUntil(c));
+	return res;
 });
 
 export { permalink };

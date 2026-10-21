@@ -8,11 +8,11 @@
  * Clef is a decision model, not a chat model: it takes a state plus typed
  * questions and returns a probability per answer, so there is no free text
  * to parse and the verdict carries a real score. The spam/ham cut-off is the
- * `spam_ai_threshold` setting, applied here rather than baked into the cache,
- * so retuning it on /admin/settings also re-judges cached bodies.
+ * `spam_ai_threshold` setting, editable on /admin/settings.
  *
- * We cache the probability in KV (RATE_LIMITS namespace) keyed on a short
- * hash of body_md so identical resubmissions don't re-bill.
+ * No verdict cache: a call costs a few neurons, a hit needs the same body
+ * twice, and a key on the body alone would hand one author's verdict to
+ * another, since the model also sees the author, page and first-comment flag.
  */
 
 import { log } from "../log";
@@ -20,7 +20,6 @@ import type { SpamCheckInput, SpamVerdict } from "./index";
 
 type WorkersAiConfig = {
 	ai: Ai;
-	cache: KVNamespace | null;
 	// Percent, 1–100: flag when P(spam) >= this / 100.
 	threshold: number;
 };
@@ -32,17 +31,23 @@ type ClefRunner = {
 };
 
 const MODEL = "@cf/cloudflare/clef-flash";
-const CACHE_TTL_SECONDS = 60 * 60 * 6; // 6h — body hash is content-addressed
 const MAX_BODY_FOR_PROMPT = 2_000; // truncate for cost / latency
+// The comment POST waits on this; past it the check is "no opinion". AI.run
+// takes no AbortSignal, so the call is raced rather than cancelled.
+const TIMEOUT_MS = 5_000;
 
-const encoder = new TextEncoder();
-
-const cacheKey = async (bodyMd: string): Promise<string> => {
-	const digest = await crypto.subtle.digest("SHA-256", encoder.encode(bodyMd));
-	const hex = Array.from(new Uint8Array(digest), (b) =>
-		b.toString(16).padStart(2, "0"),
-	).join("");
-	return `spamcache:${hex.slice(0, 32)}`;
+const withTimeout = async <T>(p: Promise<T>, ms: number): Promise<T> => {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	try {
+		return await Promise.race([
+			p,
+			new Promise<never>((_, reject) => {
+				timer = setTimeout(() => reject(new Error(`timed out after ${ms} ms`)), ms);
+			}),
+		]);
+	} finally {
+		clearTimeout(timer);
+	}
 };
 
 const QUESTIONS = {
@@ -60,22 +65,13 @@ const QUESTIONS = {
 const isProbability = (n: unknown): n is number =>
 	typeof n === "number" && n >= 0 && n <= 1;
 
-const verdict = (
-	p: number,
-	threshold: number,
-	cached: boolean,
-): SpamVerdict => {
+const verdict = (p: number, threshold: number): SpamVerdict => {
 	// Divide the threshold, never multiply p: 0.57 * 100 is 56.99999999999999,
 	// which would pass a score sitting exactly on the cut-off as ham.
 	const spam = p >= threshold / 100;
-	const raw = { cached, model: MODEL, threshold };
+	const raw = { model: MODEL, threshold };
 	return spam
-		? {
-				spam,
-				reason: cached ? "workers-ai.cached" : "workers-ai.spam",
-				score: p,
-				raw,
-			}
+		? { spam, reason: "workers-ai.spam", score: p, raw }
 		: { spam, score: p, raw };
 };
 
@@ -83,28 +79,21 @@ export const checkWorkersAi = async (
 	cfg: WorkersAiConfig,
 	input: SpamCheckInput,
 ): Promise<SpamVerdict | null> => {
-	const key = await cacheKey(input.body_md);
-	if (cfg.cache) {
-		// Pre-Clef entries hold "spam"/"ham"; they parse to NaN and fall
-		// through to a fresh call. A miss is null, which Number() would turn
-		// into 0 — a confident "ham" — so it is screened out first.
-		const hit = await cfg.cache.get(key);
-		const cached = hit === null ? Number.NaN : Number(hit);
-		if (isProbability(cached)) return verdict(cached, cfg.threshold, true);
-	}
-
 	try {
 		// biome-ignore lint/suspicious/noExplicitAny: the response is probed defensively below.
-		const out: any = await (cfg.ai as unknown as ClefRunner).run(MODEL, {
-			model: "clef-flash",
-			state: {
-				author: input.author_name,
-				first_time_commenter: input.is_first_comment,
-				page: input.post_url,
-				comment: input.body_md.slice(0, MAX_BODY_FOR_PROMPT),
-			},
-			questions: QUESTIONS,
-		});
+		const out: any = await withTimeout(
+			(cfg.ai as unknown as ClefRunner).run(MODEL, {
+				model: "clef-flash",
+				state: {
+					author: input.author_name,
+					first_time_commenter: input.is_first_comment,
+					page: input.post_url,
+					comment: input.body_md.slice(0, MAX_BODY_FOR_PROMPT),
+				},
+				questions: QUESTIONS,
+			}),
+			TIMEOUT_MS,
+		);
 		const p = out?.answers?.spam?.noul;
 		if (!isProbability(p)) {
 			log.warn("spam.adapter.error", {
@@ -113,12 +102,7 @@ export const checkWorkersAi = async (
 			});
 			return null;
 		}
-		if (cfg.cache) {
-			await cfg.cache.put(key, String(p), {
-				expirationTtl: CACHE_TTL_SECONDS,
-			});
-		}
-		return verdict(p, cfg.threshold, false);
+		return verdict(p, cfg.threshold);
 	} catch (err) {
 		log.warn("spam.adapter.error", {
 			provider: "workers-ai",

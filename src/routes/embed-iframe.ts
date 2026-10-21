@@ -47,14 +47,21 @@
  * The page is cached for 5 minutes, which is safe because every one of these
  * params is part of the URL and therefore part of the cache key.
  *
+ * `/embed/?slug=<slug>` is the same page as a static asset: public/embed/,
+ * written by scripts/build-embed.ts, resolves the same query through the same
+ * frameConfig in the browser (src/widget/frame.ts), so a pageview does not run
+ * the Worker. This route stays for existing `/embed/<slug>` embeds, and
+ * renderShellFromQuery below answers `/embed/?slug=` when the build skipped
+ * the static copy.
+ *
  * Strings flowing into the HTML body are escaped (JSON.stringify for JS
  * literals, attribute escape for data-* values) so query params can't
  * inject markup.
  */
-import { Hono } from "hono";
-import { FALLBACK_LOCALE } from "../i18n";
-import { matchLocale } from "../i18n/negotiate";
+import { type Context, Hono } from "hono";
+import { LOCALES } from "../i18n";
 import type { Bindings } from "../index";
+import { frameConfig, safeApiOrigin } from "../widget/frame-config";
 
 const iframe = new Hono<{ Bindings: Bindings }>();
 
@@ -67,24 +74,12 @@ const escapeAttr = (s: string): string =>
 
 const TURNSTILE_ORIGIN = "https://challenges.cloudflare.com";
 
-/** Named palettes shipped in src/widget/styles.css. Keep the two in step. */
-const PRESETS = new Set(["minimal", "soft", "contrast"]);
-
 const allowedOriginSet = (env: Bindings): Set<string> => {
 	const list = (env.ALLOWED_ORIGINS ?? "")
 		.split(",")
 		.map((s) => s.trim())
 		.filter(Boolean);
 	return new Set(list);
-};
-
-const safeApiOrigin = (raw: string): string | null => {
-	if (!/^https?:\/\//i.test(raw)) return null;
-	try {
-		return new URL(raw).origin;
-	} catch {
-		return null;
-	}
 };
 
 /**
@@ -359,53 +354,16 @@ iframe.get("/turnstile-frame", (c) => {
 	return c.body(html);
 });
 
-iframe.get("/:slug", (c) => {
-	const slug = c.req.param("slug");
-	if (!slug || slug.length > 200) return c.text("invalid slug", 400);
-
+const renderShell = (c: Context<{ Bindings: Bindings }>, slug: string) => {
 	const url = new URL(c.req.url);
 	const selfOrigin = `${url.protocol}//${url.host}`;
-	// `?api=` lets operators point at a different Worker, but the override
-	// must be in ALLOWED_ORIGINS — otherwise an attacker could craft a link
-	// that loads attacker-controlled JS into the iframe (which we'd then
-	// allow via the CSP we build below).
-	const apiOverrideRaw = c.req.query("api");
-	const overrideOrigin = apiOverrideRaw ? safeApiOrigin(apiOverrideRaw) : null;
-	const allowed = allowedOriginSet(c.env);
-	const apiBase =
-		overrideOrigin && allowed.has(overrideOrigin)
-			? overrideOrigin
-			: selfOrigin;
-
-	const title = c.req.query("title") ?? "";
-	const pageUrl = c.req.query("url") ?? "";
-	// Passed through, not validated: the widget forwards it as post_published
-	// and the server parses it there, so the same unparseable value fails the
-	// same way on both embed paths.
-	const published = c.req.query("published") ?? "";
-	// Validated against the vocabulary, not merely escaped: it reaches a CSS
-	// declaration below, where escapeAttr buys nothing. Same three values the
-	// Turnstile route accepts; anything else is "auto" (follow the OS).
-	const themeRaw = c.req.query("theme") ?? "auto";
-	const theme = themeRaw === "light" || themeRaw === "dark" ? themeRaw : "auto";
-	// Validated against the same closed vocabulary as the CSS: an unknown value
-	// becomes no preset at all, so a typo degrades to the default palette rather
-	// than emitting an attribute nothing matches.
-	const presetRaw = c.req.query("preset") ?? "";
-	const preset = PRESETS.has(presetRaw) ? presetRaw : "";
-	const mode = c.req.query("mode") === "reactions" ? "reactions" : "";
-	const lang = c.req.query("lang") ?? "";
-	// See the ?lang= note in the route doc above: `data-lang` forwards the raw
-	// request, `<html lang>` only ever claims a locale that exists.
-	const docLang = matchLocale(lang) ?? FALLBACK_LOCALE;
-
-	// The postMessage target for the height protocol. Must be allowlisted —
-	// see safeParentOrigin. Callers pass ?parent_origin=https://yourblog.example.
-	const parentOrigin = safeParentOrigin(
-		c.env,
-		selfOrigin,
-		c.req.query("parent_origin"),
-	);
+	const cfg = frameConfig(slug, url.searchParams, selfOrigin, {
+		allowed: [...allowedOriginSet(c.env)],
+		locales: Object.keys(LOCALES),
+		dev: c.env.ENV === "dev",
+	});
+	if (!cfg) return c.text("invalid slug", 400);
+	const { apiBase, theme, docLang, parentOrigin } = cfg;
 
 	// CSP: third-party origins we contact are apiBase (embed.js + API calls)
 	// and Turnstile (anonymous bot check). frame-ancestors pins who may frame
@@ -446,13 +404,7 @@ iframe.get("/:slug", (c) => {
 </head>
 <body>
 <div
-  id="garrul"
-  data-slug="${escapeAttr(slug)}"
-  data-api="${escapeAttr(apiBase)}"
-  data-title="${escapeAttr(title)}"
-  data-url="${escapeAttr(pageUrl)}"${published ? `\n  data-published="${escapeAttr(published)}"` : ""}
-  data-theme="${escapeAttr(theme)}"${preset ? `\n  data-preset="${escapeAttr(preset)}"` : ""}
-  data-lang="${escapeAttr(lang)}"${mode ? `\n  data-mode="${mode}"` : ""}
+  id="garrul"${cfg.data.map(([k, v]) => `\n  data-${k}="${escapeAttr(v)}"`).join("")}
 ></div>
 <script src="${escapeAttr(apiBase)}/embed.js"></script>
 <script>
@@ -494,6 +446,18 @@ iframe.get("/:slug", (c) => {
 	// from injecting RUM beacons that our CSP then blocks.
 	c.header("cache-control", "public, max-age=300, no-transform");
 	return c.body(html);
-});
+};
+
+iframe.get("/:slug", (c) => renderShell(c, c.req.param("slug")));
+
+/**
+ * Fallback for the static shell's URL, `/embed/?slug=…`, on an install whose
+ * build did not emit public/embed/ (see scripts/build-embed.ts). Where the
+ * static copy exists, Static Assets answers first and this never runs.
+ * Mounted on the app in src/index.ts: Hono's strict routing will not match
+ * `/embed/` to a `/` route under the `/embed` mount.
+ */
+export const renderShellFromQuery = (c: Context<{ Bindings: Bindings }>) =>
+	renderShell(c, c.req.query("slug") ?? "");
 
 export { iframe };

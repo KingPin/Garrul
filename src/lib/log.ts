@@ -97,11 +97,13 @@ export const requestLogger = (): MiddlewareHandler => {
 			path: sanitizeLoggedPath(new URL(c.req.url).pathname),
 		};
 		c.set("requestId" as never, requestId);
-		c.header("x-request-id", requestId);
 		const start = Date.now();
 		emit("info", ctx, "request.start");
 		try {
 			await next();
+			// Set after the handler: one that returns a raw Response (cached
+			// pages, the feed) replaces any header set before it.
+			c.header("x-request-id", requestId);
 		} finally {
 			emit("info", ctx, "request.end", {
 				status: c.res.status,

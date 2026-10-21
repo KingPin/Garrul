@@ -38,7 +38,6 @@ export type SpamEnv = {
 	AKISMET_API_KEY?: string;
 	AKISMET_SITE_URL?: string;
 	AI?: Ai;
-	RATE_LIMITS?: KVNamespace;
 };
 
 export const checkSpam = async (
@@ -59,7 +58,7 @@ export const checkSpam = async (
 	if (provider === "workers-ai") {
 		if (!env.AI) return null;
 		return checkWorkersAi(
-			{ ai: env.AI, cache: env.RATE_LIMITS ?? null, threshold: aiThreshold },
+			{ ai: env.AI, threshold: aiThreshold },
 			input,
 		);
 	}

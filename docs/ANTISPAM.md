@@ -185,15 +185,31 @@ binding = "AI"
 
 A comment is queued when that probability is at or above the **AI spam threshold**: `SPAM_AI_THRESHOLD` (percent, `1`–`100`, default `70`), also editable on **Admin → Settings → Anti-spam**. The probability is stored as the verdict's score and shown on each comment's detail page, so you can tune the threshold against your real traffic. Lower it to catch more spam at the cost of more real comments in the queue; raise it for the reverse.
 
-**Privacy posture.** Inference runs on Cloudflare's edge via your AI binding — no third-party API call leaves CF infrastructure. The probability is cached in the `RATE_LIMITS` KV namespace for 6 hours keyed on a SHA-256 hash of the body, so identical resubmissions don't re-bill. The cache holds the probability, not the verdict, so a threshold change also applies to cached bodies.
+**Privacy posture.** Inference runs on Cloudflare's edge via your AI binding — no third-party API call leaves CF infrastructure. Nothing about the comment is cached: each new comment is one model call.
 
-**Cost.** Clef-flash bills input tokens only ($0.038 per million at the time of writing). A 2,000-character comment is well under a thousand tokens.
+**Cost.** Clef-flash bills input tokens only: $0.038 per million, or 3,455 neurons per million, at the time of writing. A comment of up to 2,000 characters plus the question is a few hundred tokens, so one check is roughly 1–3 neurons. Both Workers plans include 10,000 neurons a day (reset 00:00 UTC), which covers a few thousand comments. On the Free plan, calls past that fail and comments post without an AI check; on Paid, 1,000 comments cost about $0.03. **Admin → Usage** shows today's neurons and the measured average per call. No API key is needed: the `[ai]` binding bills the account the Worker runs in.
 
 Tradeoff vs. Akismet: no shared cross-site spam reputation, but no third-party data egress. Good fit if your audience cares about that, or if you don't want to manage another vendor.
 
 ### Combining
 
 Layers stack. With everything on, a comment is flagged if **any** signal trips. The classifier is only called when no heuristic has already flagged (saves cost/latency).
+
+### What each layer costs
+
+Per comment post from a non-admin, read from the code rather than measured. Free-tier ceilings in brackets.
+
+| Layer | Worker requests [100k/day] | D1 [5M rows read, 100k written/day] | KV | Other |
+| --- | --- | --- | --- | --- |
+| Turnstile | +1 per challenge (the frame page) | — | — | One siteverify call per post. Turnstile itself is free. |
+| Honeypot timing | +1 per reader who starts writing (`/comments/form-token`) | — | — | HMAC in CPU |
+| Link threshold | — | — | — | CPU only |
+| First-comment moderation | — | 1 indexed read | — | — |
+| Muted words | — | — | — | CPU only; at most 200 terms |
+| `akismet` | — | 1 indexed read (first-comment feature) | — | One call to Akismet |
+| `workers-ai` | — | 1 indexed read (first-comment feature) | — | Roughly 1–3 neurons [10,000/day] |
+
+Any layer that runs also inserts one `spam_verdicts` row, and the classifier inserts a second. Each insert is about three rows written, because the table has two indexes. No layer writes KV.
 
 ## Rate-limit accuracy (known limitations)
 

@@ -5,8 +5,10 @@
  * Atom over RSS 2.0 because Atom is XML-namespaced (cleaner validation),
  * has a real id field, and is what every modern feed reader prefers.
  *
- * Cached for 5 minutes at the edge. New comments showing up a few minutes
- * late in a reader is fine; this is RSS, not a chat.
+ * Cached for 5 minutes at the edge (Cache API, so a hit skips D1 but still
+ * bills the Worker request). bustTreeCache drops it in the handling colo on
+ * every comment mutation; elsewhere new comments show up a few minutes late,
+ * which is fine for a feed.
  *
  * body_html is included inline (escaped as XHTML via CDATA). It was
  * already sanitized when the comment was rendered, so re-running an
@@ -17,7 +19,9 @@ import type { Bindings } from "../index";
 import { getPost, listLatestApprovedComments } from "../db/queries";
 import { tFor } from "../i18n";
 import { resolveLocale } from "../i18n/negotiate";
+import { matchCache, putResponse, tryWaitUntil } from "../lib/response-cache";
 import { loadStrings } from "../lib/settings";
+import { feedCacheKey } from "../lib/tree-cache";
 
 const feed = new Hono<{ Bindings: Bindings }>();
 
@@ -77,6 +81,10 @@ feed.get("/:slug", async (c) => {
 	const slug = c.req.param("slug");
 	if (!slug || slug.length > 200) return c.text("invalid slug", 400);
 
+	const key = feedCacheKey(c.req.url, slug);
+	const hit = await matchCache(key);
+	if (hit) return hit;
+
 	const post = await getPost(c.env.DB, slug);
 	const comments = await listLatestApprovedComments(c.env.DB, slug, 50);
 
@@ -125,9 +133,14 @@ feed.get("/:slug", async (c) => {
   ${entries}
 </feed>`;
 
-	c.header("content-type", "application/atom+xml; charset=utf-8");
-	c.header("cache-control", "public, max-age=300");
-	return c.body(xml);
+	const res = new Response(xml, {
+		headers: {
+			"content-type": "application/atom+xml; charset=utf-8",
+			"cache-control": "public, max-age=300",
+		},
+	});
+	await putResponse(key, res, tryWaitUntil(c));
+	return res;
 });
 
 export { feed };

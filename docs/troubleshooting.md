@@ -142,7 +142,7 @@ widget renders but is unstyled, your CSP probably blocks
 Two options:
 
 1. Add `unsafe-inline` to your CSP for the host page.
-2. Use the iframe variant (`/embed/:slug`) instead — it has its own
+2. Use the iframe variant (`/embed/?slug=…`) instead — it has its own
    CSP and won't touch yours.
 
 ### Posting a comment fails with "The anti-spam check didn't load."
@@ -178,7 +178,7 @@ our iframe — your CSP doesn't see it and doesn't need to allow it.
 > stricter Garrul-side CSP for the Turnstile iframe.
 
 If you can't relax the host CSP, switch to the iframe variant
-(`/embed/:slug`) — the iframe page sets its own CSP that already
+(`/embed/?slug=…`) — the iframe page sets its own CSP that already
 permits everything, so the host CSP only needs `frame-src` for the
 Worker origin. See the "Iframe (CSP-strict hosts)" section in the
 README.

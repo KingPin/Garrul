@@ -194,20 +194,9 @@ describe("workers-ai provider", () => {
 		run: vi.fn(async () => ({ answers: { spam: { type: "noul", noul: p } } })),
 	});
 
-	class StubKV {
-		map = new Map<string, string>();
-		async get(key: string) {
-			return this.map.get(key) ?? null;
-		}
-		async put(key: string, value: string) {
-			this.map.set(key, value);
-		}
-	}
-
-	const envWith = (ai: unknown, kv?: StubKV) => ({
+	const envWith = (ai: unknown) => ({
 		SPAM_PROVIDER: "workers-ai",
 		AI: ai as Ai,
-		...(kv && { RATE_LIMITS: kv as unknown as KVNamespace }),
 	});
 
 	it("calls Clef-flash with the comment as state and one yes/no question", async () => {
@@ -224,12 +213,9 @@ describe("workers-ai provider", () => {
 	});
 
 	it("flags spam at or above the threshold and records the probability as score", async () => {
-		const kv = new StubKV();
-		const v = await checkSpam(envWith(makeAi(0.5), kv), input, 50);
+		const v = await checkSpam(envWith(makeAi(0.5)), input, 50);
 		expect(v).toMatchObject({ spam: true, reason: "workers-ai.spam", score: 0.5 });
-		expect(v?.raw).toMatchObject({ cached: false, threshold: 50 });
-		// Caches the probability, not the verdict, so a retuned threshold applies.
-		expect([...kv.map.values()]).toEqual(["0.5"]);
+		expect(v?.raw).toMatchObject({ threshold: 50 });
 	});
 
 	it("passes as ham below the threshold", async () => {
@@ -237,38 +223,28 @@ describe("workers-ai provider", () => {
 		expect(v).toMatchObject({ spam: false, score: 0.49 });
 	});
 
-	it("flags a score sitting exactly on the threshold, fresh and cached", async () => {
+	it("flags a score sitting exactly on the threshold", async () => {
 		// 0.57 * 100 is 56.99999999999999, so a multiplied comparison misses this.
-		const ai = makeAi(0.57);
-		const kv = new StubKV();
-		expect(await checkSpam(envWith(ai, kv), input, 57)).toMatchObject({
+		expect(await checkSpam(envWith(makeAi(0.57)), input, 57)).toMatchObject({
 			spam: true,
-			raw: { cached: false },
-		});
-		expect(await checkSpam(envWith(ai, kv), input, 57)).toMatchObject({
-			spam: true,
-			raw: { cached: true },
 		});
 	});
 
-	it("re-judges a cached probability against the current threshold", async () => {
-		const ai = makeAi(0.6);
-		const kv = new StubKV();
-		expect((await checkSpam(envWith(ai, kv), input, 50))?.spam).toBe(true);
-		const v = await checkSpam(envWith(ai, kv), input, 80);
-		expect(v).toMatchObject({ spam: false, score: 0.6, raw: { cached: true } });
-		expect(ai.run).toHaveBeenCalledTimes(1);
-	});
-
-	it("treats a pre-Clef SPAM/HAM cache entry as a miss", async () => {
-		const ai = makeAi(0.2);
-		const kv = new StubKV();
-		await checkSpam(envWith(ai, kv), input);
-		const [key] = kv.map.keys();
-		kv.map.set(key as string, "spam");
-		const v = await checkSpam(envWith(ai, kv), input);
-		expect(v).toMatchObject({ spam: false, raw: { cached: false } });
-		expect(ai.run).toHaveBeenCalledTimes(2);
+	it("keeps its verdict when KV is out of quota", async () => {
+		// A KV-backed verdict cache used to sit here. Once the account's daily KV
+		// writes ran out, its put threw and the verdict was dropped as "no opinion".
+		const exhausted = {
+			get: vi.fn(async () => {
+				throw new Error("KV get() limit exceeded for the day.");
+			}),
+			put: vi.fn(async () => {
+				throw new Error("KV put() limit exceeded for the day.");
+			}),
+		};
+		const env = { ...envWith(makeAi(0.9)), RATE_LIMITS: exhausted };
+		expect(await checkSpam(env, input, 70)).toMatchObject({ spam: true, score: 0.9 });
+		expect(exhausted.get).not.toHaveBeenCalled();
+		expect(exhausted.put).not.toHaveBeenCalled();
 	});
 
 	it("returns null when the answer is missing or not a probability", async () => {

@@ -339,6 +339,14 @@ export const queryAppliedMigrations = (
 	return names((first as { results: unknown[] }).results);
 };
 
+/**
+ * Run a SQL file against the remote D1 `database` (binding or name). Used for
+ * the idempotent post-deploy reconcile files in src/db/post-deploy/.
+ */
+export const executeD1File = (database: string, file: string): void => {
+	wrangler(["d1", "execute", database, "--remote", "--file", file]);
+};
+
 export const npmRun = (script: string, extraArgs: string[] = []): void => {
 	const args = ["run", script];
 	if (extraArgs.length > 0) args.push("--", ...extraArgs);

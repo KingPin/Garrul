@@ -51,8 +51,9 @@ writing a name in it.
 
 | Table | Contents |
 | --- | --- |
-| `posts` | `slug`, `title`, `url` — page metadata |
-| `spam_verdicts` | `comment_id`, `source`, `verdict`, `score`, `raw`. `raw` is adapter metadata only: `{response, pro_tip}` for Akismet (`src/lib/spam/akismet.ts:86`), `{cached, model, threshold}` for Workers AI, whose spam probability goes in `score` (`src/lib/spam/workers-ai.ts:69`). It does **not** echo comment content. |
+| `posts` | `slug`, `title`, `url` — page metadata, plus `page_votes_up` / `page_votes_down` totals |
+| `page_reaction_totals` | `post_slug`, `kind`, `count` — per-page reaction totals, no user link |
+| `spam_verdicts` | `comment_id`, `source`, `verdict`, `score`, `raw`. `raw` is adapter metadata only: `{response, pro_tip}` for Akismet (`src/lib/spam/akismet.ts:86`), `{model, threshold}` for Workers AI, whose spam probability goes in `score` (`src/lib/spam/workers-ai.ts:72`); older verdicts also carry `cached`. It does **not** echo comment content. |
 | `webhook_endpoints` | Operator config: `url`, `secret`, `events` |
 | `saved_replies` | Canned moderator text, `owner_id`. Staff-authored, not subject data. |
 | `settings`, `email_send_budget`, `_migrations` | Instance configuration and counters |
@@ -63,15 +64,9 @@ writing a name in it.
 
 | Namespace | Key | Contents | TTL |
 | --- | --- | --- | --- |
-| `SESSIONS` | `sess:<32 random bytes, hex>` | `{user_id, expires_at}` — no name, no email | 30 days, slid forward at most once a day (`src/lib/session.ts:55`) |
+| `SESSIONS` | `sess:<32 random bytes, hex>` | `{user_id, expires_at}` — no name, no email | 30 days, slid forward once less than 15 days remain (`src/lib/session.ts`) |
 | `OAUTH_STATE` | widget handoff / `tg:link:<token>` | `{user_id}` | 60 s (`src/lib/oauth.ts:395`) / 600 s (`src/routes/telegram.ts:65`) |
-| `RATE_LIMITS` | `spamcache:<first 32 hex of SHA-256(body_md)>` | The Workers-AI spam probability for that body (a number, 0–1). Only written when `SPAM_PROVIDER=workers-ai`. | 6 h (`src/lib/spam/workers-ai.ts:35`) |
 | `TREE_CACHE` | `meta:latest-release` (resolved settings no longer cached here; they live in a 60 s per-isolate memo) | The version check — no personal data | 1 h (`src/lib/version-check.ts:57`) |
-
-The spam cache key is **derived from the comment text**. It is a truncated hash,
-not the text, and it expires in six hours — but if the same body is submitted
-twice inside that window, the key's existence reveals that. Worth knowing; not
-worth a policy paragraph.
 
 OAuth *state* is a signed cookie, not a KV row, despite the namespace name
 (`src/lib/oauth.ts`). The namespace is reused for the two short-lived tokens
@@ -81,13 +76,19 @@ above.
 
 ## Edge Cache API (`caches.default`)
 
-Not KV, and never backed up. Two users:
+Not KV, and never backed up. Four users:
 
 - **Comment tree pages** — the first page of a thread, including public comment
   bodies and author display names. Short `max-age`
   (`src/lib/response-cache.ts:133`), and busted per slug on write, on
   moderation, and on erasure (`src/lib/moderation.ts:224-226`). Nothing here is
   more exposed than the page a reader already sees.
+- **Atom feeds** — the latest 50 approved comments per post, with bodies and
+  author display names, for 5 minutes (`src/routes/feed.ts`). Dropped with the
+  slug's tree pages by the same bust, so erasure and moderation clear it in
+  the handling colo.
+- **Comment permalinks** — the `/c/:id` redirect target (the post URL plus an
+  anchor), for 5 minutes (`src/routes/permalink.ts`). No personal data.
 - **Rate-limit counters** — keyed by identity: `user:<id>` for a signed-in
   author, otherwise the `ip_hash` (`src/routes/api.comments.ts:433-436`). Just
   timestamps, expiring with the window.
