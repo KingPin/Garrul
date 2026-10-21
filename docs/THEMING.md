@@ -60,6 +60,7 @@ Or in a stylesheet:
 | `--garrul-vote-active`    | `--garrul-badge-bg`                      | Active vote / reaction highlight (defaults to the badge background) |
 | `--garrul-shadow`         | `0 1px 2px rgba(0,0,0,.06)`              | Box-shadow on raised surfaces         |
 | `--garrul-motion`         | `120ms`                                  | Duration of every hover/press/state transition. Set `0ms` to opt out; a reader's `prefers-reduced-motion` overrides it either way |
+| `--garrul-padding`        | `0`                                      | Inner padding of the widget root, as **one length** (e.g. `1rem`, `16px`). Default keeps it flush with host text; set it when you also set `--garrul-bg`. Shorthand (`1rem 2rem`) and percentages are unsupported: the narrow-screen Turnstile offset reuses the value inside `calc()` |
 
 `--garrul-font` can only name fonts the host page already loads. `@font-face`
 cannot be declared inside the shadow root, so load the web font on your page

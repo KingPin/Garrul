@@ -34,6 +34,11 @@ workers_dev = true
 # Per-version preview URLs are not needed for a comment backend.
 preview_urls = false
 
+# Minify the Worker script. Cuts the upload by about a third (~20% gzipped)
+# with no behavior change; the widget bundle is minified separately by
+# scripts/build-embed.ts and is unaffected.
+minify = true
+
 # Recommended: point at your custom subdomain (e.g. comments.example.com).
 # Falling back to <name>.workers.dev works but causes third-party-cookie
 # friction in some browsers — see docs.

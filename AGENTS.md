@@ -889,6 +889,7 @@ ancestor.
 | `--garrul-vote-active` | `--garrul-badge-bg`                                     | Active vote / reaction highlight (defaults to the badge background) |
 | `--garrul-shadow`     | `0 1px 2px rgba(0,0,0,.06)`                              | Box-shadow on raised surfaces          |
 | `--garrul-motion`     | `120ms`                                                  | Transition duration; `0ms` opts out    |
+| `--garrul-padding`    | `0`                                                      | Widget root inner padding, one length (no shorthand or %); opt-in with `--garrul-bg` |
 
 ### Presets (since v2.9.0)
 

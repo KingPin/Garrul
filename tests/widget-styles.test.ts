@@ -62,12 +62,12 @@ describe("widget stylesheet minification", () => {
 		for (const c of classes) expect(minified).toContain(c);
 	});
 
-	it("scopes the accent-button rule to the form's direct children", () => {
+	it("scopes the accent-button rule to the submit button's class", () => {
 		// The tabs and Markdown toolbar are <button>s nested inside .gr-form.
 		// A descendant selector outranks their class rules and paints them in
-		// the accent palette, so only the top-level submit may match.
-		expect(source).not.toMatch(/\.gr-form button\b/);
-		expect(source).toContain(".gr-form > button {");
+		// the accent palette, so only the submit's own class may match.
+		expect(source).not.toMatch(/\.gr-form >? ?button\b/);
+		expect(source).toContain(".gr-form .gr-submit {");
 	});
 
 	it("preserves every shipped data-preset palette", () => {
