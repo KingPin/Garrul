@@ -1653,7 +1653,10 @@ routes = [
 `custom_domain = true` requires the apex zone on Cloudflare DNS.
 Wrangler provisions the proxied subdomain on first deploy (first cert
 issuance ~30 seconds). Don't use `*.workers.dev` in production —
-third-party-cookie blocking in Safari/Brave breaks sign-in.
+third-party-cookie blocking in Safari/Brave breaks sign-in. Once the
+custom domain works, set `workers_dev = false` in `wrangler.toml`:
+Wrangler only defaults it off when `routes` is set, and an explicit
+`true` keeps the `workers.dev` hostname public alongside your domain.
 
 **Vulnerability disclosure (`security.txt`).** Set a disclosure contact —
 Admin → Settings → Vulnerability disclosure, or the `SECURITY_CONTACT`

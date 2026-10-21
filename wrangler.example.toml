@@ -28,8 +28,9 @@ main = "src/index.ts"
 compatibility_date = "2025-11-01"
 compatibility_flags = ["nodejs_compat"]
 
-# Serve from <name>.<subdomain>.workers.dev. Wrangler enables this by default
-# and warns when it is unset; a custom domain (routes below) works alongside it.
+# Serve from <name>.<subdomain>.workers.dev. Unset, Wrangler enables it only
+# when no routes are configured. Once you add a custom domain (routes below),
+# set this to false unless you want the workers.dev hostname to stay public.
 workers_dev = true
 # Per-version preview URLs are not needed for a comment backend.
 preview_urls = false
