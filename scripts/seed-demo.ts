@@ -104,8 +104,26 @@ const upsertPost = (slug: string, title: string, url: string, now: number) => {
 	d1Execute(sql);
 };
 
+// Every table with a plain (non-cascading) FK to comments(id). Clicking around
+// the demo thread leaves votes, reactions, reports and digest rows behind, and
+// any one of them fails the comments DELETE on the next re-seed. spam_verdicts
+// is ON DELETE CASCADE and needs no entry.
+const COMMENT_CHILD_TABLES = [
+	"votes",
+	"reactions",
+	"reports",
+	"notifications",
+	"moderator_notifications",
+];
+
 const wipeExistingComments = (slug: string) => {
-	d1Execute(`DELETE FROM comments WHERE post_slug = '${sqlEsc(slug)}'`);
+	const ids = `SELECT id FROM comments WHERE post_slug = '${sqlEsc(slug)}'`;
+	d1Execute(
+		[
+			...COMMENT_CHILD_TABLES.map((t) => `DELETE FROM ${t} WHERE comment_id IN (${ids})`),
+			`DELETE FROM comments WHERE post_slug = '${sqlEsc(slug)}'`,
+		].join(";\n"),
+	);
 };
 
 const insertSeedUser = (name: string, now: number): string => {
