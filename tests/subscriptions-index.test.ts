@@ -43,13 +43,14 @@ describe("subscriptions email index", () => {
 		// Verbatim predicate from countPendingSubscriptionsForEmail.
 		const detail = plan(
 			`SELECT COUNT(*) AS n FROM subscriptions
-			  WHERE email = 'a@example.com' AND confirmed_at IS NULL`,
+			  WHERE email = 'a@example.com' AND confirmed_at IS NULL
+			    AND unsubscribed_at IS NULL AND created_at >= 0`,
 		);
 		expect(detail).toContain("idx_subs_email_confirmed");
 		expect(detail).not.toContain("SCAN subscriptions");
-		// Both predicate columns are in the index, so SQLite never touches the
-		// table at all — this is the cheapest shape available.
-		expect(detail).toContain("COVERING INDEX");
+		// Not a covering index any more: the cancel and age filters read the
+		// rows the seek lands on. Those are one address's pending rows, so a
+		// handful at most.
 	});
 
 	it("serves the erasure lookups from the index", () => {

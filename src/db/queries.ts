@@ -2567,16 +2567,33 @@ export const confirmSubscription = async (
 	return (res.meta?.changes ?? 0) > 0;
 };
 
+/**
+ * Never-confirmed rows for one address created at or after `since`, for the
+ * per-address pending cap on POST /subscribe.
+ *
+ * Without the window the cap was a permanent lockout: nothing ever deletes a
+ * pending row, so one stranger naming an address on five posts left that
+ * address unable to subscribe by email again. Cancelled rows are excluded for
+ * the same reason — a reader who cancelled a pending row should get its slot
+ * back.
+ *
+ * `created_at` is a sound "pending since" here only because of the
+ * `unsubscribed_at IS NULL` filter: the one upsert branch that turns an old
+ * confirmed row back into a pending one (re-subscribing after a cancel) leaves
+ * `unsubscribed_at` set, so such a row is never counted with a stale timestamp.
+ */
 export const countPendingSubscriptionsForEmail = async (
 	db: D1Database,
 	email: string,
+	since: number,
 ): Promise<number> => {
 	const row = await db
 		.prepare(
 			`SELECT COUNT(*) AS n FROM subscriptions
-			  WHERE email = ? AND confirmed_at IS NULL`,
+			  WHERE email = ? AND confirmed_at IS NULL
+			    AND unsubscribed_at IS NULL AND created_at >= ?`,
 		)
-		.bind(email.toLowerCase())
+		.bind(email.toLowerCase(), since)
 		.first<{ n: number }>();
 	return row?.n ?? 0;
 };

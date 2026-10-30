@@ -29,9 +29,10 @@
  *     it, which is what the widget relies on.
  *     The user already proved control of the inbox to the provider, so a
  *     second loop adds friction without security.
- *   - A per-email pending cap (5) prevents amplifying the confirmation
- *     email itself into a mailbomb — without it an attacker could forge
- *     5 confirm-emails per minute per IP without consuming any of them.
+ *   - A per-email pending cap (5 per week) prevents amplifying the
+ *     confirmation email itself into a mailbomb — without it an attacker
+ *     could forge 5 confirm-emails per minute per IP without consuming any
+ *     of them.
  *
  * Mailbomb defence, in the order it applies (issue #64):
  *   1. The IP-keyed rate limiter. Racy on the default Cache API backend — N
@@ -78,6 +79,10 @@ const subscriptions = new Hono<{ Bindings: Bindings; Variables: LocaleVars }>();
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PENDING_PER_EMAIL_CAP = 5;
+// How long a never-confirmed row holds one of those five slots. Bounds the
+// confirm mail a stranger can aim at one address to five new threads a week,
+// and bounds how long they can keep that address from subscribing.
+const PENDING_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 const PROVIDER_VERIFIED = new Set(["github", "google"]);
 
 /**
@@ -202,7 +207,11 @@ subscriptions.post("/", async (c) => {
 	// itself from being weaponized as a mailbomb. The cap is generous so
 	// real users juggling threads aren't rejected.
 	if (!autoConfirm) {
-		const pending = await countPendingSubscriptionsForEmail(c.env.DB, email);
+		const pending = await countPendingSubscriptionsForEmail(
+			c.env.DB,
+			email,
+			Date.now() - PENDING_WINDOW_MS,
+		);
 		if (pending >= PENDING_PER_EMAIL_CAP) {
 			return c.json(
 				{ error: t("err.ratelimit"), reason: "pending_limit_exceeded" },

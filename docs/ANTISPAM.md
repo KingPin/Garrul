@@ -227,7 +227,7 @@ The rate limiter is a **cost-raiser, not a hard ceiling.** Treat the configured 
 | Report | `UNIQUE(comment_id, reporter_ip_hash)` — one report per comment per network, full stop |
 | Vote / reaction / page vote | Idempotent toggle on a unique row — repeats flip a row, they don't accumulate |
 | `/auth/signout`, `/auth/session/exchange`, `/auth/:provider/callback` | **None.** The rate limit is the only control today, so it raises the cost of exhausting the 1,000/day account-wide KV delete quota but does not cap it (30 per 600 s is 4,320/day from one IP). If you see delete-quota pressure, add the [WAF rule for sign-out](#waf-rule-for-sign-out). Binding `RATE_LIMIT_DO` closes the concurrency and per-colo gaps, but one IP can still reach 4,320/day; only a WAF rule on a Pro or higher plan lowers that figure |
-| Subscribe | A [global confirmation-email ceiling](#the-confirmation-email-ceiling), counted atomically in D1. `PENDING_PER_EMAIL_CAP` (5 unconfirmed rows per address) is also non-racy but binds *per address*, so it alone does not stop an attacker cycling addresses |
+| Subscribe | A [global confirmation-email ceiling](#the-confirmation-email-ceiling), counted atomically in D1. `PENDING_PER_EMAIL_CAP` (5 unconfirmed rows per address per week; cancelled rows don't count) is also non-racy but binds *per address*, so it alone does not stop an attacker cycling addresses |
 
 **What the race actually buys an attacker.** Every second control in that table is unaffected by it, so what #2 loosens is a *rate*, not an action — it cannot buy a second report on the same comment, or a double-counted vote. The `/auth/*` row is the exception: it has no second control, so there the race lets concurrent requests spend extra KV deletes.
 
