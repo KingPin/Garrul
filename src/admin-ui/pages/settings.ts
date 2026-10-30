@@ -254,7 +254,7 @@ const SPAM_NUMBER_META: { key: NumberKey; label: string; help: string }[] = [
 	{
 		key: "spam_ai_threshold",
 		label: "AI spam threshold (%)",
-		help: "Only used when SPAM_PROVIDER is workers-ai. Queue a comment when the classifier rates it at least this likely to be spam. Lower catches more spam and queues more real comments. Each comment's detail page shows the classifier score (0–1), so you can tune this against real traffic. Cost: one Workers AI call per comment, roughly 1–3 neurons (an estimate; Usage shows the measured average per call). The 10,000 free neurons a day cover a few thousand comments. The threshold does not change the cost.",
+		help: "Only used when SPAM_PROVIDER is workers-ai. Queue a comment when the classifier rates it at least this likely to be spam. Lower catches more spam and queues more real comments. Each comment's detail page shows the classifier score (0–1), so you can tune this against real traffic. Cost: one Workers AI call per comment; the model below sets the price. The threshold does not change the cost.",
 	},
 ];
 
@@ -404,6 +404,20 @@ export const renderSettings = (
 		],
 		label: "Default order",
 		help: "Order top-level comments load in. Readers can still switch order themselves; this is only where they start. \"Top\" needs voting enabled — with voting off it serves newest first instead, and your choice here is kept for if you turn voting back on.",
+	});
+
+	// Which Clef model the classifier calls. Lives with the threshold on the
+	// Anti-spam tab because the two are tuned together: a bigger model is worth
+	// trying when the threshold alone can't separate spam from real comments.
+	const aiModelSelect = renderSelect({
+		name: "spam_ai_model",
+		model: "strs.spam_ai_model",
+		options: [
+			{ value: "clef-flash", label: "Clef-flash — 9B, cheapest (default)" },
+			{ value: "clef", label: "Clef — 27B, about 6× the cost per comment" },
+		],
+		label: "AI classifier model",
+		help: "Only used when SPAM_PROVIDER is workers-ai. Clef-flash costs roughly 1–3 neurons per comment, so the 10,000 free neurons a day cover a few thousand comments. Clef costs roughly 6–20, which covers about 500–1,500. Past the free allowance on the Free plan, checks fail and comments post without an AI check. Clef is also slower; a check that runs past 5 seconds counts as no opinion. Usage shows the measured average per call.",
 	});
 
 	const blocklistTextarea = renderTextarea({
@@ -670,6 +684,7 @@ export const renderSettings = (
       comment. <a href="/admin/usage">Usage</a> shows today's totals.</p>
       ${modToggles}
       ${spamNumberInputs}
+      ${aiModelSelect}
       <p class="muted" x-show="nums.spam_honeypot_min_ms > 0 && !hasFormTsSecret" x-cloak>
       <strong>Fill-time check is inactive.</strong> It needs
       <code>SPAM_FORM_TS_SECRET</code> to sign the form timestamp — without it an

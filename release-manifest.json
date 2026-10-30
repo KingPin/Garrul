@@ -227,6 +227,11 @@
       "addedIn": "2.38.0"
     },
     {
+      "name": "SPAM_AI_MODEL",
+      "required": false,
+      "addedIn": "2.41.0"
+    },
+    {
       "name": "SPAM_FIRST_COMMENT_MODERATE",
       "required": false,
       "addedIn": "1.1.1"

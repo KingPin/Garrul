@@ -25,6 +25,7 @@ import { COMMENT_SORTS, getAllSettings } from "../db/queries";
 import { LOCALES } from "../i18n";
 import { AUTO_LOCALE } from "../i18n/negotiate";
 import { DEFAULT_REACTION_KINDS, REACTION_KIND_SET } from "../widget/reactions";
+import { CLEF_MODELS } from "./spam/workers-ai";
 import { MAX_DEPTH } from "./tree";
 
 export type FlagKey =
@@ -60,7 +61,10 @@ export type NumberKey =
 
 export type ResolvedNumbers = Record<NumberKey, number>;
 
-export type StringSettingKey = "default_locale" | "default_sort";
+export type StringSettingKey =
+	| "default_locale"
+	| "default_sort"
+	| "spam_ai_model";
 
 export type ResolvedStrings = Record<StringSettingKey, string>;
 
@@ -240,7 +244,7 @@ const NUMBERS: Record<
 		min: 0,
 		max: 60_000,
 	},
-	// Queue a comment when the Workers AI classifier (Clef-flash) puts its spam
+	// Queue a comment when the Workers AI classifier (Clef) puts its spam
 	// probability at or above this percent. Only read when
 	// SPAM_PROVIDER=workers-ai. min is 1, not 0: 0 would queue every comment,
 	// which is first-comment moderation for everyone, not a classifier.
@@ -363,6 +367,19 @@ const STRINGS: Record<
 		env: "DEFAULT_SORT",
 		default: "new",
 		options: () => [...COMMENT_SORTS],
+	},
+	// Which Clef model the workers-ai classifier calls. A whitelist, not a free
+	// model id: the value is spliced into the `@cf/cloudflare/…` id, so a
+	// stray row must not be able to point AI.run at another model. A junk value
+	// resolves to the default rather than switching the classifier off.
+	//
+	// `clef-flash` stays the default because it is what every install ran before
+	// this setting existed — an upgrade must not multiply the per-comment cost.
+	// Only read when SPAM_PROVIDER=workers-ai.
+	spam_ai_model: {
+		env: "SPAM_AI_MODEL",
+		default: "clef-flash",
+		options: () => [...CLEF_MODELS],
 	},
 };
 

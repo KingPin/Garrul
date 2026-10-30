@@ -639,9 +639,21 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
 		adminEditable: true,
 		hint: "flag if the Workers AI spam probability is at least N percent",
 		description:
-			"Optional. With `SPAM_PROVIDER=workers-ai`, flag a comment to `pending` when the Clef-flash classifier rates it at least N percent likely to be spam. `1`–`100`; unset = `70`. Ignored for other providers.",
+			"Optional. With `SPAM_PROVIDER=workers-ai`, flag a comment to `pending` when the Clef classifier rates it at least N percent likely to be spam. `1`–`100`; unset = `70`. Ignored for other providers.",
 		example: "70",
 		addedIn: "2.38.0",
+	},
+	{
+		name: "SPAM_AI_MODEL",
+		kind: "var",
+		required: false,
+		group: "Anti-spam",
+		adminEditable: true,
+		hint: 'Workers AI classifier model: "clef-flash" (default) or "clef"',
+		description:
+			"Optional. With `SPAM_PROVIDER=workers-ai`, which Cloudflare Clef model classifies comments: `clef-flash` (9B, cheapest) or `clef` (27B, about 6× the neurons per comment). Any other value resolves to `clef-flash`. Ignored for other providers.",
+		example: "clef",
+		addedIn: "2.41.0",
 	},
 	{
 		name: "SPAM_FIRST_COMMENT_MODERATE",

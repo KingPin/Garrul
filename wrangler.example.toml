@@ -209,6 +209,11 @@ OAUTH_CALLBACK_BASE = "https://comments.example.com"
 # at least this percent (1-100). Also editable on /admin/settings.
 # SPAM_AI_THRESHOLD = "70"
 #
+# Workers AI only: which Clef model classifies — "clef-flash" (default,
+# cheapest) or "clef" (27B, about 6x the neurons). Also editable on
+# /admin/settings.
+# SPAM_AI_MODEL = "clef"
+#
 # For SPAM_PROVIDER = "workers-ai", also add this binding:
 # [ai]
 # binding = "AI"

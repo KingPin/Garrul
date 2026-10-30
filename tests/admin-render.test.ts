@@ -608,6 +608,9 @@ describe("renderDashboard", () => {
 	const dashNumbers = Object.fromEntries(
 		NUMBER_KEYS.map((k) => [k, 0]),
 	) as ResolvedNumbers;
+	const dashStrings = Object.fromEntries(
+		STRING_KEYS.map((k) => [k, stringDefault(k)]),
+	) as ResolvedStrings;
 
 	it("renders the spam-rate percentage and oldest-pending link", () => {
 		const html = renderDashboard(
@@ -626,6 +629,7 @@ describe("renderDashboard", () => {
 			env,
 			dashFlags,
 			dashNumbers,
+			dashStrings,
 		);
 		expect(html).toContain("12.0%");
 		expect(html).toContain("/admin/comments/01HOLDEST");
@@ -651,6 +655,7 @@ describe("renderDashboard", () => {
 			env,
 			dashFlags,
 			dashNumbers,
+			dashStrings,
 		);
 		expect(html).toContain("No activity in this range");
 		expect(html).toContain("No pending comments");
@@ -673,6 +678,7 @@ describe("renderDashboard", () => {
 			env,
 			dashFlags,
 			dashNumbers,
+			dashStrings,
 		);
 		expect(html).toContain("Comments by domain");
 		expect(html).toContain("a.example.com");
@@ -701,6 +707,7 @@ describe("renderDashboard", () => {
 			env,
 			dashFlags,
 			dashNumbers,
+			dashStrings,
 		);
 		expect(html).toContain("…and 3 more domains");
 		expect(html).toContain("h0.example.com");
@@ -723,9 +730,29 @@ describe("renderDashboard", () => {
 			env,
 			dashFlags,
 			dashNumbers,
+			dashStrings,
 		);
 		expect(html).not.toContain("<svg/onload=alert(1)>");
 		expect(html).toContain("&lt;svg/onload=alert(1)&gt;");
+	});
+
+	it("names the Clef model and threshold in the anti-spam summary", () => {
+		const html = renderDashboard(
+			{
+				stats,
+				timeline: [],
+				top_posts: [],
+				top_commenters: [],
+				oldest_pending: null,
+				spam_rate: { total: 0, spam: 0 },
+				by_host: [],
+			},
+			{ SPAM_PROVIDER: "workers-ai" } as Bindings,
+			dashFlags,
+			{ ...dashNumbers, spam_ai_threshold: 70 },
+			dashStrings,
+		);
+		expect(html).toContain("workers-ai(clef-flash, ≥70%)");
 	});
 });
 

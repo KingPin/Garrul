@@ -212,6 +212,22 @@ describe("workers-ai provider", () => {
 		);
 	});
 
+	it("calls full Clef when the model setting names it", async () => {
+		const ai = makeAi(0.1);
+		const v = await checkSpam(envWith(ai), input, 70, "clef");
+		expect(ai.run).toHaveBeenCalledWith(
+			"@cf/cloudflare/clef",
+			expect.objectContaining({ model: "clef" }),
+		);
+		expect(v?.raw).toMatchObject({ model: "@cf/cloudflare/clef" });
+	});
+
+	it("records the Clef-flash id when no model is passed", async () => {
+		// Upgrade safety: an install with no new setting keeps today's raw.model.
+		const v = await checkSpam(envWith(makeAi(0.1)), input);
+		expect(v?.raw).toMatchObject({ model: "@cf/cloudflare/clef-flash" });
+	});
+
 	it("flags spam at or above the threshold and records the probability as score", async () => {
 		const v = await checkSpam(envWith(makeAi(0.5)), input, 50);
 		expect(v).toMatchObject({ spam: true, reason: "workers-ai.spam", score: 0.5 });

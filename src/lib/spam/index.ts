@@ -12,7 +12,7 @@
 
 import { log } from "../log";
 import { checkAkismet } from "./akismet";
-import { checkWorkersAi } from "./workers-ai";
+import { checkWorkersAi, type ClefModel } from "./workers-ai";
 
 export type SpamCheckInput = {
 	body_md: string;
@@ -45,6 +45,8 @@ export const checkSpam = async (
 	input: SpamCheckInput,
 	// The resolved `spam_ai_threshold` setting; 70 mirrors its default.
 	aiThreshold = 70,
+	// The resolved `spam_ai_model` setting; clef-flash mirrors its default.
+	aiModel: ClefModel = "clef-flash",
 ): Promise<SpamVerdict | null> => {
 	const provider = env.SPAM_PROVIDER;
 	if (!provider) return null;
@@ -58,7 +60,7 @@ export const checkSpam = async (
 	if (provider === "workers-ai") {
 		if (!env.AI) return null;
 		return checkWorkersAi(
-			{ ai: env.AI, threshold: aiThreshold },
+			{ ai: env.AI, model: aiModel, threshold: aiThreshold },
 			input,
 		);
 	}

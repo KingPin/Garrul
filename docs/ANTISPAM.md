@@ -181,13 +181,13 @@ Add an AI binding to `wrangler.toml`:
 binding = "AI"
 ```
 
-**How it decides.** The classifier is Cloudflare's [Clef-flash](https://developers.cloudflare.com/workers-ai/models/clef-flash/) (`@cf/cloudflare/clef-flash`), a decision model rather than a chat model. Garrul sends it the comment body (first 2,000 characters), the author's display name, whether this is their first comment, and the page URL, and asks one yes/no question: is this spam? Clef returns a probability, not free text.
+**How it decides.** The classifier is one of Cloudflare's Clef decision models, chosen by `SPAM_AI_MODEL` (also on **Admin → Settings → Anti-spam**): [Clef-flash](https://developers.cloudflare.com/workers-ai/models/clef-flash/) (`@cf/cloudflare/clef-flash`, 9B, the default) or [Clef](https://developers.cloudflare.com/workers-ai/models/clef/) (`@cf/cloudflare/clef`, 27B). Both are decision models rather than chat models, and both get the same request. Garrul sends it the comment body (first 2,000 characters), the author's display name, whether this is their first comment, and the page URL, and asks one yes/no question: is this spam? Clef returns a probability, not free text.
 
 A comment is queued when that probability is at or above the **AI spam threshold**: `SPAM_AI_THRESHOLD` (percent, `1`–`100`, default `70`), also editable on **Admin → Settings → Anti-spam**. The probability is stored as the verdict's score and shown on each comment's detail page, so you can tune the threshold against your real traffic. Lower it to catch more spam at the cost of more real comments in the queue; raise it for the reverse.
 
 **Privacy posture.** Inference runs on Cloudflare's edge via your AI binding — no third-party API call leaves CF infrastructure. Nothing about the comment is cached: each new comment is one model call.
 
-**Cost.** Clef-flash bills input tokens only: $0.038 per million, or 3,455 neurons per million, at the time of writing. A comment of up to 2,000 characters plus the question is a few hundred tokens, so one check is roughly 1–3 neurons. Both Workers plans include 10,000 neurons a day (reset 00:00 UTC), which covers a few thousand comments. On the Free plan, calls past that fail and comments post without an AI check; on Paid, 1,000 comments cost about $0.03. **Admin → Usage** shows today's neurons and the measured average per call. No API key is needed: the `[ai]` binding bills the account the Worker runs in.
+**Cost.** Clef-flash bills input tokens only: $0.038 per million, or 3,455 neurons per million, at the time of writing. A comment of up to 2,000 characters plus the question is a few hundred tokens, so one check is roughly 1–3 neurons. Both Workers plans include 10,000 neurons a day (reset 00:00 UTC), which covers a few thousand comments. Full Clef bills $0.240 per million input tokens (21,818 neurons per million), about 6.3× Clef-flash: roughly 6–20 neurons per check, so the free allowance covers about 500–1,500 comments a day. It is also slower; a check that runs past 5 seconds counts as no opinion and the comment posts on the heuristics alone. On the Free plan, calls past that fail and comments post without an AI check; on Paid, 1,000 comments cost about $0.03. **Admin → Usage** shows today's neurons and the measured average per call. No API key is needed: the `[ai]` binding bills the account the Worker runs in.
 
 Tradeoff vs. Akismet: no shared cross-site spam reputation, but no third-party data egress. Good fit if your audience cares about that, or if you don't want to manage another vendor.
 
@@ -207,7 +207,7 @@ Per comment post from a non-admin, read from the code rather than measured. Free
 | First-comment moderation | — | 1 indexed read | — | — |
 | Muted words | — | — | — | CPU only; at most 200 terms |
 | `akismet` | — | 1 indexed read (first-comment feature) | — | One call to Akismet |
-| `workers-ai` | — | 1 indexed read (first-comment feature) | — | Roughly 1–3 neurons [10,000/day] |
+| `workers-ai` | — | 1 indexed read (first-comment feature) | — | Roughly 1–3 neurons (Clef-flash) or 6–20 (Clef) [10,000/day] |
 
 Any layer that runs also inserts one `spam_verdicts` row, and the classifier inserts a second. Each insert is about three rows written, because the table has two indexes. No layer writes KV.
 

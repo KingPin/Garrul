@@ -1,11 +1,16 @@
 import type { Bindings } from "../../index";
-import type { ResolvedFlags, ResolvedNumbers } from "../../lib/settings";
+import type {
+	ResolvedFlags,
+	ResolvedNumbers,
+	ResolvedStrings,
+} from "../../lib/settings";
 import { escapeHtml } from "../escape";
 
 export const spamSummary = (
 	env: Bindings,
 	flags: ResolvedFlags,
 	numbers: ResolvedNumbers,
+	strings: ResolvedStrings,
 ): string => {
 	// Match the same gating evaluateSpam uses at runtime, otherwise the
 	// dashboard would claim a layer is active when it isn't (honeypot timing
@@ -16,7 +21,7 @@ export const spamSummary = (
 	// deploy-time value it replaced. The provider and its credentials stay env.
 	const provider =
 		env.SPAM_PROVIDER === "workers-ai"
-			? `workers-ai(≥${numbers.spam_ai_threshold}%)`
+			? `workers-ai(${strings.spam_ai_model}, ≥${numbers.spam_ai_threshold}%)`
 			: env.SPAM_PROVIDER || "off";
 	const heuristics: string[] = [];
 	const minMs = numbers.spam_honeypot_min_ms;

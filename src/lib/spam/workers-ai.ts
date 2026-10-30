@@ -1,5 +1,5 @@
 /**
- * Cloudflare Workers AI classifier, backed by Clef-flash.
+ * Cloudflare Workers AI classifier, backed by Clef-flash or Clef.
  *
  * Privacy posture: nothing leaves the Cloudflare edge — the AI binding
  * routes the inference call internally. Operators concerned about shipping
@@ -23,8 +23,15 @@ import {
 } from "./decision";
 import type { SpamCheckInput, SpamVerdict } from "./index";
 
+// The two text-capable Clef sizes. Both take the same request; they differ
+// in size, speed and price (docs/ANTISPAM.md has the figures). Clef-omni is
+// left out: it adds audio and video input, and a comment is text.
+export const CLEF_MODELS = ["clef-flash", "clef"] as const;
+export type ClefModel = (typeof CLEF_MODELS)[number];
+
 type WorkersAiConfig = {
 	ai: Ai;
+	model: ClefModel;
 	// Percent, 1–100: flag when P(spam) >= this / 100.
 	threshold: number;
 };
@@ -35,7 +42,6 @@ type ClefRunner = {
 	run(model: string, input: unknown): Promise<unknown>;
 };
 
-const MODEL = "@cf/cloudflare/clef-flash";
 // The comment POST waits on this; past it the check is "no opinion". AI.run
 // takes no AbortSignal, so the call is raced rather than cancelled.
 const TIMEOUT_MS = 5_000;
@@ -59,9 +65,10 @@ export const checkWorkersAi = async (
 	input: SpamCheckInput,
 ): Promise<SpamVerdict | null> => {
 	try {
+		const id = `@cf/cloudflare/${cfg.model}`;
 		const out = await withTimeout(
-			(cfg.ai as unknown as ClefRunner).run(MODEL, {
-				model: "clef-flash",
+			(cfg.ai as unknown as ClefRunner).run(id, {
+				model: cfg.model,
 				state: decisionState(input),
 				questions: QUESTIONS,
 			}),
@@ -75,7 +82,7 @@ export const checkWorkersAi = async (
 			});
 			return null;
 		}
-		return decisionVerdict(p, cfg.threshold, "workers-ai", MODEL);
+		return decisionVerdict(p, cfg.threshold, "workers-ai", id);
 	} catch (err) {
 		log.warn("spam.adapter.error", {
 			provider: "workers-ai",

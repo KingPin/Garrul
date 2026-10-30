@@ -857,7 +857,29 @@ describe("loadStrings", () => {
 			// `new` deliberately, not `old`: an upgrade must not reorder every
 			// thread on an existing install.
 			default_sort: "new",
+			// The model every install ran before the setting existed, so an
+			// upgrade does not change the per-comment cost.
+			spam_ai_model: "clef-flash",
 		});
+	});
+
+	it("resolves SPAM_AI_MODEL to its canonical Clef name", async () => {
+		const { env } = mkEnv({}, { SPAM_AI_MODEL: "CLEF" });
+		expect((await loadStrings(env)).spam_ai_model).toBe("clef");
+	});
+
+	it("falls back to clef-flash for a model outside the whitelist", async () => {
+		// A typo must not switch the classifier off, and nothing outside the
+		// list may reach `AI.run` — the id is built from this value.
+		const { env } = mkEnv({}, { SPAM_AI_MODEL: "@cf/meta/llama-3.1-8b" });
+		expect((await loadStrings(env)).spam_ai_model).toBe("clef-flash");
+	});
+
+	it("resolves a junk stored model to clef-flash, not to the env value", async () => {
+		// DB > env: a present row wins even when it is junk, and junk resolves to
+		// the default — so a bad row can't reach AI.run either.
+		const { env } = mkEnv({ spam_ai_model: "gpt-4o" }, { SPAM_AI_MODEL: "clef" });
+		expect((await loadStrings(env)).spam_ai_model).toBe("clef-flash");
 	});
 
 	it("resolves a value for every canonical string key", async () => {
