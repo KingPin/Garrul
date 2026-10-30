@@ -191,6 +191,32 @@ A comment is queued when that probability is at or above the **AI spam threshold
 
 Tradeoff vs. Akismet: no shared cross-site spam reputation, but no third-party data egress. Good fit if your audience cares about that, or if you don't want to manage another vendor.
 
+### Bring-your-own decision model (`SPAM_PROVIDER=decisions`)
+
+Use any endpoint that speaks the OpenAI-style `/decisions` API — OpenRouter by default — with your own key and the model you choose. Garrul sends exactly the request the Workers AI classifier sends: the same state and the same yes/no question. The answer is a spam probability, and the same **AI spam threshold** (`SPAM_AI_THRESHOLD`, also on **Admin → Settings → Anti-spam**) decides.
+
+```toml
+# wrangler.toml
+[vars]
+SPAM_PROVIDER = "decisions"
+SPAM_DECISIONS_MODEL = "~typesafe/jev-latest"   # the model id as your endpoint names it
+# SPAM_DECISIONS_URL = "https://openrouter.ai/api/alpha/decisions"   # the default
+```
+
+```bash
+wrangler secret put SPAM_DECISIONS_API_KEY
+```
+
+`SPAM_DECISIONS_MODEL` is only the starting value. The model is also on **Admin → Settings → Anti-spam** (`spam_decisions_model`), so you can switch models on live traffic and compare, with no redeploy. **Reset** returns it to `SPAM_DECISIONS_MODEL`.
+
+The check is skipped (no opinion, the comment posts on the heuristics alone) when the key or the model is unset, or when `SPAM_DECISIONS_URL` is not `https://` — the key is never sent in plaintext. Garrul never follows a redirect from the endpoint; a 3xx answer is no opinion. Each verdict records the model id **you configured** in `spam_verdicts.raw.model`, so the comment detail page shows which setting was in force. With an alias such as `~typesafe/jev-latest`, that is the alias, not the concrete model the provider resolved it to.
+
+**Privacy posture.** Unlike Workers AI, **the comment leaves Cloudflare.** The comment body (first 2,000 characters), the author's display name, whether this is their first comment, and the page URL go to the endpoint you configure, and from there to whichever model vendor it routes to. Email, IP and user agent are never sent. This is a new subprocessor: add it to your privacy policy (`docs/privacy-policy.template.md` has a stub) and check `docs/compliance/subprocessors.md`.
+
+**Stability.** OpenRouter's route is `/api/alpha/`, so its shape can change. A response Garrul cannot read is logged as `spam.adapter.error` and treated as no opinion — the classifier goes quiet, it never holds comments by mistake. Watch `wrangler tail` for that event after a provider change.
+
+**Cost.** Billed by your provider, per its price list. Garrul makes one call per comment that no heuristic has already queued, and waits at most 5 seconds. **Admin → Usage** tracks Workers AI neurons only, not this spend.
+
 ### Combining
 
 Layers stack. With everything on, a comment is flagged if **any** signal trips. The classifier is only called when no heuristic has already flagged (saves cost/latency).
@@ -208,6 +234,7 @@ Per comment post from a non-admin, read from the code rather than measured. Free
 | Muted words | — | — | — | CPU only; at most 200 terms |
 | `akismet` | — | 1 indexed read (first-comment feature) | — | One call to Akismet |
 | `workers-ai` | — | 1 indexed read (first-comment feature) | — | Roughly 1–3 neurons (Clef-flash) or 6–20 (Clef) [10,000/day] |
+| `decisions` | — | 1 indexed read (first-comment feature) | — | One call to your provider, billed by it |
 
 Any layer that runs also inserts one `spam_verdicts` row, and the classifier inserts a second. Each insert is about three rows written, because the table has two indexes. No layer writes KV.
 

@@ -53,7 +53,7 @@ writing a name in it.
 | --- | --- |
 | `posts` | `slug`, `title`, `url` — page metadata, plus `page_votes_up` / `page_votes_down` totals |
 | `page_reaction_totals` | `post_slug`, `kind`, `count` — per-page reaction totals, no user link |
-| `spam_verdicts` | `comment_id`, `source`, `verdict`, `score`, `raw`. `raw` is adapter metadata only: `{response, pro_tip}` for Akismet (`src/lib/spam/akismet.ts:86`), `{model, threshold}` for Workers AI, whose spam probability goes in `score` (`src/lib/spam/workers-ai.ts:72`); older verdicts also carry `cached`. It does **not** echo comment content. |
+| `spam_verdicts` | `comment_id`, `source`, `verdict`, `score`, `raw`. `raw` is adapter metadata only: `{response, pro_tip}` for Akismet (`src/lib/spam/akismet.ts:86`), `{model, threshold}` for Workers AI and the `decisions` provider, whose spam probability goes in `score` (`src/lib/spam/decision.ts`); older verdicts also carry `cached`. It does **not** echo comment content. |
 | `webhook_endpoints` | Operator config: `url`, `secret`, `events` |
 | `saved_replies` | Canned moderator text, `owner_id`. Staff-authored, not subject data. |
 | `settings`, `email_send_budget`, `_migrations` | Instance configuration and counters |

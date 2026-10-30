@@ -398,14 +398,19 @@ default, server-side clamped), edited from **Settings → Moderation**.
   collapsing "off" onto `0` would have redefined what `0` does for anyone
   already running it.
 - `SPAM_AI_THRESHOLD` — clamped to `1`–`100`, default `70`. Percent spam
-  probability at which the `workers-ai` classifier (Clef) queues a
-  comment. No `0`: that would queue everything. Ignored for other providers.
-  The probability lands in `spam_verdicts.score`.
+  probability at which the `workers-ai` classifier (Clef) or the
+  `decisions` provider queues a comment. No `0`: that would queue everything.
+  Ignored for `akismet`. The probability lands in `spam_verdicts.score`.
 - `SPAM_AI_MODEL` — `clef-flash` (default) or `clef`, matched
   case-insensitively. Anything else resolves to `clef-flash`, so a typo never
   turns the classifier off and no other Workers AI model can be reached. Only
   read by the `workers-ai` provider. `spam_verdicts.raw.model` records which
   model decided.
+- `SPAM_DECISIONS_MODEL` — free-form model id for the `decisions` provider,
+  up to 200 characters, as the endpoint names it. The Settings page row
+  (`spam_decisions_model`) overrides it so operators can compare models
+  without a redeploy; empty skips the check. `spam_verdicts.raw.model`
+  records the configured id (an alias stays an alias).
 - `SPAM_HONEYPOT_MIN_MS` — clamped to `0`–`60000`; `0` (default) = off. Still
   requires `SPAM_FORM_TS_SECRET`, which stays a secret: without it the form
   timestamp is unsigned and forgeable, so `evaluateSpam` skips the check, the
