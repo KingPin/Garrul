@@ -764,8 +764,8 @@ describe("renderDashboard", () => {
 		expect(html).toContain("workers-ai(clef-flash, ≥70%)");
 	});
 
-	it("names the BYOK model and threshold in the anti-spam summary", () => {
-		const html = renderDashboard(
+	const decisionsSummary = (env: Partial<Bindings>) =>
+		renderDashboard(
 			{
 				stats,
 				timeline: [],
@@ -775,14 +775,24 @@ describe("renderDashboard", () => {
 				spam_rate: { total: 0, spam: 0 },
 				by_host: [],
 			},
-			{ SPAM_PROVIDER: "decisions" } as Bindings,
+			{ SPAM_PROVIDER: "decisions", ...env } as Bindings,
 			dashFlags,
 			{ ...dashNumbers, spam_ai_threshold: 80 },
 			dashStrings,
 			// The resolved setting, not env: an admin can change it.
 			{ ...dashTexts, spam_decisions_model: "vendor/decider" },
 		);
-		expect(html).toContain("decisions(vendor/decider, ≥80%)");
+
+	it("names the BYOK model and threshold in the anti-spam summary", () => {
+		expect(decisionsSummary({ SPAM_DECISIONS_API_KEY: "k" })).toContain(
+			"decisions(vendor/decider, ≥80%)",
+		);
+	});
+
+	it("flags a decisions provider with no key, which skips every check", () => {
+		expect(decisionsSummary({})).toContain(
+			"decisions(vendor/decider, ≥80%, no key)",
+		);
 	});
 });
 
