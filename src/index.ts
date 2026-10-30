@@ -26,7 +26,7 @@ import { runWebhookRetries } from "./lib/webhook";
 import { runIpRetention } from "./db/ip-retention";
 import { runAuditRetention } from "./db/audit-retention";
 import { log, requestLogger } from "./lib/log";
-import { corsAndCsrf } from "./lib/cors";
+import { corsAndCsrf, isSelfOriginFormPath } from "./lib/cors";
 import { jsonBodyLimit } from "./lib/body-limit";
 import { requireConfig } from "./lib/require-config";
 import { type LocaleVars, localeMiddleware } from "./lib/locale";
@@ -308,9 +308,7 @@ app.use("*", async (c, next) => {
 	// token in the URL from leaking to any other site.
 	c.header(
 		"referrer-policy",
-		/^\/api\/v1\/subscribe\/(confirm|unsubscribe)\//.test(c.req.path)
-			? "same-origin"
-			: "no-referrer",
+		isSelfOriginFormPath(c.req.path) ? "same-origin" : "no-referrer",
 	);
 	c.header(
 		"permissions-policy",
