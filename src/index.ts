@@ -302,7 +302,16 @@ app.use("*", requireConfig());
 app.use("*", async (c, next) => {
 	await next();
 	c.header("strict-transport-security", "max-age=63072000; includeSubDomains; preload");
-	c.header("referrer-policy", "no-referrer");
+	// The emailed confirm/unsubscribe pages POST a form back to themselves, and
+	// under no-referrer browsers send that POST with `Origin: null`, which the
+	// self-origin CSRF check in lib/cors.ts rejects. same-origin still keeps the
+	// token in the URL from leaking to any other site.
+	c.header(
+		"referrer-policy",
+		/^\/api\/v1\/subscribe\/(confirm|unsubscribe)\//.test(c.req.path)
+			? "same-origin"
+			: "no-referrer",
+	);
 	c.header(
 		"permissions-policy",
 		"interest-cohort=(), browsing-topics=()",
