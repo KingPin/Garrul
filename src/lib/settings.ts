@@ -245,9 +245,9 @@ const NUMBERS: Record<
 		min: 0,
 		max: 60_000,
 	},
-	// Queue a comment when the Workers AI classifier (Clef) puts its spam
+	// Queue a comment when the AI classifier (Clef) puts its spam
 	// probability at or above this percent. Only read when
-	// SPAM_PROVIDER=workers-ai. min is 1, not 0: 0 would queue every comment,
+	// SPAM_PROVIDER=workers-ai or decisions. min is 1, not 0: 0 would queue every comment,
 	// which is first-comment moderation for everyone, not a classifier.
 	spam_ai_threshold: {
 		env: "SPAM_AI_THRESHOLD",

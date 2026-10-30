@@ -432,8 +432,8 @@ export const renderSettings = (
 		help: `Only used when SPAM_PROVIDER is <code>decisions</code>. The model id
 		as your endpoint names it — on OpenRouter, <code>vendor/model</code>.
 		Change it here to compare models on real traffic: each comment's detail
-		page records the model that was asked. Empty skips the check. Reset
-		returns to <code>SPAM_DECISIONS_MODEL</code>.`,
+		page records the model that was asked. Empty skips the check. <strong>Reset to defaults</strong>
+		(clears every override) returns it to <code>SPAM_DECISIONS_MODEL</code>.`,
 		rows: 1,
 		maxlength: SPAM_DECISIONS_MODEL_MAX,
 		placeholder: "~typesafe/jev-latest",

@@ -671,7 +671,7 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
 		required: false,
 		group: "Anti-spam",
 		adminEditable: true,
-		hint: "flag if the Workers AI spam probability is at least N percent",
+		hint: "flag if the AI classifier's spam probability is at least N percent",
 		description:
 			"Optional. With `SPAM_PROVIDER=workers-ai` or `decisions`, flag a comment to `pending` when the Clef classifier rates it at least N percent likely to be spam. `1`–`100`; unset = `70`. Ignored for `akismet`.",
 		example: "70",
