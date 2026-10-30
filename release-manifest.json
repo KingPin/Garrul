@@ -107,6 +107,11 @@
       "addedIn": "1.1.1"
     },
     {
+      "name": "SPAM_DECISIONS_API_KEY",
+      "required": false,
+      "addedIn": "2.41.0"
+    },
+    {
       "name": "SPAM_FORM_TS_SECRET",
       "required": false,
       "addedIn": "1.1.1"
@@ -205,6 +210,16 @@
       "name": "SPAM_PROVIDER",
       "required": false,
       "addedIn": "1.1.1"
+    },
+    {
+      "name": "SPAM_DECISIONS_MODEL",
+      "required": false,
+      "addedIn": "2.41.0"
+    },
+    {
+      "name": "SPAM_DECISIONS_URL",
+      "required": false,
+      "addedIn": "2.41.0"
     },
     {
       "name": "SPAM_BLOCKLIST",

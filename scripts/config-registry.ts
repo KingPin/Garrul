@@ -556,9 +556,9 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
 		kind: "var",
 		required: false,
 		group: "Anti-spam",
-		hint: '"akismet" or "workers-ai"; unset for none',
+		hint: '"akismet", "workers-ai" or "decisions"; unset for none',
 		description:
-			'Optional. Pluggable content classifier — `akismet` or `workers-ai`. Unset = no classifier. `workers-ai` also needs an `[ai]` binding. See `docs/ANTISPAM.md`.',
+			'Optional. Pluggable content classifier — `akismet`, `workers-ai`, or `decisions` (bring your own key). Unset = no classifier. `workers-ai` also needs an `[ai]` binding; `decisions` needs `SPAM_DECISIONS_API_KEY` and a model. See `docs/ANTISPAM.md`.',
 		example: "akismet",
 		addedIn: "1.1.1",
 	},
@@ -583,6 +583,40 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
 			"Optional. Public site URL sent to Akismet alongside each check. Required when `SPAM_PROVIDER=akismet`.",
 		example: "https://yourblog.example.com",
 		addedIn: "1.1.1",
+	},
+	{
+		name: "SPAM_DECISIONS_API_KEY",
+		kind: "secret",
+		required: false,
+		group: "Anti-spam",
+		hint: 'required when SPAM_PROVIDER = "decisions"',
+		description:
+			"Optional. API key for the bring-your-own decision model, sent as a Bearer token to `SPAM_DECISIONS_URL`. Required when `SPAM_PROVIDER=decisions`.",
+		example: "sk-or-...",
+		addedIn: "2.41.0",
+	},
+	{
+		name: "SPAM_DECISIONS_MODEL",
+		kind: "var",
+		required: false,
+		group: "Anti-spam",
+		adminEditable: true,
+		hint: 'model id at the decisions endpoint; needed when SPAM_PROVIDER = "decisions"',
+		description:
+			"Optional. Model id the `decisions` provider asks, as the endpoint names it (OpenRouter ids look like `vendor/model`). Needed when `SPAM_PROVIDER=decisions`; unset or empty skips the check. Usually changed on the Settings page, to compare models — this is the default a fresh deploy starts with. Comments are sent to that provider, outside Cloudflare.",
+		example: "~typesafe/jev-latest",
+		addedIn: "2.41.0",
+	},
+	{
+		name: "SPAM_DECISIONS_URL",
+		kind: "var",
+		required: false,
+		group: "Anti-spam",
+		hint: "OpenAI-style /decisions endpoint; unset = OpenRouter",
+		description:
+			"Optional. Endpoint for `SPAM_PROVIDER=decisions`. Must be `https://`; anything else disables the check. Unset = `https://openrouter.ai/api/alpha/decisions`.",
+		example: "https://openrouter.ai/api/alpha/decisions",
+		addedIn: "2.41.0",
 	},
 	{
 		name: "SPAM_FORM_TS_SECRET",
@@ -639,7 +673,7 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
 		adminEditable: true,
 		hint: "flag if the Workers AI spam probability is at least N percent",
 		description:
-			"Optional. With `SPAM_PROVIDER=workers-ai`, flag a comment to `pending` when the Clef classifier rates it at least N percent likely to be spam. `1`–`100`; unset = `70`. Ignored for other providers.",
+			"Optional. With `SPAM_PROVIDER=workers-ai` or `decisions`, flag a comment to `pending` when the Clef classifier rates it at least N percent likely to be spam. `1`–`100`; unset = `70`. Ignored for `akismet`.",
 		example: "70",
 		addedIn: "2.38.0",
 	},

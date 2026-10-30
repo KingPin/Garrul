@@ -394,10 +394,14 @@ const evaluateSpam = async (
 			numbers.spam_ai_threshold,
 			// parseStringSetting only ever returns a CLEF_MODELS entry.
 			strings.spam_ai_model as ClefModel,
+			texts.spam_decisions_model,
 		);
 		if (classifierVerdict) {
+			// checkSpam returns a verdict only for a provider it knows.
 			const source: SpamVerdictSource =
-				env.SPAM_PROVIDER === "akismet" ? "akismet" : "workers-ai";
+				env.SPAM_PROVIDER === "akismet" || env.SPAM_PROVIDER === "decisions"
+					? env.SPAM_PROVIDER
+					: "workers-ai";
 			verdicts.push({
 				source,
 				verdict: classifierVerdict.spam ? "spam" : "ham",

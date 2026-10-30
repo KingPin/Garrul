@@ -216,6 +216,57 @@ describe("POST /comments — anti-spam on create", () => {
 		expect((await post({ body: "x".repeat(100_000) })).status).toBe(400);
 		expect(stored()).toEqual([]);
 	});
+
+	it("records a decisions-provider verdict under its own source", async () => {
+		const original = globalThis.fetch;
+		globalThis.fetch = (async () =>
+			new Response(JSON.stringify(clef(0.95)))) as typeof fetch;
+		try {
+			const res = await post(
+				{ body: "cheap pills here" },
+				{
+					SPAM_PROVIDER: "decisions",
+					SPAM_DECISIONS_API_KEY: "k",
+					SPAM_DECISIONS_MODEL: "vendor/decider",
+				},
+			);
+			expect(res.status).toBe(201);
+			expect(stored().map((c) => c.status)).toEqual(["pending"]);
+			expect(verdicts().map((v) => [v.source, v.verdict])).toEqual([
+				["decisions", "spam"],
+			]);
+		} finally {
+			globalThis.fetch = original;
+		}
+	});
+
+	it("asks the model a stored spam_decisions_model names, over the env value", async () => {
+		sqlite
+			.prepare("INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)")
+			.run("spam_decisions_model", "vendor/other", 1_700_000_000_000);
+		const original = globalThis.fetch;
+		const models: unknown[] = [];
+		globalThis.fetch = (async (url: string, init: RequestInit) => {
+			if (String(url).includes("/decisions")) {
+				models.push(JSON.parse(String(init.body)).model);
+			}
+			return new Response(JSON.stringify(clef(0.1)));
+		}) as typeof fetch;
+		try {
+			const res = await post(
+				{ body: "nice write-up" },
+				{
+					SPAM_PROVIDER: "decisions",
+					SPAM_DECISIONS_API_KEY: "k",
+					SPAM_DECISIONS_MODEL: "vendor/decider",
+				},
+			);
+			expect(res.status).toBe(201);
+			expect(models).toEqual(["vendor/other"]);
+		} finally {
+			globalThis.fetch = original;
+		}
+	});
 });
 
 describe("POST /comments — who hears about a new comment", () => {

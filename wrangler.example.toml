@@ -184,9 +184,10 @@ OAUTH_CALLBACK_BASE = "https://comments.example.com"
 # TELEGRAM_BOT_USERNAME = "YourGarrulBot"
 
 # Anti-spam (all optional; OFF by default). See docs/ANTISPAM.md.
-# Pluggable content classifier — "akismet" or "workers-ai". Leave unset for none.
+# Pluggable content classifier — "akismet", "workers-ai" or "decisions". Leave unset for none.
 # SPAM_PROVIDER = "akismet"
 # SPAM_PROVIDER = "workers-ai"
+# SPAM_PROVIDER = "decisions"
 #
 # Lightweight in-core heuristics. Unset = off. Tripped signals flag the
 # comment to status='pending' (admin queue) — never a silent drop.
@@ -205,7 +206,7 @@ OAUTH_CALLBACK_BASE = "https://comments.example.com"
 # t.me/*
 # """
 #
-# Workers AI only: queue a comment when the classifier's spam probability is
+# Workers AI and decisions: queue a comment when the classifier's spam probability is
 # at least this percent (1-100). Also editable on /admin/settings.
 # SPAM_AI_THRESHOLD = "70"
 #
@@ -217,6 +218,14 @@ OAUTH_CALLBACK_BASE = "https://comments.example.com"
 # For SPAM_PROVIDER = "workers-ai", also add this binding:
 # [ai]
 # binding = "AI"
+#
+# For SPAM_PROVIDER = "decisions" (bring your own key): any endpoint with the
+# OpenAI-style /decisions API. Comments leave Cloudflare for that provider —
+# see docs/ANTISPAM.md. The key is a secret: SPAM_DECISIONS_API_KEY.
+# Uses SPAM_AI_THRESHOLD like workers-ai. The model is also editable on
+# /admin/settings, to compare models without a redeploy.
+# SPAM_DECISIONS_MODEL = "~typesafe/jev-latest"
+# SPAM_DECISIONS_URL = "https://openrouter.ai/api/alpha/decisions" # the default
 
 # Optional: atomic, cross-colo-accurate rate limiting via a Durable Object.
 #
@@ -280,6 +289,7 @@ crons = ["*/15 * * * *"]
 #   TELEGRAM_WEBHOOK_SECRET — shared secret for setWebhook; required for inbound commands
 #   AKISMET_API_KEY — required when SPAM_PROVIDER = "akismet"
 #   AKISMET_SITE_URL — public site URL registered with Akismet
+#   SPAM_DECISIONS_API_KEY — required when SPAM_PROVIDER = "decisions"
 #   SPAM_FORM_TS_SECRET — HMAC key for signed form-timestamp tokens
 #   CF_API_TOKEN — Analytics-read token; scopes in AGENTS-OPERATE §5
 #   GITHUB_TOKEN — no-permission token; raises the 60 req/hr cap

@@ -3,6 +3,7 @@ import type {
 	ResolvedFlags,
 	ResolvedNumbers,
 	ResolvedStrings,
+	ResolvedTexts,
 } from "../../lib/settings";
 import { escapeHtml } from "../escape";
 
@@ -11,6 +12,7 @@ export const spamSummary = (
 	flags: ResolvedFlags,
 	numbers: ResolvedNumbers,
 	strings: ResolvedStrings,
+	texts: ResolvedTexts,
 ): string => {
 	// Match the same gating evaluateSpam uses at runtime, otherwise the
 	// dashboard would claim a layer is active when it isn't (honeypot timing
@@ -22,7 +24,9 @@ export const spamSummary = (
 	const provider =
 		env.SPAM_PROVIDER === "workers-ai"
 			? `workers-ai(${strings.spam_ai_model}, ≥${numbers.spam_ai_threshold}%)`
-			: env.SPAM_PROVIDER || "off";
+			: env.SPAM_PROVIDER === "decisions"
+				? `decisions(${texts.spam_decisions_model || "no model"}, ≥${numbers.spam_ai_threshold}%)`
+				: env.SPAM_PROVIDER || "off";
 	const heuristics: string[] = [];
 	const minMs = numbers.spam_honeypot_min_ms;
 	if (minMs > 0 && env.SPAM_FORM_TS_SECRET) {

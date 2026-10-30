@@ -564,6 +564,7 @@ interactive_secrets() {
 	put_secret TELEGRAM_WEBHOOK_SECRET "shared secret for setWebhook; required for inbound commands"
 	put_secret AKISMET_API_KEY "required when SPAM_PROVIDER = \"akismet\""
 	put_secret AKISMET_SITE_URL "public site URL registered with Akismet"
+	put_secret SPAM_DECISIONS_API_KEY "required when SPAM_PROVIDER = \"decisions\""
 	put_secret SPAM_FORM_TS_SECRET "HMAC key for signed form-timestamp tokens"
 	put_secret CF_API_TOKEN "Analytics-read token; scopes in AGENTS-OPERATE §5"
 	put_secret GITHUB_TOKEN "no-permission token; raises the 60 req/hr cap"

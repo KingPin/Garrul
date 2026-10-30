@@ -80,6 +80,7 @@ export type TextSettingKey =
 	| "security_contact"
 	| "staff_badge_label"
 	| "reserved_names"
+	| "spam_decisions_model"
 	| ReactionKindsKey;
 
 export type ResolvedTexts = Record<TextSettingKey, string>;
@@ -404,6 +405,9 @@ export const MAX_TEXT_SETTING_CHARS = 20_000;
 /** Cap on the staff badge label: it sits inline next to a commenter's name. */
 export const STAFF_BADGE_LABEL_MAX = 32;
 
+/** Cap on the BYOK decision-model id: provider ids are well under 100 characters. */
+export const SPAM_DECISIONS_MODEL_MAX = 200;
+
 // Free-form text settings. Same precedence chain as everything above
 // (DB > env > default), but neither clamped nor whitelisted — see
 // MAX_TEXT_SETTING_CHARS for why boundedness is the invariant instead.
@@ -440,6 +444,18 @@ const TEXTS: Record<
 	// the names signed-in users already post under (isNameClaimed). Empty by
 	// default and DB-only, for the same reasons as staff_badge_label.
 	reserved_names: { default: "" },
+	// Model id the bring-your-own-key `decisions` spam provider asks
+	// (src/lib/spam/decisions.ts). Free-form, unlike spam_ai_model: an
+	// endpoint's model list is not ours to whitelist, and the id only travels
+	// inside the JSON request body, never a URL or a header. Editable on the
+	// Settings page so an operator can compare models on live traffic without
+	// a redeploy. Empty (the default, or a cleared box) skips the check; Reset
+	// returns to SPAM_DECISIONS_MODEL. Only read when SPAM_PROVIDER=decisions.
+	spam_decisions_model: {
+		env: "SPAM_DECISIONS_MODEL",
+		default: "",
+		max: SPAM_DECISIONS_MODEL_MAX,
+	},
 	// Which reaction kinds each surface offers, in render order, as a
 	// comma-separated list of vocabulary kinds (src/widget/reactions.ts).
 	// Stored raw like the rest of this group and normalized at use by

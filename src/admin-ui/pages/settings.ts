@@ -10,6 +10,7 @@ import {
 	type ResolvedStrings,
 	type ResolvedTexts,
 	MAX_TEXT_SETTING_CHARS,
+	SPAM_DECISIONS_MODEL_MAX,
 	STAFF_BADGE_LABEL_MAX,
 	TEXT_KEYS,
 	isReactionKindsKey,
@@ -254,7 +255,7 @@ const SPAM_NUMBER_META: { key: NumberKey; label: string; help: string }[] = [
 	{
 		key: "spam_ai_threshold",
 		label: "AI spam threshold (%)",
-		help: "Only used when SPAM_PROVIDER is workers-ai. Queue a comment when the classifier rates it at least this likely to be spam. Lower catches more spam and queues more real comments. Each comment's detail page shows the classifier score (0–1), so you can tune this against real traffic. Cost: one Workers AI call per comment; the model below sets the price. The threshold does not change the cost.",
+		help: "Only used when SPAM_PROVIDER is workers-ai or decisions. Queue a comment when the classifier rates it at least this likely to be spam. Lower catches more spam and queues more real comments. Each comment's detail page shows the classifier score (0–1), so you can tune this against real traffic. Cost: one model call per comment; the model sets the price. The threshold does not change the cost.",
 	},
 ];
 
@@ -311,6 +312,8 @@ export const renderSettings = (
 		["SPAM_PROVIDER", env.SPAM_PROVIDER || "(unset)"],
 		["AKISMET_API_KEY", env.AKISMET_API_KEY ? "(set)" : "(unset)"],
 		["AKISMET_SITE_URL", env.AKISMET_SITE_URL ?? "(unset)"],
+		["SPAM_DECISIONS_URL", env.SPAM_DECISIONS_URL || "(default: OpenRouter)"],
+		["SPAM_DECISIONS_API_KEY", env.SPAM_DECISIONS_API_KEY ? "(set)" : "(unset)"],
 		["SPAM_FORM_TS_SECRET", env.SPAM_FORM_TS_SECRET ? "(set)" : "(unset)"],
 	];
 	const body = rows
@@ -418,6 +421,22 @@ export const renderSettings = (
 		],
 		label: "AI classifier model",
 		help: "Only used when SPAM_PROVIDER is workers-ai. Clef-flash costs roughly 1–3 neurons per comment, so the 10,000 free neurons a day cover a few thousand comments. Clef costs roughly 6–20, which covers about 500–1,500. Past the free allowance on the Free plan, checks fail and comments post without an AI check. Clef is also slower; a check that runs past 5 seconds counts as no opinion. Usage shows the measured average per call.",
+	});
+
+	// The BYOK model is free-form, so it is a text setting, not a select. It
+	// sits with the Clef choice because both answer "which model decides".
+	const decisionsModelTextarea = renderTextarea({
+		name: "spam_decisions_model",
+		model: "texts.spam_decisions_model",
+		label: "Decision model (bring your own key)",
+		help: `Only used when SPAM_PROVIDER is <code>decisions</code>. The model id
+		as your endpoint names it — on OpenRouter, <code>vendor/model</code>.
+		Change it here to compare models on real traffic: each comment's detail
+		page records the model that was asked. Empty skips the check. Reset
+		returns to <code>SPAM_DECISIONS_MODEL</code>.`,
+		rows: 1,
+		maxlength: SPAM_DECISIONS_MODEL_MAX,
+		placeholder: "~typesafe/jev-latest",
 	});
 
 	const blocklistTextarea = renderTextarea({
@@ -685,6 +704,7 @@ export const renderSettings = (
       ${modToggles}
       ${spamNumberInputs}
       ${aiModelSelect}
+      ${decisionsModelTextarea}
       <p class="muted" x-show="nums.spam_honeypot_min_ms > 0 && !hasFormTsSecret" x-cloak>
       <strong>Fill-time check is inactive.</strong> It needs
       <code>SPAM_FORM_TS_SECRET</code> to sign the form timestamp — without it an

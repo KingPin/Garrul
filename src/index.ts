@@ -99,6 +99,12 @@ export type Bindings = {
 	SPAM_PROVIDER?: string;
 	AKISMET_API_KEY?: string;
 	AKISMET_SITE_URL?: string;
+	// Bring-your-own-key decision model (SPAM_PROVIDER=decisions). URL and
+	// model are vars (the model is also the spam_decisions_model setting's env
+	// fallback); the key is a secret. See src/lib/spam/decisions.ts.
+	SPAM_DECISIONS_URL?: string;
+	SPAM_DECISIONS_MODEL?: string;
+	SPAM_DECISIONS_API_KEY?: string;
 	AI?: Ai;
 	SPAM_LINK_THRESHOLD?: string;
 	SPAM_AI_THRESHOLD?: string;

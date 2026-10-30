@@ -78,6 +78,8 @@ TELEGRAM_WEBHOOK_SECRET=""
 AKISMET_API_KEY=""
 # public site URL registered with Akismet
 AKISMET_SITE_URL=""
+# required when SPAM_PROVIDER = "decisions"
+SPAM_DECISIONS_API_KEY=""
 # HMAC key for signed form-timestamp tokens
 SPAM_FORM_TS_SECRET=""
 

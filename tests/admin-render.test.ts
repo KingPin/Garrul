@@ -611,6 +611,9 @@ describe("renderDashboard", () => {
 	const dashStrings = Object.fromEntries(
 		STRING_KEYS.map((k) => [k, stringDefault(k)]),
 	) as ResolvedStrings;
+	const dashTexts = Object.fromEntries(
+		TEXT_KEYS.map((k) => [k, ""]),
+	) as ResolvedTexts;
 
 	it("renders the spam-rate percentage and oldest-pending link", () => {
 		const html = renderDashboard(
@@ -630,6 +633,7 @@ describe("renderDashboard", () => {
 			dashFlags,
 			dashNumbers,
 			dashStrings,
+			dashTexts,
 		);
 		expect(html).toContain("12.0%");
 		expect(html).toContain("/admin/comments/01HOLDEST");
@@ -656,6 +660,7 @@ describe("renderDashboard", () => {
 			dashFlags,
 			dashNumbers,
 			dashStrings,
+			dashTexts,
 		);
 		expect(html).toContain("No activity in this range");
 		expect(html).toContain("No pending comments");
@@ -679,6 +684,7 @@ describe("renderDashboard", () => {
 			dashFlags,
 			dashNumbers,
 			dashStrings,
+			dashTexts,
 		);
 		expect(html).toContain("Comments by domain");
 		expect(html).toContain("a.example.com");
@@ -708,6 +714,7 @@ describe("renderDashboard", () => {
 			dashFlags,
 			dashNumbers,
 			dashStrings,
+			dashTexts,
 		);
 		expect(html).toContain("…and 3 more domains");
 		expect(html).toContain("h0.example.com");
@@ -731,6 +738,7 @@ describe("renderDashboard", () => {
 			dashFlags,
 			dashNumbers,
 			dashStrings,
+			dashTexts,
 		);
 		expect(html).not.toContain("<svg/onload=alert(1)>");
 		expect(html).toContain("&lt;svg/onload=alert(1)&gt;");
@@ -751,8 +759,30 @@ describe("renderDashboard", () => {
 			dashFlags,
 			{ ...dashNumbers, spam_ai_threshold: 70 },
 			dashStrings,
+			dashTexts,
 		);
 		expect(html).toContain("workers-ai(clef-flash, ≥70%)");
+	});
+
+	it("names the BYOK model and threshold in the anti-spam summary", () => {
+		const html = renderDashboard(
+			{
+				stats,
+				timeline: [],
+				top_posts: [],
+				top_commenters: [],
+				oldest_pending: null,
+				spam_rate: { total: 0, spam: 0 },
+				by_host: [],
+			},
+			{ SPAM_PROVIDER: "decisions" } as Bindings,
+			dashFlags,
+			{ ...dashNumbers, spam_ai_threshold: 80 },
+			dashStrings,
+			// The resolved setting, not env: an admin can change it.
+			{ ...dashTexts, spam_decisions_model: "vendor/decider" },
+		);
+		expect(html).toContain("decisions(vendor/decider, ≥80%)");
 	});
 });
 

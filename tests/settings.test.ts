@@ -942,6 +942,23 @@ describe("staff_badge_label", () => {
 	});
 });
 
+describe("spam_decisions_model", () => {
+	it("resolves from SPAM_DECISIONS_MODEL", async () => {
+		const { env } = mkEnv({}, { SPAM_DECISIONS_MODEL: "vendor/decider" });
+		expect((await loadTexts(env)).spam_decisions_model).toBe("vendor/decider");
+	});
+
+	it("lets a stored row beat the env value", async () => {
+		// The Settings page writes this row so an operator can compare models
+		// without a redeploy.
+		const { env } = mkEnv(
+			{ spam_decisions_model: "vendor/other" },
+			{ SPAM_DECISIONS_MODEL: "vendor/decider" },
+		);
+		expect((await loadTexts(env)).spam_decisions_model).toBe("vendor/other");
+	});
+});
+
 const SIX = ["fire", "love", "wow", "laugh", "hmm", "cry"];
 
 describe("reaction kind lists — resolution", () => {
