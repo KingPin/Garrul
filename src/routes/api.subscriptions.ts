@@ -29,9 +29,10 @@
  *     it, which is what the widget relies on.
  *     The user already proved control of the inbox to the provider, so a
  *     second loop adds friction without security.
- *   - A per-email pending cap (5) prevents amplifying the confirmation
- *     email itself into a mailbomb — without it an attacker could forge
- *     5 confirm-emails per minute per IP without consuming any of them.
+ *   - A per-email pending cap (5 per week) prevents amplifying the
+ *     confirmation email itself into a mailbomb — without it an attacker
+ *     could forge 5 confirm-emails per minute per IP without consuming any
+ *     of them.
  *
  * Mailbomb defence, in the order it applies (issue #64):
  *   1. The IP-keyed rate limiter. Racy on the default Cache API backend — N
@@ -78,6 +79,10 @@ const subscriptions = new Hono<{ Bindings: Bindings; Variables: LocaleVars }>();
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PENDING_PER_EMAIL_CAP = 5;
+// How long a never-confirmed row holds one of those five slots. Bounds the
+// confirm mail a stranger can aim at one address to five new threads a week,
+// and bounds how long they can keep that address from subscribing.
+const PENDING_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 const PROVIDER_VERIFIED = new Set(["github", "google"]);
 
 /**
@@ -202,7 +207,11 @@ subscriptions.post("/", async (c) => {
 	// itself from being weaponized as a mailbomb. The cap is generous so
 	// real users juggling threads aren't rejected.
 	if (!autoConfirm) {
-		const pending = await countPendingSubscriptionsForEmail(c.env.DB, email);
+		const pending = await countPendingSubscriptionsForEmail(
+			c.env.DB,
+			email,
+			Date.now() - PENDING_WINDOW_MS,
+		);
 		if (pending >= PENDING_PER_EMAIL_CAP) {
 			return c.json(
 				{ error: t("err.ratelimit"), reason: "pending_limit_exceeded" },
@@ -602,9 +611,10 @@ subscriptions.post("/unsubscribe/:token/row/:id", async (c) => {
  * every Gmail user's unsubscribe leaves from the same handful of Google IPs, so
  * an IP bucket (or the global envelope, 200/10min) throttles legitimate
  * unsubscribes on any instance with real traffic while costing an attacker
- * nothing: the sibling GET /unsubscribe/:token does the identical unindexed
- * token lookup with no limit at all. The bound on abuse is the token's
- * unguessability, same as the GET.
+ * nothing: the sibling GET /unsubscribe/:token does the identical token lookup
+ * with no limit at all. The bound on abuse is the token's unguessability, same
+ * as the GET; the bound on cost is the shape guard in `getSubscriptionByToken`
+ * plus 0024's index.
  */
 subscriptions.post("/unsubscribe/:token/one-click", async (c) => {
 	const token = c.req.param("token");
@@ -659,7 +669,8 @@ subscriptions.post("/unsubscribe/:token/one-click", async (c) => {
  * bell rather than a status code they can do nothing about.
  *
  * **Known limitation, deliberately not reconciled.** `POST /subscribe` takes
- * the address from the request body *or* the session (see :160), so a signed-in
+ * the address from the request body *or* the session (see its `email`
+ * fallback), so a signed-in
  * reader who types some other address creates a row keyed to that address —
  * which their own `/mine` will never show, and which stays reachable only
  * through its emailed unsubscribe link. Closing the gap means either refusing
@@ -684,8 +695,8 @@ const MINE_LIMITS = {
  *
  * `email: null` is not a failure: it is a signed-in reader whose account
  * carries no address (ghost, X/Twitter), and each caller decides what empty
- * means for it. The 401/403 split mirrors `POST /subscribe` at :143-147 — a
- * session pointing at a refused user is banned, not unauthenticated.
+ * means for it. The 401/403 split mirrors `POST /subscribe`'s session check —
+ * a session pointing at a refused user is banned, not unauthenticated.
  *
  * **The limiter keys on the account, not the client IP, and that is the whole
  * reason this helper exists.** `GET /mine` fires on every widget mount, so an
@@ -699,8 +710,8 @@ const MINE_LIMITS = {
  * gives each account its own envelope and leaves the IP budget to the writes it
  * was sized for.
  *
- * Session first, D1 second — same order as `PATCH /comments/:id`
- * (api.comments.ts:1021) and for the same reason. A caller with no cookie is
+ * Session first, D1 second — same order as `PATCH /comments/:id` in
+ * api.comments.ts, and for the same reason. A caller with no cookie is
  * refused before spending either a KV or a D1 read, because `readSession`
  * returns null without touching KV when the cookie is absent or malformed.
  */
@@ -748,7 +759,7 @@ subscriptions.get("/mine", async (c) => {
 		// `id` is what makes the bell a two-way toggle: cancelling goes through
 		// `DELETE /mine/:id`, so without it the widget would have to fetch the
 		// reader's whole list just to learn the id of the thread it is already
-		// looking at. Unlike `POST /subscribe` (see :298), disclosing a ULID here
+		// looking at. Unlike `POST /subscribe` (see its response), disclosing a ULID here
 		// leaks nothing — the session has already proven it owns this address, so
 		// there is no third party for the id to be an oracle about.
 		return c.json({

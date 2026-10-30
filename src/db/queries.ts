@@ -2483,7 +2483,8 @@ export const upsertSubscription = async (
 
 // The shape `randomToken()` in routes/api.subscriptions.ts has minted since
 // subscriptions shipped: 32 bytes from crypto.getRandomValues, lowercase hex.
-// It is the only writer of this column, and no importer touches it.
+// It and its copy in routes/admin.ts (the resend-confirmation action) are the
+// only writers of `token` and `confirm_token`, and no importer touches either.
 const SUB_TOKEN_RE = /^[0-9a-f]{64}$/;
 
 /**
@@ -2515,16 +2516,31 @@ export const getSubscriptionByToken = async (
 		.first<Subscription>();
 };
 
+/**
+ * Look up a subscription by its confirm token, or null when the link is dead.
+ *
+ * Same shape guard as `getSubscriptionByToken`, same reason: the confirm GET
+ * is a CARVE_OUT path with no rate limit, and `randomToken()` mints both.
+ *
+ * A confirmed-then-cancelled row resolves to null. `confirmSubscription` keeps
+ * the token alive so a re-click after a prefetch still lands on the success
+ * page, but once the reader unsubscribes that page would tell them they are
+ * subscribed when they are not. Re-subscribing clears `confirmed_at` and mints
+ * a fresh token, so the row comes back through the new link, never this one.
+ */
 export const getSubscriptionByConfirmToken = async (
 	db: D1Database,
 	confirm_token: string,
 ): Promise<Subscription | null> => {
+	if (!SUB_TOKEN_RE.test(confirm_token)) return null;
 	return await db
 		.prepare(
 			`SELECT id, post_slug, email, token, created_at,
 			        unsubscribed_at, last_notified_at,
 			        confirm_token, confirmed_at, locale
-			   FROM subscriptions WHERE confirm_token = ?`,
+			   FROM subscriptions
+			  WHERE confirm_token = ?
+			    AND (confirmed_at IS NULL OR unsubscribed_at IS NULL)`,
 		)
 		.bind(confirm_token)
 		.first<Subscription>();
@@ -2567,16 +2583,33 @@ export const confirmSubscription = async (
 	return (res.meta?.changes ?? 0) > 0;
 };
 
+/**
+ * Never-confirmed rows for one address created at or after `since`, for the
+ * per-address pending cap on POST /subscribe.
+ *
+ * Without the window the cap was a permanent lockout: nothing ever deletes a
+ * pending row, so one stranger naming an address on five posts left that
+ * address unable to subscribe by email again. Cancelled rows are excluded for
+ * the same reason — a reader who cancelled a pending row should get its slot
+ * back.
+ *
+ * `created_at` is a sound "pending since" here only because of the
+ * `unsubscribed_at IS NULL` filter: the one upsert branch that turns an old
+ * confirmed row back into a pending one (re-subscribing after a cancel) leaves
+ * `unsubscribed_at` set, so such a row is never counted with a stale timestamp.
+ */
 export const countPendingSubscriptionsForEmail = async (
 	db: D1Database,
 	email: string,
+	since: number,
 ): Promise<number> => {
 	const row = await db
 		.prepare(
 			`SELECT COUNT(*) AS n FROM subscriptions
-			  WHERE email = ? AND confirmed_at IS NULL`,
+			  WHERE email = ? AND confirmed_at IS NULL
+			    AND unsubscribed_at IS NULL AND created_at >= ?`,
 		)
-		.bind(email.toLowerCase())
+		.bind(email.toLowerCase(), since)
 		.first<{ n: number }>();
 	return row?.n ?? 0;
 };

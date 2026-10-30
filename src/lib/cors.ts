@@ -142,6 +142,17 @@ const matches = (origin: string, allowed: Set<string>): boolean => {
 const isCarveOut = (method: string, path: string): boolean =>
 	method === "GET" && CARVE_OUT_PATHS.some((re) => re.test(path));
 
+/**
+ * Every page that renders one of the self-origin forms lives on a path in this
+ * list too (each GET page posts back to its own path or a sibling), so this is
+ * also where src/index.ts relaxes Referrer-Policy to `same-origin`. Under
+ * `no-referrer` a browser sends a form POST with `Origin: null` and the check
+ * below rejects it. One list, so a new form can't be added to one and not the
+ * other.
+ */
+export const isSelfOriginFormPath = (path: string): boolean =>
+	SELF_ORIGIN_POST_PATHS.some((re) => re.test(path));
+
 const isSelfOriginPost = (
 	method: string,
 	path: string,
@@ -149,7 +160,7 @@ const isSelfOriginPost = (
 	requestUrl: string,
 ): boolean => {
 	if (method !== "POST" || !origin) return false;
-	if (!SELF_ORIGIN_POST_PATHS.some((re) => re.test(path))) return false;
+	if (!isSelfOriginFormPath(path)) return false;
 	return origin === new URL(requestUrl).origin;
 };
 

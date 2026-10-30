@@ -218,14 +218,41 @@ describe("POST /subscribe — refusals before a row is written", () => {
 	it("caps never-confirmed rows per address so the confirm mail can't be a mailbomb", async () => {
 		const pending = sqlite.prepare(
 			`INSERT INTO subscriptions (id, post_slug, email, token, created_at, confirmed_at)
-			 VALUES (?, ?, ?, ?, 1, NULL)`,
+			 VALUES (?, ?, ?, ?, ?, NULL)`,
 		);
-		for (let i = 0; i < 5; i++) pending.run(`p${i}`, `other-${i}`, EMAIL, `tok-${i}`);
+		for (let i = 0; i < 5; i++) pending.run(`p${i}`, `other-${i}`, EMAIL, `tok-${i}`, Date.now());
 		const res = await subscribe({ post_slug: SLUG, email: EMAIL }, "203.0.113.11");
 		expect(res.status).toBe(429);
 		expect(((await res.json()) as { reason: string }).reason).toBe("pending_limit_exceeded");
 		expect(count()).toBe(5);
 		expect(sent).toEqual([]);
+	});
+
+	// Nothing deletes a pending row, so without a window five forged subscribes
+	// locked the address out of email subscriptions forever.
+	it("frees a pending slot once the row is a week old", async () => {
+		const pending = sqlite.prepare(
+			`INSERT INTO subscriptions (id, post_slug, email, token, created_at, confirmed_at)
+			 VALUES (?, ?, ?, ?, ?, NULL)`,
+		);
+		const eightDaysAgo = Date.now() - 8 * 24 * 60 * 60 * 1000;
+		for (let i = 0; i < 5; i++) pending.run(`p${i}`, `other-${i}`, EMAIL, `tok-${i}`, eightDaysAgo);
+		const res = await subscribe({ post_slug: SLUG, email: EMAIL }, "203.0.113.13");
+		expect(res.status).toBe(200);
+		expect(sent).toHaveLength(1);
+	});
+
+	it("does not count pending rows the reader cancelled", async () => {
+		const pending = sqlite.prepare(
+			`INSERT INTO subscriptions (id, post_slug, email, token, created_at, confirmed_at, unsubscribed_at)
+			 VALUES (?, ?, ?, ?, ?, NULL, ?)`,
+		);
+		for (let i = 0; i < 5; i++) {
+			pending.run(`p${i}`, `other-${i}`, EMAIL, `tok-${i}`, Date.now(), Date.now());
+		}
+		const res = await subscribe({ post_slug: SLUG, email: EMAIL }, "203.0.113.14");
+		expect(res.status).toBe(200);
+		expect(sent).toHaveLength(1);
 	});
 
 	it("503s instead of storing an unconfirmable row when outbound email isn't set up", async () => {

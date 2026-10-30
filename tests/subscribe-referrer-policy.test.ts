@@ -56,8 +56,12 @@ describe("Referrer-Policy on the emailed subscription pages", () => {
 		expect(res.headers.get("referrer-policy")).toBe("same-origin");
 	});
 
-	it("keeps no-referrer everywhere else", async () => {
-		const res = await get("/api/v1/health");
+	it.each([
+		"/api/v1/health",
+		// RFC 8058 target: a mail provider's server calls it, no form, no page.
+		`/api/v1/subscribe/unsubscribe/${TOKEN}/one-click`,
+	])("keeps no-referrer on %s", async (path) => {
+		const res = await get(path);
 		expect(res.headers.get("referrer-policy")).toBe("no-referrer");
 	});
 });

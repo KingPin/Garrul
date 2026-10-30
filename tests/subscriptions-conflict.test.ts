@@ -52,6 +52,11 @@ const makeD1 = (db: DatabaseSync): any => ({
 
 const SLUG = "notify-me";
 const EMAIL = "reader@example.com";
+// Confirm tokens that are looked up must have the shape randomToken() mints;
+// getSubscriptionByConfirmToken rejects anything else without a query.
+const C_ORIGINAL = "a".repeat(64);
+const C_NEW = "b".repeat(64);
+const C_TOK = "c".repeat(64);
 
 let db: D1Database;
 
@@ -78,10 +83,10 @@ const owner = (token: string): Promise<Subscription> =>
 
 /** A live, confirmed subscription, as the double-opt-in loop leaves it. */
 const confirmed = async (): Promise<Subscription> => {
-	const sub = await stranger("tok-original", "confirm-original");
+	const sub = await stranger("tok-original", C_ORIGINAL);
 	await confirmSubscription(db, sub.id);
 	// Re-read: the upsert's return value predates the confirm.
-	const row = await getSubscriptionByConfirmToken(db, "confirm-original");
+	const row = await getSubscriptionByConfirmToken(db, C_ORIGINAL);
 	if (!row) throw new Error("test setup: confirmed row not found");
 	return row;
 };
@@ -98,7 +103,7 @@ describe("upsertSubscription — re-subscribe by a stranger", () => {
 		const before = await confirmed();
 		const after = await stranger("tok-attacker", "confirm-attacker");
 		expect(after.confirmed_at).toBe(before.confirmed_at);
-		expect(after.confirm_token).toBe("confirm-original");
+		expect(after.confirm_token).toBe(C_ORIGINAL);
 		expect(after.unsubscribed_at).toBeNull();
 	});
 
@@ -119,11 +124,11 @@ describe("upsertSubscription — re-subscribe by a stranger", () => {
 	it("retires the old confirm link when a cancelled row is re-requested", async () => {
 		const sub = await confirmed();
 		await markSubscriptionUnsubscribed(db, sub.id);
-		await stranger("tok-attacker", "confirm-new");
+		await stranger("tok-attacker", C_NEW);
 
-		expect(await getSubscriptionByConfirmToken(db, "confirm-original")).toBeNull();
+		expect(await getSubscriptionByConfirmToken(db, C_ORIGINAL)).toBeNull();
 		expect(
-			(await getSubscriptionByConfirmToken(db, "confirm-new"))?.id,
+			(await getSubscriptionByConfirmToken(db, C_NEW))?.id,
 		).toBe(sub.id);
 	});
 
@@ -161,7 +166,7 @@ describe("upsertSubscription — auto-confirm path", () => {
 
 describe("confirmSubscription", () => {
 	it("reports whether this call was the one that confirmed", async () => {
-		const sub = await stranger("tok", "confirm-tok");
+		const sub = await stranger("tok", C_TOK);
 		expect(await confirmSubscription(db, sub.id)).toBe(true);
 		// A mail-client prefetch followed by the human's click: still fine, but
 		// only the first one did anything.
@@ -169,9 +174,9 @@ describe("confirmSubscription", () => {
 	});
 
 	it("keeps the token alive so a prefetched link still renders for the human", async () => {
-		const sub = await stranger("tok", "confirm-tok");
+		const sub = await stranger("tok", C_TOK);
 		await confirmSubscription(db, sub.id);
-		expect((await getSubscriptionByConfirmToken(db, "confirm-tok"))?.id).toBe(
+		expect((await getSubscriptionByConfirmToken(db, C_TOK))?.id).toBe(
 			sub.id,
 		);
 	});
@@ -186,10 +191,24 @@ describe("confirmSubscription", () => {
 		expect(await listActiveSubscriptionsForPost(db, SLUG)).toHaveLength(0);
 	});
 
+	it("retires the confirm link once a confirmed row is cancelled", async () => {
+		// Otherwise the kept-alive link renders "you're subscribed" to a reader
+		// who has unsubscribed.
+		const sub = await confirmed();
+		await markSubscriptionUnsubscribed(db, sub.id);
+		expect(await getSubscriptionByConfirmToken(db, C_ORIGINAL)).toBeNull();
+	});
+
+	it("ignores a malformed confirm token without a lookup", async () => {
+		await stranger("tok", C_TOK);
+		expect(await getSubscriptionByConfirmToken(db, C_TOK.toUpperCase())).toBeNull();
+		expect(await getSubscriptionByConfirmToken(db, `${C_TOK}x`)).toBeNull();
+	});
+
 	it("clears unsubscribed_at when a re-subscribed row is confirmed", async () => {
 		const sub = await confirmed();
 		await markSubscriptionUnsubscribed(db, sub.id);
-		await stranger("tok-attacker", "confirm-new");
+		await stranger("tok-attacker", C_NEW);
 
 		// Only the recipient can follow this link out of their own mailbox.
 		expect(await confirmSubscription(db, sub.id)).toBe(true);
