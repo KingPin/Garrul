@@ -418,9 +418,10 @@ default, server-side clamped), edited from **Settings → Moderation**.
   `form_token_enabled: false` so the widget does not request it. The Settings page flags this
   combination inline rather than letting the dial sit there doing nothing.
 
-`SPAM_PROVIDER`, `AKISMET_API_KEY`, `AKISMET_SITE_URL` and `SPAM_FORM_TS_SECRET`
-stay **deploy-time**: the provider needs capability detection (`akismet` wants an
-API key, `workers-ai` wants the `[ai]` binding) and a dropdown offering a
+`SPAM_PROVIDER`, `AKISMET_API_KEY`, `AKISMET_SITE_URL`, `SPAM_DECISIONS_API_KEY`,
+`SPAM_DECISIONS_URL` and `SPAM_FORM_TS_SECRET` stay **deploy-time**: the provider
+needs capability detection (`akismet` wants an API key, `workers-ai` wants the
+`[ai]` binding, `decisions` wants a key and an https endpoint) and a dropdown offering a
 provider the deploy cannot serve is worse than an env var. Everything that can
 lock an operator out — all secrets, `ENV`, `ALLOWED_ORIGINS`, `ADMIN_EMAILS`, and
 the OAuth-redirect URLs — is deliberately excluded from runtime editing, because
@@ -575,12 +576,13 @@ its credentials stay deploy-time.
   and zero-width characters; does not strip accents or decode leetspeak.
   `#` starts a comment. Normally maintained on the Settings page — the
   env var is just the default a fresh deploy starts with.
-- `SPAM_PROVIDER` — set to `akismet` or `workers-ai` to enable a
-  content classifier (each has its own required secrets/bindings).
+- `SPAM_PROVIDER` — set to `akismet`, `workers-ai` or `decisions` (bring your
+  own key) to enable a content classifier (each has its own required
+  secrets/bindings).
 
 See [`docs/ANTISPAM.md`](./docs/ANTISPAM.md) for the full layer
 breakdown, privacy tradeoffs (Akismet sends comment content off
-Cloudflare; Workers AI keeps it on-network), and recommended starter
+Cloudflare, and so does `decisions`; Workers AI keeps it on-network), and recommended starter
 configs.
 
 ### Accurate rate limiting: the Durable Object backend (opt-in)

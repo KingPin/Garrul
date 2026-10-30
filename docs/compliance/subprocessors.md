@@ -151,7 +151,7 @@ posture the software supports:
 | Setting | Value | Effect |
 | --- | --- | --- |
 | OAuth client ids/secrets | none | Anonymous commenting with Turnstile only. No provider learns anything. |
-| `SPAM_PROVIDER` | unset, or `workers-ai` | Built-in heuristics only, or classification that stays inside Cloudflare. **Never `akismet`** — that is the one transfer that ships comment text off-platform. |
+| `SPAM_PROVIDER` | unset, or `workers-ai` | Built-in heuristics only, or classification that stays inside Cloudflare. **Never `akismet` or `decisions`** — those are the transfers that ship comment text off-platform. |
 | `EMAIL_PROVIDER` / `RESEND_API_KEY` | unset | No email subprocessor. Subscriptions can't be confirmed, so nobody's address is collected at all. |
 | Telegram bot token | unset | No messaging subprocessor. |
 | Webhooks | none configured | No operator-chosen recipients. |

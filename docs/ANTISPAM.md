@@ -187,11 +187,11 @@ A comment is queued when that probability is at or above the **AI spam threshold
 
 **Privacy posture.** Inference runs on Cloudflare's edge via your AI binding — no third-party API call leaves CF infrastructure. Nothing about the comment is cached: each new comment is one model call.
 
-**Cost.** Clef-flash bills input tokens only: $0.038 per million, or 3,455 neurons per million, at the time of writing. A comment of up to 2,000 characters plus the question is a few hundred tokens, so one check is roughly 1–3 neurons. Both Workers plans include 10,000 neurons a day (reset 00:00 UTC), which covers a few thousand comments. Full Clef bills $0.240 per million input tokens (21,818 neurons per million), about 6.3× Clef-flash: roughly 6–20 neurons per check, so the free allowance covers about 500–1,500 comments a day. It is also slower; a check that runs past 5 seconds counts as no opinion and the comment posts on the heuristics alone. On the Free plan, calls past that fail and comments post without an AI check; on Paid, 1,000 comments cost about $0.03. **Admin → Usage** shows today's neurons and the measured average per call. No API key is needed: the `[ai]` binding bills the account the Worker runs in.
+**Cost.** Clef-flash bills input tokens only: $0.038 per million, or 3,455 neurons per million, at the time of writing. A comment of up to 2,000 characters plus the question is a few hundred tokens, so one check is roughly 1–3 neurons. Both Workers plans include 10,000 neurons a day (reset 00:00 UTC), which covers a few thousand comments. Full Clef bills $0.240 per million input tokens (21,818 neurons per million), about 6.3× Clef-flash: roughly 6–20 neurons per check, so the free allowance covers about 500–1,500 comments a day. On the Free plan, calls past that allowance fail and comments post without an AI check; on Paid, 1,000 comments cost about $0.03 with Clef-flash and about $0.07–0.22 with Clef (6–20 neurons per check at $0.011 per 1,000 neurons). Clef is also slower; a check that runs past 5 seconds counts as no opinion and the comment posts on the heuristics alone. **Admin → Usage** shows today's neurons and the measured average per call. No API key is needed: the `[ai]` binding bills the account the Worker runs in.
 
 Tradeoff vs. Akismet: no shared cross-site spam reputation, but no third-party data egress. Good fit if your audience cares about that, or if you don't want to manage another vendor.
 
-### Bring-your-own decision model (`SPAM_PROVIDER=decisions`)
+#### `decisions` (bring your own key)
 
 Use any endpoint that speaks the OpenAI-style `/decisions` API — OpenRouter by default — with your own key and the model you choose. Garrul sends exactly the request the Workers AI classifier sends: the same state and the same yes/no question. The answer is a spam probability, and the same **AI spam threshold** (`SPAM_AI_THRESHOLD`, also on **Admin → Settings → Anti-spam**) decides.
 
@@ -207,7 +207,7 @@ SPAM_DECISIONS_MODEL = "~typesafe/jev-latest"   # the model id as your endpoint 
 wrangler secret put SPAM_DECISIONS_API_KEY
 ```
 
-`SPAM_DECISIONS_MODEL` is only the starting value. The model is also on **Admin → Settings → Anti-spam** (`spam_decisions_model`), so you can switch models on live traffic and compare, with no redeploy. **Reset** returns it to `SPAM_DECISIONS_MODEL`.
+`SPAM_DECISIONS_MODEL` is only the starting value. The model is also on **Admin → Settings → Anti-spam** (`spam_decisions_model`), so you can switch models on live traffic and compare, with no redeploy. **Reset to defaults** (clears every override) returns it to `SPAM_DECISIONS_MODEL`.
 
 The check is skipped (no opinion, the comment posts on the heuristics alone) when the key or the model is unset, or when `SPAM_DECISIONS_URL` is not `https://` — the key is never sent in plaintext. Garrul never follows a redirect from the endpoint; a 3xx answer is no opinion. Each verdict records the model id **you configured** in `spam_verdicts.raw.model`, so the comment detail page shows which setting was in force. With an alias such as `~typesafe/jev-latest`, that is the alias, not the concrete model the provider resolved it to.
 
