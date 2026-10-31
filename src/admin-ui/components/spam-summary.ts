@@ -20,15 +20,19 @@ export const spamSummary = (
 	//
 	// The three heuristic dials come from the resolved settings, not raw env, so
 	// this line reflects an admin's Settings-page override rather than the
-	// deploy-time value it replaced. The provider and its credentials stay env.
+	// deploy-time value it replaced. The provider and its credentials stay env;
+	// the spam_provider_enabled setting can only pause it.
 	// A decisions provider with no key skips every check, so say so here.
 	const decisionsKey = env.SPAM_DECISIONS_API_KEY ? "" : ", no key";
-	const provider =
-		env.SPAM_PROVIDER === "workers-ai"
-			? `workers-ai(${strings.spam_ai_model}, ≥${numbers.spam_ai_threshold}%)`
-			: env.SPAM_PROVIDER === "decisions"
-				? `decisions(${texts.spam_decisions_model || "no model"}, ≥${numbers.spam_ai_threshold}%${decisionsKey})`
-				: env.SPAM_PROVIDER || "off";
+	const provider = !env.SPAM_PROVIDER
+		? "off"
+		: !flags.spam_provider_enabled
+			? `${env.SPAM_PROVIDER}, paused`
+			: env.SPAM_PROVIDER === "workers-ai"
+				? `workers-ai(${strings.spam_ai_model}, ≥${numbers.spam_ai_threshold}%)`
+				: env.SPAM_PROVIDER === "decisions"
+					? `decisions(${texts.spam_decisions_model || "no model"}, ≥${numbers.spam_ai_threshold}%${decisionsKey})`
+					: env.SPAM_PROVIDER;
 	const heuristics: string[] = [];
 	const minMs = numbers.spam_honeypot_min_ms;
 	if (minMs > 0 && env.SPAM_FORM_TS_SECRET) {

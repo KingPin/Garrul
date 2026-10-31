@@ -138,6 +138,7 @@ describe("loadFlags — defaults", () => {
 			page_votes_enabled: false,
 			show_deleted_placeholders: false,
 			spam_first_comment_moderate: false,
+			spam_provider_enabled: true,
 			moderator_email_enabled: false,
 			turnstile_always: false,
 		});
@@ -778,6 +779,23 @@ describe("promoted runtime settings — spam_first_comment_moderate", () => {
 			{ SPAM_FIRST_COMMENT_MODERATE: "true" },
 		);
 		expect((await loadFlags(env)).spam_first_comment_moderate).toBe(false);
+	});
+});
+
+describe("spam_provider_enabled — panel-only switch", () => {
+	it("defaults on, so an upgrade keeps the configured provider running", async () => {
+		const { env } = mkEnv();
+		expect((await loadFlags(env)).spam_provider_enabled).toBe(true);
+	});
+
+	it("reads no env var", async () => {
+		const { env } = mkEnv({}, { SPAM_PROVIDER_ENABLED: "false" });
+		expect((await loadFlags(env)).spam_provider_enabled).toBe(true);
+	});
+
+	it("turns off from a DB row", async () => {
+		const { env } = mkEnv({ spam_provider_enabled: "false" });
+		expect((await loadFlags(env)).spam_provider_enabled).toBe(false);
 	});
 });
 

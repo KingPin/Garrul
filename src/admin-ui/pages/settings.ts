@@ -138,6 +138,11 @@ const MOD_FLAG_META: { key: FlagKey; label: string; help: string }[] = [
 		help: "Require a Turnstile challenge on every comment, not just anonymous ones. Off by default — a signed-in reader posts without one. Needs TURNSTILE_SITE_KEY and TURNSTILE_SECRET configured; without them this does nothing. Cost: Turnstile itself is free. Each challenge adds one Worker request for the challenge frame and one siteverify call when the comment posts.",
 	},
 	{
+		key: "spam_provider_enabled",
+		label: "Run the spam classifier",
+		help: "Check comments with the provider SPAM_PROVIDER names (see the Configuration tab). Off pauses that provider; the heuristics below keep running. This switch cannot choose a different provider, and it does nothing when SPAM_PROVIDER is unset. Cost: off stops the per-comment classifier call and its D1 lookup.",
+	},
+	{
 		key: "moderator_email_enabled",
 		label: "Email me about the queue",
 		help: "Send a digest to ADMIN_EMAILS (or MODERATOR_NOTIFY_EMAILS) when comments land in the queue or get reported. Needs email configured — EMAIL_PROVIDER, RESEND_API_KEY, EMAIL_FROM and PUBLIC_BASE_URL — and stays silent without it.",

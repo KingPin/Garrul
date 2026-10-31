@@ -37,6 +37,7 @@ export type FlagKey =
 	| "page_votes_enabled"
 	| "show_deleted_placeholders"
 	| "spam_first_comment_moderate"
+	| "spam_provider_enabled"
 	| "moderator_email_enabled"
 	| "turnstile_always";
 
@@ -87,8 +88,8 @@ export type ResolvedTexts = Record<TextSettingKey, string>;
 
 // Each flag's env-var source and hardcoded default. `votes_enabled` /
 // `downvotes_enabled` keep their legacy env names so existing wrangler.toml
-// vars keep working.
-const FLAGS: Record<FlagKey, { env: keyof Bindings; default: boolean }> = {
+// vars keep working. A flag with no `env` is settable from the admin panel only.
+const FLAGS: Record<FlagKey, { env?: keyof Bindings; default: boolean }> = {
 	comments_enabled: { env: "COMMENTS_ENABLED", default: true },
 	reactions_enabled: { env: "REACTIONS_ENABLED", default: true },
 	votes_enabled: { env: "VOTING_ENABLED", default: true },
@@ -112,6 +113,11 @@ const FLAGS: Record<FlagKey, { env: keyof Bindings; default: boolean }> = {
 		env: "SPAM_FIRST_COMMENT_MODERATE",
 		default: false,
 	},
+	// Pause the classifier SPAM_PROVIDER names without a redeploy. It can only
+	// turn that provider off, never pick another one: the provider and its
+	// credentials stay deploy-time. Panel-only because SPAM_PROVIDER unset is
+	// already the env-side off switch. Default ON so an upgrade changes nothing.
+	spam_provider_enabled: { default: true },
 	// Email the operator when a comment lands in the queue or gets reported
 	// (src/lib/moderator-digest.ts). Default OFF for the usual upgrade reason,
 	// with an extra one behind it: this is *outbound mail*, so an install that
@@ -671,7 +677,8 @@ const resolve = (
 			// DB row wins. Fall back to the default if the stored string is junk.
 			out[key] = parseBool(dbSettings[key], spec.default);
 		} else {
-			out[key] = parseBool(env[spec.env] as string | undefined, spec.default);
+			const raw = spec.env ? (env[spec.env] as string | undefined) : undefined;
+			out[key] = parseBool(raw, spec.default);
 		}
 	}
 	return out;

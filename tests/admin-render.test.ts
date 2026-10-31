@@ -601,10 +601,12 @@ describe("renderDashboard", () => {
 	};
 	const env = {} as Bindings;
 	// The anti-spam summary line reads the three heuristic dials from resolved
-	// settings, so the dashboard needs them alongside env.
-	const dashFlags = Object.fromEntries(
-		FLAG_KEYS.map((k) => [k, false]),
-	) as ResolvedFlags;
+	// settings, so the dashboard needs them alongside env. The provider switch
+	// stays at its default (on) so the provider lines below render in full.
+	const dashFlags = {
+		...Object.fromEntries(FLAG_KEYS.map((k) => [k, false])),
+		spam_provider_enabled: true,
+	} as ResolvedFlags;
 	const dashNumbers = Object.fromEntries(
 		NUMBER_KEYS.map((k) => [k, 0]),
 	) as ResolvedNumbers;
@@ -762,6 +764,26 @@ describe("renderDashboard", () => {
 			dashTexts,
 		);
 		expect(html).toContain("workers-ai(clef-flash, ≥70%)");
+	});
+
+	it("says the provider is paused when spam_provider_enabled is off", () => {
+		const html = renderDashboard(
+			{
+				stats,
+				timeline: [],
+				top_posts: [],
+				top_commenters: [],
+				oldest_pending: null,
+				spam_rate: { total: 0, spam: 0 },
+				by_host: [],
+			},
+			{ SPAM_PROVIDER: "workers-ai" } as Bindings,
+			{ ...dashFlags, spam_provider_enabled: false },
+			dashNumbers,
+			dashStrings,
+			dashTexts,
+		);
+		expect(html).toContain("provider=<code>workers-ai, paused</code>");
 	});
 
 	const decisionsSummary = (env: Partial<Bindings>) =>

@@ -175,6 +175,24 @@ describe("POST /comments — anti-spam on create", () => {
 		expect(models).toEqual(["@cf/cloudflare/clef"]);
 	});
 
+	it("skips the configured classifier while spam_provider_enabled is off", async () => {
+		sqlite
+			.prepare("INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)")
+			.run("spam_provider_enabled", "false", 1_700_000_000_000);
+		let aiCalls = 0;
+		const res = await post(
+			{ body: "cheap pills here" },
+			{
+				SPAM_PROVIDER: "workers-ai",
+				AI: { run: async () => { aiCalls++; return clef(0.97); } },
+			},
+		);
+		expect(res.status).toBe(201);
+		expect(stored().map((c) => c.status)).toEqual(["approved"]);
+		expect(verdicts()).toEqual([]);
+		expect(aiCalls).toBe(0);
+	});
+
 	it("holds a first comment when moderate-on-first is on, and skips the classifier", async () => {
 		let aiCalls = 0;
 		const res = await post(
