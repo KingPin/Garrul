@@ -54,4 +54,36 @@ describe("external call timeouts", () => {
 		await vi.advanceTimersByTimeAsync(5_000);
 		await expect(v).resolves.toBeNull();
 	});
+	it("a decisions call carries a 5 s timeout signal, and a timeout is no opinion", async () => {
+		// Fake timers can't drive AbortSignal.timeout, so pin the deadline at
+		// the call instead of waiting it out.
+		const timeout = vi.spyOn(AbortSignal, "timeout");
+		const fetch = vi.fn(async (_url: string, _init?: RequestInit) => {
+			throw new DOMException("timed out", "TimeoutError");
+		});
+		vi.stubGlobal("fetch", fetch);
+		const env = { SPAM_PROVIDER: "decisions", SPAM_DECISIONS_API_KEY: "k" };
+		await expect(
+			checkSpam(env, input, 70, "clef-flash", "vendor/decider"),
+		).resolves.toBeNull();
+		expect(timeout).toHaveBeenCalledWith(5_000);
+		expect(fetch.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal);
+		timeout.mockRestore();
+	});
+
+	it("a decisions body that times out mid-read is no opinion", async () => {
+		// The timeout signal also aborts the body stream, so res.json() rejects.
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => ({
+				ok: true,
+				status: 200,
+				json: () => Promise.reject(new DOMException("timed out", "TimeoutError")),
+			})),
+		);
+		const env = { SPAM_PROVIDER: "decisions", SPAM_DECISIONS_API_KEY: "k" };
+		await expect(
+			checkSpam(env, input, 70, "clef-flash", "vendor/decider"),
+		).resolves.toBeNull();
+	});
 });

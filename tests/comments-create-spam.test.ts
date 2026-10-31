@@ -154,6 +154,27 @@ describe("POST /comments — anti-spam on create", () => {
 		expect(verdicts().map((v) => [v.source, v.verdict])).toEqual([["workers-ai", "ham"]]);
 	});
 
+	it("calls the Clef model a stored spam_ai_model names", async () => {
+		sqlite
+			.prepare("INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)")
+			.run("spam_ai_model", "clef", 1_700_000_000_000);
+		const models: string[] = [];
+		const res = await post(
+			{ body: "nice write-up" },
+			{
+				SPAM_PROVIDER: "workers-ai",
+				AI: {
+					run: async (id: string) => {
+						models.push(id);
+						return clef(0.1);
+					},
+				},
+			},
+		);
+		expect(res.status).toBe(201);
+		expect(models).toEqual(["@cf/cloudflare/clef"]);
+	});
+
 	it("holds a first comment when moderate-on-first is on, and skips the classifier", async () => {
 		let aiCalls = 0;
 		const res = await post(
@@ -194,6 +215,57 @@ describe("POST /comments — anti-spam on create", () => {
 		expect((await post({ body: "hi", website: "https://bot.example" })).status).toBe(400);
 		expect((await post({ body: "x".repeat(100_000) })).status).toBe(400);
 		expect(stored()).toEqual([]);
+	});
+
+	it("records a decisions-provider verdict under its own source", async () => {
+		const original = globalThis.fetch;
+		globalThis.fetch = (async () =>
+			new Response(JSON.stringify(clef(0.95)))) as typeof fetch;
+		try {
+			const res = await post(
+				{ body: "cheap pills here" },
+				{
+					SPAM_PROVIDER: "decisions",
+					SPAM_DECISIONS_API_KEY: "k",
+					SPAM_DECISIONS_MODEL: "vendor/decider",
+				},
+			);
+			expect(res.status).toBe(201);
+			expect(stored().map((c) => c.status)).toEqual(["pending"]);
+			expect(verdicts().map((v) => [v.source, v.verdict])).toEqual([
+				["decisions", "spam"],
+			]);
+		} finally {
+			globalThis.fetch = original;
+		}
+	});
+
+	it("asks the model a stored spam_decisions_model names, over the env value", async () => {
+		sqlite
+			.prepare("INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)")
+			.run("spam_decisions_model", "vendor/other", 1_700_000_000_000);
+		const original = globalThis.fetch;
+		const models: unknown[] = [];
+		globalThis.fetch = (async (url: string, init: RequestInit) => {
+			if (String(url).includes("/decisions")) {
+				models.push(JSON.parse(String(init.body)).model);
+			}
+			return new Response(JSON.stringify(clef(0.1)));
+		}) as typeof fetch;
+		try {
+			const res = await post(
+				{ body: "nice write-up" },
+				{
+					SPAM_PROVIDER: "decisions",
+					SPAM_DECISIONS_API_KEY: "k",
+					SPAM_DECISIONS_MODEL: "vendor/decider",
+				},
+			);
+			expect(res.status).toBe(201);
+			expect(models).toEqual(["vendor/other"]);
+		} finally {
+			globalThis.fetch = original;
+		}
 	});
 });
 

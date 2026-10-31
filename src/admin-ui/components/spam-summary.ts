@@ -1,11 +1,18 @@
 import type { Bindings } from "../../index";
-import type { ResolvedFlags, ResolvedNumbers } from "../../lib/settings";
+import type {
+	ResolvedFlags,
+	ResolvedNumbers,
+	ResolvedStrings,
+	ResolvedTexts,
+} from "../../lib/settings";
 import { escapeHtml } from "../escape";
 
 export const spamSummary = (
 	env: Bindings,
 	flags: ResolvedFlags,
 	numbers: ResolvedNumbers,
+	strings: ResolvedStrings,
+	texts: ResolvedTexts,
 ): string => {
 	// Match the same gating evaluateSpam uses at runtime, otherwise the
 	// dashboard would claim a layer is active when it isn't (honeypot timing
@@ -14,10 +21,14 @@ export const spamSummary = (
 	// The three heuristic dials come from the resolved settings, not raw env, so
 	// this line reflects an admin's Settings-page override rather than the
 	// deploy-time value it replaced. The provider and its credentials stay env.
+	// A decisions provider with no key skips every check, so say so here.
+	const decisionsKey = env.SPAM_DECISIONS_API_KEY ? "" : ", no key";
 	const provider =
 		env.SPAM_PROVIDER === "workers-ai"
-			? `workers-ai(≥${numbers.spam_ai_threshold}%)`
-			: env.SPAM_PROVIDER || "off";
+			? `workers-ai(${strings.spam_ai_model}, ≥${numbers.spam_ai_threshold}%)`
+			: env.SPAM_PROVIDER === "decisions"
+				? `decisions(${texts.spam_decisions_model || "no model"}, ≥${numbers.spam_ai_threshold}%${decisionsKey})`
+				: env.SPAM_PROVIDER || "off";
 	const heuristics: string[] = [];
 	const minMs = numbers.spam_honeypot_min_ms;
 	if (minMs > 0 && env.SPAM_FORM_TS_SECRET) {

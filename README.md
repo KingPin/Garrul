@@ -192,8 +192,8 @@ On top of those, four heuristics: minimum fill time, link count, hold an
 author's first comment, and a **muted-words list** with word-boundary and
 wildcard terms. All off by default, each with an env var that sets the
 deploy-time default, and all four retunable from **Settings → Moderation**
-without a redeploy. Optionally a content classifier (Akismet or Workers
-AI) runs when no heuristic has already flagged.
+without a redeploy. Optionally a content classifier (Akismet, Workers
+AI, or your own decision model) runs when no heuristic has already flagged.
 
 **Nothing is ever silently dropped.** Every layer routes to
 `/admin/queue?status=pending`; you decide what gets approved. The

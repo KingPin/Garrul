@@ -181,15 +181,41 @@ Add an AI binding to `wrangler.toml`:
 binding = "AI"
 ```
 
-**How it decides.** The classifier is Cloudflare's [Clef-flash](https://developers.cloudflare.com/workers-ai/models/clef-flash/) (`@cf/cloudflare/clef-flash`), a decision model rather than a chat model. Garrul sends it the comment body (first 2,000 characters), the author's display name, whether this is their first comment, and the page URL, and asks one yes/no question: is this spam? Clef returns a probability, not free text.
+**How it decides.** The classifier is one of Cloudflare's Clef decision models, chosen by `SPAM_AI_MODEL` (also on **Admin → Settings → Anti-spam**): [Clef-flash](https://developers.cloudflare.com/workers-ai/models/clef-flash/) (`@cf/cloudflare/clef-flash`, 9B, the default) or [Clef](https://developers.cloudflare.com/workers-ai/models/clef/) (`@cf/cloudflare/clef`, 27B). Both are decision models rather than chat models, and both get the same request. Garrul sends it the comment body (first 2,000 characters), the author's display name, whether this is their first comment, and the page URL, and asks one yes/no question: is this spam? Clef returns a probability, not free text.
 
 A comment is queued when that probability is at or above the **AI spam threshold**: `SPAM_AI_THRESHOLD` (percent, `1`–`100`, default `70`), also editable on **Admin → Settings → Anti-spam**. The probability is stored as the verdict's score and shown on each comment's detail page, so you can tune the threshold against your real traffic. Lower it to catch more spam at the cost of more real comments in the queue; raise it for the reverse.
 
 **Privacy posture.** Inference runs on Cloudflare's edge via your AI binding — no third-party API call leaves CF infrastructure. Nothing about the comment is cached: each new comment is one model call.
 
-**Cost.** Clef-flash bills input tokens only: $0.038 per million, or 3,455 neurons per million, at the time of writing. A comment of up to 2,000 characters plus the question is a few hundred tokens, so one check is roughly 1–3 neurons. Both Workers plans include 10,000 neurons a day (reset 00:00 UTC), which covers a few thousand comments. On the Free plan, calls past that fail and comments post without an AI check; on Paid, 1,000 comments cost about $0.03. **Admin → Usage** shows today's neurons and the measured average per call. No API key is needed: the `[ai]` binding bills the account the Worker runs in.
+**Cost.** Clef-flash bills input tokens only: $0.038 per million, or 3,455 neurons per million, at the time of writing. A comment of up to 2,000 characters plus the question is a few hundred tokens, so one check is roughly 1–3 neurons. Both Workers plans include 10,000 neurons a day (reset 00:00 UTC), which covers a few thousand comments. Full Clef bills $0.240 per million input tokens (21,818 neurons per million), about 6.3× Clef-flash: roughly 6–20 neurons per check, so the free allowance covers about 500–1,500 comments a day. On the Free plan, calls past that allowance fail and comments post without an AI check; on Paid, 1,000 comments cost about $0.03 with Clef-flash and about $0.07–0.22 with Clef (6–20 neurons per check at $0.011 per 1,000 neurons). Clef is also slower; a check that runs past 5 seconds counts as no opinion and the comment posts on the heuristics alone. **Admin → Usage** shows today's neurons and the measured average per call. No API key is needed: the `[ai]` binding bills the account the Worker runs in.
 
 Tradeoff vs. Akismet: no shared cross-site spam reputation, but no third-party data egress. Good fit if your audience cares about that, or if you don't want to manage another vendor.
+
+#### `decisions` (bring your own key)
+
+Use any endpoint that speaks the OpenAI-style `/decisions` API — OpenRouter by default — with your own key and the model you choose. Garrul sends exactly the request the Workers AI classifier sends: the same state and the same yes/no question. The answer is a spam probability, and the same **AI spam threshold** (`SPAM_AI_THRESHOLD`, also on **Admin → Settings → Anti-spam**) decides.
+
+```toml
+# wrangler.toml
+[vars]
+SPAM_PROVIDER = "decisions"
+SPAM_DECISIONS_MODEL = "~typesafe/jev-latest"   # the model id as your endpoint names it
+# SPAM_DECISIONS_URL = "https://openrouter.ai/api/alpha/decisions"   # the default
+```
+
+```bash
+wrangler secret put SPAM_DECISIONS_API_KEY
+```
+
+`SPAM_DECISIONS_MODEL` is only the starting value. The model is also on **Admin → Settings → Anti-spam** (`spam_decisions_model`), so you can switch models on live traffic and compare, with no redeploy. **Reset to defaults** (clears every override) returns it to `SPAM_DECISIONS_MODEL`.
+
+The check is skipped (no opinion, the comment posts on the heuristics alone) when the key or the model is unset, or when `SPAM_DECISIONS_URL` is not `https://` — the key is never sent in plaintext. Garrul never follows a redirect from the endpoint; a 3xx answer is no opinion. Each verdict records the model id **you configured** in `spam_verdicts.raw.model`, so the comment detail page shows which setting was in force. With an alias such as `~typesafe/jev-latest`, that is the alias, not the concrete model the provider resolved it to.
+
+**Privacy posture.** Unlike Workers AI, **the comment leaves Cloudflare.** The comment body (first 2,000 characters), the author's display name, whether this is their first comment, and the page URL go to the endpoint you configure, and from there to whichever model vendor it routes to. Email, IP and user agent are never sent. This is a new subprocessor: add it to your privacy policy (`docs/privacy-policy.template.md` has a stub) and check `docs/compliance/subprocessors.md`.
+
+**Stability.** OpenRouter's route is `/api/alpha/`, so its shape can change. A response Garrul cannot read is logged as `spam.adapter.error` and treated as no opinion — the classifier goes quiet, it never holds comments by mistake. Watch `wrangler tail` for that event after a provider change.
+
+**Cost.** Billed by your provider, per its price list. Garrul makes one call per comment that no heuristic has already queued, and waits at most 5 seconds. **Admin → Usage** tracks Workers AI neurons only, not this spend.
 
 ### Combining
 
@@ -207,7 +233,8 @@ Per comment post from a non-admin, read from the code rather than measured. Free
 | First-comment moderation | — | 1 indexed read | — | — |
 | Muted words | — | — | — | CPU only; at most 200 terms |
 | `akismet` | — | 1 indexed read (first-comment feature) | — | One call to Akismet |
-| `workers-ai` | — | 1 indexed read (first-comment feature) | — | Roughly 1–3 neurons [10,000/day] |
+| `workers-ai` | — | 1 indexed read (first-comment feature) | — | Roughly 1–3 neurons (Clef-flash) or 6–20 (Clef) [10,000/day] |
+| `decisions` | — | 1 indexed read (first-comment feature) | — | One call to your provider, billed by it |
 
 Any layer that runs also inserts one `spam_verdicts` row, and the classifier inserts a second. Each insert is about three rows written, because the table has two indexes. No layer writes KV.
 

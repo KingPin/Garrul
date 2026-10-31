@@ -212,6 +212,22 @@ describe("workers-ai provider", () => {
 		);
 	});
 
+	it("calls full Clef when the model setting names it", async () => {
+		const ai = makeAi(0.1);
+		const v = await checkSpam(envWith(ai), input, 70, "clef");
+		expect(ai.run).toHaveBeenCalledWith(
+			"@cf/cloudflare/clef",
+			expect.objectContaining({ model: "clef" }),
+		);
+		expect(v?.raw).toMatchObject({ model: "@cf/cloudflare/clef" });
+	});
+
+	it("records the Clef-flash id when no model is passed", async () => {
+		// Upgrade safety: an install with no new setting keeps today's raw.model.
+		const v = await checkSpam(envWith(makeAi(0.1)), input);
+		expect(v?.raw).toMatchObject({ model: "@cf/cloudflare/clef-flash" });
+	});
+
 	it("flags spam at or above the threshold and records the probability as score", async () => {
 		const v = await checkSpam(envWith(makeAi(0.5)), input, 50);
 		expect(v).toMatchObject({ spam: true, reason: "workers-ai.spam", score: 0.5 });
@@ -256,5 +272,141 @@ describe("workers-ai provider", () => {
 	it("returns null when the model call throws", async () => {
 		const ai = { run: vi.fn(async () => { throw new Error("ai down"); }) };
 		expect(await checkSpam(envWith(ai), input)).toBeNull();
+	});
+});
+
+describe("decisions provider", () => {
+	// Bring-your-own-key: any OpenAI-style /decisions endpoint. The key rides in
+	// an Authorization header, and a provider's error body can quote it back,
+	// so the adapter logs only a status or an error name, never a message.
+	const SECRET = "sk-do-not-log-me-0123456789abcdef";
+	const originalFetch = globalThis.fetch;
+	let calls: { url: string; init: RequestInit }[];
+	let lines: string[];
+
+	const env = (extra: Record<string, string> = {}) => ({
+		SPAM_PROVIDER: "decisions",
+		SPAM_DECISIONS_API_KEY: SECRET,
+		...extra,
+	});
+	// The model arrives as the resolved `spam_decisions_model` setting, not env.
+	const check = (e = env(), threshold = 70, model = "vendor/decider") =>
+		checkSpam(e, input, threshold, "clef-flash", model);
+	const respond = (status: number, body: unknown) => {
+		globalThis.fetch = (async (url: string, init: RequestInit) => {
+			calls.push({ url, init });
+			return new Response(
+				typeof body === "string" ? body : JSON.stringify(body),
+				{ status },
+			);
+		}) as typeof fetch;
+	};
+	const answer = (p: unknown) => ({ answers: { spam: { type: "noul", noul: p } } });
+
+	beforeEach(() => {
+		calls = [];
+		lines = [];
+		vi.spyOn(console, "log").mockImplementation((s: unknown) => {
+			lines.push(String(s));
+		});
+	});
+	afterEach(() => {
+		globalThis.fetch = originalFetch;
+		vi.restoreAllMocks();
+	});
+
+	it("posts the shared spam question to OpenRouter by default, with a bearer key", async () => {
+		respond(200, answer(0.1));
+		await check();
+		expect(calls).toHaveLength(1);
+		// `?.`: tsconfig sets noUncheckedIndexedAccess, and tests are type-checked.
+		expect(calls[0]?.url).toBe("https://openrouter.ai/api/alpha/decisions");
+		const headers = new Headers(calls[0]?.init.headers);
+		expect(headers.get("authorization")).toBe(`Bearer ${SECRET}`);
+		// A redirect could carry that header to another host or to http://.
+		expect(calls[0]?.init.redirect).toBe("manual");
+		const body = JSON.parse(String(calls[0]?.init.body));
+		expect(body).toMatchObject({
+			model: "vendor/decider",
+			state: { comment: "Hello world", author: "Daisy" },
+			questions: { spam: { type: "noul" } },
+		});
+		// Same privacy contract as Clef: no email, IP or user agent.
+		expect(Object.keys(body.state).sort()).toEqual(
+			["author", "comment", "first_time_commenter", "page"],
+		);
+	});
+
+	it("uses SPAM_DECISIONS_URL when set", async () => {
+		respond(200, answer(0.1));
+		await check(env({ SPAM_DECISIONS_URL: "https://decide.example/v1/decisions" }));
+		expect(calls[0]?.url).toBe("https://decide.example/v1/decisions");
+	});
+
+	it("refuses a non-https endpoint without calling it", async () => {
+		respond(200, answer(0.9));
+		expect(
+			await check(env({ SPAM_DECISIONS_URL: "http://decide.example/v1/decisions" })),
+		).toBeNull();
+		expect(calls).toHaveLength(0);
+	});
+
+	it("returns null on a redirect without following it", async () => {
+		respond(302, "");
+		expect(await check()).toBeNull();
+		expect(calls).toHaveLength(1);
+		expect(lines.join("\n")).toContain("302");
+	});
+
+	it("returns null without a key or a model, and never calls out", async () => {
+		respond(200, answer(0.9));
+		expect(await check(env({ SPAM_DECISIONS_API_KEY: "" }))).toBeNull();
+		expect(await check(env(), 70, "")).toBeNull();
+		expect(calls).toHaveLength(0);
+	});
+
+	it("applies the threshold and records the configured model", async () => {
+		respond(200, answer(0.8));
+		expect(await check()).toMatchObject({
+			spam: true,
+			reason: "decisions.spam",
+			score: 0.8,
+			raw: { model: "vendor/decider", threshold: 70 },
+		});
+		respond(200, answer(0.69));
+		expect(await check()).toMatchObject({ spam: false, score: 0.69 });
+	});
+
+	it("returns null on an HTTP error without logging the body or the key", async () => {
+		respond(401, `{"error":"invalid key ${SECRET}"}`);
+		expect(await check()).toBeNull();
+		const logged = lines.join("\n");
+		expect(logged).toContain("401");
+		expect(logged).not.toContain(SECRET.slice(0, 8));
+		expect(logged).not.toContain("invalid key");
+	});
+
+	it("returns null on a malformed answer", async () => {
+		respond(200, answer("0.9"));
+		expect(await check()).toBeNull();
+		respond(200, { choices: [] });
+		expect(await check()).toBeNull();
+	});
+
+	it("logs only an error's name, never its message", async () => {
+		// V8's JSON.parse error quotes a truncated prefix of the text it choked
+		// on — here, the start of the key — so an exact-match scrub would miss
+		// it. A fetch error can carry whatever the runtime saw.
+		respond(200, `${SECRET} PRIVATE-BODY is not json`);
+		expect(await check()).toBeNull();
+		globalThis.fetch = (async () => {
+			throw new TypeError(`connect failed for ${SECRET}`);
+		}) as typeof fetch;
+		expect(await check()).toBeNull();
+		const logged = lines.join("\n");
+		expect(logged).not.toContain(SECRET.slice(0, 8));
+		expect(logged).not.toContain("PRIVATE-BODY");
+		expect(logged).toContain("SyntaxError");
+		expect(logged).toContain("TypeError");
 	});
 });

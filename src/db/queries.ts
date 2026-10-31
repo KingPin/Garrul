@@ -3317,7 +3317,7 @@ export const adminLatestAuditByTarget = async (
 // Spam verdicts
 // ---------------------------------------------------------------------------
 
-export type SpamVerdictSource = "akismet" | "workers-ai" | "heuristics";
+export type SpamVerdictSource = "akismet" | "workers-ai" | "decisions" | "heuristics";
 export type SpamVerdictValue = "spam" | "ham" | "uncertain";
 
 export type SpamVerdictRow = {

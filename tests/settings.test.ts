@@ -857,7 +857,29 @@ describe("loadStrings", () => {
 			// `new` deliberately, not `old`: an upgrade must not reorder every
 			// thread on an existing install.
 			default_sort: "new",
+			// The model every install ran before the setting existed, so an
+			// upgrade does not change the per-comment cost.
+			spam_ai_model: "clef-flash",
 		});
+	});
+
+	it("resolves SPAM_AI_MODEL to its canonical Clef name", async () => {
+		const { env } = mkEnv({}, { SPAM_AI_MODEL: "CLEF" });
+		expect((await loadStrings(env)).spam_ai_model).toBe("clef");
+	});
+
+	it("falls back to clef-flash for a model outside the whitelist", async () => {
+		// A typo must not switch the classifier off, and nothing outside the
+		// list may reach `AI.run` — the id is built from this value.
+		const { env } = mkEnv({}, { SPAM_AI_MODEL: "@cf/meta/llama-3.1-8b" });
+		expect((await loadStrings(env)).spam_ai_model).toBe("clef-flash");
+	});
+
+	it("resolves a junk stored model to clef-flash, not to the env value", async () => {
+		// DB > env: a present row wins even when it is junk, and junk resolves to
+		// the default — so a bad row can't reach AI.run either.
+		const { env } = mkEnv({ spam_ai_model: "gpt-4o" }, { SPAM_AI_MODEL: "clef" });
+		expect((await loadStrings(env)).spam_ai_model).toBe("clef-flash");
 	});
 
 	it("resolves a value for every canonical string key", async () => {
@@ -917,6 +939,23 @@ describe("staff_badge_label", () => {
 	it("truncates an over-long stored value to its own cap, not the global one", async () => {
 		const { env } = mkEnv({ staff_badge_label: "x".repeat(STAFF_BADGE_LABEL_MAX + 10) });
 		expect((await loadTexts(env)).staff_badge_label).toHaveLength(STAFF_BADGE_LABEL_MAX);
+	});
+});
+
+describe("spam_decisions_model", () => {
+	it("resolves from SPAM_DECISIONS_MODEL", async () => {
+		const { env } = mkEnv({}, { SPAM_DECISIONS_MODEL: "vendor/decider" });
+		expect((await loadTexts(env)).spam_decisions_model).toBe("vendor/decider");
+	});
+
+	it("lets a stored row beat the env value", async () => {
+		// The Settings page writes this row so an operator can compare models
+		// without a redeploy.
+		const { env } = mkEnv(
+			{ spam_decisions_model: "vendor/other" },
+			{ SPAM_DECISIONS_MODEL: "vendor/decider" },
+		);
+		expect((await loadTexts(env)).spam_decisions_model).toBe("vendor/other");
 	});
 });
 

@@ -87,8 +87,17 @@ not enable it, so if you turn it on, edit the policy.
 | --- | --- |
 | **Role** | Content-scoring, inside Cloudflare |
 | **When** | `SPAM_PROVIDER=workers-ai`. Off by default. |
-| **Receives** | The comment body truncated to 2000 characters, the author's display name, whether this is their first comment, and the page URL, sent to the `@cf/cloudflare/clef-flash` decision model (`src/lib/spam/workers-ai.ts:33-34`, `:85`) |
+| **Receives** | The comment body truncated to 2000 characters, the author's display name, whether this is their first comment, and the page URL, sent to the Clef decision model `SPAM_AI_MODEL` picks — `@cf/cloudflare/clef-flash` by default, or `@cf/cloudflare/clef` (`src/lib/spam/workers-ai.ts`, `src/lib/spam/decision.ts`) |
 | **New subprocessor?** | **No.** It stays within Cloudflare, already your processor. That makes it the low-transfer choice if you want machine classification but not a US vendor relationship. |
+
+### Bring-your-own decision model — spam classification
+
+| | |
+| --- | --- |
+| **Role** | Content-scoring, at a vendor the operator chooses |
+| **When** | `SPAM_PROVIDER=decisions`. Off by default. |
+| **Receives** | The comment body truncated to 2000 characters, the author's display name, whether this is their first comment, and the page URL, sent over https to `SPAM_DECISIONS_URL` (default `https://openrouter.ai/api/alpha/decisions`) for the model the resolved `spam_decisions_model` setting names — the **Admin → Settings** value when one is saved, else `SPAM_DECISIONS_MODEL` (`src/lib/spam/decisions.ts`, `src/lib/spam/decision.ts`). No email, IP or user agent. |
+| **New subprocessor?** | **Yes.** The endpoint operator (OpenRouter by default) and the model vendor it routes to both receive comment content. Name both in your privacy policy, and check where they process data. Changing the model on the Settings page can change the vendor — review the new one before you switch. |
 
 ### Telegram — operator notifications
 
@@ -142,7 +151,7 @@ posture the software supports:
 | Setting | Value | Effect |
 | --- | --- | --- |
 | OAuth client ids/secrets | none | Anonymous commenting with Turnstile only. No provider learns anything. |
-| `SPAM_PROVIDER` | unset, or `workers-ai` | Built-in heuristics only, or classification that stays inside Cloudflare. **Never `akismet`** — that is the one transfer that ships comment text off-platform. |
+| `SPAM_PROVIDER` | unset, or `workers-ai` | Built-in heuristics only, or classification that stays inside Cloudflare. **Never `akismet` or `decisions`** — those are the transfers that ship comment text off-platform. |
 | `EMAIL_PROVIDER` / `RESEND_API_KEY` | unset | No email subprocessor. Subscriptions can't be confirmed, so nobody's address is collected at all. |
 | Telegram bot token | unset | No messaging subprocessor. |
 | Webhooks | none configured | No operator-chosen recipients. |

@@ -1125,8 +1125,8 @@ is on by default. From the end-user perspective:
    IP, and stores the comment under that ghost author.
 4. If the operator has enabled any **optional anti-spam layers**
    (timing honeypot, link-count threshold, first-comment moderation,
-   Akismet, or Cloudflare Workers AI), a flagged comment is created
-   with `status='pending'` instead of `approved`. A signed-in author
+   Akismet, Cloudflare Workers AI, or a bring-your-own decision model), a
+   flagged comment is created with `status='pending'` instead of `approved`. A signed-in author
    still sees their own pending comment inline with a **"Pending
    approval"** badge (the list endpoint returns the viewer's own pending
    rows, scoped to their session); it stays hidden from everyone else

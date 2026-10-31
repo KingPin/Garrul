@@ -167,6 +167,12 @@ you submit or cancel the comment.
   host the comment system.
   [Enable only if SPAM_PROVIDER=workers-ai.]
 
+- **[Model provider, e.g. OpenRouter and the model vendor it routes to]**
+  classifies comments as spam or not. Your comment text, your display name
+  and the page address are sent to them. Your email address and IP address
+  are not.
+  [Enable only if SPAM_PROVIDER=decisions.]
+
 - **Telegram** receives moderation notifications, which include comment
   text and author display names.
   [Enable only if a Telegram bot is configured.]

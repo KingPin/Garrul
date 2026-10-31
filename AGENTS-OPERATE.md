@@ -230,14 +230,18 @@ between the two is a build error, not a silent misclassification.
 | `TELEGRAM_BOT_TOKEN` | secret | Optional. BotFather token enabling the Telegram operator bot. With only this set, outbound notifications work (add a `telegram` webhook endpoint with a chat id). Unset = feature off. See `docs/telegram.md`. | `123456789:AAH...` | `wrangler secret put` / `.dev.vars` |
 | `TELEGRAM_WEBHOOK_SECRET` | secret | Optional. Shared secret echoed in the `X-Telegram-Bot-Api-Secret-Token` header; required for inbound buttons/slash commands. Pass it to Telegram's `setWebhook` as `secret_token`. Unset = inbound rejected (fail closed). | ``openssl rand -base64 32` output` | `wrangler secret put` / `.dev.vars` |
 | `TELEGRAM_BOT_USERNAME` | var | Optional. Bot `@username` (without `@`). When set, `/admin/telegram` renders a one-tap `t.me/<bot>?start=<code>` deep link instead of manual `/start` steps. | `YourGarrulBot` | `wrangler.toml` |
-| `SPAM_PROVIDER` | var | Optional. Pluggable content classifier — `akismet` or `workers-ai`. Unset = no classifier. `workers-ai` also needs an `[ai]` binding. See `docs/ANTISPAM.md`. | `akismet` | `wrangler.toml` |
+| `SPAM_PROVIDER` | var | Optional. Pluggable content classifier — `akismet`, `workers-ai`, or `decisions` (bring your own key). Unset = no classifier. `workers-ai` also needs an `[ai]` binding; `decisions` needs `SPAM_DECISIONS_API_KEY` and a model. See `docs/ANTISPAM.md`. | `akismet` | `wrangler.toml` |
 | `AKISMET_API_KEY` | secret | Optional. Akismet API key. Required when `SPAM_PROVIDER=akismet`. | `...` | `wrangler secret put` / `.dev.vars` |
 | `AKISMET_SITE_URL` | secret | Optional. Public site URL sent to Akismet alongside each check. Required when `SPAM_PROVIDER=akismet`. | `https://yourblog.example.com` | `wrangler secret put` / `.dev.vars` |
+| `SPAM_DECISIONS_API_KEY` | secret | Optional. API key for the bring-your-own decision model, sent as a Bearer token to `SPAM_DECISIONS_URL`. Required when `SPAM_PROVIDER=decisions`. | `sk-or-...` | `wrangler secret put` / `.dev.vars` |
+| `SPAM_DECISIONS_MODEL` | var | Optional. Model id the `decisions` provider asks, as the endpoint names it (OpenRouter ids look like `vendor/model`). Needed when `SPAM_PROVIDER=decisions`; unset or empty skips the check. Usually changed on the Settings page, to compare models — this is the default a fresh deploy starts with. Comments are sent to that provider, outside Cloudflare. | `~typesafe/jev-latest` | `wrangler.toml` default; **Admin → Settings** overrides |
+| `SPAM_DECISIONS_URL` | var | Optional. Endpoint for `SPAM_PROVIDER=decisions`. Must be `https://`; anything else disables the check. Unset = `https://openrouter.ai/api/alpha/decisions`. | `https://openrouter.ai/api/alpha/decisions` | `wrangler.toml` |
 | `SPAM_FORM_TS_SECRET` | secret | Optional. HMAC key for signed form-timestamp tokens. Set when `SPAM_HONEYPOT_MIN_MS` is in use, otherwise the timing check cannot be trusted. | ``openssl rand -base64 32` output` | `wrangler secret put` / `.dev.vars` |
 | `SPAM_BLOCKLIST` | var | Optional. Muted-words list, one term per line. A term matches whole words only (`ass` does not flag "class"); wrap it in `*` to match anywhere (`*casino*`), or trail one for a prefix (`t.me/*`). Matching is case-insensitive, folds Unicode lookalike forms (fullwidth `ｖｉａｇｒａ` matches `viagra`) and ignores zero-width characters. Accents are *not* stripped and leetspeak is *not* decoded. Lines starting with `#` are comments. Not a regex — `.` and `(` are literal text. Checked against the comment body, author name and page URL; a hit routes the comment to the admin queue, never a silent drop. Usually maintained on the Settings page rather than here — this is the default a fresh deploy starts with. | `casino\n*viagra*\nt.me/*` | `wrangler.toml` default; **Admin → Settings** overrides |
 | `SPAM_LINK_THRESHOLD` | var | Optional. Flag a comment to `pending` when it contains more than N URLs. Unset (or `-1`) = off; `0` flags any comment containing a link. Tripped signals never silently drop a comment — they route it to the admin queue. | `3` | `wrangler.toml` default; **Admin → Settings** overrides |
 | `SPAM_HONEYPOT_MIN_MS` | var | Optional. Flag a comment to `pending` when the form was submitted faster than N milliseconds. Pair with `SPAM_FORM_TS_SECRET` — without it the timestamp is unsigned and the check is skipped. Unset or `0` = off. | `1500` | `wrangler.toml` default; **Admin → Settings** overrides |
-| `SPAM_AI_THRESHOLD` | var | Optional. With `SPAM_PROVIDER=workers-ai`, flag a comment to `pending` when the Clef-flash classifier rates it at least N percent likely to be spam. `1`–`100`; unset = `70`. Ignored for other providers. | `70` | `wrangler.toml` default; **Admin → Settings** overrides |
+| `SPAM_AI_THRESHOLD` | var | Optional. With `SPAM_PROVIDER=workers-ai` or `decisions`, flag a comment to `pending` when the Clef classifier rates it at least N percent likely to be spam. `1`–`100`; unset = `70`. Ignored for `akismet`. | `70` | `wrangler.toml` default; **Admin → Settings** overrides |
+| `SPAM_AI_MODEL` | var | Optional. With `SPAM_PROVIDER=workers-ai`, which Cloudflare Clef model classifies comments: `clef-flash` (9B, cheapest) or `clef` (27B, about 6× the neurons per comment). Any other value resolves to `clef-flash`. Ignored for other providers. | `clef` | `wrangler.toml` default; **Admin → Settings** overrides |
 | `SPAM_FIRST_COMMENT_MODERATE` | var | Optional. Route a new author's comments to `pending` until one is approved. Unset = off. | `true` | `wrangler.toml` default; **Admin → Settings** overrides |
 | `CF_ACCOUNT_ID` | var | Optional. Cloudflare account ID; paired with `CF_API_TOKEN` to enable the `/admin/usage` analytics page. | `0123abcd...` | `wrangler.toml` (or `wrangler secret put` — the in-app setup guide uses the secret form; both work) |
 | `CF_API_TOKEN` | secret | Optional. Cloudflare API token for `/admin/usage`. Least-privilege scopes: Account.Analytics:Read, Account.D1:Read, Account.Workers KV Storage:Read. The page renders setup instructions when either value is unset. | `...` | `wrangler secret put` / `.dev.vars` |
@@ -394,9 +398,19 @@ default, server-side clamped), edited from **Settings → Moderation**.
   collapsing "off" onto `0` would have redefined what `0` does for anyone
   already running it.
 - `SPAM_AI_THRESHOLD` — clamped to `1`–`100`, default `70`. Percent spam
-  probability at which the `workers-ai` classifier (Clef-flash) queues a
-  comment. No `0`: that would queue everything. Ignored for other providers.
-  The probability lands in `spam_verdicts.score`.
+  probability at which the `workers-ai` classifier (Clef) or the
+  `decisions` provider queues a comment. No `0`: that would queue everything.
+  Ignored for `akismet`. The probability lands in `spam_verdicts.score`.
+- `SPAM_AI_MODEL` — `clef-flash` (default) or `clef`, matched
+  case-insensitively. Anything else resolves to `clef-flash`, so a typo never
+  turns the classifier off and no other Workers AI model can be reached. Only
+  read by the `workers-ai` provider. `spam_verdicts.raw.model` records which
+  model decided.
+- `SPAM_DECISIONS_MODEL` — free-form model id for the `decisions` provider,
+  up to 200 characters, as the endpoint names it. The Settings page row
+  (`spam_decisions_model`) overrides it so operators can compare models
+  without a redeploy; empty skips the check. `spam_verdicts.raw.model`
+  records the configured id (an alias stays an alias).
 - `SPAM_HONEYPOT_MIN_MS` — clamped to `0`–`60000`; `0` (default) = off. Still
   requires `SPAM_FORM_TS_SECRET`, which stays a secret: without it the form
   timestamp is unsigned and forgeable, so `evaluateSpam` skips the check, the
@@ -404,9 +418,10 @@ default, server-side clamped), edited from **Settings → Moderation**.
   `form_token_enabled: false` so the widget does not request it. The Settings page flags this
   combination inline rather than letting the dial sit there doing nothing.
 
-`SPAM_PROVIDER`, `AKISMET_API_KEY`, `AKISMET_SITE_URL` and `SPAM_FORM_TS_SECRET`
-stay **deploy-time**: the provider needs capability detection (`akismet` wants an
-API key, `workers-ai` wants the `[ai]` binding) and a dropdown offering a
+`SPAM_PROVIDER`, `AKISMET_API_KEY`, `AKISMET_SITE_URL`, `SPAM_DECISIONS_API_KEY`,
+`SPAM_DECISIONS_URL` and `SPAM_FORM_TS_SECRET` stay **deploy-time**: the provider
+needs capability detection (`akismet` wants an API key, `workers-ai` wants the
+`[ai]` binding, `decisions` wants a key and an https endpoint) and a dropdown offering a
 provider the deploy cannot serve is worse than an env var. Everything that can
 lock an operator out — all secrets, `ENV`, `ALLOWED_ORIGINS`, `ADMIN_EMAILS`, and
 the OAuth-redirect URLs — is deliberately excluded from runtime editing, because
@@ -561,12 +576,13 @@ its credentials stay deploy-time.
   and zero-width characters; does not strip accents or decode leetspeak.
   `#` starts a comment. Normally maintained on the Settings page — the
   env var is just the default a fresh deploy starts with.
-- `SPAM_PROVIDER` — set to `akismet` or `workers-ai` to enable a
-  content classifier (each has its own required secrets/bindings).
+- `SPAM_PROVIDER` — set to `akismet`, `workers-ai` or `decisions` (bring your
+  own key) to enable a content classifier (each has its own required
+  secrets/bindings).
 
 See [`docs/ANTISPAM.md`](./docs/ANTISPAM.md) for the full layer
 breakdown, privacy tradeoffs (Akismet sends comment content off
-Cloudflare; Workers AI keeps it on-network), and recommended starter
+Cloudflare, and so does `decisions`; Workers AI keeps it on-network), and recommended starter
 configs.
 
 ### Accurate rate limiting: the Durable Object backend (opt-in)

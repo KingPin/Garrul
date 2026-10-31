@@ -367,7 +367,7 @@ const loadDashboardData = (db: D1Database): Promise<DashboardData> => {
 admin.get("/", async (c) => {
 	const user = await requireMod(c);
 	if (user instanceof Response) return user;
-	const [data, updateInfo, { flags, numbers }] = await Promise.all([
+	const [data, updateInfo, { flags, numbers, strings, texts }] = await Promise.all([
 		loadDashboardData(c.env.DB),
 		peekCachedLatestVersion(c.env),
 		// The anti-spam summary line reports the resolved heuristic dials, so it
@@ -379,6 +379,8 @@ admin.get("/", async (c) => {
 		c.env,
 		flags,
 		numbers,
+		strings,
+		texts,
 	);
 	return c.html(renderPage(c, "Dashboard", body, user, updateInfo));
 });

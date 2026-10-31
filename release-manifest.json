@@ -107,6 +107,11 @@
       "addedIn": "1.1.1"
     },
     {
+      "name": "SPAM_DECISIONS_API_KEY",
+      "required": false,
+      "addedIn": "2.41.0"
+    },
+    {
       "name": "SPAM_FORM_TS_SECRET",
       "required": false,
       "addedIn": "1.1.1"
@@ -207,6 +212,16 @@
       "addedIn": "1.1.1"
     },
     {
+      "name": "SPAM_DECISIONS_MODEL",
+      "required": false,
+      "addedIn": "2.41.0"
+    },
+    {
+      "name": "SPAM_DECISIONS_URL",
+      "required": false,
+      "addedIn": "2.41.0"
+    },
+    {
       "name": "SPAM_BLOCKLIST",
       "required": false,
       "addedIn": "2.12.0"
@@ -225,6 +240,11 @@
       "name": "SPAM_AI_THRESHOLD",
       "required": false,
       "addedIn": "2.38.0"
+    },
+    {
+      "name": "SPAM_AI_MODEL",
+      "required": false,
+      "addedIn": "2.41.0"
     },
     {
       "name": "SPAM_FIRST_COMMENT_MODERATE",

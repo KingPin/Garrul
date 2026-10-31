@@ -8,7 +8,12 @@ import type {
 	TopPost,
 } from "../../db/queries";
 import { spamSummary } from "../components/spam-summary";
-import type { ResolvedFlags, ResolvedNumbers } from "../../lib/settings";
+import type {
+	ResolvedFlags,
+	ResolvedNumbers,
+	ResolvedStrings,
+	ResolvedTexts,
+} from "../../lib/settings";
 import { identiconSvg } from "../../lib/identicon";
 import { barChartSvg } from "../charts";
 import { escapeHtml } from "../escape";
@@ -148,6 +153,8 @@ export const renderDashboard = (
 	env: Bindings,
 	flags: ResolvedFlags,
 	numbers: ResolvedNumbers,
+	strings: ResolvedStrings,
+	texts: ResolvedTexts,
 ): string => {
 	const { stats, timeline, top_posts, top_commenters, oldest_pending, spam_rate, by_host } = data;
 	return `
@@ -168,7 +175,7 @@ export const renderDashboard = (
       <div class="l">spam rate (30d)</div>
     </div>
   </div>
-  <p class="muted">Anti-spam: ${spamSummary(env, flags, numbers)}. See <a href="/admin/settings">Settings</a> to change.</p>
+  <p class="muted">Anti-spam: ${spamSummary(env, flags, numbers, strings, texts)}. See <a href="/admin/settings">Settings</a> to change.</p>
 </div>
 
 ${embedCard(env)}

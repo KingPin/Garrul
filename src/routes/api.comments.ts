@@ -91,6 +91,7 @@ import {
 	verifyFormTimestamp,
 } from "../lib/spam/heuristics";
 import { checkSpam } from "../lib/spam";
+import type { ClefModel } from "../lib/spam/workers-ai";
 import type { CommentStatus } from "../db/queries";
 import {
 	buildTree,
@@ -292,6 +293,7 @@ const evaluateSpam = async (
 	flags: ResolvedFlags,
 	numbers: ResolvedNumbers,
 	texts: ResolvedTexts,
+	strings: ResolvedStrings,
 	author: User,
 	bodyMd: string,
 	postUrl: string | null,
@@ -379,17 +381,27 @@ const evaluateSpam = async (
 	// Skip the classifier call when a heuristic already flagged — the
 	// outcome is already `pending` and the call may cost money/latency.
 	if (reasons.length === 0 && env.SPAM_PROVIDER) {
-		const classifierVerdict = await checkSpam(env, {
-			body_md: bodyMd,
-			author_name: author.name,
-			author_email: author.email,
-			user_agent: userAgent,
-			post_url: postUrl,
-			is_first_comment: isFirst,
-		}, numbers.spam_ai_threshold);
+		const classifierVerdict = await checkSpam(
+			env,
+			{
+				body_md: bodyMd,
+				author_name: author.name,
+				author_email: author.email,
+				user_agent: userAgent,
+				post_url: postUrl,
+				is_first_comment: isFirst,
+			},
+			numbers.spam_ai_threshold,
+			// parseStringSetting only ever returns a CLEF_MODELS entry.
+			strings.spam_ai_model as ClefModel,
+			texts.spam_decisions_model,
+		);
 		if (classifierVerdict) {
+			// checkSpam returns a verdict only for a provider it knows.
 			const source: SpamVerdictSource =
-				env.SPAM_PROVIDER === "akismet" ? "akismet" : "workers-ai";
+				env.SPAM_PROVIDER === "akismet" || env.SPAM_PROVIDER === "decisions"
+					? env.SPAM_PROVIDER
+					: "workers-ai";
 			verdicts.push({
 				source,
 				verdict: classifierVerdict.spam ? "spam" : "ham",
@@ -441,7 +453,7 @@ comments.post("/", async (c) => {
 	const t = c.get("t") ?? tFor(FALLBACK_LOCALE);
 	// One resolved-settings object for all three groups this handler needs;
 	// the per-group helpers are thin views over the same memoized load.
-	const { flags, numbers, texts } = await loadSettings(c.env);
+	const { flags, numbers, strings, texts } = await loadSettings(c.env);
 	if (!flags.comments_enabled) {
 		return c.json({ error: "comments_disabled" }, 403);
 	}
@@ -726,6 +738,7 @@ comments.post("/", async (c) => {
 		flags,
 		numbers,
 		texts,
+		strings,
 		author,
 		bodyCheck.body,
 		postUrl,
@@ -1375,7 +1388,7 @@ comments.patch("/:id", async (c) => {
 
 	// Same single read as the POST path: the edit window needs `numbers`, and the
 	// spam re-run below needs `flags` and `texts`, all from one KV entry.
-	const { flags, numbers, texts } = await loadSettings(c.env);
+	const { flags, numbers, strings, texts } = await loadSettings(c.env);
 	if (Date.now() - existing.created_at > editWindowMs(numbers)) {
 		return c.json({ error: t("err.edit.window_expired") }, 403);
 	}
@@ -1398,6 +1411,7 @@ comments.patch("/:id", async (c) => {
 		flags,
 		numbers,
 		texts,
+		strings,
 		author,
 		bodyCheck.body,
 		post?.url ?? null,
