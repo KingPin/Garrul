@@ -281,7 +281,8 @@ type SpamEvaluation = {
  * honeypot timing, link count, muted words, first-comment — are all runtime
  * settings (DB override > env > default) so an operator can
  * retune them from the Settings page while watching the queue; `SPAM_PROVIDER`
- * and the credentials stay deploy-time. Admins skip the check entirely.
+ * and the credentials stay deploy-time, and the `spam_provider_enabled` setting
+ * can only pause that provider. Admins skip the check entirely.
  * Heuristics run first and short-circuit the (potentially paid) classifier call.
  *
  * Per-source verdicts are surfaced alongside the routing decision so the
@@ -309,6 +310,7 @@ const evaluateSpam = async (
 	const reasons: string[] = [];
 	const verdicts: PendingVerdict[] = [];
 	const heuristicsRaw: Record<string, unknown> = {};
+	const provider = flags.spam_provider_enabled ? env.SPAM_PROVIDER : undefined;
 
 	const minMs = numbers.spam_honeypot_min_ms;
 	if (minMs > 0 && env.SPAM_FORM_TS_SECRET && !opts.skipFormTs) {
@@ -361,7 +363,7 @@ const evaluateSpam = async (
 	// when the operator hasn't asked us to auto-moderate on it.
 	const moderateFirst = flags.spam_first_comment_moderate;
 	let isFirst = false;
-	if (moderateFirst || env.SPAM_PROVIDER) {
+	if (moderateFirst || provider) {
 		isFirst = await isFirstComment(env.DB, author.id);
 		if (moderateFirst) {
 			heuristicsRaw.first_comment = { is_first: isFirst };
@@ -380,7 +382,7 @@ const evaluateSpam = async (
 
 	// Skip the classifier call when a heuristic already flagged — the
 	// outcome is already `pending` and the call may cost money/latency.
-	if (reasons.length === 0 && env.SPAM_PROVIDER) {
+	if (reasons.length === 0 && provider) {
 		const classifierVerdict = await checkSpam(
 			env,
 			{
@@ -399,8 +401,8 @@ const evaluateSpam = async (
 		if (classifierVerdict) {
 			// checkSpam returns a verdict only for a provider it knows.
 			const source: SpamVerdictSource =
-				env.SPAM_PROVIDER === "akismet" || env.SPAM_PROVIDER === "decisions"
-					? env.SPAM_PROVIDER
+				provider === "akismet" || provider === "decisions"
+					? provider
 					: "workers-ai";
 			verdicts.push({
 				source,
