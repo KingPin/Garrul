@@ -151,7 +151,9 @@ None of this is reachable by a commenter: the list is yours, and the cost is a p
 
 ### 5. Content classifier (`SPAM_PROVIDER`)
 
-Pluggable third-party content classification. Pick one of:
+Pluggable third-party content classification. Pick one of the providers below.
+
+The provider is deploy-time. **Admin → Settings → Moderation → Run the spam classifier** can pause the configured provider without a redeploy, and turn it back on. It cannot select a different provider. While it is off, the heuristics keep running and the dashboard shows the provider as `paused`. It is on by default; **Reset to defaults** turns it back on.
 
 #### `akismet`
 

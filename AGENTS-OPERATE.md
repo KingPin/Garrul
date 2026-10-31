@@ -428,6 +428,12 @@ the OAuth-redirect URLs — is deliberately excluded from runtime editing, becau
 DB > env means one bad admin save beats the declared config and the surface you'd
 use to fix it is the one you just broke.
 
+One narrow exception: the panel-only `spam_provider_enabled` setting (Moderation
+→ *Run the spam classifier*, default on, no env var) pauses the configured
+`SPAM_PROVIDER` and turns it back on. It cannot select a different provider, so
+it needs no capability detection. While it is off, `evaluateSpam` skips the
+classifier call and the first-comment lookup the classifier uses.
+
 ## 6. `ALLOWED_ORIGINS` deep-dive
 
 The single most common foot-gun. Symptom: the widget mounts but every
@@ -578,7 +584,8 @@ its credentials stay deploy-time.
   env var is just the default a fresh deploy starts with.
 - `SPAM_PROVIDER` — set to `akismet`, `workers-ai` or `decisions` (bring your
   own key) to enable a content classifier (each has its own required
-  secrets/bindings).
+  secrets/bindings). The Settings page can pause it (*Run the spam
+  classifier*), but cannot switch to another provider.
 
 See [`docs/ANTISPAM.md`](./docs/ANTISPAM.md) for the full layer
 breakdown, privacy tradeoffs (Akismet sends comment content off
