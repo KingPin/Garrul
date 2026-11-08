@@ -991,6 +991,12 @@ tracked by the `_migrations` table. Current set:
 - `0024_subscriptions_token_index.sql` — `subscriptions(token)`; the unsubscribe-link lookup was a full table scan on two endpoints that take no session and no rate limit, so a loop of random tokens read the whole table per request
 - `0025_comment_pins.sql` — `comments.pinned_at` plus a partial UNIQUE index: one pinned top-level comment per post
 - `0026_staff_badge.sql` — `comments.as_staff`, the per-comment opt-in staff marker
+- `0027_oauth_email_names.sql` — clears display names that an earlier OAuth fallback set to the account email
+- `0028_user_name_key.sql` — `users.name_key`, so an anonymous commenter is refused a name a signed-in user already posts under
+- `0029_owner_login.sql` — `owner_login_tokens`, the single-use links `npm run owner-link` mints for installs with no OAuth provider and no `ADMIN_EMAILS`. Only the token's SHA-256 is stored
+- `0030_thread_and_retention_indexes.sql` — indexes for top-level thread paging (chronological and by score) and the IP retention sweep; drops the unused `comments_score_idx`
+- `0031_admin_list_indexes.sql` — indexes for the moderation queue, dashboard windows and admin list pages
+- `0032_page_engagement_totals.sql` — `posts.page_votes_up` / `page_votes_down` plus `page_reaction_totals`, kept on write so bootstrap no longer counts page reactions and votes on every pageview
 
 Run with `npm run migrate` (local Miniflare) or
 `npm run migrate -- --remote` (production D1). Idempotent. Never edit a
