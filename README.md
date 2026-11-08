@@ -194,6 +194,8 @@ wildcard terms. All off by default, each with an env var that sets the
 deploy-time default, and all four retunable from **Settings → Moderation**
 without a redeploy. Optionally a content classifier (Akismet, Workers
 AI, or your own decision model) runs when no heuristic has already flagged.
+The provider is chosen at deploy time; **Settings → Moderation** can pause
+it and turn it back on without a redeploy.
 
 **Nothing is ever silently dropped.** Every layer routes to
 `/admin/queue?status=pending`; you decide what gets approved. The
