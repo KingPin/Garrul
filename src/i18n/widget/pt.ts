@@ -68,6 +68,7 @@ export const pt = {
 	// variants split on the article ("Seu nome" / "O seu nome"), and a
 	// placeholder loses nothing by dropping it.
 	"w.name_ph": "Nome",
+	"w.forget_me": "Não é você? Apagar dados salvos",
 	"w.body_ph": "Adicione um comentário…",
 	// example.com is the RFC-2606 reserved example domain; a translated
 	// lookalike would be somebody's real domain.

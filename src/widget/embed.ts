@@ -44,6 +44,7 @@ import { loadErrorMessage } from "./load-error";
 import { watchForSignIn } from "./auth-recovery";
 import { autoSizeTextarea } from "./autosize";
 import { DRAFT_MAX, adoptLegacyDraft, draftKey, legacyDraftKey } from "./drafts";
+import { authorKey, readAuthor, rememberAuthor } from "./author";
 import { createTurnstileGate, type TurnstileGate } from "./turnstile-gate";
 import { makeS, type StringTable, type WidgetKey } from "./strings";
 import {
@@ -380,6 +381,29 @@ const attachDraft = (ta: HTMLTextAreaElement, key: string, legacyKey: string): s
 		}, 400);
 	});
 	return key;
+};
+
+// ── Remembered author ───────────────────────────────────────────────────────
+// Anonymous readers get their name (and notify email, when they gave one)
+// prefilled on the next visit. Shape and merge rules live in ./author.
+
+/**
+ * `localStorage`, or null where merely touching the getter throws — or where
+ * the operator opted out with `data-remember="off"` (a privacy policy that
+ * can't cover a stored address). Every author read and write goes through here.
+ */
+const authorStore = (host: HTMLElement): Storage | null => {
+	if (host.dataset.remember === "off") return null;
+	try {
+		return localStorage;
+	} catch {
+		return null;
+	}
+};
+
+/** Fill an input from saved details, only when the reader hasn't typed. */
+const prefill = (input: HTMLInputElement | null, value: string): void => {
+	if (input && value && !input.value) input.value = value;
 };
 
 type MdFormat = {
@@ -2166,6 +2190,8 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 		nameInput.placeholder = s("w.name_ph");
 		nameInput.setAttribute("aria-label", s("w.name_ph"));
 		nameInput.required = true;
+		nameInput.setAttribute("autocomplete", "nickname");
+		prefill(nameInput, readAuthor(authorStore(ctx.host), authorKey(ctx.apiOrigin)).name);
 		wrap.appendChild(nameInput);
 	}
 	if (isStaff(ctx.me)) wrap.appendChild(buildStaffToggle());
@@ -2358,6 +2384,8 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 			}
 			// Reply landed — drop the saved draft before the list re-renders.
 			clearDraft(dkey);
+			if (nameInput)
+				rememberAuthor(authorStore(ctx.host), authorKey(ctx.apiOrigin), { name: nameInput.value });
 			// The 201 carries the whole comment, so render it rather than paying a
 			// GET to read it back (see insertPostedNode). Pending replies take the
 			// same path as approved ones: `status` comes from the echo, so the
@@ -2798,6 +2826,9 @@ const buildForm = (
 		name.placeholder = s("w.name_ph");
 		name.setAttribute("aria-label", s("w.name_ph"));
 		name.required = true;
+		// Overrides the form-level "off": a display name is the one field here a
+		// browser's autofill should offer.
+		name.setAttribute("autocomplete", "nickname");
 		card.prepend(name);
 	}
 
@@ -3862,6 +3893,31 @@ const loadOnce = async (
 	) as HTMLTextAreaElement | null;
 	if (composer)
 		attachDraft(composer, draftKey(apiOrigin, slug, null), legacyDraftKey(slug, null));
+	// Opted out: also drop what an earlier, opted-in deploy saved. clearDraft is
+	// a plain guarded removeItem, nothing draft-specific.
+	const akey = authorKey(apiOrigin);
+	if (host.dataset.remember === "off") clearDraft(akey);
+	const savedAuthor = readAuthor(authorStore(host), akey);
+	// Fields absent for a signed-in reader are null and skipped. The email lands
+	// in the still-hidden notify field: the box stays unticked, opt-in stays explicit.
+	const nameField = form.querySelector<HTMLInputElement>(".gr-name-input");
+	const emailField = form.querySelector<HTMLInputElement>(".gr-email-input");
+	prefill(nameField, savedAuthor.name);
+	prefill(emailField, savedAuthor.email);
+	// A shared computer shows the last commenter's name to the next reader, so
+	// offer the way out right where the name appears.
+	if (nameField && (savedAuthor.name || savedAuthor.email)) {
+		const forget = el("button", "gr-forget", s("w.forget_me"));
+		forget.type = "button";
+		forget.addEventListener("click", () => {
+			clearDraft(akey);
+			nameField.value = "";
+			if (emailField) emailField.value = "";
+			nameField.focus();
+			forget.remove();
+		});
+		nameField.after(forget);
+	}
 	const list = el("div", "gr-list");
 	if (data.threads.length === 0) {
 		// Don't invite a comment the reader can't leave: when comments are
@@ -4308,6 +4364,11 @@ const submit = async (
 				).catch(() => {});
 			}
 		}
+		// The address is remembered only when the reader used it for notify.
+		rememberAuthor(authorStore(host), authorKey(apiOrigin), {
+			name,
+			email: notifyCb?.checked ? (emailInput?.value ?? "") : "",
+		});
 
 		// The 201 carries the whole comment, so render it instead of spending a
 		// second request reading it back — and instead of re-fetching page one,

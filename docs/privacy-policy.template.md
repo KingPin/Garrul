@@ -140,6 +140,13 @@ browser's `localStorage` so it survives an accidental reload. It never
 leaves your device — it is not sent to us — and it is cleared as soon as
 you submit or cancel the comment.
 
+After you post without signing in, the name you used is saved there too,
+along with the email address if you asked to be notified of replies, so
+the form is filled in on your next visit. This also stays on your device.
+Use the "Not you? Clear saved details" link under your name, or clear this
+site's data in your browser settings, to remove it.
+<!-- Delete the paragraph above if your embed sets data-remember="off". -->
+
 ## Who sees your data
 
 - **Site moderators** at `[YOUR DOMAIN]` (whose emails are in the

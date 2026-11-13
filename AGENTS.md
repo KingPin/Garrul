@@ -304,6 +304,7 @@ Every attribute the widget reads from the `#garrul` host element
 | `data-url`   | no       | Canonical permalink; sent on every comment create (top-level and reply). The first non-null value wins and later values are ignored. Used in RSS and notification emails. |
 | `data-published` | no   | Article publish time (epoch ms or ISO 8601). On the iframe variant pass it as `?published=` (§6). The widget sends it as `post_published` on every comment create (top-level and reply); the server records it only on the request that creates the post row and never changes it after that — it arrives on an unauthenticated POST, and an old enough value closes the thread for good, so a later request cannot supply or move it. Anchors age-based auto-close (`AUTO_CLOSE_DAYS`). Omit it and Garrul anchors on first-engagement time, which closes a bit later than intended. If a reaction, page vote or admin action created the row before the first comment, the slug keeps that first-engagement anchor. Repair today is direct D1 SQL on `posts.published_at`; an admin edit surface is a separate backlog item. |
 | `data-lang`  | no       | BCP-47 tag pinning the widget's interface language (see "Language" below). Unrecognized tags fall back to English rather than erroring. |
+| `data-remember` | no    | `off` stops the widget saving an anonymous reader's name and notify email in `localStorage`, and deletes any saved entry on mount. Any other value (or absent) keeps it on. Script embed only. |
 | `data-mode`  | no       | `reactions` mounts only the page-level reactions/votes bar (no thread, no composer) in one request (`/api/v1/bootstrap?…&view=engagement`). Needs `PAGE_REACTIONS_ENABLED` and/or `PAGE_VOTES_ENABLED`; with both off it renders nothing and logs one console warning. Any other value is the normal thread. |
 
 The host element MUST have `id="garrul"`; the widget looks it up by ID
@@ -1323,6 +1324,12 @@ both `data-api` and the `<script src>`.
   autosave keys are `garrul:draft:<api origin>:<slug>[:<parent>]` (since
   v2.27.0), so a draft belongs to one Worker origin. Pre-v2.27.0 drafts
   (`garrul:draft:<slug>`) are adopted once on the next mount.
+  Anonymous commenter details follow the same rule: after an accepted
+  post the widget saves `{name, email}` under `garrul:author:<api origin>`
+  and prefills the name field (and the hidden notify email field, box left
+  unticked) on later mounts. The email is saved only when notify was ticked.
+  A prefilled top-level form shows a "Not you?" button (`.gr-forget`) that
+  deletes the entry and empties both fields.
 - Don't render two `#garrul` elements on one page; only the first is
   picked up. Multi-thread is not a supported mode in v1.
 - Don't try to style internals via host CSS. Shadow DOM blocks it on

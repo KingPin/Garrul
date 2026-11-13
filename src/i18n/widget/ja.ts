@@ -58,6 +58,7 @@ export const ja = {
 	"w.preview.loading": "プレビューを読み込んでいます…",
 	"w.preview.failed": "プレビューに失敗しました。もう一度お試しください。",
 	"w.name_ph": "名前",
+	"w.forget_me": "ご本人ではありませんか？保存された情報を消去",
 	"w.body_ph": "コメントを入力…",
 	// example.com is the RFC-2606 reserved example domain; a localized
 	// lookalike would be somebody's real domain.

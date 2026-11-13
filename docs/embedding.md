@@ -128,6 +128,22 @@ reviewed:
 Resolution order, the iframe variant's `?lang=`, what is and isn't
 translated, and how timestamps render: [`i18n.md`](i18n.md).
 
+## Remembered name and email
+
+After an anonymous reader posts, the widget saves their name in the host
+page's `localStorage` and fills it in on their next visit. If they ticked
+"notify me", it saves that address too. Nothing is sent to the server for this.
+A "Not you? Clear saved details" link under the prefilled name deletes it.
+
+If your privacy policy can't cover that, turn it off:
+
+```html
+<div id="garrul" data-slug="my-post" data-remember="off"></div>
+```
+
+With `off`, the widget saves nothing and deletes any details it saved before.
+The iframe variant has no equivalent setting.
+
 ## Lazy-loading
 
 The widget fires one Worker request on page load, before the reader has

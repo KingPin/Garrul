@@ -39,6 +39,7 @@ export const ar = {
 	"w.preview.loading": "جارٍ تحميل المعاينة…",
 	"w.preview.failed": "تعذّرت المعاينة. حاول مرة أخرى.",
 	"w.name_ph": "اسمك",
+	"w.forget_me": "لست أنت؟ امسح البيانات المحفوظة",
 	"w.body_ph": "أضف تعليقًا…",
 	"w.email_ph": "you@example.com",
 	"w.email_label": "عنوان البريد الإلكتروني",

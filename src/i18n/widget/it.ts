@@ -55,6 +55,7 @@ export const it = {
 	"w.preview.loading": "Caricamento dell'anteprima…",
 	"w.preview.failed": "Anteprima non riuscita. Riprova.",
 	"w.name_ph": "Il tuo nome",
+	"w.forget_me": "Non sei tu? Cancella i dati salvati",
 	"w.body_ph": "Aggiungi un commento…",
 	// example.com is the RFC-2606 reserved example domain; a translated
 	// lookalike would be somebody's real domain.

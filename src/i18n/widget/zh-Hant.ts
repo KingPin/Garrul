@@ -30,6 +30,7 @@ export const zhHant = {
 	"w.preview.loading": "正在載入預覽…",
 	"w.preview.failed": "預覽失敗，請再試一次。",
 	"w.name_ph": "名稱",
+	"w.forget_me": "不是你？清除已儲存的資料",
 	"w.body_ph": "新增留言…",
 	"w.email_ph": "you@example.com",
 	"w.email_label": "電子郵件地址",

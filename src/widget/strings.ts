@@ -66,6 +66,7 @@ export const EN = {
 	"w.preview.loading": "Loading preview…",
 	"w.preview.failed": "Preview failed. Try again.",
 	"w.name_ph": "Your name",
+	"w.forget_me": "Not you? Clear saved details",
 	"w.body_ph": "Add a comment…",
 	"w.email_ph": "you@example.com",
 	"w.email_label": "Email address",
