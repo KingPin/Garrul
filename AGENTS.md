@@ -1328,6 +1328,8 @@ both `data-api` and the `<script src>`.
   post the widget saves `{name, email}` under `garrul:author:<api origin>`
   and prefills the name field (and the hidden notify email field, box left
   unticked) on later mounts. The email is saved only when notify was ticked.
+  A prefilled top-level form shows a "Not you?" button (`.gr-forget`) that
+  deletes the entry and empties both fields.
 - Don't render two `#garrul` elements on one page; only the first is
   picked up. Multi-thread is not a supported mode in v1.
 - Don't try to style internals via host CSS. Shadow DOM blocks it on

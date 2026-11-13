@@ -49,6 +49,7 @@ export const nl = {
 	"w.preview.loading": "Voorbeeld laden…",
 	"w.preview.failed": "Voorbeeld mislukt. Probeer het opnieuw.",
 	"w.name_ph": "Naam",
+	"w.forget_me": "Niet jij? Opgeslagen gegevens wissen",
 	"w.body_ph": "Reactie toevoegen…",
 	// example.com is the RFC-2606 reserved example domain; a translated
 	// lookalike would be somebody's real domain.

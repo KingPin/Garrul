@@ -3893,13 +3893,31 @@ const loadOnce = async (
 	) as HTMLTextAreaElement | null;
 	if (composer)
 		attachDraft(composer, draftKey(apiOrigin, slug, null), legacyDraftKey(slug, null));
+	// Opted out: also drop what an earlier, opted-in deploy saved. clearDraft is
+	// a plain guarded removeItem, nothing draft-specific.
+	const akey = authorKey(apiOrigin);
+	if (host.dataset.remember === "off") clearDraft(akey);
+	const savedAuthor = readAuthor(authorStore(host), akey);
 	// Fields absent for a signed-in reader are null and skipped. The email lands
 	// in the still-hidden notify field: the box stays unticked, opt-in stays explicit.
-	// Opted out: also drop what an earlier, opted-in deploy saved.
-	if (host.dataset.remember === "off") clearDraft(authorKey(apiOrigin));
-	const savedAuthor = readAuthor(authorStore(host), authorKey(apiOrigin));
-	prefill(form.querySelector<HTMLInputElement>(".gr-name-input"), savedAuthor.name);
-	prefill(form.querySelector<HTMLInputElement>(".gr-email-input"), savedAuthor.email);
+	const nameField = form.querySelector<HTMLInputElement>(".gr-name-input");
+	const emailField = form.querySelector<HTMLInputElement>(".gr-email-input");
+	prefill(nameField, savedAuthor.name);
+	prefill(emailField, savedAuthor.email);
+	// A shared computer shows the last commenter's name to the next reader, so
+	// offer the way out right where the name appears.
+	if (nameField && (savedAuthor.name || savedAuthor.email)) {
+		const forget = el("button", "gr-forget", s("w.forget_me"));
+		forget.type = "button";
+		forget.addEventListener("click", () => {
+			clearDraft(akey);
+			nameField.value = "";
+			if (emailField) emailField.value = "";
+			nameField.focus();
+			forget.remove();
+		});
+		nameField.after(forget);
+	}
 	const list = el("div", "gr-list");
 	if (data.threads.length === 0) {
 		// Don't invite a comment the reader can't leave: when comments are

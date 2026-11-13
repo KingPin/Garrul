@@ -373,7 +373,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
    the composer's autosize into a rubber band. */
 .gr-toolbar-btn, .gr-submit, .gr-actions button, .gr-low-score,
 .gr-vote, .gr-reaction, .gr-sort select, .gr-loadmore, .gr-collapse, .gr-showmore,
-.gr-signin button, .gr-signed button, .gr-attribution a {
+.gr-signin button, .gr-signed button, .gr-attribution a, .gr-form .gr-forget {
 	transition: background-color var(--gr-motion), border-color var(--gr-motion),
 		color var(--gr-motion), opacity var(--gr-motion);
 }
@@ -403,6 +403,15 @@ button:active:not([disabled]) { opacity: 0.75; }
 .gr-honeypot { position: absolute; left: -9999px; top: -9999px; }
 .gr-form .gr-notify { display: flex; align-items: center; gap: 0.4rem; font-size: 0.9em; cursor: pointer; }
 .gr-form .gr-notify .gr-notify-cb { width: auto; }
+/* "Not you?" under a remembered name. The bare text look of the comment
+   actions, muted until hover: an escape hatch, not a call to action. */
+.gr-form .gr-forget {
+	align-self: flex-start;
+	font: inherit; font-size: 0.85em;
+	background: transparent; color: var(--gr-muted);
+	border: none; padding: 0; min-height: 24px; cursor: pointer;
+}
+.gr-form .gr-forget:hover { color: var(--gr-link); }
 /* Reply forms are not .gr-form, so the staff toggle is styled unscoped. */
 .gr-staff-toggle { display: flex; align-items: center; gap: 0.4rem; font-size: 0.9em; cursor: pointer; }
 .gr-staff-toggle .gr-staff-cb { width: auto; }

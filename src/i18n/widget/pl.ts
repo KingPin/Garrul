@@ -68,6 +68,7 @@ export const pl = {
 	"w.preview.failed": "Nie udało się wczytać podglądu. Spróbuj ponownie.",
 	// No "Twoje" — the file's no-pronoun rule.
 	"w.name_ph": "Imię lub nazwa",
+	"w.forget_me": "To nie Ty? Wyczyść zapisane dane",
 	"w.body_ph": "Dodaj komentarz…",
 	// example.com is the RFC-2606 reserved example domain; a translated
 	// lookalike would be somebody's real domain.

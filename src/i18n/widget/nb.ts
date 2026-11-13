@@ -54,6 +54,7 @@ export const nb = {
 	"w.preview.loading": "Laster forhåndsvisning…",
 	"w.preview.failed": "Forhåndsvisningen mislyktes. Prøv igjen.",
 	"w.name_ph": "Navnet ditt",
+	"w.forget_me": "Ikke deg? Slett lagrede opplysninger",
 	"w.body_ph": "Skriv en kommentar…",
 	// example.com is the RFC-2606 reserved example domain; a translated
 	// lookalike would be somebody's real domain.
