@@ -880,6 +880,7 @@ ancestor.
 | `--garrul-accent-fg`  | `#fff`                                                   | Submit button text                     |
 | `--garrul-link`       | `#2563eb`                                                | Link color in comment bodies           |
 | `--garrul-error`      | `#b91c1c`                                                | Error message color                    |
+| `--garrul-notice`     | `#1e6091`                                                | Informational notices (e.g. a closed thread) |
 | `--garrul-badge-bg`   | `#e0e7ff`                                                | "Verified" badge background            |
 | `--garrul-badge-fg`   | `#1e3a8a`                                                | "Verified" badge text                  |
 | `--garrul-skel`       | `#e7e9ec`                                                | Skeleton-loading placeholder color     |
