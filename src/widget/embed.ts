@@ -2185,6 +2185,7 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 		nameInput.placeholder = s("w.name_ph");
 		nameInput.setAttribute("aria-label", s("w.name_ph"));
 		nameInput.required = true;
+		nameInput.setAttribute("autocomplete", "nickname");
 		prefill(nameInput, readAuthor(authorStore(), authorKey(ctx.apiOrigin)).name);
 		wrap.appendChild(nameInput);
 	}
@@ -2820,6 +2821,9 @@ const buildForm = (
 		name.placeholder = s("w.name_ph");
 		name.setAttribute("aria-label", s("w.name_ph"));
 		name.required = true;
+		// Overrides the form-level "off": a display name is the one field here a
+		// browser's autofill should offer.
+		name.setAttribute("autocomplete", "nickname");
 		card.prepend(name);
 	}
 
