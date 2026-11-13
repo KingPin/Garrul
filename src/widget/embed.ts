@@ -387,8 +387,13 @@ const attachDraft = (ta: HTMLTextAreaElement, key: string, legacyKey: string): s
 // Anonymous readers get their name (and notify email, when they gave one)
 // prefilled on the next visit. Shape and merge rules live in ./author.
 
-/** `localStorage`, or null where merely touching the getter throws. */
-const authorStore = (): Storage | null => {
+/**
+ * `localStorage`, or null where merely touching the getter throws — or where
+ * the operator opted out with `data-remember="off"` (a privacy policy that
+ * can't cover a stored address). Every author read and write goes through here.
+ */
+const authorStore = (host: HTMLElement): Storage | null => {
+	if (host.dataset.remember === "off") return null;
 	try {
 		return localStorage;
 	} catch {
@@ -2186,7 +2191,7 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 		nameInput.setAttribute("aria-label", s("w.name_ph"));
 		nameInput.required = true;
 		nameInput.setAttribute("autocomplete", "nickname");
-		prefill(nameInput, readAuthor(authorStore(), authorKey(ctx.apiOrigin)).name);
+		prefill(nameInput, readAuthor(authorStore(ctx.host), authorKey(ctx.apiOrigin)).name);
 		wrap.appendChild(nameInput);
 	}
 	if (isStaff(ctx.me)) wrap.appendChild(buildStaffToggle());
@@ -2380,7 +2385,7 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 			// Reply landed — drop the saved draft before the list re-renders.
 			clearDraft(dkey);
 			if (nameInput)
-				rememberAuthor(authorStore(), authorKey(ctx.apiOrigin), { name: nameInput.value });
+				rememberAuthor(authorStore(ctx.host), authorKey(ctx.apiOrigin), { name: nameInput.value });
 			// The 201 carries the whole comment, so render it rather than paying a
 			// GET to read it back (see insertPostedNode). Pending replies take the
 			// same path as approved ones: `status` comes from the echo, so the
@@ -3890,7 +3895,9 @@ const loadOnce = async (
 		attachDraft(composer, draftKey(apiOrigin, slug, null), legacyDraftKey(slug, null));
 	// Fields absent for a signed-in reader are null and skipped. The email lands
 	// in the still-hidden notify field: the box stays unticked, opt-in stays explicit.
-	const savedAuthor = readAuthor(authorStore(), authorKey(apiOrigin));
+	// Opted out: also drop what an earlier, opted-in deploy saved.
+	if (host.dataset.remember === "off") clearDraft(authorKey(apiOrigin));
+	const savedAuthor = readAuthor(authorStore(host), authorKey(apiOrigin));
 	prefill(form.querySelector<HTMLInputElement>(".gr-name-input"), savedAuthor.name);
 	prefill(form.querySelector<HTMLInputElement>(".gr-email-input"), savedAuthor.email);
 	const list = el("div", "gr-list");
@@ -4340,7 +4347,7 @@ const submit = async (
 			}
 		}
 		// The address is remembered only when the reader used it for notify.
-		rememberAuthor(authorStore(), authorKey(apiOrigin), {
+		rememberAuthor(authorStore(host), authorKey(apiOrigin), {
 			name,
 			email: notifyCb?.checked ? (emailInput?.value ?? "") : "",
 		});
