@@ -1323,6 +1323,10 @@ both `data-api` and the `<script src>`.
   autosave keys are `garrul:draft:<api origin>:<slug>[:<parent>]` (since
   v2.27.0), so a draft belongs to one Worker origin. Pre-v2.27.0 drafts
   (`garrul:draft:<slug>`) are adopted once on the next mount.
+  Anonymous commenter details follow the same rule: after an accepted
+  post the widget saves `{name, email}` under `garrul:author:<api origin>`
+  and prefills the name field (and the hidden notify email field, box left
+  unticked) on later mounts. The email is saved only when notify was ticked.
 - Don't render two `#garrul` elements on one page; only the first is
   picked up. Multi-thread is not a supported mode in v1.
 - Don't try to style internals via host CSS. Shadow DOM blocks it on
