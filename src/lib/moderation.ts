@@ -33,7 +33,7 @@ import { bustTreeCache } from "./tree-cache";
 import { fireWebhook, type WebhookEvent } from "./webhook";
 
 /** waitUntil-capable context (Hono's c.executionCtx). */
-type WaitUntilCtx = { waitUntil(p: Promise<unknown>): void } | undefined;
+export type WaitUntilCtx = { waitUntil(p: Promise<unknown>): void } | undefined;
 
 export type CommentAction = "approve" | "spam" | "delete" | "restore";
 
