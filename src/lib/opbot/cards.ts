@@ -24,6 +24,16 @@ export type OpCard = {
 	buttons: OpButton[][];
 };
 
+/** First `max` code points of `s`; unlike `slice` it never splits a surrogate pair. */
+export const truncateCodePoints = (s: string, max: number): string =>
+	s.length <= max ? s : Array.from(s).slice(0, max).join("");
+
+/** `truncateCodePoints` plus a trailing ellipsis when something was cut. */
+export const ellipsize = (s: string, max: number): string => {
+	const cut = truncateCodePoints(s, max);
+	return cut.length < s.length ? `${cut}…` : s;
+};
+
 export const relativeAge = (since: number, now: number): string => {
 	const ms = Math.max(0, now - since);
 	const mins = Math.floor(ms / 60000);
@@ -84,10 +94,7 @@ export const renderQueueCard = async (
 			`Author: ${author?.name ?? "unknown"}`,
 			`On: ${comment.post_slug} · ${relativeAge(comment.created_at, Date.now())} ago`,
 		],
-		snippet:
-			comment.body_md.length > 200
-				? `${comment.body_md.slice(0, 200)}…`
-				: comment.body_md,
+		snippet: ellipsize(comment.body_md, 200),
 		...(env.PUBLIC_BASE_URL && {
 			adminUrl: `${env.PUBLIC_BASE_URL.replace(/\/$/, "")}/admin/comments/${encodeURIComponent(comment.id)}`,
 		}),

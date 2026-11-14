@@ -36,7 +36,13 @@ import {
 	runOpAction,
 	unbanUser,
 } from "../lib/opbot/actions";
-import { buttonsFor, type OpCard, renderQueueCard } from "../lib/opbot/cards";
+import {
+	buttonsFor,
+	ellipsize,
+	type OpCard,
+	renderQueueCard,
+	truncateCodePoints,
+} from "../lib/opbot/cards";
 import { decodePayload, encodePayload } from "../lib/opbot/codec";
 import { type OpActor, resolveDiscordActor } from "../lib/opbot/identity";
 import { consumeLinkToken } from "../lib/opbot/link-token";
@@ -186,7 +192,7 @@ const dispatch = async (ctx: Ctx, i: DiscordInteraction): Promise<Reply> => {
 		if (action === "rsub") return submitReply(ctx, i, actor, commentId, payload.extra);
 		if (action !== "bsub") return ephemeral(MSG.unknown);
 		const input = i.data?.components?.flatMap((r) => r.components).find((x) => x.custom_id === "reason");
-		const reason = input?.value?.trim().slice(0, 500) || null;
+		const reason = truncateCodePoints(input?.value?.trim() ?? "", 500) || null;
 		return runAndRender(ctx, i, actor, "ban", commentId, q, reason);
 	}
 	switch (action) {
@@ -562,7 +568,7 @@ const handleCommand = async (ctx: Ctx, i: DiscordInteraction, actor: OpActor): P
 			const r = await readComment(env, arg);
 			if (!r) return ephemeral(MSG.gone);
 			const { comment, authorName, openReports } = r;
-			const snippet = comment.body_md.length > 200 ? `${comment.body_md.slice(0, 200)}…` : comment.body_md;
+			const snippet = ellipsize(comment.body_md, 200);
 			const url = adminUrl(env, arg);
 			return ephemeral(
 				[

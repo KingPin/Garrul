@@ -30,7 +30,13 @@ import { t } from "../i18n";
 import type { Bindings } from "../index";
 import { log } from "../lib/log";
 import { hasRole, requiredRole, runOpAction, unbanUser } from "../lib/opbot/actions";
-import { buttonsFor, type OpCard, renderQueueCard } from "../lib/opbot/cards";
+import {
+	buttonsFor,
+	ellipsize,
+	type OpCard,
+	renderQueueCard,
+	truncateCodePoints,
+} from "../lib/opbot/cards";
 import { decodePayload, encodePayload } from "../lib/opbot/codec";
 import { type OpActor, resolveTelegramActor } from "../lib/opbot/identity";
 import { consumeLinkToken, issueLinkToken } from "../lib/opbot/link-token";
@@ -480,7 +486,7 @@ const handlePromptAnswer = async (
 		actor,
 		action: "ban",
 		commentId: prompt[2] as string,
-		reason: text.slice(0, 500),
+		reason: truncateCodePoints(text, 500),
 	});
 	await sendMessage(
 		token,
@@ -658,10 +664,7 @@ const renderCommentText = async (
 	const r = await readComment(env, id);
 	if (!r) return t("telegram.comment_not_found");
 	const { comment, authorName, openReports } = r;
-	const snippet =
-		comment.body_md.length > 200
-			? `${comment.body_md.slice(0, 200)}…`
-			: comment.body_md;
+	const snippet = ellipsize(comment.body_md, 200);
 	const url = adminCommentUrl(env, id);
 	const lines = [
 		`<b>Comment</b> <code>${escapeTg(id)}</code>`,
