@@ -216,7 +216,7 @@ const handleCallback = async (
 			await sendMessage(
 				token,
 				cq.message.chat.id,
-				`Ban reason for comment <code>${escapeTg(decoded.commentId)}</code> — send the reason as a reply to this message.`,
+				`Ban reason for comment <code>${escapeTg(decoded.commentId)}</code> — send the reason as a reply to this message, ${mentionOf(cq.from.id, actor.user.name)}.`,
 				{ replyMarkup: { force_reply: true, selective: true } },
 			);
 		}
@@ -371,7 +371,7 @@ const handleReplyTap = async (
 		await sendMessage(
 			token,
 			chatId,
-			`Reply to comment <code>${escapeTg(cid)}</code> — send your text as a reply to this message.`,
+			`Reply to comment <code>${escapeTg(cid)}</code> — send your text as a reply to this message, ${mentionOf(cq.from.id, actor.user.name)}.`,
 			{ replyMarkup: { force_reply: true, selective: true } },
 		);
 		return;
@@ -736,6 +736,10 @@ const handleStart = async (
 // Quotes are escaped too because this also feeds href="..." attributes via
 // tgLink — an unescaped quote there breaks the attribute and Telegram rejects
 // the whole message.
+// selective force_reply targets only users @mentioned in the text, so a prompt
+// must mention the moderator who tapped or no one in a group gets the reply box.
+const mentionOf = (id: number, name: string): string => `<a href="tg://user?id=${id}">${escapeTg(name)}</a>`;
+
 const escapeTg = (s: string): string =>
 	s
 		.replace(/&/g, "&amp;")

@@ -1019,7 +1019,7 @@ describe("POST /telegram/webhook — ban reason, /unban and /user ban state", ()
 			SECRET,
 		);
 		expect(lastText()).toBe(
-			`Ban reason for comment <code>${id}</code> — send the reason as a reply to this message.`,
+			`Ban reason for comment <code>${id}</code> — send the reason as a reply to this message, <a href="tg://user?id=42">Boss</a>.`,
 		);
 		expect(replies().at(-1)?.body.reply_markup).toEqual({ force_reply: true, selective: true });
 		expect(tgCalls.find((c) => c.method === "answerCallbackQuery")?.body.text).toBeUndefined();
@@ -1228,7 +1228,8 @@ describe("POST /telegram/webhook — reply with saved replies", () => {
 	it("rc tap sends a force_reply prompt; the reply posts verbatim", async () => {
 		const id = await seedComment("approved");
 		await tap("43", encodeCallback("rc", id));
-		const prompt = `Reply to comment <code>${id}</code> — send your text as a reply to this message.`;
+		// selective force_reply targets only @mentioned users, so the tapping moderator is mentioned.
+		const prompt = `Reply to comment <code>${id}</code> — send your text as a reply to this message, <a href="tg://user?id=43">Moddy</a>.`;
 		expect(lastText()).toBe(prompt);
 		expect(sent().at(-1)?.body.reply_markup).toEqual({ force_reply: true, selective: true });
 		await answerPrompt("43", "Thanks {name}", `Reply to comment ${id} — send your text as a reply to this message.`);
