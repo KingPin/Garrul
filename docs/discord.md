@@ -63,6 +63,12 @@ Open **`/admin/discord`** (admin only) and fill in:
 | Admin role id | Optional. Members with this role act as `admin`. |
 | Digest channel id | Optional. Channel for the daily digest. Empty = no Discord digest. |
 
+Garrul checks the digest channel when you save it. If the bot cannot see the
+channel (Discord answers 401 or 403), the save fails with `channel_forbidden`:
+check the bot's **View Channel** permission there. A channel that does not exist
+fails with `channel_not_found`. The same check runs when you save a Discord bot
+alert endpoint under **Webhooks**.
+
 Enable Developer Mode in Discord (User Settings → Advanced) to copy ids.
 Settings go through the settings memo, so a change can lag up to 60 s.
 
@@ -164,7 +170,8 @@ Discord limits shape the picker:
 - A menu holds 25 options. **Write custom** takes one; when more saved replies
   remain, **More…** takes another, so a page shows 23 replies (up to 24 on the
   last page).
-- Titles over 100 characters are cut with "…". Only the title is cut.
+- Titles over 100 characters are cut to 99 characters plus "…". Only the title
+  is cut.
 - A modal holds 4000 characters. A saved reply whose expanded body is longer is
   left out, and the picker says to use the dashboard for those. The bot never
   posts a cut body.
@@ -176,8 +183,8 @@ edit fails, the reply stays posted and the failure is logged.
 
 When the bot is on (token and public key) and a **Digest channel id** is set,
 the existing `*/15` cron posts a once-daily summary (pending, open reports and
-most-flagged thread, 7-day spam rate, oldest pending) to that channel. It
-self-gates to roughly once every 24 hours using its own timestamp
+most-flagged thread, 7-day spam rate, banned users, oldest pending) to that
+channel. It self-gates to at most once every 23 hours using its own timestamp
 (`dc_digest_last_sent_at`), independent of the Telegram digest. Because it goes
 to a channel, role-only team mods see it too. A failed post is logged and
 retried the next day.
