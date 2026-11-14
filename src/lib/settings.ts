@@ -25,7 +25,7 @@ import { COMMENT_SORTS, getAllSettings } from "../db/queries";
 import { LOCALES } from "../i18n";
 import { AUTO_LOCALE } from "../i18n/negotiate";
 import { DEFAULT_REACTION_KINDS, REACTION_KIND_SET } from "../widget/reactions";
-import { SNOWFLAKE_RE } from "./discord";
+import { SNOWFLAKE_RE } from "./opbot/codec";
 import { CLEF_MODELS } from "./spam/workers-ai";
 import { MAX_DEPTH } from "./tree";
 

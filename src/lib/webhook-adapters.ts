@@ -33,8 +33,8 @@
  */
 import type { CommentStatus } from "../db/queries";
 import { getComment, getPost, getUser } from "../db/queries";
-import { buttonRows } from "./discord";
-import { buttonsFor } from "./opbot/cards";
+import { buttonsFor, type OpButton } from "./opbot/cards";
+import { encodePayload } from "./opbot/codec";
 import { moderationKeyboard } from "./telegram";
 import type { WebhookEvent, WebhookPayload } from "./webhook";
 
@@ -290,6 +290,27 @@ export const renderDiscordBody = async (
 
 // Bot-posted variant: the same embed plus moderation buttons. The bot token is
 // never part of the body (it is added to the request headers at send time).
+const BUTTON_STYLE = { primary: 1, secondary: 2, success: 3, danger: 4 } as const;
+
+/** Discord action rows (≤ 5 rows of ≤ 5 buttons) for an OpButton grid. */
+export const buttonRows = (
+	buttons: OpButton[][],
+	commentId: string,
+	extra: string[] = [],
+): unknown[] =>
+	buttons
+		.filter((row) => row.length > 0)
+		.slice(0, 5)
+		.map((row) => ({
+			type: 1,
+			components: row.slice(0, 5).map((b) => ({
+				type: 2,
+				style: BUTTON_STYLE[b.style],
+				label: b.label,
+				custom_id: encodePayload("discord", b.action, commentId, extra),
+			})),
+		}));
+
 export const renderDiscordBotBody = async (
 	db: WebhookAdapterDb,
 	payload: WebhookPayload,

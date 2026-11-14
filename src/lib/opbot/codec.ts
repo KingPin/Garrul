@@ -62,3 +62,6 @@ export const decodePayload = (
 	if ((action === "rv") !== (commentId === "-")) return null;
 	return { action: action as OpAction, commentId, extra };
 };
+
+/** A Discord snowflake id. Leaf constant so settings and webhook code need no Discord module. */
+export const SNOWFLAKE_RE = /^\d{17,20}$/;

@@ -2,12 +2,16 @@
 // a thin REST client and OpCard -> message rendering. No Discord SDK.
 import type { Bindings } from "../index";
 import { log } from "./log";
-import type { OpButton, OpCard } from "./opbot/cards";
-import { encodePayload } from "./opbot/codec";
+import type { OpCard } from "./opbot/cards";
+import { SNOWFLAKE_RE } from "./opbot/codec";
 import {
+	buttonRows,
 	escapeDiscordMentions,
 	sanitizeDiscordDescription,
 } from "./webhook-adapters";
+
+// Re-exported so existing importers keep one Discord entry point.
+export { buttonRows, SNOWFLAKE_RE };
 
 export type DiscordInteraction = {
 	id: string;
@@ -39,11 +43,9 @@ export type DiscordInteraction = {
 export const DISCORD_API = "https://discord.com/api/v10";
 export const EPHEMERAL = 64;
 export const TIMESTAMP_WINDOW_S = 300;
-export const SNOWFLAKE_RE = /^\d{17,20}$/;
 
 const API_TIMEOUT_MS = 5000;
 const EMBED_COLOR = 0x5865f2;
-const STYLE = { primary: 1, secondary: 2, success: 3, danger: 4 } as const;
 
 export const discordEnabled = (
 	env: Pick<Bindings, "DISCORD_BOT_TOKEN" | "DISCORD_PUBLIC_KEY">,
@@ -140,25 +142,6 @@ export const discordApi = async (
 		clearTimeout(timer);
 	}
 };
-
-/** Discord action rows (≤ 5 rows of ≤ 5 buttons) for an OpButton grid. */
-export const buttonRows = (
-	buttons: OpButton[][],
-	commentId: string,
-	extra: string[] = [],
-): unknown[] =>
-	buttons
-		.filter((row) => row.length > 0)
-		.slice(0, 5)
-		.map((row) => ({
-			type: 1,
-			components: row.slice(0, 5).map((b) => ({
-				type: 2,
-				style: STYLE[b.style],
-				label: b.label,
-				custom_id: encodePayload("discord", b.action, commentId, extra),
-			})),
-		}));
 
 export const cardToMessage = (
 	card: OpCard,
