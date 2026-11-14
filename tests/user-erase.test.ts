@@ -206,6 +206,11 @@ beforeEach(() => {
 			 VALUES (?, ?, ?, 0, ?)`,
 		)
 		.run("tg-555", "chat-555", TARGET_ID, 1_700_000_000_000);
+	sqlite
+		.prepare(
+			`INSERT INTO discord_links (discord_user_id, user_id, linked_at) VALUES (?, ?, ?)`,
+		)
+		.run("111111111111111111", TARGET_ID, 1_700_000_000_000);
 
 	// Three notes, one of each shape the erasure has to tell apart: about the
 	// target, about a comment of theirs, and authored *by* the target.
@@ -408,6 +413,13 @@ describe("POST /admin/api/users/:id/erase — linked records", () => {
 		).toBe(0);
 	});
 
+	it("removes the Discord link", async () => {
+		await erase({ confirm: "ERASE", redact_bodies: false });
+		expect(
+			count("SELECT COUNT(*) AS n FROM discord_links WHERE user_id = ?", TARGET_ID),
+		).toBe(0);
+	});
+
 	it("clears reporter_ip_hash on reports they filed but keeps the report", async () => {
 		await erase({ confirm: "ERASE", redact_bodies: false });
 		const r = sqlite
@@ -456,6 +468,7 @@ describe("POST /admin/api/users/:id/erase — audit trail", () => {
 			subscriptions_deleted: 1,
 			reports_scrubbed: 1,
 			telegram_links_deleted: 1,
+			discord_links_deleted: 1,
 			moderator_notes_deleted: 1,
 		});
 		// The point of the action is that this data is gone. Writing the name or
