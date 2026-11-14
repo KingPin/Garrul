@@ -95,6 +95,10 @@ describe("saving a discord_bot endpoint", () => {
 			);
 		channel({}, 404);
 		expect(await (await save(h, CHANNEL)).json()).toEqual({ error: "channel_not_found" });
+		channel({}, 403);
+		expect(await (await save(h, CHANNEL)).json()).toEqual({ error: "channel_forbidden" });
+		channel({}, 401);
+		expect(await (await save(h, CHANNEL)).json()).toEqual({ error: "channel_forbidden" });
 		channel({ type: 0, guild_id: "888888888888888888" });
 		expect(await (await save(h, CHANNEL)).json()).toEqual({ error: "channel_wrong_guild" });
 		channel({ type: 2, guild_id: GUILD });
@@ -142,6 +146,30 @@ describe("delivery", () => {
 		expect(fetchMock).not.toHaveBeenCalled();
 		expect(h.sqlite.prepare("SELECT last_error FROM webhook_deliveries").get()).toEqual({
 			last_error: "discord:not_configured",
+		});
+	});
+
+	it("refuses a stored non-snowflake channel with discord:bad_channel and never fetches", async () => {
+		const h = setup();
+		h.enable();
+		h.sqlite
+			.prepare(
+				`INSERT INTO webhook_endpoints (id, url, adapter, enabled, fail_count, created_at, updated_at)
+				 VALUES ('e1', '../../guilds/1', 'discord_bot', 1, 0, 1, 1)`,
+			)
+			.run();
+		h.sqlite
+			.prepare(
+				`INSERT INTO webhook_deliveries (id, endpoint_id, event, payload, status, attempts, next_attempt_at, created_at)
+				 VALUES ('d1', 'e1', 'comment.posted', '{}', 'pending', 0, 1, 1)`,
+			)
+			.run();
+		const fetchMock = vi.fn();
+		vi.stubGlobal("fetch", fetchMock);
+		await runWebhookRetries(h.env as never);
+		expect(fetchMock).not.toHaveBeenCalled();
+		expect(h.sqlite.prepare("SELECT last_error FROM webhook_deliveries").get()).toEqual({
+			last_error: "discord:bad_channel",
 		});
 	});
 

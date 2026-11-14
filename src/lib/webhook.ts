@@ -53,6 +53,7 @@ import {
 } from "../db/queries";
 import { log } from "./log";
 import { DISCORD_API, discordEnabled } from "./discord";
+import { SNOWFLAKE_RE } from "./opbot/codec";
 import { checkOutboundUrl } from "./url-safety";
 import {
 	type AdapterOpts,
@@ -209,7 +210,8 @@ const resolveTarget = (
 		};
 	}
 	if (endpoint.adapter === "discord_bot") {
-		if (!discordEnabled(env)) return null;
+		// Re-checked here: the row may predate validation or be hand-edited.
+		if (!discordEnabled(env) || !SNOWFLAKE_RE.test(endpoint.url)) return null;
 		return {
 			url: `${DISCORD_API}/channels/${endpoint.url}/messages`,
 			// Fixed, trusted host; the channel id was validated as a snowflake on save.
@@ -253,7 +255,9 @@ const postOnce = async (
 			status: 0,
 			error:
 				endpoint.adapter === "discord_bot"
-					? "discord:not_configured"
+					? discordEnabled(env)
+						? "discord:bad_channel"
+						: "discord:not_configured"
 					: "telegram:no_token",
 		};
 	}

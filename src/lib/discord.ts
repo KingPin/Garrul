@@ -180,9 +180,17 @@ export const validateDiscordChannel = async (
 	guildId: string,
 ): Promise<
 	| { ok: true }
-	| { ok: false; error: "channel_not_found" | "channel_wrong_guild" | "channel_wrong_type" }
+	| {
+			ok: false;
+			error:
+				| "channel_not_found"
+				| "channel_forbidden"
+				| "channel_wrong_guild"
+				| "channel_wrong_type";
+	  }
 > => {
 	const r = await discordApi(token, "GET", `/channels/${channelId}`);
+	if (r.status === 401 || r.status === 403) return { ok: false, error: "channel_forbidden" };
 	if (!r.ok) return { ok: false, error: "channel_not_found" };
 	const ch = r.json as { type?: number; guild_id?: string } | undefined;
 	if (ch?.guild_id !== guildId) return { ok: false, error: "channel_wrong_guild" };
