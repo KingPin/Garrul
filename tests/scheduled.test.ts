@@ -24,6 +24,10 @@ vi.mock("../src/lib/webhook", async (importOriginal) => ({
 	...(await importOriginal<typeof import("../src/lib/webhook")>()),
 	runWebhookRetries: vi.fn(),
 }));
+vi.mock("../src/lib/discord-digest", async (importOriginal) => ({
+	...(await importOriginal<typeof import("../src/lib/discord-digest")>()),
+	runDiscordDigest: vi.fn(),
+}));
 vi.mock("../src/lib/telegram-digest", async (importOriginal) => ({
 	...(await importOriginal<typeof import("../src/lib/telegram-digest")>()),
 	runTelegramDigest: vi.fn(),
@@ -42,6 +46,7 @@ import { runIpRetention } from "../src/db/ip-retention";
 import { runAuditRetention } from "../src/db/audit-retention";
 import { runDigest } from "../src/lib/digest";
 import { log } from "../src/lib/log";
+import { runDiscordDigest } from "../src/lib/discord-digest";
 import { runModeratorDigest } from "../src/lib/moderator-digest";
 import { runTelegramDigest } from "../src/lib/telegram-digest";
 import { runWebhookRetries } from "../src/lib/webhook";
@@ -74,6 +79,7 @@ describe("scheduled handler pass isolation", () => {
 		vi.mocked(runModeratorDigest).mockReset().mockResolvedValue(undefined);
 		vi.mocked(runWebhookRetries).mockReset().mockResolvedValue(undefined);
 		vi.mocked(runTelegramDigest).mockReset().mockResolvedValue(undefined);
+		vi.mocked(runDiscordDigest).mockReset().mockResolvedValue(undefined);
 		vi.mocked(runIpRetention).mockReset().mockResolvedValue(undefined);
 		vi.mocked(runAuditRetention).mockReset().mockResolvedValue(undefined);
 		errSpy = vi.spyOn(log, "error").mockImplementation(() => {});
@@ -86,12 +92,13 @@ describe("scheduled handler pass isolation", () => {
 	it("runs all passes under separate waitUntil calls", async () => {
 		const { ctx, tracked } = makeCtx();
 		await scheduled(ctx);
-		expect(tracked).toHaveLength(6);
+		expect(tracked).toHaveLength(7);
 		await Promise.all(tracked);
 		expect(runDigest).toHaveBeenCalledTimes(1);
 		expect(runModeratorDigest).toHaveBeenCalledTimes(1);
 		expect(runWebhookRetries).toHaveBeenCalledTimes(1);
 		expect(runTelegramDigest).toHaveBeenCalledTimes(1);
+		expect(runDiscordDigest).toHaveBeenCalledTimes(1);
 		expect(runIpRetention).toHaveBeenCalledTimes(1);
 		expect(runAuditRetention).toHaveBeenCalledTimes(1);
 		expect(errSpy).not.toHaveBeenCalled();

@@ -21,6 +21,7 @@ import { permalink } from "./routes/permalink";
 import { subscriptions } from "./routes/api.subscriptions";
 import { runDigest } from "./lib/digest";
 import { runModeratorDigest } from "./lib/moderator-digest";
+import { runDiscordDigest } from "./lib/discord-digest";
 import { runTelegramDigest } from "./lib/telegram-digest";
 import { runWebhookRetries } from "./lib/webhook";
 import { runIpRetention } from "./db/ip-retention";
@@ -435,6 +436,11 @@ export default {
 		ctx.waitUntil(
 			runTelegramDigest(env).catch((err) => {
 				log.error("scheduled.telegram_digest", { error: String(err) });
+			}),
+		);
+		ctx.waitUntil(
+			runDiscordDigest(env).catch((err) => {
+				log.error("scheduled.discord_digest", { error: String(err) });
 			}),
 		);
 		// Privacy retention. No-ops unless IP_HASH_RETENTION_DAYS (or its

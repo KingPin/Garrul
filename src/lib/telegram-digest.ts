@@ -18,16 +18,10 @@
  * only counts, slugs, and ages — so this stays clear of the no-PII logging and
  * messaging conventions.
  */
-import {
-	adminOldestPending,
-	adminOpenReportSummary,
-	adminSpamRate,
-	adminStats,
-	getSetting,
-	listTelegramDigestLinks,
-	setSetting,
-} from "../db/queries";
+import { getSetting, listTelegramDigestLinks, setSetting } from "../db/queries";
+import type { Bindings } from "../index";
 import { log } from "./log";
+import { collectDigest, relativeAge } from "./opbot/readouts";
 import { sendMessage } from "./telegram";
 
 type DigestEnv = {
@@ -53,46 +47,30 @@ const escapeTg = (s: string): string =>
 		.replace(/"/g, "&quot;")
 		.replace(/'/g, "&#39;");
 
-const relativeAge = (since: number, now: number): string => {
-	const ms = Math.max(0, now - since);
-	const mins = Math.floor(ms / 60000);
-	if (mins < 60) return `${mins}m`;
-	const hrs = Math.floor(mins / 60);
-	if (hrs < 24) return `${hrs}h`;
-	return `${Math.floor(hrs / 24)}d`;
-};
-
 const adminBase = (env: DigestEnv): string | null =>
 	env.PUBLIC_BASE_URL ? env.PUBLIC_BASE_URL.replace(/\/$/, "") : null;
 
 const renderDigest = async (env: DigestEnv, now: number): Promise<string> => {
-	const [stats, reports, spam, oldest] = await Promise.all([
-		adminStats(env.DB),
-		adminOpenReportSummary(env.DB),
-		adminSpamRate(env.DB, 7),
-		adminOldestPending(env.DB),
-	]);
+	const d = await collectDigest(env as Bindings, now);
 
 	const base = adminBase(env);
-	const pct =
-		spam.total > 0 ? Math.round((spam.spam / spam.total) * 1000) / 10 : 0;
 
 	const lines: string[] = ["<b>Garrul daily digest</b>"];
 
 	lines.push(
-		`• Pending: <b>${stats.pending_comments}</b>`,
-		`• Open reports: <b>${reports.open}</b>${
-			reports.top
-				? ` — most on <code>${escapeTg(reports.top.slug)}</code> (${reports.top.count})`
+		`• Pending: <b>${d.pending}</b>`,
+		`• Open reports: <b>${d.openReports}</b>${
+			d.topFlagged
+				? ` — most on <code>${escapeTg(d.topFlagged.slug)}</code> (${d.topFlagged.count})`
 				: ""
 		}`,
-		`• Spam (7d): <b>${pct}%</b> of ${spam.total}`,
-		`• Banned users: <b>${stats.banned_users}</b>`,
+		`• Spam (7d): <b>${d.spamPct}%</b> of ${d.spamTotal}`,
+		`• Banned users: <b>${d.banned}</b>`,
 	);
 
-	if (oldest) {
+	if (d.oldestAgeMs !== null) {
 		lines.push(
-			`• Oldest pending: <b>${relativeAge(oldest.created_at, now)}</b> old`,
+			`• Oldest pending: <b>${relativeAge(now - d.oldestAgeMs, now)}</b> old`,
 		);
 	}
 
