@@ -6,7 +6,6 @@ import {
 } from "../../db/queries";
 import type { Bindings } from "../../index";
 import type { OpAction } from "./codec";
-import { relativeAge } from "./readouts";
 
 export type OpButton = {
 	action: OpAction;
@@ -23,6 +22,15 @@ export type OpCard = {
 	adminUrl?: string;
 	commentId: string;
 	buttons: OpButton[][];
+};
+
+export const relativeAge = (since: number, now: number): string => {
+	const ms = Math.max(0, now - since);
+	const mins = Math.floor(ms / 60000);
+	if (mins < 60) return `${mins}m`;
+	const hrs = Math.floor(mins / 60);
+	if (hrs < 24) return `${hrs}h`;
+	return `${Math.floor(hrs / 24)}d`;
 };
 
 export const buttonsFor = (

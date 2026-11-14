@@ -14,14 +14,9 @@ import {
 import type { Bindings } from "../../index";
 import { banState } from "./actions";
 
-export const relativeAge = (since: number, now: number): string => {
-	const ms = Math.max(0, now - since);
-	const mins = Math.floor(ms / 60000);
-	if (mins < 60) return `${mins}m`;
-	const hrs = Math.floor(mins / 60);
-	if (hrs < 24) return `${hrs}h`;
-	return `${Math.floor(hrs / 24)}d`;
-};
+// relativeAge lives in cards.ts: cards must not import this file (cycle through
+// actions -> moderation -> webhook -> webhook-adapters -> cards).
+export { relativeAge } from "./cards";
 
 export const readQueue = async (env: Bindings) => {
 	const [stats, oldest, reports] = await Promise.all([
