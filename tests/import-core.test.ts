@@ -412,6 +412,7 @@ describe("source moderation state", () => {
 		// Dropping it silently loses a call the operator never got to make.
 		const { plan, status } = await importWith("pending");
 		expect(plan.new_comments).toBe(1);
+		expect(plan.existing_comments).toBe(0);
 		expect(plan.skipped_deleted).toBe(0);
 		expect(plan.skipped_spam).toBe(0);
 		expect(status).toBe("pending");
@@ -962,6 +963,25 @@ describe("re-run re-parenting", () => {
 			(x) => x.sql.startsWith("INSERT INTO comments") && x.binds[10] === "a3",
 		);
 		expect(child).toBe(inserted?.binds[0]);
+	});
+
+	it("counts the comments an earlier run already imported", async () => {
+		// Without this the plan can only say "already here" by subtraction,
+		// which is the arithmetic an operator reviewing a trial migration
+		// should not have to do — and under dry_run it is the whole answer to
+		// "is this export already in?".
+		for (const dry_run of [false, true]) {
+			const { db } = makeSecondRunDb({ a1: "n1", a2: "n2" });
+			const plan = await runImport(
+				db,
+				stubAdapter("x", thread([c("a1", null), c("a2", "a1"), c("a3", "a2")])),
+				"",
+				"s",
+				{ dry_run },
+			);
+			expect(plan.existing_comments).toBe(2);
+			expect(plan.new_comments).toBe(1);
+		}
 	});
 
 	it("scopes the UPDATE to this source's unparented row in SQL as well", async () => {

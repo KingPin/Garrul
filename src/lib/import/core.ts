@@ -266,6 +266,15 @@ export type ImportPlan = {
 	new_users: number;
 	new_comments: number;
 	/**
+	 * Comments an earlier run of this source already imported, matched on
+	 * `(import_source, import_id)` and left exactly as they are.
+	 *
+	 * `comments_total - skipped_* - new_comments` is not a substitute: that
+	 * difference also absorbs comments whose thread is missing from the
+	 * export. This is the number that says "this export is already in".
+	 */
+	existing_comments: number;
+	/**
 	 * Source threads that landed on a slug an earlier thread already claimed.
 	 *
 	 * Slugs drop the query string, so every `?page=2` and `?utm_source=` variant
@@ -588,6 +597,7 @@ export const runImport = async (
 		new_pages: 0,
 		new_users: 0,
 		new_comments: 0,
+		existing_comments: 0,
 		merged_pages: 0,
 		fallback_slugs: 0,
 	};
@@ -767,6 +777,7 @@ export const runImport = async (
 			.first<{ id: string }>();
 		if (existing) {
 			nativeIdBySourceId.set(c.source_id, existing.id);
+			plan.existing_comments += 1;
 			continue;
 		}
 

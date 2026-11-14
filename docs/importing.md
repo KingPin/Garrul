@@ -5,7 +5,10 @@ its predecessor Commento), isso, and Cusdis. All five share one core
 (`src/lib/import/core.ts`) and one contract — idempotent by the source's own
 comment ID, markdown in and out, moderation state carried across rather than
 flattened to approved, and every write INSERT-only so a re-run never
-overwrites a decision an operator made on this side.
+overwrites a decision an operator made on this side. The plan every run
+prints says so in numbers: `new_comments` is what this run added,
+`existing_comments` is what an earlier run already had and this one left
+alone, and `skipped_deleted` / `skipped_spam` are what the flags held back.
 
 Disqus, Remark42 and Comentario/Commento are **single-step**: each product
 writes an export file, and you hand that file straight to the CLI or the
