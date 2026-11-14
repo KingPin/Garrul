@@ -197,11 +197,33 @@ const resolveTarget = (
 	return { url: endpoint.url, checkUrl: true };
 };
 
+const isDiscordAdapter = (a: WebhookAdapter): boolean =>
+	a === "discord";
+
+// Discord's retry_after: JSON body seconds (may be fractional), else the
+// Retry-After header in seconds. Returns ms, or undefined when absent.
+const parseRetryAfterMs = async (res: Response): Promise<number | undefined> => {
+	let secs = Number.NaN;
+	try {
+		const j = (await res.json()) as { retry_after?: unknown };
+		if (typeof j?.retry_after === "number") secs = j.retry_after;
+	} catch {
+		// body not JSON; fall through to the header
+	}
+	if (!Number.isFinite(secs)) secs = Number(res.headers.get("retry-after"));
+	return Number.isFinite(secs) && secs >= 0 ? Math.ceil(secs * 1000) : undefined;
+};
+
 const postOnce = async (
 	env: WebhookEnv,
 	endpoint: WebhookEndpoint,
 	body: string,
-): Promise<{ ok: boolean; status: number; error?: string }> => {
+): Promise<{
+	ok: boolean;
+	status: number;
+	error?: string;
+	retryAfterMs?: number;
+}> => {
 	const target = resolveTarget(env, endpoint);
 	if (!target) return { ok: false, status: 0, error: "telegram:no_token" };
 	if (target.checkUrl) {
@@ -234,6 +256,14 @@ const postOnce = async (
 		// replaces the `http_3xx` tag with something an operator can act on.
 		if (res.status >= 300 && res.status < 400) {
 			return { ok: false, status: res.status, error: "redirect_refused" };
+		}
+		if (res.status === 429 && isDiscordAdapter(endpoint.adapter)) {
+			const retryAfterMs = await parseRetryAfterMs(res);
+			return {
+				ok: false,
+				status: 429,
+				...(retryAfterMs === undefined ? {} : { retryAfterMs }),
+			};
 		}
 		return { ok: res.ok, status: res.status };
 	} catch (err) {
@@ -309,7 +339,8 @@ const dispatchToEndpoint = async (
 		endpoint.id,
 		payload.event,
 		body,
-		Date.now() + (RETRY_SCHEDULE_MS[0] ?? 60_000),
+		Date.now() +
+			Math.max(RETRY_SCHEDULE_MS[0] ?? 60_000, result.retryAfterMs ?? 0),
 	);
 };
 
@@ -425,10 +456,13 @@ const retryDelivery = async (
 	await markWebhookFailed(
 		env.DB,
 		delivery.id,
-		giveup ? null : Date.now() + next,
+		giveup ? null : Date.now() + Math.max(next ?? 0, result.retryAfterMs ?? 0),
 		errorTag,
 	);
-	if (giveup) {
+	if (giveup && result.status === 429 && isDiscordAdapter(endpoint.adapter)) {
+		// Throttled, not broken: never count it toward auto-disable.
+		log.warn("webhook.dropped_throttled", { endpoint_id: endpoint.id });
+	} else if (giveup) {
 		const newCount = endpoint.fail_count + 1;
 		await incrementWebhookFailCount(
 			env.DB,
