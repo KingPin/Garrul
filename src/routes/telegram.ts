@@ -152,7 +152,7 @@ telegram.post("/webhook", async (c) => {
 				c.executionCtx,
 			);
 		} else if (update.message) {
-			await handleMessage(c.env, token, update.message);
+			await handleMessage(c.env, token, update.message, c.executionCtx);
 		}
 	} catch (err) {
 		log.error("telegram.handler", { error: String(err) });
@@ -430,6 +430,7 @@ const handlePromptAnswer = async (
 	msg: TgMessage,
 	prompt: RegExpMatchArray,
 	text: string,
+	executionCtx: { waitUntil(p: Promise<unknown>): void },
 ): Promise<void> => {
 	const chatId = msg.chat.id;
 	const who = msg.from
@@ -452,7 +453,7 @@ const handlePromptAnswer = async (
 	if (isReply) {
 		const res = await postModeratorReply({
 			env,
-			executionCtx: { waitUntil() {} },
+			executionCtx,
 			reqUrl: env.PUBLIC_BASE_URL ?? "https://invalid.local/",
 			actor: actor.user,
 			commentId: prompt[2] as string,
@@ -469,7 +470,7 @@ const handlePromptAnswer = async (
 	}
 	const res = await runOpAction({
 		env,
-		executionCtx: { waitUntil() {} },
+		executionCtx,
 		actor,
 		action: "ban",
 		commentId: prompt[2] as string,
@@ -494,6 +495,7 @@ const handleMessage = async (
 	env: Bindings,
 	token: string,
 	msg: TgMessage,
+	executionCtx: { waitUntil(p: Promise<unknown>): void },
 ): Promise<void> => {
 	const text = (msg.text ?? "").trim();
 	const chatId = msg.chat.id;
@@ -505,7 +507,7 @@ const handleMessage = async (
 	if (replied?.from?.id !== undefined && replied.from.id === botId) {
 		const prompt = (replied.text ?? "").match(PROMPT_RE);
 		if (prompt) {
-			if (text) await handlePromptAnswer(env, token, msg, prompt, text);
+			if (text) await handlePromptAnswer(env, token, msg, prompt, text, executionCtx);
 			return;
 		}
 	}

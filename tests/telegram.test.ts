@@ -1252,6 +1252,15 @@ describe("POST /telegram/webhook — reply with saved replies", () => {
 		expect(replyRows()).toHaveLength(0);
 	});
 
+	it("a reply prompt answer passes the real executionCtx downstream", async () => {
+		vi.mocked(fireWebhook).mockClear();
+		const id = await seedComment("approved");
+		await answerPrompt("43", "hello", `Reply to comment ${id} — send your text as a reply to this message.`);
+		expect(vi.mocked(fireWebhook)).toHaveBeenCalled();
+		const [, ctx] = vi.mocked(fireWebhook).mock.calls[0]!;
+		expect(ctx?.waitUntil).toBe(execCtx.waitUntil);
+	});
+
 	it("help lists /unban and the staff refusal has no Discord wording", async () => {
 		const say = (text: string) =>
 			post(mkEnv(), { update_id: 42, message: { message_id: 31, chat: { id: 555 }, from: { id: 42 }, text } }, SECRET);
