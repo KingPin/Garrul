@@ -16,6 +16,13 @@
  * token at call time.
  */
 import { log } from "./log";
+import { buttonsFor } from "./opbot/cards";
+import {
+	type OpAction,
+	PAYLOAD_MAX,
+	decodePayload,
+	encodePayload,
+} from "./opbot/codec";
 import type { CommentStatus } from "../db/queries";
 import type { WebhookEvent } from "./webhook";
 
@@ -99,40 +106,18 @@ const timingSafeEqual = (a: string, b: string): boolean => {
 // under the cap. Ban targets the comment too; the handler resolves the author
 // from the comment so we never need to pack a second id.
 
-export type TgAction =
-	| "approve"
-	| "spam"
-	| "delete"
-	| "restore"
-	| "ban"
-	| "resolve";
+export type TgAction = OpAction;
 
-const CALLBACK_PREFIX = "g";
-const TG_ACTIONS: readonly TgAction[] = [
-	"approve",
-	"spam",
-	"delete",
-	"restore",
-	"ban",
-	"resolve",
-] as const;
-
-export const CALLBACK_DATA_MAX = 64;
+export const CALLBACK_DATA_MAX = PAYLOAD_MAX.telegram;
 
 export const encodeCallback = (action: TgAction, commentId: string): string =>
-	`${CALLBACK_PREFIX}:${action}:${commentId}`;
+	encodePayload("telegram", action, commentId);
 
 export const decodeCallback = (
 	data: string | undefined,
 ): { action: TgAction; commentId: string } | null => {
-	if (typeof data !== "string") return null;
-	const parts = data.split(":");
-	if (parts.length !== 3) return null;
-	const [prefix, action, commentId] = parts;
-	if (prefix !== CALLBACK_PREFIX) return null;
-	if (!TG_ACTIONS.includes(action as TgAction)) return null;
-	if (!commentId) return null;
-	return { action: action as TgAction, commentId };
+	const d = decodePayload(data);
+	return d ? { action: d.action, commentId: d.commentId } : null;
 };
 
 // --------------------------- Inline keyboard ------------------------------
@@ -153,32 +138,18 @@ export const moderationKeyboard = (
 	commentId: string,
 	status?: CommentStatus | null,
 ): { inline_keyboard: InlineButton[][] } => {
-	const btn = (text: string, action: TgAction): InlineButton => ({
-		text,
-		callback_data: encodeCallback(action, commentId),
-	});
-
-	// Fall back to the full triage when status is unknown (comment row was
-	// unavailable at render time) — better to offer an idempotent Approve than
-	// to hide a needed action.
-	let firstRow: InlineButton[];
-	if (status === "spam") {
-		firstRow = [btn("✅ Not spam", "restore")];
-	} else if (status === "approved") {
-		firstRow = [btn("🚫 Spam", "spam")];
-	} else {
-		firstRow = [btn("✅ Approve", "approve"), btn("🚫 Spam", "spam")];
-	}
-
-	const secondRow: InlineButton[] = [
-		btn("🗑 Delete", "delete"),
-		btn("⛔ Ban author", "ban"),
-	];
-	if (event === "comment.reported") {
-		secondRow.push(btn("📁 Resolve reports", "resolve"));
-	}
-
-	return { inline_keyboard: [firstRow, secondRow] };
+	// Reply button is added to Telegram in a later task; drop it for now.
+	const rows = buttonsFor(status, {
+		reported: event === "comment.reported",
+	}).map((r) =>
+		r
+			.filter((b) => b.action !== "reply")
+			.map((b) => ({
+				text: b.label,
+				callback_data: encodeCallback(b.action, commentId),
+			})),
+	);
+	return { inline_keyboard: rows };
 };
 
 // ------------------------------ API client --------------------------------
