@@ -52,10 +52,12 @@ import {
 	type WebhookEndpoint,
 } from "../db/queries";
 import { log } from "./log";
+import { DISCORD_API, discordEnabled } from "./discord";
 import { checkOutboundUrl } from "./url-safety";
 import {
 	type AdapterOpts,
 	renderDiscordBody,
+	renderDiscordBotBody,
 	renderSlackBody,
 	renderTelegramBody,
 } from "./webhook-adapters";
@@ -90,6 +92,10 @@ type WebhookEnv = {
 	// Kept here (env secret) rather than in D1 so the token is never stored
 	// in plaintext alongside the (non-secret) chat id.
 	TELEGRAM_BOT_TOKEN?: string;
+	// Discord bot credentials. The `discord_bot` adapter posts to a channel id
+	// held in the endpoint's `url` column; the token is added at send time only.
+	DISCORD_BOT_TOKEN?: string;
+	DISCORD_PUBLIC_KEY?: string;
 };
 
 // Fixed, trusted Telegram Bot API host. Telegram endpoints target this URL
@@ -136,6 +142,7 @@ const renderBody = async (
 	if (adapter === "slack") return renderSlackBody(db, payload, opts);
 	if (adapter === "discord") return renderDiscordBody(db, payload, opts);
 	if (adapter === "telegram") return renderTelegramBody(db, payload, opts);
+	if (adapter === "discord_bot") return renderDiscordBotBody(db, payload, opts);
 	return renderGenericBody(payload);
 };
 
@@ -161,6 +168,7 @@ const buildSyntheticEnvEndpoint = (url: string): WebhookEndpoint => {
 };
 
 const buildHeaders = async (
+	env: WebhookEnv,
 	endpoint: WebhookEndpoint,
 	body: string,
 ): Promise<HeadersInit> => {
@@ -168,6 +176,12 @@ const buildHeaders = async (
 		"content-type": "application/json",
 		"user-agent": "Garrul-Webhook/2.0",
 	};
+	// The bot token is added here, at send time, so it never lands in a stored
+	// delivery row. Discord authenticates by token; no HMAC header.
+	if (endpoint.adapter === "discord_bot") {
+		headers.authorization = `Bot ${env.DISCORD_BOT_TOKEN ?? ""}`;
+		return headers;
+	}
 	if (endpoint.secret) {
 		const sig = await signWebhookBody(endpoint.secret, body);
 		headers["x-garrul-signature"] = sig.header;
@@ -194,11 +208,19 @@ const resolveTarget = (
 			checkUrl: false,
 		};
 	}
+	if (endpoint.adapter === "discord_bot") {
+		if (!discordEnabled(env)) return null;
+		return {
+			url: `${DISCORD_API}/channels/${endpoint.url}/messages`,
+			// Fixed, trusted host; the channel id was validated as a snowflake on save.
+			checkUrl: false,
+		};
+	}
 	return { url: endpoint.url, checkUrl: true };
 };
 
 const isDiscordAdapter = (a: WebhookAdapter): boolean =>
-	a === "discord";
+	a === "discord" || a === "discord_bot";
 
 // Discord's retry_after: JSON body seconds (may be fractional), else the
 // Retry-After header in seconds. Returns ms, or undefined when absent.
@@ -225,7 +247,16 @@ const postOnce = async (
 	retryAfterMs?: number;
 }> => {
 	const target = resolveTarget(env, endpoint);
-	if (!target) return { ok: false, status: 0, error: "telegram:no_token" };
+	if (!target) {
+		return {
+			ok: false,
+			status: 0,
+			error:
+				endpoint.adapter === "discord_bot"
+					? "discord:not_configured"
+					: "telegram:no_token",
+		};
+	}
 	if (target.checkUrl) {
 		const safe = checkOutboundUrl(target.url, {
 			allowHttp: allowHttpFor(endpoint, env),
@@ -236,7 +267,7 @@ const postOnce = async (
 	const controller = new AbortController();
 	const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
 	try {
-		const headers = await buildHeaders(endpoint, body);
+		const headers = await buildHeaders(env, endpoint, body);
 		const res = await fetch(target.url, {
 			method: "POST",
 			headers,
@@ -280,7 +311,10 @@ const postOnce = async (
 // only ever placed in the telegram target URL, but fetch error messages can
 // echo that URL back, so we strip the exact secret defensively.
 const scrubToken = (s: string, env: WebhookEnv): string =>
-	env.TELEGRAM_BOT_TOKEN ? s.split(env.TELEGRAM_BOT_TOKEN).join("***") : s;
+	[env.TELEGRAM_BOT_TOKEN, env.DISCORD_BOT_TOKEN].reduce<string>(
+		(acc, t) => (t ? acc.split(t).join("***") : acc),
+		s,
+	);
 
 const isDevEnv = (env: WebhookEnv): boolean => env.ENV === "dev";
 

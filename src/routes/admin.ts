@@ -135,6 +135,7 @@ import {
 import { renderUserDetail } from "../admin-ui/pages/user-detail";
 import { renderUsers } from "../admin-ui/pages/users";
 import { renderOperator } from "../admin-ui/pages/operator";
+import { SNOWFLAKE_RE, discordEnabled, validateDiscordChannel } from "../lib/discord";
 import { renderTelegram } from "../admin-ui/pages/telegram";
 import { issueTelegramLinkToken } from "./telegram";
 import { renderSettings } from "../admin-ui/pages/settings";
@@ -144,6 +145,7 @@ import {
 	canonicalReactionKinds,
 	FLAG_KEYS,
 	isReactionKindsKey,
+	loadDiscordSettings,
 	loadNumbers,
 	loadSettings,
 	NUMBER_KEYS,
@@ -1226,10 +1228,12 @@ const isValidEvent = (v: unknown): v is (typeof VALID_EVENTS)[number] =>
 const isValidTelegramChatId = (v: string): boolean =>
 	/^-?\d{1,20}$/.test(v) || /^@[A-Za-z][A-Za-z0-9_]{4,31}$/.test(v);
 
-const parseWebhookBody = (
+const parseWebhookBody = async (
 	body: WebhookBody,
 	env: Bindings,
-): { ok: true; fields: WebhookFields } | { ok: false; error: string } => {
+): Promise<
+	{ ok: true; fields: WebhookFields } | { ok: false; error: string }
+> => {
 	if (typeof body.url !== "string" || body.url.length === 0) {
 		return { ok: false, error: "url_required" };
 	}
@@ -1247,6 +1251,21 @@ const parseWebhookBody = (
 		if (!isValidTelegramChatId(body.url)) {
 			return { ok: false, error: "chat_id_invalid" };
 		}
+	} else if (adapter === "discord_bot") {
+		// `url` holds a channel id; the real target is the fixed Discord API host.
+		if (!SNOWFLAKE_RE.test(body.url)) {
+			return { ok: false, error: "channel_id_invalid" };
+		}
+		const { guildId } = await loadDiscordSettings(env);
+		if (!discordEnabled(env) || !env.DISCORD_BOT_TOKEN || !guildId) {
+			return { ok: false, error: "discord_not_configured" };
+		}
+		const ch = await validateDiscordChannel(
+			env.DISCORD_BOT_TOKEN,
+			body.url,
+			guildId,
+		);
+		if (!ch.ok) return { ok: false, error: ch.error };
 	} else {
 		// allowHttp only in dev — production endpoints must be https to make
 		// the signing+secret guarantees meaningful end-to-end.
@@ -1302,7 +1321,7 @@ admin.post("/api/webhooks", async (c) => {
 	if (user instanceof Response) return user;
 	const body = await c.req.json<WebhookBody>().catch(() => null);
 	if (!body) return c.json({ error: "invalid_body" }, 400);
-	const parsed = parseWebhookBody(body, c.env);
+	const parsed = await parseWebhookBody(body, c.env);
 	if (!parsed.ok) return c.json({ error: parsed.error }, 400);
 	// On create there is nothing to preserve, so "absent" collapses to "unsigned".
 	const created = await createWebhookEndpoint(c.env.DB, {
@@ -1334,7 +1353,7 @@ admin.patch("/api/webhooks/:id", async (c) => {
 	if (!existing) return c.json({ error: "not_found" }, 404);
 	const body = await c.req.json<WebhookBody>().catch(() => null);
 	if (!body) return c.json({ error: "invalid_body" }, 400);
-	const parsed = parseWebhookBody(body, c.env);
+	const parsed = await parseWebhookBody(body, c.env);
 	if (!parsed.ok) return c.json({ error: parsed.error }, 400);
 	await updateWebhookEndpoint(c.env.DB, id, parsed.fields);
 	await adminInsertAudit(c.env.DB, {

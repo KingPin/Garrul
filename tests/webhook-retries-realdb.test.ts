@@ -113,7 +113,7 @@ describe("Discord 429 handling", () => {
 		return { row, ep, before };
 	};
 
-	it.each(["discord"])("%s: reschedules at max(backoff, retry_after), one attempt", async (adapter) => {
+	it.each(["discord", "discord_bot"])("%s: reschedules at max(backoff, retry_after), one attempt", async (adapter) => {
 		const { row, before } = await run(adapter, 0);
 		expect(row.status).toBe("pending");
 		expect(row.attempts).toBe(1);
@@ -121,7 +121,7 @@ describe("Discord 429 handling", () => {
 		expect(row.next_attempt_at).toBeGreaterThanOrEqual(before + (RETRY_SCHEDULE_MS[1] as number));
 	});
 
-	it.each(["discord"])("%s: a final 429 never raises fail_count", async (adapter) => {
+	it.each(["discord", "discord_bot"])("%s: a final 429 never raises fail_count", async (adapter) => {
 		const { row, ep } = await run(adapter, RETRY_SCHEDULE_MS.length - 1);
 		expect(row.status).toBe("giveup");
 		expect(ep).toEqual({ enabled: 1, fail_count: 9 });

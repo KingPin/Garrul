@@ -33,6 +33,8 @@
  */
 import type { CommentStatus } from "../db/queries";
 import { getComment, getPost, getUser } from "../db/queries";
+import { buttonRows } from "./discord";
+import { buttonsFor } from "./opbot/cards";
 import { moderationKeyboard } from "./telegram";
 import type { WebhookEvent, WebhookPayload } from "./webhook";
 
@@ -246,13 +248,10 @@ export const renderSlackBody = async (
 	return JSON.stringify({ text });
 };
 
-export const renderDiscordBody = async (
-	db: WebhookAdapterDb,
+const discordEmbed = (
+	ctx: Ctx,
 	payload: WebhookPayload,
-	opts: AdapterOpts = {},
-): Promise<string> => {
-	const ctx = await loadContext(db, payload, opts);
-
+): Record<string, unknown> => {
 	// Wrap the destination in <…> so Discord treats it as a literal URL:
 	// a bare URL containing ")" (e.g. a "/wiki/Foo_(bar)" page link) would
 	// otherwise terminate the markdown link early. The URLs are already
@@ -277,7 +276,37 @@ export const renderDiscordBody = async (
 		embed.fields = [{ name: "Links", value: links.join(" · ") }];
 	}
 
-	return JSON.stringify({ embeds: [embed] });
+	return embed;
+};
+
+export const renderDiscordBody = async (
+	db: WebhookAdapterDb,
+	payload: WebhookPayload,
+	opts: AdapterOpts = {},
+): Promise<string> => {
+	const ctx = await loadContext(db, payload, opts);
+	return JSON.stringify({ embeds: [discordEmbed(ctx, payload)] });
+};
+
+// Bot-posted variant: the same embed plus moderation buttons. The bot token is
+// never part of the body (it is added to the request headers at send time).
+export const renderDiscordBotBody = async (
+	db: WebhookAdapterDb,
+	payload: WebhookPayload,
+	opts: AdapterOpts = {},
+): Promise<string> => {
+	const ctx = await loadContext(db, payload, opts);
+	return JSON.stringify({
+		embeds: [discordEmbed(ctx, payload)],
+		components: buttonRows(
+			buttonsFor(ctx.status, {
+				reported: payload.event === "comment.reported",
+				banLabel: "banr",
+			}),
+			payload.comment_id,
+		),
+		allowed_mentions: { parse: [] },
+	});
 };
 
 // ----------------------------- Telegram ------------------------------------

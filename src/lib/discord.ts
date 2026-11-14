@@ -2,7 +2,7 @@
 // a thin REST client and OpCard -> message rendering. No Discord SDK.
 import type { Bindings } from "../index";
 import { log } from "./log";
-import type { OpCard } from "./opbot/cards";
+import type { OpButton, OpCard } from "./opbot/cards";
 import { encodePayload } from "./opbot/codec";
 import {
 	escapeDiscordMentions,
@@ -141,6 +141,25 @@ export const discordApi = async (
 	}
 };
 
+/** Discord action rows (≤ 5 rows of ≤ 5 buttons) for an OpButton grid. */
+export const buttonRows = (
+	buttons: OpButton[][],
+	commentId: string,
+	extra: string[] = [],
+): unknown[] =>
+	buttons
+		.filter((row) => row.length > 0)
+		.slice(0, 5)
+		.map((row) => ({
+			type: 1,
+			components: row.slice(0, 5).map((b) => ({
+				type: 2,
+				style: STYLE[b.style],
+				label: b.label,
+				custom_id: encodePayload("discord", b.action, commentId, extra),
+			})),
+		}));
+
 export const cardToMessage = (
 	card: OpCard,
 	extra: string[] = [],
@@ -165,21 +184,9 @@ export const cardToMessage = (
 			{ name: "Done by", value: escapeDiscordMentions(card.doneBy).slice(0, 1024) },
 		];
 	}
-	const components = card.buttons
-		.filter((row) => row.length > 0)
-		.slice(0, 5)
-		.map((row) => ({
-			type: 1,
-			components: row.slice(0, 5).map((b) => ({
-				type: 2,
-				style: STYLE[b.style],
-				label: b.label,
-				custom_id: encodePayload("discord", b.action, card.commentId, extra),
-			})),
-		}));
 	return {
 		embeds: [embed],
-		components,
+		components: buttonRows(card.buttons, card.commentId, extra),
 		allowed_mentions: { parse: [] },
 	};
 };
