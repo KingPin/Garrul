@@ -122,6 +122,8 @@ const TG_HANDLED: readonly OpAction[] = [
 	"restore",
 	"ban",
 	"resolve",
+	"rv",
+	"nx",
 ];
 
 export const decodeCallback = (

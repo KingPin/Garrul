@@ -22,13 +22,14 @@ import { Hono } from "hono";
 import {
 	countOpenReportsByComment,
 	getUser,
+	nextPendingAfter,
 	upsertTelegramLink,
 } from "../db/queries";
 import { t } from "../i18n";
 import type { Bindings } from "../index";
 import { log } from "../lib/log";
 import { hasRole, requiredRole, runOpAction } from "../lib/opbot/actions";
-import { buttonsFor } from "../lib/opbot/cards";
+import { buttonsFor, type OpCard, renderQueueCard } from "../lib/opbot/cards";
 import { decodePayload } from "../lib/opbot/codec";
 import { resolveTelegramActor } from "../lib/opbot/identity";
 import { consumeLinkToken, issueLinkToken } from "../lib/opbot/link-token";
@@ -183,6 +184,37 @@ const handleCallback = async (
 		return;
 	}
 	const extra = decodePayload(cq.data)?.extra ?? [];
+	if (decoded.action === "rv" || decoded.action === "nx") {
+		await answerCallbackQuery(token, cq.id);
+		const next = await nextPendingAfter(
+			env.DB,
+			decoded.action === "rv" ? null : decoded.commentId,
+		);
+		if (cq.message) {
+			const card = next ? await renderQueueCard(env, next) : null;
+			await editMessageText(
+				token,
+				cq.message.chat.id,
+				cq.message.message_id,
+				card ? tgCardText(card) : "Queue is empty 🎉",
+				card
+					? {
+							replyMarkup: {
+								// Action rows carry "q" so the post-action keyboard keeps
+								// Next; the Next row (last) does not.
+								inline_keyboard: [
+									...toInlineKeyboard(card.buttons.slice(0, -1), card.commentId, ["q"])
+										.inline_keyboard,
+									...toInlineKeyboard(card.buttons.slice(-1), card.commentId)
+										.inline_keyboard,
+								],
+							},
+						}
+					: undefined,
+			);
+		}
+		return;
+	}
 	// TG_HANDLED guarantees one of the six actions runOpAction accepts.
 	const action = decoded.action as
 		| "approve"
@@ -308,7 +340,11 @@ const handleMessage = async (
 
 	switch (cmd.name) {
 		case "queue":
-			await sendMessage(token, chatId, await renderQueueText(env));
+			await sendMessage(token, chatId, await renderQueueText(env), {
+					replyMarkup: {
+						inline_keyboard: [[{ text: "Review ▶", callback_data: "g:rv:-" }]],
+					},
+				});
 			break;
 		case "stats":
 			await sendMessage(token, chatId, await renderStatsText(env));
@@ -418,6 +454,14 @@ const renderUserText = async (env: Bindings, arg: string): Promise<string> => {
 		`Joined: ${relativeAge(user.created_at, Date.now())} ago`,
 	].join("\n");
 };
+
+const tgCardText = (card: OpCard): string =>
+	[
+		`<b>${escapeTg(card.title)}</b>`,
+		...card.lines.map(escapeTg),
+		...(card.snippet ? [`<blockquote>${escapeTg(card.snippet)}</blockquote>`] : []),
+		...(card.adminUrl ? [tgLink(card.adminUrl, "🔍 Open in admin")] : []),
+	].join("\n");
 
 const tgLink = (url: string, label: string): string =>
 	`<a href="${escapeTg(url)}">${escapeTg(label)}</a>`;

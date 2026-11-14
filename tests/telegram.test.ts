@@ -876,3 +876,97 @@ describe("POST /telegram/webhook — ban, flagged posts and callback floods", ()
 		}
 	});
 });
+
+describe("queue review", () => {
+	const cb = (data: string) => ({
+		update_id: 3,
+		callback_query: {
+			id: "cbq-q",
+			from: { id: 42 },
+			message: { message_id: 10, chat: { id: 555 }, text: "x" },
+			data,
+		},
+	});
+	type Kb = { inline_keyboard: { text: string; callback_data: string }[][] };
+	const lastEdit = () =>
+		[...tgCalls].reverse().find((c) => c.method === "editMessageText");
+	const seedThree = async () => {
+		const ids: string[] = [];
+		for (let i = 0; i < 3; i++) {
+			const id = await seedComment("pending");
+			sqlite
+				.prepare("UPDATE comments SET created_at = ?, body_md = ? WHERE id = ?")
+				.run(1_700_000_001_000 + i * 1000, `body ${i} <b>`, id as string);
+			ids.push(id);
+		}
+		return ids;
+	};
+	const asMod = async () => {
+		seedUser("01HMOD0000000000000000000A", "mod");
+		await linkOperator("42", "01HMOD0000000000000000000A");
+	};
+
+	it("/queue carries a Review button and unchanged text", async () => {
+		await asMod();
+		await post(
+			mkEnv(),
+			{
+				update_id: 1,
+				message: { message_id: 1, chat: { id: 555 }, from: { id: 42 }, text: "/queue" },
+			},
+			SECRET,
+		);
+		const send = tgCalls.find((c) => c.method === "sendMessage");
+		expect(String(send?.body.text).startsWith("<b>Moderation queue</b>")).toBe(true);
+		expect(send?.body.reply_markup).toEqual({
+			inline_keyboard: [[{ text: "Review ▶", callback_data: "g:rv:-" }]],
+		});
+	});
+
+	it("rv shows the oldest pending card; nx walks on and ends empty", async () => {
+		await asMod();
+		const [a, b, c] = (await seedThree()) as [string, string, string];
+		await post(mkEnv(), cb("g:rv:-"), SECRET);
+		let e = lastEdit();
+		expect(String(e?.body.text)).toContain("Pending comment");
+		expect(String(e?.body.text)).toContain("body 0 &lt;b&gt;");
+		const rows = ((e?.body.reply_markup ?? { inline_keyboard: [] }) as Kb).inline_keyboard;
+		expect(rows[0]?.map((x) => x.callback_data)).toEqual([`g:approve:${a}:q`, `g:spam:${a}:q`]);
+		expect(rows.at(-1)).toEqual([{ text: "⏭ Next", callback_data: `g:nx:${a}` }]);
+
+		await post(mkEnv(), cb(`g:nx:${a}`), SECRET);
+		expect(String(lastEdit()?.body.text)).toContain("body 1");
+		expect(JSON.stringify(lastEdit()?.body.reply_markup)).toContain(`g:nx:${b}`);
+
+		sqlite.prepare("UPDATE comments SET status='approved' WHERE id IN (?, ?)").run(a, b);
+		await post(mkEnv(), cb(`g:nx:${c}`), SECRET);
+		e = lastEdit();
+		expect(e?.body.text).toBe("Queue is empty 🎉");
+		expect(e?.body.reply_markup).toBeUndefined();
+	});
+
+	it("nx on a vanished comment restarts from the oldest pending", async () => {
+		await asMod();
+		const [a] = (await seedThree()) as [string];
+		await post(mkEnv(), cb("g:nx:01HGONE00000000000000000XX"), SECRET);
+		expect(JSON.stringify(lastEdit()?.body.reply_markup)).toContain(`g:nx:${a}`);
+	});
+
+	it("an action on a queue card keeps Next and the done-by line", async () => {
+		await asMod();
+		const [a] = (await seedThree()) as [string];
+		await post(mkEnv(), cb(`g:approve:${a}:q`), SECRET);
+		expect(commentStatus(a)).toBe("approved");
+		const e = lastEdit();
+		expect(String(e?.body.text)).toContain("Approved by");
+		expect(JSON.stringify(e?.body.reply_markup)).toContain(`g:nx:${a}`);
+	});
+
+	it("rv and nx are refused for a non-mod", async () => {
+		seedUser("01HUSER000000000000000000A", "user");
+		await linkOperator("42", "01HUSER000000000000000000A");
+		await seedThree();
+		await post(mkEnv(), cb("g:rv:-"), SECRET);
+		expect(lastEdit()).toBeUndefined();
+	});
+});

@@ -1,5 +1,12 @@
-import type { CommentStatus } from "../../db/queries";
+import {
+	type Comment,
+	type CommentStatus,
+	countOpenReportsByComment,
+	getUser,
+} from "../../db/queries";
+import type { Bindings } from "../../index";
 import type { OpAction } from "./codec";
+import { relativeAge } from "./readouts";
 
 export type OpButton = {
 	action: OpAction;
@@ -52,4 +59,31 @@ export const buttonsFor = (
 		rows.push([{ action: "nx", label: "⏭ Next", style: "secondary" }]);
 	}
 	return rows;
+};
+
+export const renderQueueCard = async (
+	env: Bindings,
+	comment: Comment,
+): Promise<OpCard> => {
+	const [author, counts] = await Promise.all([
+		getUser(env.DB, comment.user_id),
+		countOpenReportsByComment(env.DB, [comment.id]),
+	]);
+	const openReports = counts[comment.id] ?? 0;
+	return {
+		title: "Pending comment",
+		lines: [
+			`Author: ${author?.name ?? "unknown"}`,
+			`On: ${comment.post_slug} · ${relativeAge(comment.created_at, Date.now())} ago`,
+		],
+		snippet:
+			comment.body_md.length > 200
+				? `${comment.body_md.slice(0, 200)}…`
+				: comment.body_md,
+		...(env.PUBLIC_BASE_URL && {
+			adminUrl: `${env.PUBLIC_BASE_URL.replace(/\/$/, "")}/admin/comments/${encodeURIComponent(comment.id)}`,
+		}),
+		commentId: comment.id,
+		buttons: buttonsFor(comment.status, { reported: openReports > 0, queue: true }),
+	};
 };
