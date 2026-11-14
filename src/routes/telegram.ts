@@ -20,26 +20,25 @@
  */
 import { Hono } from "hono";
 import {
-	adminOldestPending,
-	adminOpenReportSummary,
-	adminSpamRate,
-	adminStats,
 	countOpenReportsByComment,
-	getComment,
-	getTelegramLinkByTgUser,
 	getUser,
-	type User,
 	upsertTelegramLink,
 } from "../db/queries";
+import { t } from "../i18n";
 import type { Bindings } from "../index";
 import { log } from "../lib/log";
-import {
-	banUser,
-	type CommentAction,
-	moderateComment,
-	resolveReports,
-} from "../lib/moderation";
+import { hasRole, requiredRole, runOpAction } from "../lib/opbot/actions";
+import { buttonsFor } from "../lib/opbot/cards";
+import { decodePayload } from "../lib/opbot/codec";
+import { resolveTelegramActor } from "../lib/opbot/identity";
 import { consumeLinkToken, issueLinkToken } from "../lib/opbot/link-token";
+import {
+	readComment,
+	readQueue,
+	readStats,
+	readUser,
+	relativeAge,
+} from "../lib/opbot/readouts";
 import { checkRateLimit } from "../lib/ratelimit";
 import {
 	answerCallbackQuery,
@@ -47,13 +46,12 @@ import {
 	editMessageText,
 	SECRET_HEADER,
 	sendMessage,
-	type TgAction,
 	type TgCallbackQuery,
 	type TgMessage,
 	type TgUpdate,
+	toInlineKeyboard,
 	verifyTelegramSecret,
 } from "../lib/telegram";
-import { t } from "../i18n";
 
 export const telegram = new Hono<{ Bindings: Bindings }>();
 
@@ -66,18 +64,6 @@ export const issueTelegramLinkToken = (
 	kv: KVNamespace,
 	user_id: string,
 ): Promise<string> => issueLinkToken(kv, "tg", user_id);
-
-// ------------------------------- Authorization ----------------------------
-
-const hasRole = (user: User, need: "mod" | "admin"): boolean =>
-	!user.is_banned &&
-	(need === "mod"
-		? user.role === "mod" || user.role === "admin"
-		: user.role === "admin");
-
-/** The action's minimum role. Ban is admin-only, matching the HTTP routes. */
-const requiredRole = (action: TgAction): "mod" | "admin" =>
-	action === "ban" ? "admin" : "mod";
 
 // ------------------------------- Route -------------------------------------
 
@@ -176,31 +162,76 @@ const handleCallback = async (
 		return;
 	}
 
-	// Resolve identity → current user → role. The link is identity only; the
-	// role is re-checked here every time, so revoking mod/admin disables the
-	// buttons even while the link persists.
-	const link = await getTelegramLinkByTgUser(env.DB, String(cq.from.id));
-	if (!link) {
-		await answerCallbackQuery(token, cq.id, t("telegram.not_linked"));
+	// Identity → current role, re-checked on every tap. The link is identity
+	// only, so revoking mod/admin disables the buttons while the link persists.
+	const who = await resolveTelegramActor(env.DB, String(cq.from.id));
+	if (!who.ok) {
+		await answerCallbackQuery(
+			token,
+			cq.id,
+			t(
+				who.reason === "not_linked"
+					? "telegram.not_linked"
+					: "telegram.not_authorized",
+			),
+		);
 		return;
 	}
-	const user = await getUser(env.DB, link.user_id);
-	if (!user || !hasRole(user, requiredRole(decoded.action))) {
+	const { actor } = who;
+	if (!hasRole(actor, requiredRole(decoded.action))) {
 		await answerCallbackQuery(token, cq.id, t("telegram.not_authorized"));
 		return;
 	}
+	const extra = decodePayload(cq.data)?.extra ?? [];
+	// TG_HANDLED guarantees one of the six actions runOpAction accepts.
+	const action = decoded.action as
+		| "approve"
+		| "spam"
+		| "delete"
+		| "restore"
+		| "resolve"
+		| "ban";
 
-	const outcome = await runAction(
+	// runOpAction does not report how many reports it closed; read it first.
+	const openBefore =
+		action === "resolve"
+			? ((await countOpenReportsByComment(env.DB, [decoded.commentId]))[
+					decoded.commentId
+				] ?? 0)
+			: 0;
+	const res = await runOpAction({
 		env,
-		user,
-		decoded.action,
-		decoded.commentId,
 		executionCtx,
+		actor,
+		action,
+		commentId: decoded.commentId,
+	});
+	if (!res.ok) {
+		await answerCallbackQuery(
+			token,
+			cq.id,
+			t(
+				res.error === "comment_not_found"
+					? "telegram.comment_not_found"
+					: res.error === "not_authorized"
+						? "telegram.not_authorized"
+						: "telegram.ban_refused",
+			),
+		);
+		return;
+	}
+	await answerCallbackQuery(
+		token,
+		cq.id,
+		action === "resolve"
+			? t("telegram.reports_resolved", { count: openBefore })
+			: action === "ban"
+				? t("telegram.author_banned")
+				: t("telegram.action_applied", { action }),
 	);
-	await answerCallbackQuery(token, cq.id, outcome.toast);
 
-	// Reflect the result in the message and strip the keyboard so the buttons
-	// can't be tapped twice. editMessageText with no reply_markup removes it.
+	// Keep the message text, add who did what, and show the keyboard for the
+	// comment's new status.
 	if (cq.message) {
 		await editMessageText(
 			token,
@@ -210,66 +241,19 @@ const handleCallback = async (
 			// message (entities stripped), so any literal & < > in it must be
 			// re-escaped before it goes back out under parse_mode=HTML — otherwise
 			// the edit fails and the stale keyboard stays tappable.
-			`${cq.message.text ? `${escapeTg(cq.message.text)}\n\n` : ""}<b>${outcome.toast}</b> — ${escapeTg(user.name)}`,
+			`${cq.message.text ? `${escapeTg(cq.message.text)}\n\n` : ""}<b>${escapeTg(res.doneBy)}</b>`,
+			{
+				replyMarkup: toInlineKeyboard(
+					buttonsFor(res.status, {
+						reported: res.reported,
+						queue: extra[0] === "q",
+					}),
+					decoded.commentId,
+					extra,
+				),
+			},
 		);
 	}
-};
-
-// Run the decoded action through the shared moderation service. Returns a
-// short toast for answerCallbackQuery. bustTreeCache keys on the Worker
-// origin, so we pass PUBLIC_BASE_URL as the synthetic request URL.
-const runAction = async (
-	env: Bindings,
-	user: User,
-	action: TgAction,
-	commentId: string,
-	executionCtx: { waitUntil(p: Promise<unknown>): void },
-): Promise<{ toast: string }> => {
-	const reqUrl = env.PUBLIC_BASE_URL ?? "https://localhost";
-
-	if (action === "resolve") {
-		const res = await resolveReports({
-			env,
-			adminId: user.id,
-			commentId,
-		});
-		if (!res.ok) return { toast: t("telegram.comment_not_found") };
-		return { toast: t("telegram.reports_resolved", { count: res.resolved }) };
-	}
-
-	if (action === "ban") {
-		const comment = await getComment(env.DB, commentId);
-		if (!comment) return { toast: t("telegram.comment_not_found") };
-		const res = await banUser({
-			env,
-			adminId: user.id,
-			userId: comment.user_id,
-			banned: true,
-			fromComment: commentId,
-		});
-		if (!res.ok) {
-			return {
-				toast: t(
-					res.error === "not_found"
-						? "telegram.comment_not_found"
-						: "telegram.ban_refused",
-				),
-			};
-		}
-		return { toast: t("telegram.author_banned") };
-	}
-
-	// approve | spam | delete | restore → a CommentAction.
-	const res = await moderateComment({
-		env,
-		executionCtx,
-		reqUrl,
-		adminId: user.id,
-		commentId,
-		action: action as CommentAction,
-	});
-	if (!res.ok) return { toast: t("telegram.comment_not_found") };
-	return { toast: t("telegram.action_applied", { action }) };
 };
 
 // ----------------------------- Message handler -----------------------------
@@ -306,16 +290,19 @@ const handleMessage = async (
 
 	// Every query command requires a linked operator with at least mod role,
 	// re-checked here (the link is identity only).
-	const link = msg.from
-		? await getTelegramLinkByTgUser(env.DB, String(msg.from.id))
-		: null;
-	if (!link) {
-		await sendMessage(token, chatId, t("telegram.not_linked"));
-		return;
-	}
-	const user = await getUser(env.DB, link.user_id);
-	if (!user || !hasRole(user, "mod")) {
-		await sendMessage(token, chatId, t("telegram.not_authorized"));
+	const who = msg.from
+		? await resolveTelegramActor(env.DB, String(msg.from.id))
+		: ({ ok: false, reason: "not_linked" } as const);
+	if (!who.ok) {
+		await sendMessage(
+			token,
+			chatId,
+			t(
+				who.reason === "not_linked"
+					? "telegram.not_linked"
+					: "telegram.not_authorized",
+			),
+		);
 		return;
 	}
 
@@ -352,40 +339,27 @@ const commandHelpText = (): string =>
 		"/user &lt;id&gt; — a user's role + status",
 	].join("\n");
 
-const relativeAge = (since: number, now: number): string => {
-	const ms = Math.max(0, now - since);
-	const mins = Math.floor(ms / 60000);
-	if (mins < 60) return `${mins}m`;
-	const hrs = Math.floor(mins / 60);
-	if (hrs < 24) return `${hrs}h`;
-	return `${Math.floor(hrs / 24)}d`;
-};
-
 const adminCommentUrl = (env: Bindings, id: string): string | null =>
 	env.PUBLIC_BASE_URL
 		? `${env.PUBLIC_BASE_URL.replace(/\/$/, "")}/admin/comments/${encodeURIComponent(id)}`
 		: null;
 
 const renderQueueText = async (env: Bindings): Promise<string> => {
-	const [stats, oldest, reports] = await Promise.all([
-		adminStats(env.DB),
-		adminOldestPending(env.DB),
-		adminOpenReportSummary(env.DB),
-	]);
+	const q = await readQueue(env);
 	const lines = [
 		"<b>Moderation queue</b>",
-		`⏳ Pending: <b>${stats.pending_comments}</b>`,
-		`🚩 Reported: <b>${reports.open}</b>`,
-		`🚫 Spam: <b>${stats.spam_comments}</b>`,
+		`⏳ Pending: <b>${q.pending}</b>`,
+		`🚩 Reported: <b>${q.reported}</b>`,
+		`🚫 Spam: <b>${q.spam}</b>`,
 	];
-	if (reports.top) {
+	if (q.topFlagged) {
 		lines.push(
-			`Most flagged: <code>${escapeTg(reports.top.slug)}</code> (${reports.top.count})`,
+			`Most flagged: <code>${escapeTg(q.topFlagged.slug)}</code> (${q.topFlagged.count})`,
 		);
 	}
-	if (oldest) {
-		const age = relativeAge(oldest.created_at, Date.now());
-		const url = adminCommentUrl(env, oldest.id);
+	if (q.oldest) {
+		const age = relativeAge(q.oldest.created_at, Date.now());
+		const url = adminCommentUrl(env, q.oldest.id);
 		lines.push(
 			`Oldest pending: ${age} ago${url ? ` — ${tgLink(url, "open")}` : ""}`,
 		);
@@ -394,17 +368,14 @@ const renderQueueText = async (env: Bindings): Promise<string> => {
 };
 
 const renderStatsText = async (env: Bindings): Promise<string> => {
-	const [stats, spam] = await Promise.all([
-		adminStats(env.DB),
-		adminSpamRate(env.DB, 7),
-	]);
+	const s = await readStats(env);
 	const pct =
-		spam.total > 0 ? Math.round((spam.spam / spam.total) * 100) : 0;
+		s.spam7d.total > 0 ? Math.round((s.spam7d.spam / s.spam7d.total) * 100) : 0;
 	return [
 		"<b>Stats</b>",
-		`💬 Comments: <b>${stats.total_comments}</b> (${stats.pending_comments} pending)`,
-		`👥 Users: <b>${stats.total_users}</b> (${stats.banned_users} banned)`,
-		`🚫 Spam rate (7d): <b>${pct}%</b> (${spam.spam}/${spam.total})`,
+		`💬 Comments: <b>${s.totalComments}</b> (${s.pending} pending)`,
+		`👥 Users: <b>${s.totalUsers}</b> (${s.banned} banned)`,
+		`🚫 Spam rate (7d): <b>${pct}%</b> (${s.spam7d.spam}/${s.spam7d.total})`,
 	].join("\n");
 };
 
@@ -414,13 +385,9 @@ const renderCommentText = async (
 ): Promise<string> => {
 	const id = arg.trim();
 	if (!id) return "Usage: /comment &lt;id&gt;";
-	const comment = await getComment(env.DB, id);
-	if (!comment) return t("telegram.comment_not_found");
-	const [author, reportCounts] = await Promise.all([
-		getUser(env.DB, comment.user_id),
-		countOpenReportsByComment(env.DB, [id]),
-	]);
-	const openReports = reportCounts[id] ?? 0;
+	const r = await readComment(env, id);
+	if (!r) return t("telegram.comment_not_found");
+	const { comment, authorName, openReports } = r;
 	const snippet =
 		comment.body_md.length > 200
 			? `${comment.body_md.slice(0, 200)}…`
@@ -429,7 +396,7 @@ const renderCommentText = async (
 	const lines = [
 		`<b>Comment</b> <code>${escapeTg(id)}</code>`,
 		`Status: <b>${escapeTg(comment.status)}</b>${openReports > 0 ? ` · ${openReports} open report(s)` : ""}`,
-		`Author: ${escapeTg(author?.name ?? "unknown")}`,
+		`Author: ${escapeTg(authorName)}`,
 		`On: <code>${escapeTg(comment.post_slug)}</code> · ${relativeAge(comment.created_at, Date.now())} ago`,
 		`<blockquote>${escapeTg(snippet)}</blockquote>`,
 	];
@@ -440,8 +407,9 @@ const renderCommentText = async (
 const renderUserText = async (env: Bindings, arg: string): Promise<string> => {
 	const id = arg.trim();
 	if (!id) return "Usage: /user &lt;id&gt;";
-	const user = await getUser(env.DB, id);
-	if (!user) return "No such user.";
+	const r = await readUser(env, id);
+	if (!r) return "No such user.";
+	const { user } = r;
 	return [
 		`<b>User</b> <code>${escapeTg(id)}</code>`,
 		`Name: ${escapeTg(user.name)}`,

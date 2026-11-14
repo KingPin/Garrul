@@ -28,7 +28,9 @@ vi.mock("../src/lib/webhook", async (importOriginal) => ({
 	fireWebhook: vi.fn(),
 }));
 
-import { encodeCallback } from "../src/lib/telegram";
+import { t } from "../src/i18n";
+import { encodePayload } from "../src/lib/opbot/codec";
+import { decodeCallback, encodeCallback } from "../src/lib/telegram";
 import { fireWebhook } from "../src/lib/webhook";
 import type { WebhookPayload } from "../src/lib/webhook";
 import { renderTelegramBody } from "../src/lib/webhook-adapters";
@@ -130,6 +132,16 @@ describe("renderTelegramBody", () => {
 		// stubRows' comment is already approved, so no redundant Approve button.
 		expect(labels.some((l: string) => l.includes("Approve"))).toBe(false);
 		expect(labels.some((l: string) => l.includes("Spam"))).toBe(true);
+	});
+
+	it("offers a Reply button on alerts", async () => {
+		const body = JSON.parse(
+			await renderTelegramBody(makeStubDb(stubRows), payload(), { chatId: "1" }),
+		);
+		const labels = body.reply_markup.inline_keyboard
+			.flat()
+			.map((b: { text: string }) => b.text);
+		expect(labels).toContain("↩️ Reply");
 	});
 
 	it("HTML-escapes &, <, > in the snippet (no raw markup reaches Telegram)", async () => {
@@ -484,6 +496,44 @@ describe("POST /telegram/webhook — callback moderation + role gate", () => {
 		expect(auditCount("approve")).toBe(1);
 		// Acknowledged the tap.
 		expect(tgCalls.some((c) => c.method === "answerCallbackQuery")).toBe(true);
+	});
+
+	it("edits the message with a done-by line and the keyboard for the new status", async () => {
+		seedUser("01HMOD0000000000000000000A", "mod");
+		await linkOperator("42", "01HMOD0000000000000000000A");
+		const id = await seedComment("pending");
+		await post(
+			mkEnv(),
+			callbackUpdate("42", encodeCallback("approve", id)),
+			SECRET,
+		);
+		const edit = tgCalls.find((c) => c.method === "editMessageText");
+		expect(edit).toBeDefined();
+		const text = String(edit?.body.text);
+		expect(text.startsWith("alert\n\n<b>Approved by ")).toBe(true);
+		const markup = edit?.body.reply_markup as {
+			inline_keyboard: { text: string; callback_data: string }[][];
+		};
+		const rows = markup.inline_keyboard;
+		expect(rows[0]?.map((b) => b.text)).toEqual(["🚫 Spam"]);
+		expect(rows[1]?.map((b) => b.text)).toContain("↩️ Reply");
+		// Reply decodes to null until its handler lands (allowlist); the rest decode.
+		for (const b of rows.flat().filter((b) => !b.text.includes("Reply")))
+			expect(decodeCallback(b.callback_data)).not.toBeNull();
+	});
+
+	it("answers unknown_action when the Reply button is tapped (handler not wired yet)", async () => {
+		seedUser("01HMOD0000000000000000000A", "mod");
+		await linkOperator("42", "01HMOD0000000000000000000A");
+		const id = await seedComment("pending");
+		await post(
+			mkEnv(),
+			callbackUpdate("42", encodePayload("telegram", "reply", id)),
+			SECRET,
+		);
+		const ack = tgCalls.find((c) => c.method === "answerCallbackQuery");
+		expect(ack?.body.text).toBe(t("telegram.unknown_action"));
+		expect(tgCalls.some((c) => c.method === "editMessageText")).toBe(false);
 	});
 
 	it("fires the downstream webhook with a real executionCtx (not undefined)", async () => {

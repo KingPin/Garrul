@@ -16,7 +16,7 @@
  * token at call time.
  */
 import { log } from "./log";
-import { buttonsFor } from "./opbot/cards";
+import { buttonsFor, type OpButton } from "./opbot/cards";
 import {
 	type OpAction,
 	PAYLOAD_MAX,
@@ -145,24 +145,28 @@ export const decodeCallback = (
 
 export type InlineButton = { text: string; callback_data: string };
 
+export const toInlineKeyboard = (
+	rows: OpButton[][],
+	commentId: string,
+	extra?: string[],
+): { inline_keyboard: InlineButton[][] } => ({
+	inline_keyboard: rows.map((r) =>
+		r.map((b) => ({
+			text: b.label,
+			callback_data: encodePayload("telegram", b.action, commentId, extra),
+		})),
+	),
+});
+
 export const moderationKeyboard = (
 	event: WebhookEvent,
 	commentId: string,
 	status?: CommentStatus | null,
-): { inline_keyboard: InlineButton[][] } => {
-	// Reply button is added to Telegram in a later task; drop it for now.
-	const rows = buttonsFor(status, {
-		reported: event === "comment.reported",
-	}).map((r) =>
-		r
-			.filter((b) => b.action !== "reply")
-			.map((b) => ({
-				text: b.label,
-				callback_data: encodeCallback(b.action, commentId),
-			})),
+): { inline_keyboard: InlineButton[][] } =>
+	toInlineKeyboard(
+		buttonsFor(status, { reported: event === "comment.reported" }),
+		commentId,
 	);
-	return { inline_keyboard: rows };
-};
 
 // ------------------------------ API client --------------------------------
 //
@@ -230,13 +234,14 @@ export const answerCallbackQuery = (
 		...(text ? { text } : {}),
 	});
 
-// Replace a message's text + strip its keyboard after an action resolves, so
-// the buttons can't be tapped twice and the message reflects the outcome.
+// Replace a message's text after an action resolves. Without replyMarkup the
+// keyboard is stripped; with it, the keyboard for the new status is shown.
 export const editMessageText = (
 	token: string,
 	chatId: string | number,
 	messageId: number,
 	text: string,
+	opts: { replyMarkup?: { inline_keyboard: InlineButton[][] } } = {},
 ): Promise<TgResult> =>
 	callTelegram(token, "editMessageText", {
 		chat_id: chatId,
@@ -244,4 +249,5 @@ export const editMessageText = (
 		text,
 		parse_mode: "HTML",
 		disable_web_page_preview: true,
+		...(opts.replyMarkup ? { reply_markup: opts.replyMarkup } : {}),
 	});
