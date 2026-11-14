@@ -3161,6 +3161,10 @@ export const ADMIN_ACTIONS = [
 	"report.resolve",
 	"telegram.link_code",
 	"telegram.unlink",
+	"discord.settings",
+	"discord.link_code",
+	"discord.unlink",
+	"discord.commands",
 ] as const;
 export type AdminAction = (typeof ADMIN_ACTIONS)[number];
 

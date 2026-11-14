@@ -49,12 +49,14 @@ import {
 	countModeratorNotesByTarget,
 	countOpenReportsByComment,
 	createWebhookEndpoint,
+	deleteDiscordLinkByUser,
 	deleteSettings,
 	deleteTelegramLinkByUser,
 	deleteWebhookEndpoint,
 	enqueueNotificationsForPost,
 	exportUserData,
 	getComment,
+	getDiscordLinkByUser,
 	getTelegramLinkByUser,
 	getPost,
 	getUser,
@@ -135,8 +137,10 @@ import {
 import { renderUserDetail } from "../admin-ui/pages/user-detail";
 import { renderUsers } from "../admin-ui/pages/users";
 import { renderOperator } from "../admin-ui/pages/operator";
-import { SNOWFLAKE_RE, discordEnabled, validateDiscordChannel } from "../lib/discord";
+import { SNOWFLAKE_RE, discordApi, discordEnabled, validateDiscordChannel } from "../lib/discord";
 import { renderTelegram } from "../admin-ui/pages/telegram";
+import { renderDiscord } from "../admin-ui/pages/discord";
+import { issueLinkToken } from "../lib/opbot/link-token";
 import { issueTelegramLinkToken } from "./telegram";
 import { renderSettings } from "../admin-ui/pages/settings";
 import { ownerLogin } from "./admin-owner";
@@ -905,6 +909,155 @@ admin.post("/api/telegram/digest", async (c) => {
 	const updated = await setTelegramDigest(c.env.DB, user.id, body.digest);
 	if (!updated) return c.json({ error: "not_linked" }, 404);
 	return c.json({ ok: true, digest: body.digest });
+});
+
+// --- Discord moderation bot ----------------------------------------------
+//
+// Secrets (DISCORD_BOT_TOKEN / _PUBLIC_KEY / _CLIENT_ID) live in the Worker
+// env; the guild/role/channel ids are operator settings. Admin-only, like
+// Telegram linking. Audit meta never carries ids, codes or tokens.
+
+const DISCORD_ID_FIELDS = {
+	guild_id: "discord_guild_id",
+	mod_role_id: "discord_mod_role_id",
+	admin_role_id: "discord_admin_role_id",
+	digest_channel_id: "discord_digest_channel_id",
+} as const;
+
+admin.get("/discord", async (c) => {
+	const user = await requireAdmin(c);
+	if (user instanceof Response) return user;
+	const [updateInfo, link, s] = await Promise.all([
+		peekCachedLatestVersion(c.env),
+		getDiscordLinkByUser(c.env.DB, user.id),
+		loadDiscordSettings(c.env),
+	]);
+	const base = (c.env.PUBLIC_BASE_URL ?? "").replace(/\/+$/, "");
+	return c.html(
+		renderPage(
+			c,
+			"Discord",
+			renderDiscord({
+				configured: discordEnabled(c.env),
+				botTokenSet: !!c.env.DISCORD_BOT_TOKEN,
+				publicKeySet: !!c.env.DISCORD_PUBLIC_KEY,
+				clientIdSet: !!c.env.DISCORD_CLIENT_ID,
+				endpointUrl: base ? `${base}/discord/interactions` : null,
+				settings: s,
+				link: link ? { linked_at: link.linked_at } : null,
+			}),
+			user,
+			updateInfo,
+		),
+	);
+});
+
+admin.post("/api/discord/settings", async (c) => {
+	const user = await requireAdmin(c);
+	if (user instanceof Response) return user;
+	const body = await c.req.json<Record<string, unknown>>().catch(() => null);
+	if (!body || typeof body !== "object") return c.json({ error: "invalid_body" }, 400);
+	const values: Record<string, string> = {};
+	for (const field of Object.keys(DISCORD_ID_FIELDS)) {
+		const raw = body[field] ?? "";
+		const v = typeof raw === "string" ? raw.trim() : null;
+		if (v === null || (v !== "" && !SNOWFLAKE_RE.test(v))) {
+			return c.json({ error: `invalid_id:${field}` }, 400);
+		}
+		values[field] = v;
+	}
+	if (values.digest_channel_id) {
+		if (!discordEnabled(c.env) || !c.env.DISCORD_BOT_TOKEN || !values.guild_id) {
+			return c.json({ error: "discord_not_configured" }, 400);
+		}
+		const ch = await validateDiscordChannel(
+			c.env.DISCORD_BOT_TOKEN,
+			values.digest_channel_id,
+			values.guild_id,
+		);
+		if (!ch.ok) return c.json({ error: ch.error }, 400);
+	}
+	const cleared: string[] = [];
+	for (const [field, key] of Object.entries(DISCORD_ID_FIELDS)) {
+		const v = values[field] as string;
+		if (v) await setSetting(c.env.DB, key, v);
+		else cleared.push(key);
+	}
+	await deleteSettings(c.env.DB, cleared);
+	await bustSettingsCache(c.env);
+	await adminInsertAudit(c.env.DB, {
+		admin_id: user.id,
+		action: "discord.settings",
+		target_kind: "system",
+		target_id: null,
+		meta: { set: Object.keys(values).filter((f) => values[f]), cleared: cleared.length },
+	});
+	return c.json({ ok: true });
+});
+
+admin.post("/api/discord/link", async (c) => {
+	const user = await requireAdmin(c);
+	if (user instanceof Response) return user;
+	const code = await issueLinkToken(c.env.OAUTH_STATE, "dc", user.id);
+	await adminInsertAudit(c.env.DB, {
+		admin_id: user.id,
+		action: "discord.link_code",
+		target_kind: "user",
+		target_id: user.id,
+	});
+	return c.json({ ok: true, code });
+});
+
+admin.delete("/api/discord/link", async (c) => {
+	const user = await requireAdmin(c);
+	if (user instanceof Response) return user;
+	const removed = await deleteDiscordLinkByUser(c.env.DB, user.id);
+	if (removed) {
+		await adminInsertAudit(c.env.DB, {
+			admin_id: user.id,
+			action: "discord.unlink",
+			target_kind: "user",
+			target_id: user.id,
+		});
+	}
+	return c.json({ ok: true, removed });
+});
+
+const STRING_OPT = 3;
+const idOption = (name: string, description: string) => [
+	{ name, description, type: STRING_OPT, required: true },
+];
+const DISCORD_COMMANDS = [
+	{ name: "queue", description: "Review pending comments" },
+	{ name: "stats", description: "Show comment statistics" },
+	{ name: "comment", description: "Show a comment", options: idOption("id", "Comment id") },
+	{ name: "user", description: "Show a commenter", options: idOption("id", "User id") },
+	{ name: "unban", description: "Unban a commenter", options: idOption("id", "User id") },
+	{ name: "link", description: "Link your Garrul account", options: idOption("code", "Code from the admin page") },
+];
+
+admin.post("/api/discord/commands", async (c) => {
+	const user = await requireAdmin(c);
+	if (user instanceof Response) return user;
+	if (!discordEnabled(c.env) || !c.env.DISCORD_BOT_TOKEN || !c.env.DISCORD_CLIENT_ID) {
+		return c.json({ error: "discord_not_configured" }, 400);
+	}
+	const { guildId } = await loadDiscordSettings(c.env);
+	if (!guildId) return c.json({ error: "guild_not_set" }, 400);
+	const r = await discordApi(
+		c.env.DISCORD_BOT_TOKEN,
+		"PUT",
+		`/applications/${c.env.DISCORD_CLIENT_ID}/guilds/${guildId}/commands`,
+		DISCORD_COMMANDS,
+	);
+	if (!r.ok) return c.json({ error: "discord_error", status: r.status }, 502);
+	await adminInsertAudit(c.env.DB, {
+		admin_id: user.id,
+		action: "discord.commands",
+		target_kind: "system",
+		target_id: null,
+	});
+	return c.json({ ok: true });
 });
 
 admin.get("/settings", async (c) => {
