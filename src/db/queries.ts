@@ -618,6 +618,22 @@ export const upsertOauthUser = async (
 	};
 };
 
+/** Look up a user by the identity they signed in with (e.g. discord + snowflake). */
+export const getUserByProvider = async (
+	db: D1Database,
+	provider: string,
+	providerId: string,
+): Promise<User | null> => {
+	const row = await db
+		.prepare(
+			`SELECT ${USER_COLS}
+			 FROM users WHERE provider = ? AND provider_id = ?`,
+		)
+		.bind(provider, providerId)
+		.first<UserRow>();
+	return row ? toUser(row) : null;
+};
+
 export const getUser = async (
 	db: D1Database,
 	id: string,
@@ -3514,6 +3530,33 @@ export const adminOldestPending = async (
 			  LIMIT 1`,
 		)
 		.first<{ id: string; created_at: number }>();
+	return row ?? null;
+};
+
+/**
+ * Next pending comment after a cursor in the oldest-first queue walk.
+ * The cursor need not still be pending (a mid-walk moderation must not stall
+ * the walk). A null or unknown cursor starts from the oldest pending comment.
+ */
+export const nextPendingAfter = async (
+	db: D1Database,
+	afterId: string | null,
+): Promise<Comment | null> => {
+	const row = await db
+		.prepare(
+			`WITH cur AS (SELECT created_at, id FROM comments WHERE id = ?1)
+			 SELECT id, post_slug, parent_id, user_id, body_md, body_html,
+			        renderer_version, status, edited_at, deleted_at, deleted_by,
+			        ip_hash, user_agent, created_at, depth, score_up, score_down, pinned_at, as_staff
+			   FROM comments
+			  WHERE status = 'pending'
+			    AND (NOT EXISTS (SELECT 1 FROM cur)
+			         OR (created_at, id) > (SELECT created_at, id FROM cur))
+			  ORDER BY created_at ASC, id ASC
+			  LIMIT 1`,
+		)
+		.bind(afterId)
+		.first<Comment>();
 	return row ?? null;
 };
 
