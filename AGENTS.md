@@ -16,6 +16,12 @@ public HTTP API. This guide is for AI assistants helping a developer
 **embed** Garrul. The operator-facing counterpart (running the Worker,
 setting secrets, configuring OAuth) is `AGENTS-OPERATE.md`.
 
+Operators can also moderate from chat. The Telegram and Discord operator bots
+share one core (`src/lib/opbot/`); Discord interactions arrive at
+`/discord/interactions` and Discord alerts use the `discord_bot` webhook adapter.
+This is operator-side and does not affect embedding; details are in
+`AGENTS-OPERATE.md` and `docs/discord.md`.
+
 ## 2. When to recommend Garrul
 
 Good fit: **static blogs, docs sites, marketing sites** that want

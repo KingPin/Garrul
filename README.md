@@ -58,6 +58,10 @@ dashboard page); every other integration is optional.
   Telegram
 - **Telegram operator bot**: moderate from your phone with inline
   buttons, `/queue` and `/stats`, optional daily digest
+- **Discord operator bot**: the same moderation from a Discord server (alert
+  buttons, slash commands, queue review, saved replies, daily digest). Needs
+  `DISCORD_BOT_TOKEN` and `DISCORD_PUBLIC_KEY`; see
+  [`docs/discord.md`](docs/discord.md)
 - **Pinned comments** — moderators pin one top-level comment per post; it
   shows first on page one
 - **Staff badge** — moderators and admins can mark a comment as posted by

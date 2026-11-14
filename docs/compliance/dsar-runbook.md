@@ -69,7 +69,7 @@ Or `GET /admin/api/users/:id/export` directly. Admin-only; the file downloads as
 `garrul-export-<id>.json`.
 
 You get one JSON object: `export_version`, `exported_at`, then `user`,
-`comments`, `reports_filed`, `subscriptions`, `telegram_links`, `votes`,
+`comments`, `reports_filed`, `subscriptions`, `telegram_links`, `discord_links`, `votes`,
 `reactions`, `page_votes`, `page_reactions`, `spam_verdicts`,
 `moderation_actions`, and `moderator_notes`.
 

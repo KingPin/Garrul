@@ -213,6 +213,10 @@ Those are the common ones; `secrets.example.env` has the full set,
 including the Facebook / X / Discord providers, Telegram, Akismet and
 the Cloudflare usage dashboard.
 
+The Discord operator bot turns on when both `DISCORD_BOT_TOKEN` (secret) and
+`DISCORD_PUBLIC_KEY` (plain var) are set. Setup is in
+[`docs/discord.md`](docs/discord.md).
+
 Tip for generating a secret by hand:
 `openssl rand -base64 32 | npx wrangler secret put NAME` — that keeps
 the value off disk and out of your shell history.

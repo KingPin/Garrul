@@ -4,7 +4,7 @@ An optional Telegram bot for **operators** (admins and mods) — not readers.
 It does three things:
 
 1. **Notifications** — comment events delivered to a chat as messages, with
-   inline **Approve / Spam / Delete / Ban author / Resolve** buttons.
+   inline **Approve / Spam / Delete / Ban author / Resolve / Reply** buttons.
 2. **On-the-spot moderation** — tap a button to act without opening the admin
    panel. Every action runs through the same audited path as the dashboard.
 3. **Queries + digest** — `/queue`, `/stats`, `/comment <id>`, `/user <id>`,
@@ -26,7 +26,8 @@ In Telegram, talk to [@BotFather](https://t.me/BotFather):
    queue - Pending + reported counts
    stats - Totals and 7-day spam rate
    comment - <id> a comment's status + author
-   user - <id> a user's role + status
+   user - <id> a user's role, ban state + reason
+   unban - <id> lift a ban
    ```
 
 ## 2. Set the secrets
@@ -92,6 +93,10 @@ offers "Not spam" (restore). A reported event additionally offers "Resolve
 reports". Acting from Telegram fires the matching event, so flagging spam
 sends back a fresh "Not spam" message, and vice-versa.
 
+After a tap, the same message edits to the result and who did it ("Approved by
+Alice"), and shows the buttons for the comment's **new** status. Only the tapped
+message updates: Garrul does not sync other alerts for that comment.
+
 ## 5. Link your operator account
 
 A button tap or slash command must map back to a Garrul operator — a stored
@@ -112,16 +117,44 @@ there.
 
 ## 6. Commands
 
-All read-only; all require a linked operator with at least mod role:
+All require a linked operator with at least mod role (`/unban` needs admin):
 
 | Command | Shows |
 |---|---|
-| `/queue` | pending count, open-report count, oldest pending |
+| `/queue` | pending count, open-report count, oldest pending, and a **Review** button |
 | `/stats` | totals + 7-day spam rate |
 | `/comment <id>` | a comment's status, author, snippet, open reports |
-| `/user <id>` | a user's role, ban status, provider, join age |
+| `/user <id>` | a user's role, ban state and reason, provider, join age |
+| `/unban <id>` | lifts a ban (admin) |
 
 The `/cmd@YourGarrulBot` form (used in group chats) is accepted too.
+
+**Queue review.** Tap **Review** under `/queue`. The message then shows the
+**oldest** pending comment with its action buttons and **Skip**, edited in place
+as you go. The walk keeps no state; a comment someone else moderated mid-walk
+does not break it.
+
+**Ban reason.** A ban alert offers **Ban** (no reason) and **Ban with reason**.
+The second sends a prompt; reply to that prompt with the reason (Telegram has no
+forms, so this uses `force_reply`). The reason lands in the audit log, and
+`/user` shows "Banned — <reason>" (or "reason no longer available" if the audit
+row was purged, or "Not banned").
+
+**Reply.** Tap **Reply** to post an operator reply to the comment (dashboard
+defaults: reader notified, posted as staff). The bot lists your saved replies as
+buttons plus **Write custom**. A saved-reply button posts at once, with `{name}`,
+`{post}` and `{mod}` expanded. **Write custom** sends a prompt; reply to it with
+your text. The bot accepts a prompt answer only when it is a reply to the bot's
+own prompt.
+
+- In a **private chat** with the bot, the list shows your private saved replies
+  plus shared ones.
+- In a **group** chat, inline buttons are visible to every member, so the list
+  shows **shared** saved replies only. A tap on a private reply from a group, or
+  from someone other than its owner, is refused.
+
+Every prompt answer and button tap re-checks the sender's role. Sending a prompt
+grants nothing: an unlinked or under-privileged group member is refused.
 
 ## 7. Daily digest (optional)
 
@@ -139,3 +172,8 @@ once every 24 hours — no separate schedule to configure.
   `TELEGRAM_WEBHOOK_SECRET` rejects all inbound updates (fail closed).
 - Actions taken from Telegram write the same audit rows as the dashboard,
   attributed to the linked operator's user id.
+- Accepted risk: Telegram can redeliver an update, and there is no dedupe, so a
+  redelivered reply can post twice. A repeated moderation action reaches the same
+  end state.
+- Discord offers the same actions through a second transport; see
+  [discord.md](./discord.md).

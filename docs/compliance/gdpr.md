@@ -44,6 +44,7 @@ One basis per purpose, not one per instance. A typical blog deployment:
 | Reply notifications by email | `subscriptions.email`, `notifications` | **Consent** (6(1)(a)). Opt-in, double-confirmed, and revocable by one click in every email. Do not fold this into legitimate interests. |
 | Moderation accountability | `audit_log` | **Legitimate interests**, or **legal obligation** (6(1)(c)) where a content law requires you to show what you removed and when. |
 | Operator's own Telegram link | `telegram_links` | **Consent** of the operator, who is also the subject. |
+| Operator's own Discord link | `discord_links` | **Consent** of the operator, who is also the subject. |
 
 Two consequences worth writing down:
 
@@ -108,6 +109,7 @@ for reply chains to stay readable. Concretely
 - `subscriptions` for their address, and queued `notifications` riding on them,
   deleted outright.
 - `telegram_links` deleted — those carry an external chat id.
+- `discord_links` deleted — those carry an external Discord user id.
 - `moderator_notes` targeting **them** deleted. Notes they *wrote* about other
   people are kept: those record moderator work, the way their audit rows do.
 - Their sessions are revoked, so nothing keeps acting as them.
