@@ -35,6 +35,20 @@ export type ReplyError =
 	| "body_too_long"
 	| "saved_reply_not_visible";
 
+/** Operator-facing refusal text shared by the Telegram and Discord bots (English by design). */
+export const replyRefusalText = (e: ReplyError, max?: number): string =>
+	e === "comment_not_found"
+		? "That comment no longer exists."
+		: e === "comment_deleted"
+			? "That comment was deleted."
+			: e === "thread_too_deep"
+				? "That thread is too deep to reply to. Reply higher up from the dashboard."
+				: e === "body_too_long"
+					? `Reply too long (max ${max} characters).`
+					: e === "body_required"
+						? "Reply text is empty."
+						: "That saved reply isn't available here.";
+
 type ChatKind = { chat: "group" | "private" };
 
 export const presetVisible = (

@@ -29,7 +29,13 @@ import {
 import { t } from "../i18n";
 import type { Bindings } from "../index";
 import { log } from "../lib/log";
-import { hasRole, requiredRole, runOpAction, unbanUser } from "../lib/opbot/actions";
+import {
+	hasRole,
+	OPBOT_RATE_LIMIT,
+	requiredRole,
+	runOpAction,
+	unbanUser,
+} from "../lib/opbot/actions";
 import {
 	buttonsFor,
 	ellipsize,
@@ -53,7 +59,7 @@ import {
 	postModeratorReply,
 	presetVars,
 	presetVisible,
-	type ReplyError,
+	replyRefusalText,
 } from "../lib/opbot/reply";
 import { checkRateLimit } from "../lib/ratelimit";
 import {
@@ -85,15 +91,8 @@ export const issueTelegramLinkToken = (
 
 // ------------------------------- Route -------------------------------------
 
-// Inbound callers are authenticated operators (secret token → linked account →
-// per-action role check), so the comment-posting default (1/10s, 5/10min) is
-// far too strict — a moderator tapping through a queue or running a couple of
-// slash commands would be throttled mid-session. Keep a generous burst that
-// still caps a runaway loop or a redelivery storm.
-const TELEGRAM_RATE_LIMIT = {
-	short: { max: 10, windowSec: 10 },
-	long: { max: 120, windowSec: 600 },
-};
+// Rate limiting uses OPBOT_RATE_LIMIT, the shared operator-bot burst (callers
+// are authenticated operators, so the comment-posting default is too strict).
 
 telegram.post("/webhook", async (c) => {
 	// 1. Authenticate the caller. This is the ONLY gate on an originless route.
@@ -124,7 +123,7 @@ telegram.post("/webhook", async (c) => {
 	if (fromId != null) {
 		const rl = await checkRateLimit(c.req.url, `tg:${fromId}`, {
 			scope: "telegram",
-			config: TELEGRAM_RATE_LIMIT,
+			config: OPBOT_RATE_LIMIT,
 			env: c.env,
 		});
 		if (!rl.ok) {
@@ -330,19 +329,6 @@ const handleCallback = async (
 
 // ------------------------------- Reply flow --------------------------------
 
-const REPLY_REFUSAL = (e: ReplyError, max?: number): string =>
-	e === "comment_not_found"
-		? t("telegram.comment_not_found")
-		: e === "comment_deleted"
-			? "That comment was deleted."
-			: e === "thread_too_deep"
-				? "That thread is too deep to reply to. Reply higher up from the dashboard."
-				: e === "body_too_long"
-					? `Reply too long (max ${max} characters).`
-					: e === "body_required"
-						? "Reply text is empty."
-						: "That saved reply isn't available here.";
-
 const MAX_PRESET_BUTTONS = 99;
 
 const handleReplyTap = async (
@@ -394,7 +380,7 @@ const handleReplyTap = async (
 	// sr: post the chosen preset.
 	const preset = extra[0] ? await getSavedReply(env.DB, extra[0]) : null;
 	if (!preset || !presetVisible(preset, actor.user.id, ctx)) {
-		await sendMessage(token, chatId, REPLY_REFUSAL("saved_reply_not_visible"));
+		await sendMessage(token, chatId, replyRefusalText("saved_reply_not_visible"));
 		return;
 	}
 	const res = await postModeratorReply({
@@ -407,7 +393,7 @@ const handleReplyTap = async (
 		savedReplyId: preset.id,
 	});
 	if (!res.ok) {
-		await sendMessage(token, chatId, REPLY_REFUSAL(res.error, res.max));
+		await sendMessage(token, chatId, replyRefusalText(res.error, res.max));
 		return;
 	}
 	await editMessageText(
@@ -475,7 +461,7 @@ const handlePromptAnswer = async (
 			chatId,
 			res.ok
 				? `Reply posted by ${escapeTg(actor.user.name)}`
-				: REPLY_REFUSAL(res.error, res.max),
+				: replyRefusalText(res.error, res.max),
 		);
 		return;
 	}

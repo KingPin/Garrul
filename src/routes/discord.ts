@@ -52,7 +52,7 @@ import {
 	postModeratorReply,
 	presetVars,
 	presetVisible,
-	type ReplyError,
+	replyRefusalText,
 } from "../lib/opbot/reply";
 import { readComment, readQueue, readStats, readUser, relativeAge } from "../lib/opbot/readouts";
 import { checkRateLimit } from "../lib/ratelimit";
@@ -80,21 +80,6 @@ const MSG = {
 	tooLong: "Some saved replies are too long for Discord. Use the dashboard for those.",
 	unknown: "Unknown action.",
 } as const;
-
-// Same wording as the Telegram REPLY_REFUSAL map in routes/telegram.ts; copied
-// rather than imported so this route does not pull in the Telegram handler.
-const REPLY_REFUSAL = (e: ReplyError, max?: number): string =>
-	e === "comment_not_found"
-		? MSG.gone
-		: e === "comment_deleted"
-			? "That comment was deleted."
-			: e === "thread_too_deep"
-				? "That thread is too deep to reply to. Reply higher up from the dashboard."
-				: e === "body_too_long"
-					? `Reply too long (max ${max} characters).`
-					: e === "body_required"
-						? "Reply text is empty."
-						: "That saved reply isn't available here.";
 
 const ephemeral = (content: string): Reply => ({
 	type: 4,
@@ -361,7 +346,7 @@ const openReplyModal = async (
 			.bind(presetId, commentId)
 			.first<SavedReply & { author_name: string | null; post_slug: string | null; post_title: string | null }>();
 		if (!r || !presetVisible(r, user?.id ?? "", { chat: "private" })) {
-			return ephemeral(REPLY_REFUSAL("saved_reply_not_visible"));
+			return ephemeral(replyRefusalText("saved_reply_not_visible"));
 		}
 		prefill = expandPreset(r.body_md, {
 			name: r.author_name ?? undefined,
@@ -415,7 +400,7 @@ const submitReply = async (
 		bodyMd: text,
 		savedReplyId: presetId,
 	});
-	if (!res.ok) return ephemeral(REPLY_REFUSAL(res.error, res.max));
+	if (!res.ok) return ephemeral(replyRefusalText(res.error, res.max));
 	const doneBy = `Reply posted by ${actor.user.name}`;
 	if (origin === "q") return update(await queueMessage(env, commentId, doneBy));
 
