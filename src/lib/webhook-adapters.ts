@@ -197,7 +197,7 @@ const slackSafeUrl = (url: string): boolean => !/[<>|]/.test(url);
 // Inserting a zero-width space breaks the trigger while keeping the
 // text legible. (Embeds don't fire mentions, but this is cheap defense
 // in depth and keeps the rendered text tidy.)
-const escapeDiscordMentions = (s: string): string =>
+export const escapeDiscordMentions = (s: string): string =>
 	s
 		.replace(/@(everyone|here)/gi, "@​$1")
 		.replace(/<@([!&]?\d+)>/g, "<@​$1>");
@@ -211,7 +211,7 @@ const escapeDiscordMentions = (s: string): string =>
 // would become "\\[x\](url)" — Discord renders "\\" as a literal
 // backslash, leaving the "[" unescaped and the masked link live again.
 // Escaping "\" → "\\" before the brackets closes that bypass.
-const sanitizeDiscordDescription = (s: string): string =>
+export const sanitizeDiscordDescription = (s: string): string =>
 	escapeDiscordMentions(s)
 		.replace(/\\/g, "\\\\")
 		.replace(/[[\]]/g, "\\$&");

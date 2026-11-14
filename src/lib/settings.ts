@@ -25,6 +25,7 @@ import { COMMENT_SORTS, getAllSettings } from "../db/queries";
 import { LOCALES } from "../i18n";
 import { AUTO_LOCALE } from "../i18n/negotiate";
 import { DEFAULT_REACTION_KINDS, REACTION_KIND_SET } from "../widget/reactions";
+import { SNOWFLAKE_RE } from "./discord";
 import { CLEF_MODELS } from "./spam/workers-ai";
 import { MAX_DEPTH } from "./tree";
 
@@ -684,12 +685,36 @@ const resolve = (
 	return out;
 };
 
+/**
+ * Discord operator-bot wiring. Deliberately outside TEXT_KEYS/TEXTS so the
+ * /admin/settings save and reset paths never touch these keys.
+ */
+export interface ResolvedDiscord {
+	readonly guildId: string;
+	readonly modRoleId: string;
+	readonly adminRoleId: string;
+	readonly digestChannelId: string;
+}
+
+const snowflake = (dbSettings: Record<string, string>, key: string): string => {
+	const v = (dbSettings[key] ?? "").trim();
+	return SNOWFLAKE_RE.test(v) ? v : "";
+};
+
+const resolveDiscord = (dbSettings: Record<string, string>): ResolvedDiscord => ({
+	guildId: snowflake(dbSettings, "discord_guild_id"),
+	modRoleId: snowflake(dbSettings, "discord_mod_role_id"),
+	adminRoleId: snowflake(dbSettings, "discord_admin_role_id"),
+	digestChannelId: snowflake(dbSettings, "discord_digest_channel_id"),
+});
+
 /** Every resolved settings group, as held in the per-isolate memo. */
 export interface ResolvedSettings {
 	readonly flags: ResolvedFlags;
 	readonly numbers: ResolvedNumbers;
 	readonly strings: ResolvedStrings;
 	readonly texts: ResolvedTexts;
+	readonly discord: ResolvedDiscord;
 }
 
 /** Read D1 and resolve every group. */
@@ -700,6 +725,7 @@ const deriveSettings = async (env: Bindings): Promise<ResolvedSettings> => {
 		numbers: resolveNumbers(env, dbSettings),
 		strings: resolveStrings(env, dbSettings),
 		texts: resolveTexts(env, dbSettings),
+		discord: resolveDiscord(dbSettings),
 	};
 };
 
@@ -793,3 +819,7 @@ export const bustSettingsCache = (env: Bindings): Promise<void> => {
 	inFlight = null;
 	return env.TREE_CACHE.delete(CACHE_KEY_RESOLVED).catch(() => {});
 };
+
+export const loadDiscordSettings = async (
+	env: Bindings,
+): Promise<ResolvedDiscord> => (await loadSettings(env)).discord;
