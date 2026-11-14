@@ -1,9 +1,9 @@
 import {
-	adminAuditForTarget,
 	type CommentStatus,
 	countOpenReportsByComment,
 	getComment,
 	getUser,
+	latestBanAudit,
 	type User,
 } from "../../db/queries";
 import type { Bindings } from "../../index";
@@ -131,8 +131,7 @@ export const banState = async (
 	user: User,
 ): Promise<{ banned: false } | { banned: true; reason: string | null; purged: boolean }> => {
 	if (!user.is_banned) return { banned: false };
-	const rows = await adminAuditForTarget(db, "user", user.id, 20);
-	const last = rows.find((r) => r.action === "ban" || r.action === "unban");
+	const last = await latestBanAudit(db, user.id);
 	// Banned with no ban row means the audit trail was purged.
 	if (!last) return { banned: true, reason: null, purged: true };
 	return { banned: true, reason: last.reason ?? null, purged: false };

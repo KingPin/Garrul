@@ -3311,6 +3311,22 @@ export const adminAuditForTarget = async (
 	return result.results ?? [];
 };
 
+// Latest ban/unban row for a user. Filtered in SQL so unrelated audit rows can
+// never push the ban out of a fixed window.
+export const latestBanAudit = async (
+	db: D1Database,
+	user_id: string,
+): Promise<{ action: string; reason: string | null } | null> =>
+	db
+		.prepare(
+			`SELECT action, reason FROM audit_log
+			  WHERE target_kind = 'user' AND target_id = ? AND action IN ('ban', 'unban')
+			  ORDER BY created_at DESC, id DESC
+			  LIMIT 1`,
+		)
+		.bind(user_id)
+		.first<{ action: string; reason: string | null }>();
+
 // Map of {target_id: latestAuditRow} for a batch of comment IDs. Used to
 // render the "approved by X · 3h ago" strip under each queue row in one
 // extra query rather than N. Returns only the latest row per target.

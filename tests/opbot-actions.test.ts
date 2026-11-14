@@ -206,6 +206,22 @@ describe("banState", () => {
 			purged: false,
 		});
 	});
+
+	it("keeps the ban reason after more unrelated audit rows than any fixed window", async () => {
+		const { env, sqlite } = setup();
+		const real = await actorOf(env, "adm", "admin", false);
+		await runOpAction({ env, executionCtx: undefined, actor: real, action: "ban", commentId: "c1", reason: "abuse" });
+		const add = sqlite.prepare(
+			`INSERT INTO audit_log (id, admin_id, action, target_kind, target_id, created_at)
+			 VALUES (?, 'adm', 'note', 'user', 'plain', ?)`,
+		);
+		for (let n = 0; n < 60; n++) add.run(`zz-note-${n}`, 9_000_000_000_000 + n);
+		expect(await banState(env.DB, (await getUser(env.DB, "plain")) as User)).toEqual({
+			banned: true,
+			reason: "abuse",
+			purged: false,
+		});
+	});
 });
 
 describe("readouts", () => {
