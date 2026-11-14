@@ -183,6 +183,10 @@ OAUTH_CALLBACK_BASE = "https://comments.example.com"
 # a one-tap t.me/<bot>?start=<code> deep link instead of manual /start steps.
 # TELEGRAM_BOT_USERNAME = "YourGarrulBot"
 
+# Discord operator bot (optional; OFF unless DISCORD_BOT_TOKEN, a secret, is also set).
+# Application public key used to verify interaction signatures (public, so a var).
+# DISCORD_PUBLIC_KEY = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
 # Anti-spam (all optional; OFF by default). See docs/ANTISPAM.md.
 # Pluggable content classifier — "akismet", "workers-ai" or "decisions". Leave unset for none.
 # SPAM_PROVIDER = "akismet"
@@ -287,6 +291,7 @@ crons = ["*/15 * * * *"]
 #   WEBHOOK_URL — legacy single-URL webhook; prefer /admin/webhooks endpoints
 #   TELEGRAM_BOT_TOKEN — BotFather token; see docs/telegram.md
 #   TELEGRAM_WEBHOOK_SECRET — shared secret for setWebhook; required for inbound commands
+#   DISCORD_BOT_TOKEN — bot token from the Discord developer portal (Bot tab)
 #   AKISMET_API_KEY — required when SPAM_PROVIDER = "akismet"
 #   AKISMET_SITE_URL — public site URL registered with Akismet
 #   SPAM_DECISIONS_API_KEY — required when SPAM_PROVIDER = "decisions"

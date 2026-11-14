@@ -73,6 +73,10 @@ TELEGRAM_BOT_TOKEN=""
 # shared secret for setWebhook; required for inbound commands
 TELEGRAM_WEBHOOK_SECRET=""
 
+# --- Discord operator bot ---
+# bot token from the Discord developer portal (Bot tab)
+DISCORD_BOT_TOKEN=""
+
 # --- Anti-spam ---
 # required when SPAM_PROVIDER = "akismet"
 AKISMET_API_KEY=""

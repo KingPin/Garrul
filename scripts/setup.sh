@@ -562,6 +562,7 @@ interactive_secrets() {
 	put_secret WEBHOOK_URL "legacy single-URL webhook; prefer /admin/webhooks endpoints"
 	put_secret TELEGRAM_BOT_TOKEN "BotFather token; see docs/telegram.md"
 	put_secret TELEGRAM_WEBHOOK_SECRET "shared secret for setWebhook; required for inbound commands"
+	put_secret DISCORD_BOT_TOKEN "bot token from the Discord developer portal (Bot tab)"
 	put_secret AKISMET_API_KEY "required when SPAM_PROVIDER = \"akismet\""
 	put_secret AKISMET_SITE_URL "public site URL registered with Akismet"
 	put_secret SPAM_DECISIONS_API_KEY "required when SPAM_PROVIDER = \"decisions\""

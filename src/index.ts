@@ -95,6 +95,13 @@ export type Bindings = {
 	//                             one-tap t.me/<bot>?start=<code> deep link
 	//                             instead of manual /start instructions.
 	TELEGRAM_BOT_USERNAME?: string;
+	// Discord integration (optional; feature is off unless both are set).
+	//   DISCORD_BOT_TOKEN  — bot token; used for REST calls (post cards, edit
+	//                        messages, validate channels).
+	//   DISCORD_PUBLIC_KEY — application public key (hex); the /discord route
+	//                        verifies the Ed25519 signature on every interaction.
+	DISCORD_BOT_TOKEN?: string;
+	DISCORD_PUBLIC_KEY?: string;
 	// Anti-spam (all optional; each feature opts in when its env var is set).
 	SPAM_PROVIDER?: string;
 	AKISMET_API_KEY?: string;
