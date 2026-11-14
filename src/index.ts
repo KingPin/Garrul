@@ -15,6 +15,7 @@ import { wellKnown } from "./routes/well-known";
 import { iframe, renderShellFromQuery } from "./routes/embed-iframe";
 import { admin } from "./routes/admin";
 import { telegram } from "./routes/telegram";
+import { discord } from "./routes/discord";
 import { feed } from "./routes/feed";
 import { counts } from "./routes/api.counts";
 import { permalink } from "./routes/permalink";
@@ -382,6 +383,7 @@ app.route("/admin", admin);
 // Top-level (outside /api/*) so it bypasses corsAndCsrf + sessionMiddleware;
 // the route authenticates via the Telegram secret-token header instead.
 app.route("/telegram", telegram);
+app.route("/discord", discord);
 
 app.get("/", (c) =>
 	c.text(

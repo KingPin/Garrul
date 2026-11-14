@@ -11,6 +11,14 @@ import { banUser, moderateComment, resolveReports, type WaitUntilCtx } from "../
 import type { OpAction } from "./codec";
 import type { OpActor } from "./identity";
 
+// Inbound callers are authenticated operators, so the comment-posting default
+// is far too strict. A generous burst still caps a runaway loop or redelivery
+// storm. Keyed per sender (`dc:<id>`), never per IP.
+export const OPBOT_RATE_LIMIT = {
+	short: { max: 10, windowSec: 10 },
+	long: { max: 120, windowSec: 600 },
+};
+
 export type OpCommand = OpAction | "unban";
 
 const ADMIN_ONLY: ReadonlySet<OpCommand> = new Set(["ban", "banr", "bsub", "unban"]);
