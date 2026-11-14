@@ -8,15 +8,25 @@
  * Every interaction is answered synchronously (no defer in this build).
  */
 import { Hono } from "hono";
-import { getComment, getDiscordLinkByDiscordUser, getUser, nextPendingAfter, upsertDiscordLink } from "../db/queries";
+import {
+	countOpenReportsByComment,
+	getComment,
+	getDiscordLinkByDiscordUser,
+	getUser,
+	nextPendingAfter,
+	type SavedReply,
+	upsertDiscordLink,
+} from "../db/queries";
 import type { Bindings } from "../index";
 import {
 	buttonRows,
+	cardToMessage,
 	type DiscordInteraction,
+	discordApi,
 	discordEnabled,
 	EPHEMERAL,
+	SNOWFLAKE_RE,
 	verifyDiscordRequest,
-	cardToMessage,
 } from "../lib/discord";
 import { log } from "../lib/log";
 import type { WaitUntilCtx } from "../lib/moderation";
@@ -31,6 +41,14 @@ import { buttonsFor, type OpCard, renderQueueCard } from "../lib/opbot/cards";
 import { decodePayload, encodePayload } from "../lib/opbot/codec";
 import { type OpActor, resolveDiscordActor } from "../lib/opbot/identity";
 import { consumeLinkToken } from "../lib/opbot/link-token";
+import {
+	expandPreset,
+	pickerPresets,
+	postModeratorReply,
+	presetVars,
+	presetVisible,
+	type ReplyError,
+} from "../lib/opbot/reply";
 import { readComment, readQueue, readStats, readUser, relativeAge } from "../lib/opbot/readouts";
 import { checkRateLimit } from "../lib/ratelimit";
 import { loadDiscordSettings } from "../lib/settings";
@@ -54,9 +72,24 @@ const MSG = {
 	staffBan: "You can't ban a moderator or admin with a Discord role grant.",
 	banRefused: "That ban was refused.",
 	empty: "Queue is empty 🎉",
-	noReply: "Reply from Discord is not available yet.",
+	tooLong: "Some saved replies are too long for Discord. Use the dashboard for those.",
 	unknown: "Unknown action.",
 } as const;
+
+// Same wording as the Telegram REPLY_REFUSAL map in routes/telegram.ts; copied
+// rather than imported so this route does not pull in the Telegram handler.
+const REPLY_REFUSAL = (e: ReplyError, max?: number): string =>
+	e === "comment_not_found"
+		? MSG.gone
+		: e === "comment_deleted"
+			? "That comment was deleted."
+			: e === "thread_too_deep"
+				? "That thread is too deep to reply to. Reply higher up from the dashboard."
+				: e === "body_too_long"
+					? `Reply too long (max ${max} characters).`
+					: e === "body_required"
+						? "Reply text is empty."
+						: "That saved reply isn't available here.";
 
 const ephemeral = (content: string): Reply => ({
 	type: 4,
@@ -93,7 +126,10 @@ discord.post("/interactions", async (c) => {
 	} catch {
 		return c.json({ error: "bad request" }, 400);
 	}
+	if (!i || typeof i !== "object") return c.json({ error: "bad request" }, 400);
 	if (i.type === 1) return c.json({ type: 1 });
+	// Anything but a command, component or modal submit: refuse before any lookup.
+	if (i.type !== 2 && i.type !== 3 && i.type !== 5) return c.json(ephemeral(MSG.unknown));
 
 	const uid = senderId(i);
 	if (uid) {
@@ -128,6 +164,9 @@ const dispatch = async (ctx: Ctx, i: DiscordInteraction): Promise<Reply> => {
 	if (i.type === 3 && (payload?.action === "banr" || payload?.action === "ban")) {
 		return openBanModal(ctx, i, cfg, payload.commentId, payload.extra[0] === "q");
 	}
+	if (i.type === 3 && payload?.action === "pick" && i.data?.values?.[0] !== "more") {
+		return openReplyModal(ctx, i, cfg, payload.commentId, payload.extra, i.data?.values?.[0] ?? "");
+	}
 
 	const who = await resolveDiscordActor(ctx.env.DB, cfg, {
 		guildId: i.guild_id,
@@ -145,16 +184,24 @@ const dispatch = async (ctx: Ctx, i: DiscordInteraction): Promise<Reply> => {
 	const q = payload.extra[0] === "q";
 	const { action, commentId } = payload;
 	if (i.type === 5) {
-		if (action === "rsub") return ephemeral(MSG.noReply);
+		if (action === "rsub") return submitReply(ctx, i, actor, commentId, payload.extra);
 		if (action !== "bsub") return ephemeral(MSG.unknown);
 		const input = i.data?.components?.flatMap((r) => r.components).find((x) => x.custom_id === "reason");
 		const reason = input?.value?.trim().slice(0, 500) || null;
 		return runAndRender(ctx, i, actor, "ban", commentId, q, reason);
 	}
 	switch (action) {
-		case "reply":
-		case "pick":
-			return ephemeral(MSG.noReply);
+		case "reply": {
+			const origin = q ? "q" : (i.message?.id ?? "");
+			if (!q && !SNOWFLAKE_RE.test(origin)) return ephemeral(MSG.unknown);
+			const msg = await pickerMessage(ctx.env, actor, commentId, origin, 0);
+			return q ? update(msg) : { type: 4, data: { ...msg, flags: EPHEMERAL, allowed_mentions: NO_MENTIONS } };
+		}
+		case "pick": {
+			// Only "more" reaches here; preset and custom open the modal above.
+			const offset = Math.max(0, Number.parseInt(payload.extra[1] ?? "0", 10) || 0) + PICK_PAGE;
+			return update(await pickerMessage(ctx.env, actor, commentId, payload.extra[0] ?? "q", offset));
+		}
 		case "rv":
 		case "nx": {
 			const next = await nextPendingAfter(ctx.env.DB, action === "rv" ? null : commentId);
@@ -210,6 +257,183 @@ const openBanModal = async (
 			],
 		},
 	};
+};
+
+const PICK_PAGE = 23;
+const MODAL_MAX = 4000;
+const CUSTOM_OPTION = { label: "✏️ Write custom", value: "custom" };
+
+const pickerMessage = async (env: Bindings, actor: OpActor, commentId: string, origin: string, offset: number) => {
+	const presets = await pickerPresets(env.DB, actor.user.id, { chat: "private" });
+	const vars = await presetVars(env, commentId, actor.user);
+	// Select options cannot be disabled, so a preset that cannot prefill is left out.
+	const fits = presets.filter((p) => expandPreset(p.body_md, vars).length <= MODAL_MAX);
+	const hasMore = fits.length - offset > PICK_PAGE + 1;
+	const shown = fits.slice(offset, offset + (hasMore ? PICK_PAGE : PICK_PAGE + 1));
+	const options = [
+		...shown.map((p) => ({
+			label: p.title.length > 100 ? `${p.title.slice(0, 99)}…` : p.title || "(untitled)",
+			value: p.id,
+		})),
+		CUSTOM_OPTION,
+		...(hasMore ? [{ label: "More…", value: "more" }] : []),
+	];
+	return {
+		content: ["Pick a saved reply, or write your own.", ...(fits.length < presets.length ? [MSG.tooLong] : [])].join("\n"),
+		embeds: [],
+		components: [
+			{
+				type: 1,
+				components: [
+					{
+						type: 3,
+						custom_id: encodePayload("discord", "pick", commentId, [origin, String(offset)]),
+						placeholder: "Saved replies",
+						options,
+					},
+				],
+			},
+		],
+	};
+};
+
+type ActorRow = { id: string; name: string; role: string; is_banned: number; erased_at: number | null; linked: number };
+
+// Modal-opening path: at most 2 D1 reads, no writes. Mirrors the actor
+// precedence of resolveDiscordActor without creating a role-holder row; the
+// submit re-authorizes through the full resolution.
+const openReplyModal = async (
+	ctx: Ctx,
+	i: DiscordInteraction,
+	cfg: { guildId: string; modRoleId: string; adminRoleId: string },
+	commentId: string,
+	extra: string[],
+	value: string,
+): Promise<Reply> => {
+	const uid = senderId(i) as string;
+	if (!cfg.guildId || i.guild_id !== cfg.guildId) return refusal("wrong_guild");
+	const { results } = await ctx.env.DB.prepare(
+		`SELECT u.id, u.name, u.role, u.is_banned, u.erased_at,
+		        (u.id = (SELECT user_id FROM discord_links WHERE discord_user_id = ?1)) AS linked
+		   FROM users u
+		  WHERE u.id = (SELECT user_id FROM discord_links WHERE discord_user_id = ?1)
+		     OR (u.provider = 'discord' AND u.provider_id = ?1)`,
+	)
+		.bind(uid)
+		.all<ActorRow>();
+	const live = (results ?? []).filter((r) => !r.erased_at);
+	if (live.some((r) => r.is_banned)) return refusal("banned");
+	const user = live.find((r) => r.linked) ?? live[0] ?? null;
+	const roles = i.member?.roles ?? [];
+	const granted = [cfg.adminRoleId, cfg.modRoleId].some((id) => id && roles.includes(id));
+	if (!user && !granted) return refusal("not_linked");
+	if (!granted && user?.role !== "mod" && user?.role !== "admin") return refusal("not_authorized");
+
+	const presetId = value === "custom" ? null : value;
+	let prefill = "";
+	if (presetId) {
+		const r = await ctx.env.DB.prepare(
+			`SELECT sr.*, a.name AS author_name, c.post_slug, p.title AS post_title
+			   FROM saved_replies sr
+			   LEFT JOIN comments c ON c.id = ?2
+			   LEFT JOIN users a ON a.id = c.user_id
+			   LEFT JOIN posts p ON p.slug = c.post_slug
+			  WHERE sr.id = ?1`,
+		)
+			.bind(presetId, commentId)
+			.first<SavedReply & { author_name: string | null; post_slug: string | null; post_title: string | null }>();
+		if (!r || !presetVisible(r, user?.id ?? "", { chat: "private" })) {
+			return ephemeral(REPLY_REFUSAL("saved_reply_not_visible"));
+		}
+		prefill = expandPreset(r.body_md, {
+			name: r.author_name ?? undefined,
+			post: r.post_slug ? r.post_title || r.post_slug : undefined,
+			mod: user?.name ?? displayName(i),
+		});
+		if (prefill.length > MODAL_MAX) return ephemeral(MSG.tooLong);
+	}
+	return {
+		type: 9,
+		data: {
+			custom_id: encodePayload("discord", "rsub", commentId, [extra[0] ?? "q", ...(presetId ? [presetId] : [])]),
+			title: "Reply to comment",
+			components: [
+				{
+					type: 1,
+					components: [
+						{
+							type: 4,
+							custom_id: "body",
+							style: 2,
+							label: "Reply",
+							required: true,
+							max_length: MODAL_MAX,
+							...(prefill && { value: prefill }),
+						},
+					],
+				},
+			],
+		},
+	};
+};
+
+const submitReply = async (
+	ctx: Ctx,
+	i: DiscordInteraction,
+	actor: OpActor,
+	commentId: string,
+	extra: string[],
+): Promise<Reply> => {
+	const { env } = ctx;
+	const [origin = "", presetId] = extra;
+	const text = i.data?.components?.flatMap((r) => r.components).find((x) => x.custom_id === "body")?.value ?? "";
+	// postModeratorReply refuses a preset the actor cannot see (same rule as presetVisible, private chat).
+	const res = await postModeratorReply({
+		env,
+		executionCtx: ctx.executionCtx,
+		reqUrl: env.PUBLIC_BASE_URL ?? "https://invalid.local/",
+		actor: actor.user,
+		commentId,
+		bodyMd: text,
+		savedReplyId: presetId,
+	});
+	if (!res.ok) return ephemeral(REPLY_REFUSAL(res.error, res.max));
+	const doneBy = `Reply posted by ${actor.user.name}`;
+	if (origin === "q") return update(await queueMessage(env, commentId, doneBy));
+
+	const channel = i.channel_id ?? i.message?.channel_id ?? "";
+	if (env.DISCORD_BOT_TOKEN && SNOWFLAKE_RE.test(origin) && SNOWFLAKE_RE.test(channel)) {
+		const job = patchAlert(env, env.DISCORD_BOT_TOKEN, channel, origin, commentId, doneBy).catch((err) =>
+			log.error("discord.reply_patch", { error: String(err) }),
+		);
+		if (ctx.executionCtx) ctx.executionCtx.waitUntil(job);
+		else await job;
+	}
+	return update({ content: "Reply posted ✅", embeds: [], components: [] });
+};
+
+// Embeds are omitted so the alert keeps its card; a failed PATCH never undoes the reply.
+const patchAlert = async (
+	env: Bindings,
+	token: string,
+	channel: string,
+	messageId: string,
+	commentId: string,
+	doneBy: string,
+): Promise<void> => {
+	const [comment, counts] = await Promise.all([
+		getComment(env.DB, commentId),
+		countOpenReportsByComment(env.DB, [commentId]),
+	]);
+	const res = await discordApi(token, "PATCH", `/channels/${channel}/messages/${messageId}`, {
+		content: escapeDiscordMentions(doneBy),
+		components: buttonRows(
+			buttonsFor(comment?.status, { reported: (counts[commentId] ?? 0) > 0, banLabel: "banr" }),
+			commentId,
+		),
+		allowed_mentions: NO_MENTIONS,
+	});
+	if (!res.ok) log.warn("discord.reply_patch_failed", { status: res.status });
 };
 
 const queueMessage = async (env: Bindings, commentId: string, doneBy?: string) => {

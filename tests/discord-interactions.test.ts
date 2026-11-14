@@ -349,15 +349,4 @@ describe("POST /discord/interactions", () => {
 		expect(end.json.data.content).toBe("Queue is empty 🎉");
 		expect(end.json.data.components).toEqual([]);
 	});
-
-	it("reply, pick and rsub answer not-available until Task 12", async () => {
-		const cid = await seedComment("pending");
-		for (const id of [`g:reply:${cid}`, `g:pick:${cid}`]) {
-			const r = await send(await component(asMod, id));
-			expect(r.json.data.content).toBe("Reply from Discord is not available yet.");
-			expect(r.json.data.flags).toBe(EPHEMERAL);
-		}
-		const m = await send(await modal(asMod, `g:rsub:${cid}`, "hi"));
-		expect(m.json.data.content).toBe("Reply from Discord is not available yet.");
-	});
 });
