@@ -11,7 +11,6 @@ import { Hono } from "hono";
 import {
 	countOpenReportsByComment,
 	getComment,
-	getDiscordLinkByDiscordUser,
 	getUser,
 	nextPendingAfter,
 	type SavedReply,
@@ -222,19 +221,13 @@ const dispatch = async (ctx: Ctx, i: DiscordInteraction): Promise<Reply> => {
 const openBanModal = async (
 	ctx: Ctx,
 	i: DiscordInteraction,
-	cfg: { guildId: string; adminRoleId: string },
+	cfg: { guildId: string; modRoleId: string; adminRoleId: string },
 	commentId: string,
 	q: boolean,
 ): Promise<Reply> => {
-	const uid = senderId(i) as string;
-	if (!cfg.guildId || i.guild_id !== cfg.guildId) return refusal("wrong_guild");
-	let allowed = Boolean(cfg.adminRoleId) && (i.member?.roles ?? []).includes(cfg.adminRoleId);
-	if (!allowed) {
-		const link = await getDiscordLinkByDiscordUser(ctx.env.DB, uid);
-		const user = link ? await getUser(ctx.env.DB, link.user_id) : null;
-		allowed = Boolean(user && !user.erased_at && !user.is_banned && user.role === "admin");
-	}
-	if (!allowed) return ephemeral(MSG.noAccess);
+	const who = await lightResolveActor(ctx.env.DB, cfg, i);
+	if ("reason" in who) return refusal(who.reason);
+	if (effectiveRole(who) !== "admin") return ephemeral(MSG.noAccess);
 	return {
 		type: 9,
 		data: {
@@ -298,10 +291,43 @@ const pickerMessage = async (env: Bindings, actor: OpActor, commentId: string, o
 };
 
 type ActorRow = { id: string; name: string; role: string; is_banned: number; erased_at: number | null; linked: number };
+type LightActor = { user: ActorRow | null; grant: "mod" | "admin" | null };
 
-// Modal-opening path: at most 2 D1 reads, no writes. Mirrors the actor
-// precedence of resolveDiscordActor without creating a role-holder row; the
+// Modal-opening path: one D1 read, no writes. Mirrors the actor precedence of
+// resolveDiscordActor (erased rows ignored, any banned live row refuses, link
+// row wins over the provider row) without creating a role-holder row; the
 // submit re-authorizes through the full resolution.
+const lightResolveActor = async (
+	db: D1Database,
+	cfg: { guildId: string; modRoleId: string; adminRoleId: string },
+	i: DiscordInteraction,
+): Promise<LightActor | { reason: "wrong_guild" | "banned" }> => {
+	if (!cfg.guildId || i.guild_id !== cfg.guildId) return { reason: "wrong_guild" };
+	const uid = senderId(i) as string;
+	const { results } = await db
+		.prepare(
+			`SELECT u.id, u.name, u.role, u.is_banned, u.erased_at,
+			        (u.id = (SELECT user_id FROM discord_links WHERE discord_user_id = ?1)) AS linked
+			   FROM users u
+			  WHERE u.id = (SELECT user_id FROM discord_links WHERE discord_user_id = ?1)
+			     OR (u.provider = 'discord' AND u.provider_id = ?1)`,
+		)
+		.bind(uid)
+		.all<ActorRow>();
+	const live = (results ?? []).filter((r) => !r.erased_at);
+	if (live.some((r) => r.is_banned)) return { reason: "banned" };
+	const roles = i.member?.roles ?? [];
+	const has = (id: string) => Boolean(id) && roles.includes(id);
+	return {
+		user: live.find((r) => r.linked) ?? live[0] ?? null,
+		grant: has(cfg.adminRoleId) ? "admin" : has(cfg.modRoleId) ? "mod" : null,
+	};
+};
+
+/** Max of the role grant and the user row's role; null when neither reaches mod. */
+const effectiveRole = (a: LightActor): "mod" | "admin" | null =>
+	a.grant === "admin" || a.user?.role === "admin" ? "admin" : a.grant === "mod" || a.user?.role === "mod" ? "mod" : null;
+
 const openReplyModal = async (
 	ctx: Ctx,
 	i: DiscordInteraction,
@@ -310,24 +336,10 @@ const openReplyModal = async (
 	extra: string[],
 	value: string,
 ): Promise<Reply> => {
-	const uid = senderId(i) as string;
-	if (!cfg.guildId || i.guild_id !== cfg.guildId) return refusal("wrong_guild");
-	const { results } = await ctx.env.DB.prepare(
-		`SELECT u.id, u.name, u.role, u.is_banned, u.erased_at,
-		        (u.id = (SELECT user_id FROM discord_links WHERE discord_user_id = ?1)) AS linked
-		   FROM users u
-		  WHERE u.id = (SELECT user_id FROM discord_links WHERE discord_user_id = ?1)
-		     OR (u.provider = 'discord' AND u.provider_id = ?1)`,
-	)
-		.bind(uid)
-		.all<ActorRow>();
-	const live = (results ?? []).filter((r) => !r.erased_at);
-	if (live.some((r) => r.is_banned)) return refusal("banned");
-	const user = live.find((r) => r.linked) ?? live[0] ?? null;
-	const roles = i.member?.roles ?? [];
-	const granted = [cfg.adminRoleId, cfg.modRoleId].some((id) => id && roles.includes(id));
-	if (!user && !granted) return refusal("not_linked");
-	if (!granted && user?.role !== "mod" && user?.role !== "admin") return refusal("not_authorized");
+	const who = await lightResolveActor(ctx.env.DB, cfg, i);
+	if ("reason" in who) return refusal(who.reason);
+	if (!effectiveRole(who)) return refusal(who.user ? "not_authorized" : "not_linked");
+	const { user } = who;
 
 	const presetId = value === "custom" ? null : value;
 	let prefill = "";

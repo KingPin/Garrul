@@ -312,6 +312,23 @@ describe("POST /discord/interactions", () => {
 		expect(fetchMock).not.toHaveBeenCalled();
 	});
 
+	it("banr: a Discord-sign-in admin (no link, no role grant) opens the modal; a banned one is refused", async () => {
+		const cid = await seedComment("pending");
+		const OAUTH_DC = "300000000000000009";
+		const asOauth = (over: Record<string, unknown> = {}) =>
+			base(OAUTH_DC, { ...over, member: { user: { id: OAUTH_DC, username: "oa" }, roles: [] as string[] } });
+		sqlite
+			.prepare(
+				"INSERT INTO users (id, provider, provider_id, name, role, is_admin, is_banned, created_at) VALUES ('01HOAUTHADMIN000000000000A', 'discord', ?, 'OA', 'admin', 1, 0, 1)",
+			)
+			.run(OAUTH_DC);
+		const ok = await send(await component(asOauth, `g:banr:${cid}`));
+		expect(ok.json.type).toBe(9);
+		sqlite.prepare("UPDATE users SET is_banned = 1 WHERE id = '01HOAUTHADMIN000000000000A'").run();
+		const banned = await send(await component(asOauth, `g:banr:${cid}`));
+		expect(banned.json.type).toBe(4);
+	});
+
 	it("bsub bans with the reason and answers type 7; staff guard refuses with type 4", async () => {
 		const cid = await seedComment("pending");
 		const r = await send(await modal(asAdmin, `g:bsub:${cid}`, "spammer"));
