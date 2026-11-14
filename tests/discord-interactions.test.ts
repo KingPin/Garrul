@@ -323,7 +323,14 @@ describe("POST /discord/interactions", () => {
 			const p = send(body, { env: { ...env, DB: slow(env.DB) } as Bindings }).then((r) => {
 				res = r;
 			});
-			for (let n = 0; n < 100 && !res; n++) await vi.advanceTimersByTimeAsync(500);
+			// Signature verification (crypto.subtle) settles on the real event loop, not on
+			// fake timers, so yield real turns too or the gate can open before the defer
+			// timer exists.
+			const deadline = Date.now() + 5000;
+			while (!res && Date.now() < deadline) {
+				await vi.advanceTimersByTimeAsync(500);
+				await new Promise((r) => setImmediate(r));
+			}
 			open();
 			await p;
 			await Promise.all(waits);
