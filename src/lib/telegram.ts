@@ -113,11 +113,23 @@ export const CALLBACK_DATA_MAX = PAYLOAD_MAX.telegram;
 export const encodeCallback = (action: TgAction, commentId: string): string =>
 	encodePayload("telegram", action, commentId);
 
+// Actions the Telegram route handles today. Later tasks widen this list as
+// they add handlers; anything else decodes to null.
+const TG_HANDLED: readonly OpAction[] = [
+	"approve",
+	"spam",
+	"delete",
+	"restore",
+	"ban",
+	"resolve",
+];
+
 export const decodeCallback = (
 	data: string | undefined,
 ): { action: TgAction; commentId: string } | null => {
 	const d = decodePayload(data);
-	return d ? { action: d.action, commentId: d.commentId } : null;
+	if (!d || !TG_HANDLED.includes(d.action)) return null;
+	return { action: d.action, commentId: d.commentId };
 };
 
 // --------------------------- Inline keyboard ------------------------------

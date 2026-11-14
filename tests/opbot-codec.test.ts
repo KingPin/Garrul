@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { decodeCallback } from "../src/lib/telegram";
 import { buttonsFor, type OpButton } from "../src/lib/opbot/cards";
 import {
 	decodePayload,
@@ -57,5 +58,17 @@ describe("opbot codec", () => {
 		]);
 		expect(actions(buttonsFor("spam", { reported: false }))[0]).toEqual(["restore"]);
 		expect(actions(buttonsFor("pending", { reported: false, queue: true })).at(-1)).toEqual(["nx"]);
+	});
+});
+
+describe("decodeCallback allowlist", () => {
+	it("only decodes actions the Telegram route handles", () => {
+		expect(decodeCallback(`g:reply:${U}`)).toBeNull();
+		expect(decodeCallback(`g:banr:${U}`)).toBeNull();
+		expect(decodeCallback(`g:sr:${U}:${P}`)).toBeNull();
+		expect(decodeCallback(`g:approve:${U}`)).toEqual({
+			action: "approve",
+			commentId: U,
+		});
 	});
 });
