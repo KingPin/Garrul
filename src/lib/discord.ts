@@ -94,8 +94,9 @@ export const verifyDiscordRequest = async (
 	}
 };
 
+// token null: interaction webhooks authenticate by the interaction token in the path.
 export const discordApi = async (
-	token: string,
+	token: string | null,
 	method: "GET" | "POST" | "PATCH" | "PUT",
 	path: string,
 	body?: unknown,
@@ -111,7 +112,7 @@ export const discordApi = async (
 		const res = await fetch(`${DISCORD_API}${path}`, {
 			method,
 			headers: {
-				authorization: `Bot ${token}`,
+				...(token ? { authorization: `Bot ${token}` } : {}),
 				"content-type": "application/json",
 			},
 			...(body === undefined ? {} : { body: JSON.stringify(body) }),

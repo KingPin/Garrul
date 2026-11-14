@@ -131,13 +131,47 @@ discord.post("/interactions", async (c) => {
 		if (!rl.ok) return c.json(ephemeral(MSG.slow));
 	}
 
-	try {
-		return c.json(await dispatch({ env: c.env, executionCtx: c.executionCtx, reqUrl: c.req.url }, i));
-	} catch (err) {
+	const work = dispatch({ env: c.env, executionCtx: c.executionCtx, reqUrl: c.req.url }, i).catch((err) => {
 		log.error("discord.handler", { error: String(err) });
-		return c.json(ephemeral("Something went wrong. Try again."));
-	}
+		return ephemeral("Something went wrong. Try again.");
+	});
+	// A modal cannot be deferred; opening one does a fixed, small read.
+	if (opensModal(i, decodePayload(i.data?.custom_id))) return c.json(await work);
+
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const late = new Promise<null>((r) => {
+		timer = setTimeout(() => r(null), DEFER_AFTER_MS);
+	});
+	const first = await Promise.race([work, late]);
+	clearTimeout(timer);
+	if (first) return c.json(first);
+	c.executionCtx.waitUntil(work.then((reply) => deliverLate(i, reply)));
+	return c.json(i.type === 2 ? { type: 5, data: { flags: EPHEMERAL } } : { type: 6 });
 });
+
+// Discord fails an interaction not answered within 3 s, even when the action
+// already committed. Past this budget, acknowledge with a deferred response and
+// deliver the result through the interaction webhook.
+const DEFER_AFTER_MS = 2500;
+
+const opensModal = (i: DiscordInteraction, payload: ReturnType<typeof decodePayload>): boolean =>
+	i.type === 3 &&
+	(payload?.action === "banr" ||
+		payload?.action === "ban" ||
+		(payload?.action === "pick" && i.data?.values?.[0] !== "more"));
+
+const deliverLate = async (i: DiscordInteraction, reply: Reply): Promise<void> => {
+	if (!SNOWFLAKE_RE.test(i.application_id ?? "") || !i.token) return;
+	const hook = `/webhooks/${i.application_id}/${encodeURIComponent(i.token)}`;
+	// A command was deferred as an ephemeral message, so its result edits that
+	// message. A component or modal was deferred as an update: type 7 edits the
+	// clicked message, an ephemeral notice goes out as a follow-up.
+	const res =
+		i.type === 2 || reply.type === 7
+			? await discordApi(null, "PATCH", `${hook}/messages/@original`, reply.data)
+			: await discordApi(null, "POST", hook, reply.data);
+	if (!res.ok) log.error("discord.deliver_late", { status: res.status });
+};
 
 const dispatch = async (ctx: Ctx, i: DiscordInteraction): Promise<Reply> => {
 	const uid = senderId(i);
@@ -151,11 +185,10 @@ const dispatch = async (ctx: Ctx, i: DiscordInteraction): Promise<Reply> => {
 
 	// Opening the ban modal must stay within a fixed D1 read bound and write
 	// nothing, so it skips full actor resolution. The submit re-authorizes.
-	if (i.type === 3 && (payload?.action === "banr" || payload?.action === "ban")) {
-		return openBanModal(ctx, i, cfg, payload.commentId, payload.extra[0] === "q");
-	}
-	if (i.type === 3 && payload?.action === "pick" && i.data?.values?.[0] !== "more") {
-		return openReplyModal(ctx, i, cfg, payload.commentId, payload.extra, i.data?.values?.[0] ?? "");
+	if (payload && opensModal(i, payload)) {
+		return payload.action === "pick"
+			? openReplyModal(ctx, i, cfg, payload.commentId, payload.extra, i.data?.values?.[0] ?? "")
+			: openBanModal(ctx, i, cfg, payload.commentId, payload.extra[0] === "q");
 	}
 
 	const who = await resolveDiscordActor(ctx.env.DB, cfg, {

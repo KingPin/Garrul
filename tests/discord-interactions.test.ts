@@ -295,6 +295,76 @@ describe("POST /discord/interactions", () => {
 		expect(commentStatus(cid)).toBe("deleted");
 	});
 
+	// Sends one interaction whose every D1 result waits until the defer timer has fired,
+	// then lets the work finish and returns the response plus the late webhook calls.
+	const sendSlow = async (body: unknown) => {
+		let open!: () => void;
+		const gate = new Promise<void>((r) => {
+			open = r;
+		});
+		const slow = <T extends object>(o: T): T =>
+			new Proxy(o, {
+				get(t, k) {
+					const v = Reflect.get(t, k);
+					if (typeof v !== "function") return v;
+					return (...a: unknown[]) => {
+						const r = v.apply(t, a);
+						if (r instanceof Promise) return gate.then(() => r);
+						return r && typeof r === "object" ? slow(r) : r;
+					};
+				},
+			});
+		const waits: Promise<unknown>[] = [];
+		vi.spyOn(execCtx, "waitUntil").mockImplementation((p: Promise<unknown>) => void waits.push(p));
+		fetchMock.mockImplementation(async () => new Response("{}", { status: 200 }));
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+		try {
+			let res: Awaited<ReturnType<typeof send>> | undefined;
+			const p = send(body, { env: { ...env, DB: slow(env.DB) } as Bindings }).then((r) => {
+				res = r;
+			});
+			for (let n = 0; n < 100 && !res; n++) await vi.advanceTimersByTimeAsync(500);
+			open();
+			await p;
+			await Promise.all(waits);
+			return { json: res?.json, calls: fetchMock.mock.calls as [string, RequestInit][] };
+		} finally {
+			open();
+			vi.useRealTimers();
+		}
+	};
+
+	it("a slow button defers with type 6 and edits the clicked message through the interaction webhook", async () => {
+		const cid = await seedComment("pending");
+		const { json, calls } = await sendSlow(await component(asMod, `g:approve:${cid}`));
+		expect(json).toEqual({ type: 6 });
+		expect(commentStatus(cid)).toBe("approved");
+		expect(calls).toHaveLength(1);
+		const [url, init] = calls[0] as [string, RequestInit];
+		expect(url).toBe("https://discord.com/api/v10/webhooks/500000000000000001/tok/messages/@original");
+		expect(init.method).toBe("PATCH");
+		expect(new Headers(init.headers).has("authorization")).toBe(false);
+		expect(JSON.parse(init.body as string).content).toBe("Approved by ModDisplay");
+	});
+
+	it("a slow command defers as ephemeral and edits that response with the result", async () => {
+		const { json, calls } = await sendSlow(await command(asMod, "stats"));
+		expect(json).toEqual({ type: 5, data: { flags: EPHEMERAL } });
+		const [url, init] = calls[0] as [string, RequestInit];
+		expect(url).toBe("https://discord.com/api/v10/webhooks/500000000000000001/tok/messages/@original");
+		expect(init.method).toBe("PATCH");
+		expect(JSON.parse(init.body as string).content).toContain("**Stats**");
+	});
+
+	it("a slow ephemeral notice on a button goes out as a follow-up", async () => {
+		const { json, calls } = await sendSlow(await component(asMod, "g:approve:01HNOPE0000000000000000000"));
+		expect(json).toEqual({ type: 6 });
+		const [url, init] = calls[0] as [string, RequestInit];
+		expect(url).toBe("https://discord.com/api/v10/webhooks/500000000000000001/tok");
+		expect(init.method).toBe("POST");
+		expect(JSON.parse(init.body as string).flags).toBe(EPHEMERAL);
+	});
+
 	it("banr opens a type 9 modal with at most 2 D1 reads and no writes", async () => {
 		const cid = await seedComment("pending");
 		await loadDiscordSettings(env); // settings are memoized per isolate
