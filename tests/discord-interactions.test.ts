@@ -17,6 +17,7 @@ vi.mock("../src/lib/webhook", async (importOriginal) => ({
 import { insertComment } from "../src/db/queries";
 import type { Bindings } from "../src/index";
 import { loadDiscordSettings } from "../src/lib/settings";
+import { feedCacheKey } from "../src/lib/tree-cache";
 import { discord } from "../src/routes/discord";
 import { installMockCaches, uninstallMockCaches } from "./helpers/mock-caches";
 import { makeD1, makeKv } from "./helpers/admin-sqlite";
@@ -327,6 +328,18 @@ describe("POST /discord/interactions", () => {
 		sqlite.prepare("UPDATE users SET is_banned = 1 WHERE id = '01HOAUTHADMIN000000000000A'").run();
 		const banned = await send(await component(asOauth, `g:banr:${cid}`));
 		expect(banned.json.type).toBe(4);
+	});
+
+	it("approve busts the cache key of the request origin when PUBLIC_BASE_URL is unset", async () => {
+		const cid = await seedComment("pending");
+		const key = feedCacheKey("http://localhost/discord/interactions", "hello");
+		const cache = (globalThis as unknown as { caches: { default: { put(k: Request, r: Response): Promise<void>; store: Map<string, Response> } } }).caches.default;
+		await cache.put(key, new Response("stale"));
+		expect(cache.store.has(key.url)).toBe(true);
+		const noBase = { ...env, PUBLIC_BASE_URL: undefined } as unknown as Bindings;
+		const r = await send(await component(asMod, `g:approve:${cid}`), { env: noBase });
+		expect(r.json.type).toBe(7);
+		expect(cache.store.has(key.url)).toBe(false);
 	});
 
 	it("bsub bans with the reason and answers type 7; staff guard refuses with type 4", async () => {

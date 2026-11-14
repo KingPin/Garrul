@@ -150,9 +150,10 @@ telegram.post("/webhook", async (c) => {
 				token,
 				update.callback_query,
 				c.executionCtx,
+				c.req.url,
 			);
 		} else if (update.message) {
-			await handleMessage(c.env, token, update.message, c.executionCtx);
+			await handleMessage(c.env, token, update.message, c.executionCtx, c.req.url);
 		}
 	} catch (err) {
 		log.error("telegram.handler", { error: String(err) });
@@ -167,6 +168,7 @@ const handleCallback = async (
 	token: string,
 	cq: TgCallbackQuery,
 	executionCtx: { waitUntil(p: Promise<unknown>): void },
+	reqUrl: string,
 ): Promise<void> => {
 	const decoded = decodeCallback(cq.data);
 	if (!decoded) {
@@ -200,7 +202,7 @@ const handleCallback = async (
 		decoded.action === "sr" ||
 		decoded.action === "rc"
 	) {
-		await handleReplyTap(env, token, cq, decoded, extra, actor, executionCtx);
+		await handleReplyTap(env, token, cq, decoded, extra, actor, executionCtx, reqUrl);
 		return;
 	}
 	if (decoded.action === "banr") {
@@ -265,6 +267,7 @@ const handleCallback = async (
 	const res = await runOpAction({
 		env,
 		executionCtx,
+		reqUrl,
 		actor,
 		action,
 		commentId: decoded.commentId,
@@ -344,6 +347,7 @@ const handleReplyTap = async (
 	extra: string[],
 	actor: OpActor,
 	executionCtx: { waitUntil(p: Promise<unknown>): void },
+	reqUrl: string,
 ): Promise<void> => {
 	await answerCallbackQuery(token, cq.id);
 	const msg = cq.message;
@@ -390,7 +394,7 @@ const handleReplyTap = async (
 	const res = await postModeratorReply({
 		env,
 		executionCtx,
-		reqUrl: env.PUBLIC_BASE_URL ?? "https://invalid.local/",
+		reqUrl,
 		actor: actor.user,
 		commentId: cid,
 		bodyMd: expandPreset(preset.body_md, await presetVars(env, cid, actor.user)),
@@ -431,6 +435,7 @@ const handlePromptAnswer = async (
 	prompt: RegExpMatchArray,
 	text: string,
 	executionCtx: { waitUntil(p: Promise<unknown>): void },
+	reqUrl: string,
 ): Promise<void> => {
 	const chatId = msg.chat.id;
 	const who = msg.from
@@ -454,7 +459,7 @@ const handlePromptAnswer = async (
 		const res = await postModeratorReply({
 			env,
 			executionCtx,
-			reqUrl: env.PUBLIC_BASE_URL ?? "https://invalid.local/",
+			reqUrl,
 			actor: actor.user,
 			commentId: prompt[2] as string,
 			bodyMd: text,
@@ -471,6 +476,7 @@ const handlePromptAnswer = async (
 	const res = await runOpAction({
 		env,
 		executionCtx,
+		reqUrl,
 		actor,
 		action: "ban",
 		commentId: prompt[2] as string,
@@ -496,6 +502,7 @@ const handleMessage = async (
 	token: string,
 	msg: TgMessage,
 	executionCtx: { waitUntil(p: Promise<unknown>): void },
+	reqUrl: string,
 ): Promise<void> => {
 	const text = (msg.text ?? "").trim();
 	const chatId = msg.chat.id;
@@ -507,7 +514,7 @@ const handleMessage = async (
 	if (replied?.from?.id !== undefined && replied.from.id === botId) {
 		const prompt = (replied.text ?? "").match(PROMPT_RE);
 		if (prompt) {
-			if (text) await handlePromptAnswer(env, token, msg, prompt, text, executionCtx);
+			if (text) await handlePromptAnswer(env, token, msg, prompt, text, executionCtx, reqUrl);
 			return;
 		}
 	}

@@ -56,7 +56,7 @@ import { escapeDiscordMentions } from "../lib/webhook-adapters";
 export const discord = new Hono<{ Bindings: Bindings }>();
 
 type Reply = Record<string, unknown>;
-type Ctx = { env: Bindings; executionCtx: WaitUntilCtx };
+type Ctx = { env: Bindings; executionCtx: WaitUntilCtx; reqUrl: string };
 
 const NO_MENTIONS = { parse: [] as [] };
 
@@ -141,7 +141,7 @@ discord.post("/interactions", async (c) => {
 	}
 
 	try {
-		return c.json(await dispatch({ env: c.env, executionCtx: c.executionCtx }, i));
+		return c.json(await dispatch({ env: c.env, executionCtx: c.executionCtx, reqUrl: c.req.url }, i));
 	} catch (err) {
 		log.error("discord.handler", { error: String(err) });
 		return c.json(ephemeral("Something went wrong. Try again."));
@@ -403,7 +403,7 @@ const submitReply = async (
 	const res = await postModeratorReply({
 		env,
 		executionCtx: ctx.executionCtx,
-		reqUrl: env.PUBLIC_BASE_URL ?? "https://invalid.local/",
+		reqUrl: ctx.reqUrl,
 		actor: actor.user,
 		commentId,
 		bodyMd: text,
@@ -473,6 +473,7 @@ const runAndRender = async (
 	const res = await runOpAction({
 		env: ctx.env,
 		executionCtx: ctx.executionCtx,
+		reqUrl: ctx.reqUrl,
 		actor,
 		action,
 		commentId,

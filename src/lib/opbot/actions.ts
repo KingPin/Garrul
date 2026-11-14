@@ -56,6 +56,8 @@ export const runOpAction = async (args: {
 	action: keyof typeof VERB;
 	commentId: string;
 	reason?: string | null;
+	/** Origin the tree-cache key derives from; defaults to PUBLIC_BASE_URL. */
+	reqUrl?: string;
 }): Promise<
 	| { ok: true; status: CommentStatus; doneBy: string; reported: boolean }
 	| { ok: false; error: ActionError }
@@ -86,7 +88,7 @@ export const runOpAction = async (args: {
 		const res = await moderateComment({
 			env,
 			executionCtx: args.executionCtx,
-			reqUrl: env.PUBLIC_BASE_URL ?? "https://localhost",
+			reqUrl: args.reqUrl ?? env.PUBLIC_BASE_URL ?? "https://localhost",
 			adminId,
 			commentId,
 			action,
