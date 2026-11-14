@@ -39,7 +39,7 @@ import {
 	moderateComment,
 	resolveReports,
 } from "../lib/moderation";
-import { randomHex } from "../lib/oauth";
+import { consumeLinkToken, issueLinkToken } from "../lib/opbot/link-token";
 import { checkRateLimit } from "../lib/ratelimit";
 import {
 	answerCallbackQuery,
@@ -59,42 +59,13 @@ export const telegram = new Hono<{ Bindings: Bindings }>();
 
 // --------------------------- Link-token KV flow ---------------------------
 //
-// Linking is a short-lived one-time token issued in the admin panel and
-// redeemed via `/start <token>` to the bot. Stored in OAUTH_STATE (reused
-// namespace) under a dedicated prefix so it can't collide with OAuth state.
-const LINK_TOKEN_TTL = 600; // 10 minutes
-const linkKey = (token: string): string => `tg:link:${token}`;
-const LINK_TOKEN_RE = /^[0-9a-f]{48}$/;
-
+// Linking is a one-time token issued in the admin panel and redeemed via
+// `/start <token>`. The KV logic is shared with Discord (src/lib/opbot/link-token.ts).
 /** Issue a one-time link token for `user_id`. Called by the admin route. */
-export const issueTelegramLinkToken = async (
+export const issueTelegramLinkToken = (
 	kv: KVNamespace,
 	user_id: string,
-): Promise<string> => {
-	const token = randomHex(24);
-	await kv.put(
-		linkKey(token),
-		JSON.stringify({ user_id, created_at: Date.now() }),
-		{ expirationTtl: LINK_TOKEN_TTL },
-	);
-	return token;
-};
-
-const consumeLinkToken = async (
-	kv: KVNamespace,
-	token: string,
-): Promise<string | null> => {
-	if (!LINK_TOKEN_RE.test(token)) return null;
-	const raw = await kv.get(linkKey(token));
-	if (!raw) return null;
-	await kv.delete(linkKey(token)); // one-time use
-	try {
-		const parsed = JSON.parse(raw) as { user_id?: string };
-		return parsed.user_id ?? null;
-	} catch {
-		return null;
-	}
-};
+): Promise<string> => issueLinkToken(kv, "tg", user_id);
 
 // ------------------------------- Authorization ----------------------------
 
@@ -495,7 +466,7 @@ const handleStart = async (
 		return;
 	}
 
-	const userId = await consumeLinkToken(env.OAUTH_STATE, code);
+	const userId = await consumeLinkToken(env.OAUTH_STATE, "tg", code);
 	if (!userId) {
 		await sendMessage(token, chatId, t("telegram.link_invalid"));
 		return;
