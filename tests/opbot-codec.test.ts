@@ -64,7 +64,11 @@ describe("opbot codec", () => {
 describe("decodeCallback allowlist", () => {
 	it("only decodes actions the Telegram route handles", () => {
 		expect(decodeCallback(`g:reply:${U}`)).toBeNull();
-		expect(decodeCallback(`g:banr:${U}`)).toBeNull();
+		expect(decodeCallback(`g:rc:${U}`)).toBeNull();
+		expect(decodeCallback(`g:banr:${U}`)).toEqual({
+			action: "banr",
+			commentId: U,
+		});
 		expect(decodeCallback(`g:sr:${U}:${P}`)).toBeNull();
 		expect(decodeCallback(`g:approve:${U}`)).toEqual({
 			action: "approve",

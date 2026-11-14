@@ -970,3 +970,147 @@ describe("queue review", () => {
 		expect(lastEdit()).toBeUndefined();
 	});
 });
+
+describe("POST /telegram/webhook — ban reason, /unban and /user ban state", () => {
+	const ADMIN = "01HADMIN00000000000000000B";
+	const MOD = "01HMOD0000000000000000000C";
+	const AUTHOR = "01HAUTHOR000000000000000AB";
+	const BOT_ID = 123; // from the "123:ABC" test token
+	const PROMPT = (id: string) =>
+		`Ban reason for comment ${id} — send the reason as a reply to this message.`;
+	const replies = () => tgCalls.filter((c) => c.method === "sendMessage");
+	const lastText = () => String(replies().at(-1)?.body.text);
+	const answer = (tgUserId: string, text: string, promptText: string, fromId = BOT_ID) =>
+		post(
+			{ ...mkEnv(), SESSIONS: openKv() } as unknown as Bindings,
+			{
+				update_id: 20,
+				message: {
+					message_id: 30,
+					chat: { id: 555 },
+					from: { id: Number(tgUserId) },
+					text,
+					reply_to_message: { message_id: 29, chat: { id: 555 }, from: { id: fromId }, text: promptText },
+				},
+			},
+			SECRET,
+		);
+	const say = (tgUserId: string, text: string) =>
+		post(
+			mkEnv(),
+			{ update_id: 21, message: { message_id: 31, chat: { id: 555 }, from: { id: Number(tgUserId) }, text } },
+			SECRET,
+		);
+	const isBanned = (id: string) =>
+		(sqlite.prepare("SELECT is_banned FROM users WHERE id = ?").get(id) as { is_banned: number }).is_banned;
+	const banReason = () =>
+		(sqlite.prepare("SELECT reason FROM audit_log WHERE action = 'ban'").get() as { reason: string | null } | undefined)
+			?.reason;
+
+	beforeEach(async () => {
+		seedUser(ADMIN, "admin", "Boss");
+		seedUser(MOD, "mod");
+		await linkOperator("42", ADMIN);
+		await linkOperator("43", MOD);
+	});
+
+	it("ban reason: an admin banr tap sends a force_reply prompt", async () => {
+		const id = await seedComment("approved");
+		await post(
+			mkEnv(),
+			{
+				update_id: 22,
+				callback_query: {
+					id: "cb",
+					from: { id: 42 },
+					message: { message_id: 10, chat: { id: 555 }, text: "alert" },
+					data: encodeCallback("banr", id),
+				},
+			},
+			SECRET,
+		);
+		expect(lastText()).toBe(
+			`Ban reason for comment <code>${id}</code> — send the reason as a reply to this message.`,
+		);
+		expect(replies().at(-1)?.body.reply_markup).toEqual({ force_reply: true, selective: true });
+		expect(tgCalls.find((c) => c.method === "answerCallbackQuery")?.body.text).toBeUndefined();
+	});
+
+	it("ban reason: a mod banr tap is refused with a toast and no prompt", async () => {
+		const id = await seedComment("approved");
+		await post(
+			mkEnv(),
+			{
+				update_id: 22,
+				callback_query: { id: "cb", from: { id: 43 }, message: { message_id: 10, chat: { id: 555 } }, data: encodeCallback("banr", id) },
+			},
+			SECRET,
+		);
+		expect(replies()).toHaveLength(0);
+		expect(tgCalls.find((c) => c.method === "answerCallbackQuery")?.body.text).toBe(
+			"Your account doesn't have moderation access.",
+		);
+	});
+
+	it("ban reason: an admin's reply bans the author with the trimmed, capped text", async () => {
+		const id = await seedComment("approved");
+		await answer("42", `  ${"x".repeat(600)}  `, PROMPT(id));
+		expect(isBanned(AUTHOR)).toBe(1);
+		expect(banReason()).toBe("x".repeat(500));
+		expect(lastText()).toBe("<b>Banned by Boss</b>");
+	});
+
+	it("ban reason: a reply to a message not from the bot is ignored as a prompt answer", async () => {
+		const id = await seedComment("approved");
+		await answer("42", "spam farm", PROMPT(id), 999);
+		expect(isBanned(AUTHOR)).toBe(0);
+		expect(auditCount("ban")).toBe(0);
+	});
+
+	it("ban reason: a mod's reply is refused and nothing is banned", async () => {
+		const id = await seedComment("approved");
+		await answer("43", "spam farm", PROMPT(id));
+		expect(lastText()).toBe("Your account doesn't have moderation access.");
+		expect(isBanned(AUTHOR)).toBe(0);
+		expect(auditCount("ban")).toBe(0);
+	});
+
+	it("ban reason: the staff and self guards still run on a prompt answer", async () => {
+		const id = await seedComment("approved");
+		sqlite.prepare("UPDATE comments SET user_id = ? WHERE id = ?").run(ADMIN, id);
+		await answer("42", "oops", PROMPT(id));
+		expect(isBanned(ADMIN)).toBe(0);
+		expect(lastText()).toBe("Not banned: that is you, or the last admin who can still sign in.");
+	});
+
+	it("unban: an admin lifts a ban and it is audited; a mod is refused", async () => {
+		sqlite.prepare("UPDATE users SET is_banned = 1 WHERE id = ?").run(AUTHOR);
+		await say("43", `/unban ${AUTHOR}`);
+		expect(lastText()).toBe("Your account doesn't have moderation access.");
+		expect(isBanned(AUTHOR)).toBe(1);
+		await say("42", "/unban");
+		expect(lastText()).toBe("Usage: /unban &lt;id&gt;");
+		await say("42", "/unban 01HNOPE");
+		expect(lastText()).toBe("No such user.");
+		await say("42", `/unban ${AUTHOR}`);
+		expect(lastText()).toBe("Unbanned Author.");
+		expect(isBanned(AUTHOR)).toBe(0);
+		expect(auditCount("unban")).toBe(1);
+	});
+
+	it("/user shows the ban reason, no reason, purged audit, or not banned", async () => {
+		await say("42", `/user ${AUTHOR}`);
+		expect(lastText()).toContain("\nNot banned");
+		expect(lastText()).not.toContain("⛔");
+		const id = await seedComment("approved");
+		await answer("42", "a <b> reason", PROMPT(id));
+		await say("42", `/user ${AUTHOR}`);
+		expect(lastText()).toContain("Banned — a &lt;b&gt; reason");
+		sqlite.prepare("UPDATE audit_log SET reason = NULL WHERE action = 'ban'").run();
+		await say("42", `/user ${AUTHOR}`);
+		expect(lastText()).toContain("Banned — no reason given");
+		sqlite.prepare("DELETE FROM audit_log").run();
+		await say("42", `/user ${AUTHOR}`);
+		expect(lastText()).toContain("Banned — reason no longer available");
+	});
+});

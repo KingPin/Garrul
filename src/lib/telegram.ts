@@ -52,6 +52,7 @@ export type TgMessage = {
 	chat: TgChat;
 	from?: TgUser;
 	text?: string;
+	reply_to_message?: TgMessage;
 };
 
 export type TgCallbackQuery = {
@@ -121,10 +122,17 @@ const TG_HANDLED: readonly OpAction[] = [
 	"delete",
 	"restore",
 	"ban",
+	"banr",
 	"resolve",
 	"rv",
 	"nx",
 ];
+
+// The bot's own user id is the numeric part of its token ("<id>:<secret>").
+export const botIdFromToken = (token: string): number | null => {
+	const n = Number(token.split(":")[0]);
+	return Number.isInteger(n) && n > 0 ? n : null;
+};
 
 export const decodeCallback = (
 	data: string | undefined,
@@ -153,10 +161,16 @@ export const toInlineKeyboard = (
 	extra?: string[],
 ): { inline_keyboard: InlineButton[][] } => ({
 	inline_keyboard: rows.map((r) =>
-		r.map((b) => ({
-			text: b.label,
-			callback_data: encodePayload("telegram", b.action, commentId, extra),
-		})),
+		r.flatMap((b) => {
+			const button = (action: OpButton["action"], text: string) => ({
+				text,
+				callback_data: encodePayload("telegram", action, commentId, extra),
+			});
+			// Telegram-only: a typed ban reason sits right after plain Ban.
+			return b.action === "ban"
+				? [button("ban", b.label), button("banr", "⛔ Ban with reason")]
+				: [button(b.action, b.label)];
+		}),
 	),
 });
 
@@ -214,7 +228,13 @@ export const sendMessage = (
 	chatId: string | number,
 	text: string,
 	opts: {
-		replyMarkup?: { inline_keyboard: InlineButton[][] };
+		replyMarkup?:
+			| { inline_keyboard: InlineButton[][] }
+			| {
+					force_reply: true;
+					selective: true;
+					input_field_placeholder?: string;
+			  };
 		disablePreview?: boolean;
 	} = {},
 ): Promise<TgResult> =>

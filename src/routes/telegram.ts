@@ -28,10 +28,10 @@ import {
 import { t } from "../i18n";
 import type { Bindings } from "../index";
 import { log } from "../lib/log";
-import { hasRole, requiredRole, runOpAction } from "../lib/opbot/actions";
+import { hasRole, requiredRole, runOpAction, unbanUser } from "../lib/opbot/actions";
 import { buttonsFor, type OpCard, renderQueueCard } from "../lib/opbot/cards";
 import { decodePayload } from "../lib/opbot/codec";
-import { resolveTelegramActor } from "../lib/opbot/identity";
+import { type OpActor, resolveTelegramActor } from "../lib/opbot/identity";
 import { consumeLinkToken, issueLinkToken } from "../lib/opbot/link-token";
 import {
 	readComment,
@@ -43,6 +43,7 @@ import {
 import { checkRateLimit } from "../lib/ratelimit";
 import {
 	answerCallbackQuery,
+	botIdFromToken,
 	decodeCallback,
 	editMessageText,
 	SECRET_HEADER,
@@ -184,6 +185,18 @@ const handleCallback = async (
 		return;
 	}
 	const extra = decodePayload(cq.data)?.extra ?? [];
+	if (decoded.action === "banr") {
+		await answerCallbackQuery(token, cq.id);
+		if (cq.message) {
+			await sendMessage(
+				token,
+				cq.message.chat.id,
+				`Ban reason for comment <code>${escapeTg(decoded.commentId)}</code> — send the reason as a reply to this message.`,
+				{ replyMarkup: { force_reply: true, selective: true } },
+			);
+		}
+		return;
+	}
 	if (decoded.action === "rv" || decoded.action === "nx") {
 		await answerCallbackQuery(token, cq.id);
 		const next = await nextPendingAfter(
@@ -301,6 +314,57 @@ const parseCommand = (text: string): { name: string; arg: string } | null => {
 	return { name, arg };
 };
 
+// A reply to one of the bot's force_reply prompts. "Reply to" prompts join
+// this regex in a later task.
+const PROMPT_RE = /^(Ban reason for) comment ([0-9A-HJKMNP-TV-Z]{26})\b/;
+
+const handlePromptAnswer = async (
+	env: Bindings,
+	token: string,
+	msg: TgMessage,
+	prompt: RegExpMatchArray,
+	text: string,
+): Promise<void> => {
+	const chatId = msg.chat.id;
+	const who = msg.from
+		? await resolveTelegramActor(env.DB, String(msg.from.id))
+		: ({ ok: false, reason: "not_linked" } as const);
+	if (!who.ok) {
+		await sendMessage(
+			token,
+			chatId,
+			t(who.reason === "not_linked" ? "telegram.not_linked" : "telegram.not_authorized"),
+		);
+		return;
+	}
+	const { actor } = who;
+	if (!hasRole(actor, requiredRole("banr"))) {
+		await sendMessage(token, chatId, t("telegram.not_authorized"));
+		return;
+	}
+	const res = await runOpAction({
+		env,
+		executionCtx: { waitUntil() {} },
+		actor,
+		action: "ban",
+		commentId: prompt[2] as string,
+		reason: text.slice(0, 500),
+	});
+	await sendMessage(
+		token,
+		chatId,
+		res.ok
+			? `<b>${escapeTg(res.doneBy)}</b>`
+			: t(
+					res.error === "comment_not_found"
+						? "telegram.comment_not_found"
+						: res.error === "not_authorized"
+							? "telegram.not_authorized"
+							: "telegram.ban_refused",
+				),
+	);
+};
+
 const handleMessage = async (
 	env: Bindings,
 	token: string,
@@ -308,6 +372,18 @@ const handleMessage = async (
 ): Promise<void> => {
 	const text = (msg.text ?? "").trim();
 	const chatId = msg.chat.id;
+
+	// Prompt answers come first: only a reply to one of the bot's own prompts
+	// counts, and the actor is re-resolved from the sender, never the prompt.
+	const replied = msg.reply_to_message;
+	const botId = botIdFromToken(token);
+	if (replied?.from?.id !== undefined && replied.from.id === botId) {
+		const prompt = (replied.text ?? "").match(PROMPT_RE);
+		if (prompt) {
+			if (text) await handlePromptAnswer(env, token, msg, prompt, text);
+			return;
+		}
+	}
 	const cmd = parseCommand(text);
 
 	// Linking is the one command that works before a link exists.
@@ -355,6 +431,9 @@ const handleMessage = async (
 		case "user":
 			await sendMessage(token, chatId, await renderUserText(env, cmd.arg));
 			break;
+		case "unban":
+			await sendMessage(token, chatId, await runUnban(env, who.actor, cmd.arg));
+			break;
 		default:
 			await sendMessage(token, chatId, commandHelpText());
 	}
@@ -365,6 +444,26 @@ const handleMessage = async (
 // Read-only operator readouts. Dynamic values are HTML-escaped (parse_mode is
 // HTML); like the slack/discord adapters, the fixed framing is composed inline
 // rather than via t() — only the gate messages use the string table.
+
+const runUnban = async (
+	env: Bindings,
+	actor: OpActor,
+	arg: string,
+): Promise<string> => {
+	const id = arg.trim();
+	if (!id) return "Usage: /unban &lt;id&gt;";
+	if (!hasRole(actor, requiredRole("unban"))) return t("telegram.not_authorized");
+	const res = await unbanUser({ env, actor, userId: id });
+	if (!res.ok) {
+		return res.error === "not_found"
+			? "No such user."
+			: res.error === "target_is_staff"
+				? "You can't unban a moderator or admin with a Discord role grant."
+				: t("telegram.not_authorized");
+	}
+	const user = await getUser(env.DB, id);
+	return `Unbanned ${escapeTg(user?.name ?? id)}.`;
+};
 
 const commandHelpText = (): string =>
 	[
@@ -445,13 +544,20 @@ const renderUserText = async (env: Bindings, arg: string): Promise<string> => {
 	if (!id) return "Usage: /user &lt;id&gt;";
 	const r = await readUser(env, id);
 	if (!r) return "No such user.";
-	const { user } = r;
+	const { user, ban } = r;
 	return [
 		`<b>User</b> <code>${escapeTg(id)}</code>`,
 		`Name: ${escapeTg(user.name)}`,
-		`Role: <b>${escapeTg(user.role)}</b>${user.is_banned ? " · ⛔ banned" : ""}`,
+		`Role: <b>${escapeTg(user.role)}</b>`,
 		`Provider: ${escapeTg(user.provider)}`,
 		`Joined: ${relativeAge(user.created_at, Date.now())} ago`,
+		!ban.banned
+			? "Not banned"
+			: ban.purged
+				? "Banned — reason no longer available"
+				: ban.reason
+					? `Banned — ${escapeTg(ban.reason)}`
+					: "Banned — no reason given",
 	].join("\n");
 };
 
