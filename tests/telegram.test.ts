@@ -27,8 +27,11 @@ vi.mock("../src/lib/webhook", async (importOriginal) => ({
 	...(await importOriginal<typeof import("../src/lib/webhook")>()),
 	fireWebhook: vi.fn(),
 }));
+vi.mock("../src/lib/opbot/actions", async (importOriginal) => {
+	const orig = await importOriginal<typeof import("../src/lib/opbot/actions")>();
+	return { ...orig, unbanUser: vi.fn(orig.unbanUser) };
+});
 
-import { t } from "../src/i18n";
 import { encodePayload } from "../src/lib/opbot/codec";
 import { decodeCallback, encodeCallback } from "../src/lib/telegram";
 import { fireWebhook } from "../src/lib/webhook";
@@ -520,20 +523,6 @@ describe("POST /telegram/webhook — callback moderation + role gate", () => {
 		// Reply decodes to null until its handler lands (allowlist); the rest decode.
 		for (const b of rows.flat().filter((b) => !b.text.includes("Reply")))
 			expect(decodeCallback(b.callback_data)).not.toBeNull();
-	});
-
-	it("answers unknown_action when the Reply button is tapped (handler not wired yet)", async () => {
-		seedUser("01HMOD0000000000000000000A", "mod");
-		await linkOperator("42", "01HMOD0000000000000000000A");
-		const id = await seedComment("pending");
-		await post(
-			mkEnv(),
-			callbackUpdate("42", encodePayload("telegram", "reply", id)),
-			SECRET,
-		);
-		const ack = tgCalls.find((c) => c.method === "answerCallbackQuery");
-		expect(ack?.body.text).toBe(t("telegram.unknown_action"));
-		expect(tgCalls.some((c) => c.method === "editMessageText")).toBe(false);
 	});
 
 	it("fires the downstream webhook with a real executionCtx (not undefined)", async () => {
@@ -1112,5 +1101,165 @@ describe("POST /telegram/webhook — ban reason, /unban and /user ban state", ()
 		sqlite.prepare("DELETE FROM audit_log").run();
 		await say("42", `/user ${AUTHOR}`);
 		expect(lastText()).toContain("Banned — reason no longer available");
+	});
+});
+
+describe("POST /telegram/webhook — reply with saved replies", () => {
+	const ADMIN = "01HADMIN00000000000000000B";
+	const MOD = "01HMOD0000000000000000000C";
+	const OTHER = "01HMOD0000000000000000000D";
+	const BOT_ID = 123;
+	const TS = 1_700_000_000_000;
+	const sent = () => tgCalls.filter((c) => c.method === "sendMessage");
+	const lastText = () => String(sent().at(-1)?.body.text);
+	const keyboard = () =>
+		(
+			sent().at(-1)?.body.reply_markup as
+				| { inline_keyboard: { text: string; callback_data: string }[][] }
+				| undefined
+		)?.inline_keyboard ?? [];
+	const preset = (id: string, owner: string, scope: "private" | "shared", title: string, body = "Hi {name}") =>
+		sqlite
+			.prepare(
+				"INSERT INTO saved_replies (id, owner_id, title, body_md, scope, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+			)
+			.run(id, owner, title, body, scope, TS, TS);
+	const tap = (tgUserId: string, data: string, chatType = "private") =>
+		post(
+			mkEnv(),
+			{
+				update_id: 40,
+				callback_query: {
+					id: "cb",
+					from: { id: Number(tgUserId) },
+					message: { message_id: 10, chat: { id: 555, type: chatType }, text: "picker" },
+					data,
+				},
+			},
+			SECRET,
+		);
+	const answerPrompt = (tgUserId: string, text: string, promptText: string, fromId = BOT_ID) =>
+		post(
+			mkEnv(),
+			{
+				update_id: 41,
+				message: {
+					message_id: 30,
+					chat: { id: 555, type: "private" },
+					from: { id: Number(tgUserId) },
+					text,
+					reply_to_message: { message_id: 29, chat: { id: 555 }, from: { id: fromId }, text: promptText },
+				},
+			},
+			SECRET,
+		);
+	const replyRows = () =>
+		sqlite.prepare("SELECT body_md, parent_id FROM comments WHERE parent_id IS NOT NULL").all() as {
+			body_md: string;
+			parent_id: string;
+		}[];
+	const auditSaved = () =>
+		(sqlite.prepare("SELECT meta FROM audit_log WHERE action = 'comment.reply'").get() as { meta: string } | undefined)
+			?.meta;
+
+	beforeEach(async () => {
+		seedUser(ADMIN, "admin", "Boss");
+		seedUser(MOD, "mod", "Moddy");
+		seedUser(OTHER, "mod", "Other");
+		await linkOperator("42", ADMIN);
+		await linkOperator("43", MOD);
+		await linkOperator("44", OTHER);
+	});
+
+	it("reply tap lists presets with truncated labels, Write custom, and caps at 99", async () => {
+		const id = await seedComment("approved");
+		const long = "L".repeat(70);
+		preset("01HSR00000000000000000000A", MOD, "shared", long);
+		for (let i = 0; i < 100; i++) preset(`01HSR0000000000000000${String(i).padStart(5, "0")}`, MOD, "shared", `t${i}`);
+		await tap("43", encodeCallback("reply", id));
+		expect(lastText()).toBe(`Reply to comment <code>${id}</code>:`);
+		const rows = keyboard();
+		expect(rows).toHaveLength(100);
+		expect(rows.at(-1)).toEqual([{ text: "✏️ Write custom", callback_data: `g:rc:${id}` }]);
+		const labels = rows.slice(0, -1).map((r) => r[0]?.text ?? "");
+		expect(labels).toContain(`${"L".repeat(60)}…`);
+		expect(rows[0]?.[0]?.callback_data).toMatch(new RegExp(`^g:sr:${id}:01HSR`));
+	});
+
+	it("reply tap with no presets still offers Write custom", async () => {
+		const id = await seedComment("approved");
+		await tap("43", encodeCallback("reply", id));
+		expect(keyboard()).toEqual([[{ text: "✏️ Write custom", callback_data: `g:rc:${id}` }]]);
+	});
+
+	it("group chats list only shared presets; private lists own private plus shared", async () => {
+		const id = await seedComment("approved");
+		preset("01HSR00000000000000000000S", OTHER, "shared", "Shared one");
+		preset("01HSR00000000000000000000M", MOD, "private", "Mine");
+		preset("01HSR00000000000000000000X", OTHER, "private", "Theirs");
+		await tap("43", encodeCallback("reply", id), "supergroup");
+		expect(keyboard().flat().map((b) => b.text)).toEqual(["Shared one", "✏️ Write custom"]);
+		await tap("43", encodeCallback("reply", id), "private");
+		expect(keyboard().flat().map((b) => b.text).sort()).toEqual(["Mine", "Shared one", "✏️ Write custom"].sort());
+	});
+
+	it("sr tap posts the expanded preset, audits saved_reply_id and edits the picker", async () => {
+		const id = await seedComment("approved");
+		preset("01HSR00000000000000000000S", OTHER, "shared", "Hello", "Hi {name} from {mod}");
+		await tap("43", encodePayload("telegram", "sr", id, ["01HSR00000000000000000000S"]));
+		expect(replyRows()).toEqual([{ body_md: "Hi Author from Moddy", parent_id: id }]);
+		expect(auditSaved()).toContain("01HSR00000000000000000000S");
+		const edit = tgCalls.find((c) => c.method === "editMessageText");
+		expect(edit?.body.text).toBe("Reply posted by Moddy");
+		expect(edit?.body.reply_markup).toBeUndefined();
+	});
+
+	it("sr with a private preset from a group or a non-owner posts nothing", async () => {
+		const id = await seedComment("approved");
+		preset("01HSR00000000000000000000M", MOD, "private", "Mine");
+		const data = encodePayload("telegram", "sr", id, ["01HSR00000000000000000000M"]);
+		await tap("43", data, "group");
+		expect(lastText()).toBe("That saved reply isn't available here.");
+		await tap("44", data, "private");
+		expect(lastText()).toBe("That saved reply isn't available here.");
+		expect(replyRows()).toHaveLength(0);
+	});
+
+	it("rc tap sends a force_reply prompt; the reply posts verbatim", async () => {
+		const id = await seedComment("approved");
+		await tap("43", encodeCallback("rc", id));
+		const prompt = `Reply to comment <code>${id}</code> — send your text as a reply to this message.`;
+		expect(lastText()).toBe(prompt);
+		expect(sent().at(-1)?.body.reply_markup).toEqual({ force_reply: true, selective: true });
+		await answerPrompt("43", "Thanks {name}", `Reply to comment ${id} — send your text as a reply to this message.`);
+		expect(replyRows()).toEqual([{ body_md: "Thanks {name}", parent_id: id }]);
+		expect(lastText()).toBe("Reply posted by Moddy");
+		await answerPrompt("43", "ignored", `Reply to comment ${id} — send`, 999);
+		expect(replyRows()).toHaveLength(1);
+	});
+
+	it("refusals answer the operator in chat", async () => {
+		const gone = await seedComment("deleted");
+		const prompt = (cid: string) => `Reply to comment ${cid} — send your text as a reply to this message.`;
+		await answerPrompt("43", "x", prompt(gone));
+		expect(lastText()).toBe("That comment was deleted.");
+		const ok = await seedComment("approved");
+		await answerPrompt("43", "x".repeat(20_000), prompt(ok));
+		expect(lastText()).toMatch(/^Reply too long \(max \d+ characters\)\.$/);
+		sqlite.prepare("UPDATE comments SET depth = 99 WHERE id = ?").run(ok);
+		await answerPrompt("43", "hi", prompt(ok));
+		expect(lastText()).toBe("That thread is too deep to reply to. Reply higher up from the dashboard.");
+		expect(replyRows()).toHaveLength(0);
+	});
+
+	it("help lists /unban and the staff refusal has no Discord wording", async () => {
+		const say = (text: string) =>
+			post(mkEnv(), { update_id: 42, message: { message_id: 31, chat: { id: 555 }, from: { id: 42 }, text } }, SECRET);
+		await say("/help");
+		expect(lastText()).toContain("/unban &lt;id&gt; — lift a ban");
+		const { unbanUser } = await import("../src/lib/opbot/actions");
+		vi.mocked(unbanUser).mockResolvedValueOnce({ ok: false, error: "target_is_staff" });
+		await say(`/unban ${MOD}`);
+		expect(lastText()).toBe("You can't unban a moderator or admin.");
 	});
 });

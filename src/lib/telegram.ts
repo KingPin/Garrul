@@ -126,6 +126,9 @@ const TG_HANDLED: readonly OpAction[] = [
 	"resolve",
 	"rv",
 	"nx",
+	"reply",
+	"sr",
+	"rc",
 ];
 
 // The bot's own user id is the numeric part of its token ("<id>:<secret>").

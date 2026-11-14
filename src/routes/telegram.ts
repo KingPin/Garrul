@@ -21,6 +21,7 @@
 import { Hono } from "hono";
 import {
 	countOpenReportsByComment,
+	getSavedReply,
 	getUser,
 	nextPendingAfter,
 	upsertTelegramLink,
@@ -30,7 +31,7 @@ import type { Bindings } from "../index";
 import { log } from "../lib/log";
 import { hasRole, requiredRole, runOpAction, unbanUser } from "../lib/opbot/actions";
 import { buttonsFor, type OpCard, renderQueueCard } from "../lib/opbot/cards";
-import { decodePayload } from "../lib/opbot/codec";
+import { decodePayload, encodePayload } from "../lib/opbot/codec";
 import { type OpActor, resolveTelegramActor } from "../lib/opbot/identity";
 import { consumeLinkToken, issueLinkToken } from "../lib/opbot/link-token";
 import {
@@ -40,12 +41,21 @@ import {
 	readUser,
 	relativeAge,
 } from "../lib/opbot/readouts";
+import {
+	expandPreset,
+	pickerPresets,
+	postModeratorReply,
+	presetVars,
+	presetVisible,
+	type ReplyError,
+} from "../lib/opbot/reply";
 import { checkRateLimit } from "../lib/ratelimit";
 import {
 	answerCallbackQuery,
 	botIdFromToken,
 	decodeCallback,
 	editMessageText,
+	type InlineButton,
 	SECRET_HEADER,
 	sendMessage,
 	type TgCallbackQuery,
@@ -185,6 +195,14 @@ const handleCallback = async (
 		return;
 	}
 	const extra = decodePayload(cq.data)?.extra ?? [];
+	if (
+		decoded.action === "reply" ||
+		decoded.action === "sr" ||
+		decoded.action === "rc"
+	) {
+		await handleReplyTap(env, token, cq, decoded, extra, actor, executionCtx);
+		return;
+	}
 	if (decoded.action === "banr") {
 		await answerCallbackQuery(token, cq.id);
 		if (cq.message) {
@@ -301,6 +319,95 @@ const handleCallback = async (
 	}
 };
 
+// ------------------------------- Reply flow --------------------------------
+
+const REPLY_REFUSAL = (e: ReplyError, max?: number): string =>
+	e === "comment_not_found"
+		? t("telegram.comment_not_found")
+		: e === "comment_deleted"
+			? "That comment was deleted."
+			: e === "thread_too_deep"
+				? "That thread is too deep to reply to. Reply higher up from the dashboard."
+				: e === "body_too_long"
+					? `Reply too long (max ${max} characters).`
+					: e === "body_required"
+						? "Reply text is empty."
+						: "That saved reply isn't available here.";
+
+const MAX_PRESET_BUTTONS = 99;
+
+const handleReplyTap = async (
+	env: Bindings,
+	token: string,
+	cq: TgCallbackQuery,
+	decoded: { action: string; commentId: string },
+	extra: string[],
+	actor: OpActor,
+	executionCtx: { waitUntil(p: Promise<unknown>): void },
+): Promise<void> => {
+	await answerCallbackQuery(token, cq.id);
+	const msg = cq.message;
+	if (!msg) return;
+	const chatId = msg.chat.id;
+	const cid = decoded.commentId;
+	const ctx = { chat: msg.chat.type === "private" ? "private" : "group" } as const;
+
+	if (decoded.action === "reply") {
+		const rows: InlineButton[][] = [];
+		for (const p of await pickerPresets(env.DB, actor.user.id, ctx)) {
+			if (rows.length >= MAX_PRESET_BUTTONS) break;
+			let data: string;
+			try {
+				data = encodePayload("telegram", "sr", cid, [p.id]);
+			} catch {
+				continue; // id too long for a callback payload
+			}
+			const label = p.title.length > 60 ? `${p.title.slice(0, 60)}…` : p.title;
+			rows.push([{ text: label, callback_data: data }]);
+		}
+		rows.push([{ text: "✏️ Write custom", callback_data: encodePayload("telegram", "rc", cid) }]);
+		await sendMessage(token, chatId, `Reply to comment <code>${escapeTg(cid)}</code>:`, {
+			replyMarkup: { inline_keyboard: rows },
+		});
+		return;
+	}
+	if (decoded.action === "rc") {
+		await sendMessage(
+			token,
+			chatId,
+			`Reply to comment <code>${escapeTg(cid)}</code> — send your text as a reply to this message.`,
+			{ replyMarkup: { force_reply: true, selective: true } },
+		);
+		return;
+	}
+
+	// sr: post the chosen preset.
+	const preset = extra[0] ? await getSavedReply(env.DB, extra[0]) : null;
+	if (!preset || !presetVisible(preset, actor.user.id, ctx)) {
+		await sendMessage(token, chatId, REPLY_REFUSAL("saved_reply_not_visible"));
+		return;
+	}
+	const res = await postModeratorReply({
+		env,
+		executionCtx,
+		reqUrl: env.PUBLIC_BASE_URL ?? "https://invalid.local/",
+		actor: actor.user,
+		commentId: cid,
+		bodyMd: expandPreset(preset.body_md, await presetVars(env, cid, actor.user)),
+		savedReplyId: preset.id,
+	});
+	if (!res.ok) {
+		await sendMessage(token, chatId, REPLY_REFUSAL(res.error, res.max));
+		return;
+	}
+	await editMessageText(
+		token,
+		chatId,
+		msg.message_id,
+		`Reply posted by ${escapeTg(actor.user.name)}`,
+	);
+};
+
 // ----------------------------- Message handler -----------------------------
 
 // Parse "/cmd arg" — tolerating the "/cmd@BotName" form Telegram uses in
@@ -314,9 +421,8 @@ const parseCommand = (text: string): { name: string; arg: string } | null => {
 	return { name, arg };
 };
 
-// A reply to one of the bot's force_reply prompts. "Reply to" prompts join
-// this regex in a later task.
-const PROMPT_RE = /^(Ban reason for) comment ([0-9A-HJKMNP-TV-Z]{26})\b/;
+// A reply to one of the bot's force_reply prompts.
+const PROMPT_RE = /^(Ban reason for|Reply to) comment ([0-9A-HJKMNP-TV-Z]{26})\b/;
 
 const handlePromptAnswer = async (
 	env: Bindings,
@@ -338,8 +444,27 @@ const handlePromptAnswer = async (
 		return;
 	}
 	const { actor } = who;
-	if (!hasRole(actor, requiredRole("banr"))) {
+	const isReply = prompt[1] === "Reply to";
+	if (!hasRole(actor, requiredRole(isReply ? "reply" : "banr"))) {
 		await sendMessage(token, chatId, t("telegram.not_authorized"));
+		return;
+	}
+	if (isReply) {
+		const res = await postModeratorReply({
+			env,
+			executionCtx: { waitUntil() {} },
+			reqUrl: env.PUBLIC_BASE_URL ?? "https://invalid.local/",
+			actor: actor.user,
+			commentId: prompt[2] as string,
+			bodyMd: text,
+		});
+		await sendMessage(
+			token,
+			chatId,
+			res.ok
+				? `Reply posted by ${escapeTg(actor.user.name)}`
+				: REPLY_REFUSAL(res.error, res.max),
+		);
 		return;
 	}
 	const res = await runOpAction({
@@ -458,7 +583,7 @@ const runUnban = async (
 		return res.error === "not_found"
 			? "No such user."
 			: res.error === "target_is_staff"
-				? "You can't unban a moderator or admin with a Discord role grant."
+				? "You can't unban a moderator or admin."
 				: t("telegram.not_authorized");
 	}
 	const user = await getUser(env.DB, id);
@@ -472,6 +597,7 @@ const commandHelpText = (): string =>
 		"/stats — totals and 7-day spam rate",
 		"/comment &lt;id&gt; — a comment's status + author",
 		"/user &lt;id&gt; — a user's role + status",
+		"/unban &lt;id&gt; — lift a ban",
 	].join("\n");
 
 const adminCommentUrl = (env: Bindings, id: string): string | null =>
