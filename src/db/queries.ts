@@ -618,6 +618,22 @@ export const upsertOauthUser = async (
 	};
 };
 
+/** Look up a user by the identity they signed in with (e.g. discord + snowflake). */
+export const getUserByProvider = async (
+	db: D1Database,
+	provider: string,
+	providerId: string,
+): Promise<User | null> => {
+	const row = await db
+		.prepare(
+			`SELECT ${USER_COLS}
+			 FROM users WHERE provider = ? AND provider_id = ?`,
+		)
+		.bind(provider, providerId)
+		.first<UserRow>();
+	return row ? toUser(row) : null;
+};
+
 export const getUser = async (
 	db: D1Database,
 	id: string,
@@ -1949,6 +1965,7 @@ export type UserErasureCounts = {
 	subscriptions_deleted: number;
 	reports_scrubbed: number;
 	telegram_links_deleted: number;
+	discord_links_deleted: number;
 	/** Moderator notes *about* the subject. Notes they authored are kept. */
 	moderator_notes_deleted: number;
 };
@@ -2044,6 +2061,9 @@ export const eraseUserData = async (
 	const atTelegram = queue(
 		db.prepare(`DELETE FROM telegram_links WHERE user_id = ?`).bind(id),
 	);
+	const atDiscord = queue(
+		db.prepare(`DELETE FROM discord_links WHERE user_id = ?`).bind(id),
+	);
 	// Free text a moderator wrote *about* this person is their personal data,
 	// and unlike a comment body there is no expression interest on the other
 	// side of the scale — nobody reads these but the mod team. Notes they
@@ -2105,6 +2125,7 @@ export const eraseUserData = async (
 		subscriptions_deleted: changes(atSubs),
 		reports_scrubbed: changes(atReports),
 		telegram_links_deleted: changes(atTelegram),
+		discord_links_deleted: changes(atDiscord),
 		moderator_notes_deleted: changes(atNotes),
 	};
 };
@@ -2139,6 +2160,7 @@ export type UserDataExport = {
 	reports_filed: Report[];
 	subscriptions: Subscription[];
 	telegram_links: TelegramLink[];
+	discord_links: DiscordLink[];
 	votes: { comment_id: string; value: number; created_at: number }[];
 	reactions: { comment_id: string; kind: string; created_at: number }[];
 	page_votes: { post_slug: string; value: number; created_at: number }[];
@@ -2216,6 +2238,10 @@ export const exportUserData = async (
 			: [],
 		telegram_links: await rows<TelegramLink>(
 			`SELECT * FROM telegram_links WHERE user_id = ?`,
+			userId,
+		),
+		discord_links: await rows<DiscordLink>(
+			`SELECT * FROM discord_links WHERE user_id = ?`,
 			userId,
 		),
 		votes: await rows(
@@ -3135,6 +3161,10 @@ export const ADMIN_ACTIONS = [
 	"report.resolve",
 	"telegram.link_code",
 	"telegram.unlink",
+	"discord.settings",
+	"discord.link_code",
+	"discord.unlink",
+	"discord.commands",
 ] as const;
 export type AdminAction = (typeof ADMIN_ACTIONS)[number];
 
@@ -3280,6 +3310,22 @@ export const adminAuditForTarget = async (
 		.all<AuditRowWithAdmin>();
 	return result.results ?? [];
 };
+
+// Latest ban/unban row for a user. Filtered in SQL so unrelated audit rows can
+// never push the ban out of a fixed window.
+export const latestBanAudit = async (
+	db: D1Database,
+	user_id: string,
+): Promise<{ action: string; reason: string | null } | null> =>
+	db
+		.prepare(
+			`SELECT action, reason FROM audit_log
+			  WHERE target_kind = 'user' AND target_id = ? AND action IN ('ban', 'unban')
+			  ORDER BY created_at DESC, id DESC
+			  LIMIT 1`,
+		)
+		.bind(user_id)
+		.first<{ action: string; reason: string | null }>();
 
 // Map of {target_id: latestAuditRow} for a batch of comment IDs. Used to
 // render the "approved by X · 3h ago" strip under each queue row in one
@@ -3514,6 +3560,33 @@ export const adminOldestPending = async (
 			  LIMIT 1`,
 		)
 		.first<{ id: string; created_at: number }>();
+	return row ?? null;
+};
+
+/**
+ * Next pending comment after a cursor in the oldest-first queue walk.
+ * The cursor need not still be pending (a mid-walk moderation must not stall
+ * the walk). A null or unknown cursor starts from the oldest pending comment.
+ */
+export const nextPendingAfter = async (
+	db: D1Database,
+	afterId: string | null,
+): Promise<Comment | null> => {
+	const row = await db
+		.prepare(
+			`WITH cur AS (SELECT created_at, id FROM comments WHERE id = ?1)
+			 SELECT id, post_slug, parent_id, user_id, body_md, body_html,
+			        renderer_version, status, edited_at, deleted_at, deleted_by,
+			        ip_hash, user_agent, created_at, depth, score_up, score_down, pinned_at, as_staff
+			   FROM comments
+			  WHERE status = 'pending'
+			    AND (NOT EXISTS (SELECT 1 FROM cur)
+			         OR (created_at, id) > (SELECT created_at, id FROM cur))
+			  ORDER BY created_at ASC, id ASC
+			  LIMIT 1`,
+		)
+		.bind(afterId)
+		.first<Comment>();
 	return row ?? null;
 };
 
@@ -4008,10 +4081,10 @@ export const adminRotateSubscriptionConfirmToken = async (
 // Webhook endpoints + deliveries (migration 0006).
 // -----------------------------------------------------------------------------
 
-export type WebhookAdapter = "generic" | "slack" | "discord" | "telegram";
+export type WebhookAdapter = "generic" | "slack" | "discord" | "telegram" | "discord_bot";
 
 export const isWebhookAdapter = (v: unknown): v is WebhookAdapter =>
-	v === "generic" || v === "slack" || v === "discord" || v === "telegram";
+	v === "generic" || v === "slack" || v === "discord" || v === "telegram" || v === "discord_bot";
 
 export type WebhookEndpoint = {
 	id: string;
@@ -4841,6 +4914,70 @@ export const deleteTelegramLinkByUser = async (
 ): Promise<boolean> => {
 	const result = await db
 		.prepare(`DELETE FROM telegram_links WHERE user_id = ?`)
+		.bind(user_id)
+		.run();
+	return (result.meta?.changes ?? 0) > 0;
+};
+
+// --- Discord links (moderation bot identity) -----------------------------
+// See 0033_discord_links.sql. Same identity-not-permission contract as above.
+
+export type DiscordLink = {
+	discord_user_id: string;
+	user_id: string;
+	linked_at: number;
+};
+
+export const getDiscordLinkByDiscordUser = async (
+	db: D1Database,
+	discord_user_id: string,
+): Promise<DiscordLink | null> =>
+	db
+		.prepare(
+			`SELECT discord_user_id, user_id, linked_at
+			   FROM discord_links WHERE discord_user_id = ?`,
+		)
+		.bind(discord_user_id)
+		.first<DiscordLink>();
+
+export const getDiscordLinkByUser = async (
+	db: D1Database,
+	user_id: string,
+): Promise<DiscordLink | null> =>
+	db
+		.prepare(
+			`SELECT discord_user_id, user_id, linked_at
+			   FROM discord_links WHERE user_id = ?`,
+		)
+		.bind(user_id)
+		.first<DiscordLink>();
+
+/** Replaces any prior link on either side, atomically (batch = transaction). */
+export const upsertDiscordLink = async (
+	db: D1Database,
+	input: { discord_user_id: string; user_id: string },
+): Promise<void> => {
+	await db.batch([
+		db
+			.prepare(
+				`DELETE FROM discord_links WHERE discord_user_id = ? OR user_id = ?`,
+			)
+			.bind(input.discord_user_id, input.user_id),
+		db
+			.prepare(
+				`INSERT INTO discord_links (discord_user_id, user_id, linked_at)
+				 VALUES (?, ?, ?)`,
+			)
+			.bind(input.discord_user_id, input.user_id, Date.now()),
+	]);
+};
+
+export const deleteDiscordLinkByUser = async (
+	db: D1Database,
+	user_id: string,
+): Promise<boolean> => {
+	const result = await db
+		.prepare(`DELETE FROM discord_links WHERE user_id = ?`)
 		.bind(user_id)
 		.run();
 	return (result.meta?.changes ?? 0) > 0;

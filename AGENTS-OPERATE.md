@@ -230,6 +230,8 @@ between the two is a build error, not a silent misclassification.
 | `TELEGRAM_BOT_TOKEN` | secret | Optional. BotFather token enabling the Telegram operator bot. With only this set, outbound notifications work (add a `telegram` webhook endpoint with a chat id). Unset = feature off. See `docs/telegram.md`. | `123456789:AAH...` | `wrangler secret put` / `.dev.vars` |
 | `TELEGRAM_WEBHOOK_SECRET` | secret | Optional. Shared secret echoed in the `X-Telegram-Bot-Api-Secret-Token` header; required for inbound buttons/slash commands. Pass it to Telegram's `setWebhook` as `secret_token`. Unset = inbound rejected (fail closed). | ``openssl rand -base64 32` output` | `wrangler secret put` / `.dev.vars` |
 | `TELEGRAM_BOT_USERNAME` | var | Optional. Bot `@username` (without `@`). When set, `/admin/telegram` renders a one-tap `t.me/<bot>?start=<code>` deep link instead of manual `/start` steps. | `YourGarrulBot` | `wrangler.toml` |
+| `DISCORD_BOT_TOKEN` | secret | Optional. Bot token enabling the Discord operator bot (moderation cards, buttons and slash commands). The bot is active only when `DISCORD_PUBLIC_KEY` is also set. Unset = feature off. | `MTE1...fake.token.example` | `wrangler secret put` / `.dev.vars` |
+| `DISCORD_PUBLIC_KEY` | var | Optional. Discord application public key used to verify Ed25519 signatures on inbound interactions. Public, so a plain var. Required together with `DISCORD_BOT_TOKEN`; unset = inbound interactions rejected. | `0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef` | `wrangler.toml` |
 | `SPAM_PROVIDER` | var | Optional. Pluggable content classifier — `akismet`, `workers-ai`, or `decisions` (bring your own key). Unset = no classifier. `workers-ai` also needs an `[ai]` binding; `decisions` needs `SPAM_DECISIONS_API_KEY` and a model. See `docs/ANTISPAM.md`. | `akismet` | `wrangler.toml` |
 | `AKISMET_API_KEY` | secret | Optional. Akismet API key. Required when `SPAM_PROVIDER=akismet`. | `...` | `wrangler secret put` / `.dev.vars` |
 | `AKISMET_SITE_URL` | secret | Optional. Public site URL sent to Akismet alongside each check. Required when `SPAM_PROVIDER=akismet`. | `https://yourblog.example.com` | `wrangler secret put` / `.dev.vars` |
@@ -997,6 +999,7 @@ tracked by the `_migrations` table. Current set:
 - `0030_thread_and_retention_indexes.sql` — indexes for top-level thread paging (chronological and by score) and the IP retention sweep; drops the unused `comments_score_idx`
 - `0031_admin_list_indexes.sql` — indexes for the moderation queue, dashboard windows and admin list pages
 - `0032_page_engagement_totals.sql` — `posts.page_votes_up` / `page_votes_down` plus `page_reaction_totals`, kept on write so bootstrap no longer counts page reactions and votes on every pageview
+- `0033_discord_links.sql` — `discord_links` (Discord user id ↔ Garrul user id; no digest column, the Discord digest goes to a channel)
 
 Run with `npm run migrate` (local Miniflare) or
 `npm run migrate -- --remote` (production D1). Idempotent. Never edit a
@@ -1061,10 +1064,50 @@ Pages (top nav):
 | `/admin/subscriptions` | Email subscription list. Filter by email/post/confirmed/unsubscribed. Actions: manual unsubscribe, resend confirmation. |
 | `/admin/operator` | Batch operations: rerender stale comments (POSTs `/admin/api/ops/rerender` in 50-row chunks until done), seed-demo (idempotent; gated to `ENV != "production"`), the comment import upload (Disqus XML, a Remark42 backup, a Comentario/Commento JSON export, or the JSON `npm run dump-isso` / `npm run dump-cusdis` produces from an isso `comments.db` or a Cusdis `db.sqlite` — gzipped or not — see below), and two retention cards — IP-hash and audit-log — each showing how many rows are past the configured window and offering a manual drain, and **Export site data** (JSON/CSV download links — see §11). |
 | `/admin/settings` | Editable form for feature flags, display/pagination numbers, and the moderation dials (edit window, thread auto-close, community auto-collapse, the three anti-spam heuristics), saved to the `settings` D1 table (no redeploy — see section 5). Also renders a read-only `(set)`/`(unset)` summary of deploy-time config (Turnstile, email, OAuth, spam provider), which still changes via `wrangler secret put` / `wrangler.toml`. |
-| `/admin/webhooks` | Outbound webhook endpoints: add/pause/delete, per-endpoint secret + event filter, adapter (`generic` / `slack` / `discord` / `telegram`), failure counts and retry status. |
+| `/admin/webhooks` | Outbound webhook endpoints: add/pause/delete, per-endpoint secret + event filter, adapter (`generic` / `slack` / `discord` / `discord_bot` / `telegram`), failure counts and retry status. |
 | `/admin/telegram` | **Admin-only.** Telegram operator bot: shows whether the bot token/webhook secret are set, links your personal Telegram account (one-time code or deep link), toggles the daily digest, and unlinks. See `docs/telegram.md`. |
+| `/admin/discord` | **Admin-only.** Discord operator bot: guild id, mod/admin role ids, digest channel, link code, **Register commands**, and the Interactions Endpoint URL to paste into the Discord developer portal. See `docs/discord.md`. |
 | `/admin/saved-replies` | Moderator saved replies: create/edit canned responses, private or shared scope. Presets are a *prefill* for the reply composer, not the only way to reply — see **Replying from the admin panel** below. |
 | `/admin/usage` | Cloudflare analytics (Workers requests, D1 rows, KV operations, Workers AI neurons, comments by domain). Requires `CF_API_TOKEN` + `CF_ACCOUNT_ID`; renders setup instructions when unset. |
+
+### Operator bots: Telegram and Discord
+
+Both bots run on one platform-neutral core in `src/lib/opbot/` (actor
+resolution, per-action authorization, actions, neutral cards, the oldest-first
+queue walk, the button payload codec). Each transport translates cards to its
+own markup and owns its own verification: `src/routes/telegram.ts`
+(`POST /telegram/webhook`, secret header) and `src/routes/discord.ts`
+(`POST /discord/interactions`, Ed25519). Both routes sit outside `/api/*`, so
+CSRF and sessions do not apply. Every action goes through `src/lib/moderation.ts`
+exactly as the dashboard does.
+
+- **Discord is on only when `DISCORD_BOT_TOKEN` and `DISCORD_PUBLIC_KEY` are
+  both set** (see the config table). `DISCORD_CLIENT_ID` doubles as the
+  application id. The guild id, mod role id, admin role id and digest channel id
+  are admin settings at `/admin/discord`, not env vars.
+- **Interactions**: the signature is verified before any D1/KV access (401), a
+  timestamp more than 5 minutes off is 401, then PING/PONG, then a per-user rate
+  limit. There is no dedupe: a replay inside the window can post a reply twice.
+- **Identity**: a `discord_links` row (or a Discord sign-in row) or a configured
+  Discord role. The higher role wins. Discord roles are never written to
+  `users.role`. A role-derived admin cannot ban or unban a Garrul mod/admin. A
+  banned user, a wrong guild or a DM is refused.
+- **Alerts** use the `discord_bot` webhook adapter: the endpoint URL field holds
+  a channel id, messages are posted with the bot token, and saving validates the
+  channel (same guild, text or announcement). The `discord` incoming-webhook
+  adapter stays for alert-only use. For both Discord adapters a 429 is retried
+  no earlier than `retry_after` and does not raise the endpoint failure counter.
+- **Digest**: each transport has its own gate and timestamp
+  (`tg_digest_last_sent_at`, `dc_digest_last_sent_at`). Discord needs the token,
+  the public key and a digest channel.
+- Features on both transports: who-did-what card edit, queue Review (oldest
+  first, Skip), ban with reason and `/unban`, reply with saved replies. In a
+  Telegram group the saved-reply list shows shared presets only. Discord replies
+  use a select menu and a modal (25-option menu, 4000-char modal).
+- Cost rules: no new KV write per interaction (a ban keeps its one session
+  revocation write); every outbound body sets `allowed_mentions: { parse: [] }`.
+
+Operator setup: `docs/discord.md` and `docs/telegram.md`.
 
 State-changing endpoints (all under `/admin/api/...`, all require admin
 session + Origin allowlist, all write an `audit_log` row before
@@ -1106,7 +1149,7 @@ personal data** → *Download JSON*, or `GET /admin/api/users/:id/export`
 directly. This is the answer to a GDPR Art. 15 / Art. 20 or CCPA
 right-to-know request: one file (`garrul-export-<id>.json`) holding the
 account row, every comment they wrote, reports they filed, subscriptions
-for their address, Telegram link, votes, reactions, page engagement, spam
+for their address, Telegram and Discord links, votes, reactions, page engagement, spam
 classifications on their comments, moderation actions taken against
 them, and moderator notes written about them. Admin-only; a plain link
 rather than a fetch, so the payload never sits in a JS variable.
@@ -1153,7 +1196,7 @@ the row would orphan every reply written under it. What it clears:
 - `ip_hash` and `user_agent` on every comment they wrote, and
   `reporter_ip_hash` on every report they filed.
 - Their email subscriptions (plus any queued digest rows) and their
-  linked Telegram account.
+  linked Telegram and Discord accounts (`discord_links`).
 - Their live sessions, revoked.
 - Every moderator note written **about the account**. Two kinds
   deliberately survive: notes they *wrote* about someone else, which are
@@ -2087,6 +2130,7 @@ Art. 33(4) explicitly allows filing in phases.
 | OAuth `email`, `name`, `avatar_url`, `provider_id` | Links a real identity to everything that account wrote. |
 | `comments.body_md` / `body_html` | Already public on your site; not usually a disclosure. Pending, spam and soft-deleted rows are the exception — those were never published. |
 | `telegram_links` | External chat ids for operators. |
+| `discord_links` | Discord user ids for operators. Deleted on erasure, included in the export. |
 | `subscriptions.token` / `confirm_token` | Lets a holder unsubscribe or confirm someone else. Low severity, real nuisance. |
 | `webhook_endpoints.secret` | Lets a holder forge signed events at your endpoints. |
 

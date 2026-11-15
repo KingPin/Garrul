@@ -33,6 +33,8 @@
  */
 import type { CommentStatus } from "../db/queries";
 import { getComment, getPost, getUser } from "../db/queries";
+import { buttonsFor, type OpButton } from "./opbot/cards";
+import { encodePayload } from "./opbot/codec";
 import { moderationKeyboard } from "./telegram";
 import type { WebhookEvent, WebhookPayload } from "./webhook";
 
@@ -197,7 +199,7 @@ const slackSafeUrl = (url: string): boolean => !/[<>|]/.test(url);
 // Inserting a zero-width space breaks the trigger while keeping the
 // text legible. (Embeds don't fire mentions, but this is cheap defense
 // in depth and keeps the rendered text tidy.)
-const escapeDiscordMentions = (s: string): string =>
+export const escapeDiscordMentions = (s: string): string =>
 	s
 		.replace(/@(everyone|here)/gi, "@​$1")
 		.replace(/<@([!&]?\d+)>/g, "<@​$1>");
@@ -211,7 +213,7 @@ const escapeDiscordMentions = (s: string): string =>
 // would become "\\[x\](url)" — Discord renders "\\" as a literal
 // backslash, leaving the "[" unescaped and the masked link live again.
 // Escaping "\" → "\\" before the brackets closes that bypass.
-const sanitizeDiscordDescription = (s: string): string =>
+export const sanitizeDiscordDescription = (s: string): string =>
 	escapeDiscordMentions(s)
 		.replace(/\\/g, "\\\\")
 		.replace(/[[\]]/g, "\\$&");
@@ -246,13 +248,10 @@ export const renderSlackBody = async (
 	return JSON.stringify({ text });
 };
 
-export const renderDiscordBody = async (
-	db: WebhookAdapterDb,
+const discordEmbed = (
+	ctx: Ctx,
 	payload: WebhookPayload,
-	opts: AdapterOpts = {},
-): Promise<string> => {
-	const ctx = await loadContext(db, payload, opts);
-
+): Record<string, unknown> => {
 	// Wrap the destination in <…> so Discord treats it as a literal URL:
 	// a bare URL containing ")" (e.g. a "/wiki/Foo_(bar)" page link) would
 	// otherwise terminate the markdown link early. The URLs are already
@@ -277,7 +276,58 @@ export const renderDiscordBody = async (
 		embed.fields = [{ name: "Links", value: links.join(" · ") }];
 	}
 
-	return JSON.stringify({ embeds: [embed] });
+	return embed;
+};
+
+export const renderDiscordBody = async (
+	db: WebhookAdapterDb,
+	payload: WebhookPayload,
+	opts: AdapterOpts = {},
+): Promise<string> => {
+	const ctx = await loadContext(db, payload, opts);
+	return JSON.stringify({ embeds: [discordEmbed(ctx, payload)] });
+};
+
+// Bot-posted variant: the same embed plus moderation buttons. The bot token is
+// never part of the body (it is added to the request headers at send time).
+const BUTTON_STYLE = { primary: 1, secondary: 2, success: 3, danger: 4 } as const;
+
+/** Discord action rows (≤ 5 rows of ≤ 5 buttons) for an OpButton grid. */
+export const buttonRows = (
+	buttons: OpButton[][],
+	commentId: string,
+	extra: string[] = [],
+): unknown[] =>
+	buttons
+		.filter((row) => row.length > 0)
+		.slice(0, 5)
+		.map((row) => ({
+			type: 1,
+			components: row.slice(0, 5).map((b) => ({
+				type: 2,
+				style: BUTTON_STYLE[b.style],
+				label: b.label,
+				custom_id: encodePayload("discord", b.action, commentId, extra),
+			})),
+		}));
+
+export const renderDiscordBotBody = async (
+	db: WebhookAdapterDb,
+	payload: WebhookPayload,
+	opts: AdapterOpts = {},
+): Promise<string> => {
+	const ctx = await loadContext(db, payload, opts);
+	return JSON.stringify({
+		embeds: [discordEmbed(ctx, payload)],
+		components: buttonRows(
+			buttonsFor(ctx.status, {
+				reported: payload.event === "comment.reported",
+				banLabel: "banr",
+			}),
+			payload.comment_id,
+		),
+		allowed_mentions: { parse: [] },
+	});
 };
 
 // ----------------------------- Telegram ------------------------------------

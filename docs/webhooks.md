@@ -128,6 +128,19 @@ comment in place. It's configured differently from the others — the endpoint's
 URL field holds a **chat id**, not a URL, and the bot token comes from a Worker
 secret. See [telegram.md](./telegram.md) for the full setup.
 
+The `discord_bot` adapter posts to a Discord channel **as the bot**, with action
+buttons (the plain `discord` adapter is an incoming webhook and cannot carry
+buttons). The URL field holds a **channel id**; the bot token comes from
+`DISCORD_BOT_TOKEN`. Saving the endpoint checks the channel (it must exist, be a
+text or announcement channel, and belong to the configured guild). See
+[discord.md](./discord.md).
+
+**Discord 429 handling** (both `discord` and `discord_bot`): a 429 is retried
+like any failure, but the next attempt waits at least the response's
+`retry_after` value. If a delivery runs out of attempts and its last failure was
+a 429, the endpoint's failure counter does not rise, so rate limiting never
+auto-pauses a healthy endpoint; the delivery is dropped and logged.
+
 The two links point to `…/admin/comments/<id>` (the moderation detail
 page) and to the post's public URL. The **admin** link requires
 **`PUBLIC_BASE_URL`** to be set — if it is unset, the notification still

@@ -49,12 +49,14 @@ import {
 	countModeratorNotesByTarget,
 	countOpenReportsByComment,
 	createWebhookEndpoint,
+	deleteDiscordLinkByUser,
 	deleteSettings,
 	deleteTelegramLinkByUser,
 	deleteWebhookEndpoint,
 	enqueueNotificationsForPost,
 	exportUserData,
 	getComment,
+	getDiscordLinkByUser,
 	getTelegramLinkByUser,
 	getPost,
 	getUser,
@@ -135,7 +137,10 @@ import {
 import { renderUserDetail } from "../admin-ui/pages/user-detail";
 import { renderUsers } from "../admin-ui/pages/users";
 import { renderOperator } from "../admin-ui/pages/operator";
+import { SNOWFLAKE_RE, discordApi, discordEnabled, validateDiscordChannel } from "../lib/discord";
 import { renderTelegram } from "../admin-ui/pages/telegram";
+import { renderDiscord } from "../admin-ui/pages/discord";
+import { issueLinkToken } from "../lib/opbot/link-token";
 import { issueTelegramLinkToken } from "./telegram";
 import { renderSettings } from "../admin-ui/pages/settings";
 import { ownerLogin } from "./admin-owner";
@@ -144,6 +149,7 @@ import {
 	canonicalReactionKinds,
 	FLAG_KEYS,
 	isReactionKindsKey,
+	loadDiscordSettings,
 	loadNumbers,
 	loadSettings,
 	NUMBER_KEYS,
@@ -206,6 +212,7 @@ import { runSeedDemo } from "../db/seed-demo";
 import { renderConfirmEmailHtml } from "../lib/digest";
 import { sendEmail } from "../lib/email";
 import { log } from "../lib/log";
+import { postModeratorReply } from "../lib/opbot/reply";
 import { fillSubject, subjectTitle } from "../lib/post-title";
 import { FALLBACK_LOCALE, tFor } from "../i18n";
 
@@ -904,6 +911,155 @@ admin.post("/api/telegram/digest", async (c) => {
 	return c.json({ ok: true, digest: body.digest });
 });
 
+// --- Discord moderation bot ----------------------------------------------
+//
+// Secrets (DISCORD_BOT_TOKEN / _PUBLIC_KEY / _CLIENT_ID) live in the Worker
+// env; the guild/role/channel ids are operator settings. Admin-only, like
+// Telegram linking. Audit meta never carries ids, codes or tokens.
+
+const DISCORD_ID_FIELDS = {
+	guild_id: "discord_guild_id",
+	mod_role_id: "discord_mod_role_id",
+	admin_role_id: "discord_admin_role_id",
+	digest_channel_id: "discord_digest_channel_id",
+} as const;
+
+admin.get("/discord", async (c) => {
+	const user = await requireAdmin(c);
+	if (user instanceof Response) return user;
+	const [updateInfo, link, s] = await Promise.all([
+		peekCachedLatestVersion(c.env),
+		getDiscordLinkByUser(c.env.DB, user.id),
+		loadDiscordSettings(c.env),
+	]);
+	const base = (c.env.PUBLIC_BASE_URL ?? "").replace(/\/+$/, "");
+	return c.html(
+		renderPage(
+			c,
+			"Discord",
+			renderDiscord({
+				configured: discordEnabled(c.env),
+				botTokenSet: !!c.env.DISCORD_BOT_TOKEN,
+				publicKeySet: !!c.env.DISCORD_PUBLIC_KEY,
+				clientIdSet: !!c.env.DISCORD_CLIENT_ID,
+				endpointUrl: base ? `${base}/discord/interactions` : null,
+				settings: s,
+				link: link ? { linked_at: link.linked_at } : null,
+			}),
+			user,
+			updateInfo,
+		),
+	);
+});
+
+admin.post("/api/discord/settings", async (c) => {
+	const user = await requireAdmin(c);
+	if (user instanceof Response) return user;
+	const body = await c.req.json<Record<string, unknown>>().catch(() => null);
+	if (!body || typeof body !== "object") return c.json({ error: "invalid_body" }, 400);
+	const values: Record<string, string> = {};
+	for (const field of Object.keys(DISCORD_ID_FIELDS)) {
+		const raw = body[field] ?? "";
+		const v = typeof raw === "string" ? raw.trim() : null;
+		if (v === null || (v !== "" && !SNOWFLAKE_RE.test(v))) {
+			return c.json({ error: `invalid_id:${field}` }, 400);
+		}
+		values[field] = v;
+	}
+	if (values.digest_channel_id) {
+		if (!discordEnabled(c.env) || !c.env.DISCORD_BOT_TOKEN || !values.guild_id) {
+			return c.json({ error: "discord_not_configured" }, 400);
+		}
+		const ch = await validateDiscordChannel(
+			c.env.DISCORD_BOT_TOKEN,
+			values.digest_channel_id,
+			values.guild_id,
+		);
+		if (!ch.ok) return c.json({ error: ch.error }, 400);
+	}
+	const cleared: string[] = [];
+	for (const [field, key] of Object.entries(DISCORD_ID_FIELDS)) {
+		const v = values[field] as string;
+		if (v) await setSetting(c.env.DB, key, v);
+		else cleared.push(key);
+	}
+	await deleteSettings(c.env.DB, cleared);
+	await bustSettingsCache(c.env);
+	await adminInsertAudit(c.env.DB, {
+		admin_id: user.id,
+		action: "discord.settings",
+		target_kind: "system",
+		target_id: null,
+		meta: { set: Object.keys(values).filter((f) => values[f]), cleared: cleared.length },
+	});
+	return c.json({ ok: true });
+});
+
+admin.post("/api/discord/link", async (c) => {
+	const user = await requireAdmin(c);
+	if (user instanceof Response) return user;
+	const code = await issueLinkToken(c.env.OAUTH_STATE, "dc", user.id);
+	await adminInsertAudit(c.env.DB, {
+		admin_id: user.id,
+		action: "discord.link_code",
+		target_kind: "user",
+		target_id: user.id,
+	});
+	return c.json({ ok: true, code });
+});
+
+admin.delete("/api/discord/link", async (c) => {
+	const user = await requireAdmin(c);
+	if (user instanceof Response) return user;
+	const removed = await deleteDiscordLinkByUser(c.env.DB, user.id);
+	if (removed) {
+		await adminInsertAudit(c.env.DB, {
+			admin_id: user.id,
+			action: "discord.unlink",
+			target_kind: "user",
+			target_id: user.id,
+		});
+	}
+	return c.json({ ok: true, removed });
+});
+
+const STRING_OPT = 3;
+const idOption = (name: string, description: string) => [
+	{ name, description, type: STRING_OPT, required: true },
+];
+const DISCORD_COMMANDS = [
+	{ name: "queue", description: "Review pending comments" },
+	{ name: "stats", description: "Show comment statistics" },
+	{ name: "comment", description: "Show a comment", options: idOption("id", "Comment id") },
+	{ name: "user", description: "Show a commenter", options: idOption("id", "User id") },
+	{ name: "unban", description: "Unban a commenter", options: idOption("id", "User id") },
+	{ name: "link", description: "Link your Garrul account", options: idOption("code", "Code from the admin page") },
+];
+
+admin.post("/api/discord/commands", async (c) => {
+	const user = await requireAdmin(c);
+	if (user instanceof Response) return user;
+	if (!discordEnabled(c.env) || !c.env.DISCORD_BOT_TOKEN || !c.env.DISCORD_CLIENT_ID) {
+		return c.json({ error: "discord_not_configured" }, 400);
+	}
+	const { guildId } = await loadDiscordSettings(c.env);
+	if (!guildId) return c.json({ error: "guild_not_set" }, 400);
+	const r = await discordApi(
+		c.env.DISCORD_BOT_TOKEN,
+		"PUT",
+		`/applications/${c.env.DISCORD_CLIENT_ID}/guilds/${guildId}/commands`,
+		DISCORD_COMMANDS,
+	);
+	if (!r.ok) return c.json({ error: "discord_error", status: r.status }, 502);
+	await adminInsertAudit(c.env.DB, {
+		admin_id: user.id,
+		action: "discord.commands",
+		target_kind: "system",
+		target_id: null,
+	});
+	return c.json({ ok: true });
+});
+
 admin.get("/settings", async (c) => {
 	const user = await requireAdmin(c);
 	if (user instanceof Response) return user;
@@ -1225,10 +1381,12 @@ const isValidEvent = (v: unknown): v is (typeof VALID_EVENTS)[number] =>
 const isValidTelegramChatId = (v: string): boolean =>
 	/^-?\d{1,20}$/.test(v) || /^@[A-Za-z][A-Za-z0-9_]{4,31}$/.test(v);
 
-const parseWebhookBody = (
+const parseWebhookBody = async (
 	body: WebhookBody,
 	env: Bindings,
-): { ok: true; fields: WebhookFields } | { ok: false; error: string } => {
+): Promise<
+	{ ok: true; fields: WebhookFields } | { ok: false; error: string }
+> => {
 	if (typeof body.url !== "string" || body.url.length === 0) {
 		return { ok: false, error: "url_required" };
 	}
@@ -1246,6 +1404,21 @@ const parseWebhookBody = (
 		if (!isValidTelegramChatId(body.url)) {
 			return { ok: false, error: "chat_id_invalid" };
 		}
+	} else if (adapter === "discord_bot") {
+		// `url` holds a channel id; the real target is the fixed Discord API host.
+		if (!SNOWFLAKE_RE.test(body.url)) {
+			return { ok: false, error: "channel_id_invalid" };
+		}
+		const { guildId } = await loadDiscordSettings(env);
+		if (!discordEnabled(env) || !env.DISCORD_BOT_TOKEN || !guildId) {
+			return { ok: false, error: "discord_not_configured" };
+		}
+		const ch = await validateDiscordChannel(
+			env.DISCORD_BOT_TOKEN,
+			body.url,
+			guildId,
+		);
+		if (!ch.ok) return { ok: false, error: ch.error };
 	} else {
 		// allowHttp only in dev — production endpoints must be https to make
 		// the signing+secret guarantees meaningful end-to-end.
@@ -1301,7 +1474,7 @@ admin.post("/api/webhooks", async (c) => {
 	if (user instanceof Response) return user;
 	const body = await c.req.json<WebhookBody>().catch(() => null);
 	if (!body) return c.json({ error: "invalid_body" }, 400);
-	const parsed = parseWebhookBody(body, c.env);
+	const parsed = await parseWebhookBody(body, c.env);
 	if (!parsed.ok) return c.json({ error: parsed.error }, 400);
 	// On create there is nothing to preserve, so "absent" collapses to "unsigned".
 	const created = await createWebhookEndpoint(c.env.DB, {
@@ -1333,7 +1506,7 @@ admin.patch("/api/webhooks/:id", async (c) => {
 	if (!existing) return c.json({ error: "not_found" }, 404);
 	const body = await c.req.json<WebhookBody>().catch(() => null);
 	if (!body) return c.json({ error: "invalid_body" }, 400);
-	const parsed = parseWebhookBody(body, c.env);
+	const parsed = await parseWebhookBody(body, c.env);
 	if (!parsed.ok) return c.json({ error: parsed.error }, 400);
 	await updateWebhookEndpoint(c.env.DB, id, parsed.fields);
 	await adminInsertAudit(c.env.DB, {
@@ -1861,124 +2034,37 @@ admin.post("/api/comments/:id/reply", async (c) => {
 		.catch(() => null);
 	if (!body) return c.json({ error: "invalid_body" }, 400);
 
-	const valid = validateBody(
-		typeof body.body_md === "string" ? body.body_md : "",
-	);
-	if (!valid.ok) {
-		return c.json(
-			valid.key === "err.body.too_long"
-				? { error: "body_too_long", max: valid.max }
-				: { error: "body_required" },
-			400,
-		);
-	}
-
 	// Optional, but not coercible: `"false"` and `0` are what a buggy client sends
 	// when it means "don't email anyone", and silently reading either as true
 	// mails the whole thread. Absent stays absent; anything present must be a
-	// real boolean.
+	// real boolean. `as_staff` follows the same rule.
 	if (body.notify != null && typeof body.notify !== "boolean") {
 		return c.json({ error: "invalid_body" }, 400);
 	}
-	// Same rule as `notify`: optional, never coerced. Defaults on — a reply from
-	// the moderation panel is the staff voice unless the mod says otherwise.
 	if (body.as_staff != null && typeof body.as_staff !== "boolean") {
 		return c.json({ error: "invalid_body" }, 400);
 	}
-
-	// Provenance is optional, but when claimed it has to be a reply this mod can
-	// actually see — otherwise the audit row could name someone else's private
-	// saved reply. A 400 rather than a 404: the reply body is fine, the claim
-	// about where it came from is not.
-	let savedReplyId: string | null = null;
-	if (body.saved_reply_id != null) {
-		if (typeof body.saved_reply_id !== "string") {
-			return c.json({ error: "invalid_body" }, 400);
-		}
-		const source = await getSavedReply(c.env.DB, body.saved_reply_id);
-		if (!source || (source.owner_id !== user.id && source.scope !== "shared")) {
-			return c.json({ error: "saved_reply_not_visible" }, 400);
-		}
-		savedReplyId = source.id;
+	if (body.saved_reply_id != null && typeof body.saved_reply_id !== "string") {
+		return c.json({ error: "invalid_body" }, 400);
 	}
 
-	const target = await getComment(c.env.DB, c.req.param("id"));
-	if (!target) return c.json({ error: "comment_not_found" }, 404);
-	if (target.status === "deleted") {
-		return c.json({ error: "comment_deleted" }, 400);
-	}
-	// The nesting cap applies to moderators too: the O(N^2) tree-assembly cost
-	// it guards doesn't care who created the chain. Reply higher up instead.
-	const depth = target.depth + 1;
-	if (depth > MAX_REPLY_DEPTH) {
-		return c.json({ error: "thread_too_deep" }, 400);
-	}
-
-	const inserted = await insertComment(c.env.DB, {
-		post_slug: target.post_slug,
-		parent_id: target.id,
-		user_id: user.id,
-		body_md: valid.body,
-		body_html: renderMarkdown(valid.body),
-		renderer_version: CURRENT_RENDERER_VERSION,
-		status: "approved",
-		ip_hash: null,
-		user_agent: null,
-		depth,
-		as_staff: body.as_staff ?? true,
+	const res = await postModeratorReply({
+		env: c.env,
+		executionCtx: c.executionCtx,
+		reqUrl: c.req.url,
+		actor: user,
+		commentId: c.req.param("id"),
+		bodyMd: typeof body.body_md === "string" ? body.body_md : "",
+		savedReplyId: body.saved_reply_id,
+		notify: body.notify,
+		asStaff: body.as_staff,
 	});
-
-	// Default on: this is a real comment on a real thread, so the people
-	// following that thread should hear about it the same way they hear about a
-	// reader's reply. The composer's checkbox exists so a housekeeping note
-	// ("dupe, see above") doesn't have to email everyone.
-	const notify = body.notify ?? true;
-	await adminInsertAudit(c.env.DB, {
-		admin_id: user.id,
-		action: "comment.reply",
-		target_kind: "comment",
-		target_id: inserted.id,
-		meta: {
-			from_saved_reply: savedReplyId != null,
-			saved_reply_id: savedReplyId,
-			parent_id: target.id,
-			post_slug: target.post_slug,
-			// The operator's choice, not a delivery count — the fan-out below is
-			// deferred, and a number here would be a guess at what it will write.
-			notify_subscribers: notify,
-		},
-	});
-	// Bust the post's tree caches so the new reply is visible immediately.
-	await bustTreeCache(c.env, c.req.url, target.post_slug);
-	fireWebhook(c.env, c.executionCtx, {
-		event: "comment.posted",
-		comment_id: inserted.id,
-		post_slug: target.post_slug,
-		user_id: user.id,
-		ts: inserted.created_at,
-	});
-
-	if (notify) {
-		const fanout = (async () => {
-			// Skip our own address for the same reason the widget path does: being
-			// emailed about your own comment reads as a bug.
-			const count = await enqueueNotificationsForPost(
-				c.env.DB,
-				target.post_slug,
-				inserted.id,
-				user.email?.toLowerCase() ?? null,
-			);
-			log.info("notify.enqueued", { count, post_slug: target.post_slug });
-		})();
-		// Always wait for the enqueue to finish — same reasoning as the widget
-		// fan-out in routes/api.comments.ts: without an executionCtx the runtime
-		// can cancel the orphan promise once the response settles, and a lost row
-		// here is a notification nobody ever gets.
-		if (c.executionCtx) c.executionCtx.waitUntil(fanout);
-		else await fanout;
+	if (!res.ok) {
+		return res.error === "body_too_long"
+			? c.json({ error: res.error, max: res.max }, 400)
+			: c.json({ error: res.error }, res.error === "comment_not_found" ? 404 : 400);
 	}
-
-	return c.json({ ok: true, id: inserted.id, notified: notify });
+	return c.json({ ok: true, id: res.id, notified: res.notified });
 });
 
 // POST /admin/api/preview  { body_md } -> { html }

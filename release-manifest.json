@@ -97,6 +97,11 @@
       "addedIn": "1.17.0"
     },
     {
+      "name": "DISCORD_BOT_TOKEN",
+      "required": false,
+      "addedIn": "2.44.0"
+    },
+    {
       "name": "AKISMET_API_KEY",
       "required": false,
       "addedIn": "1.1.1"
@@ -205,6 +210,11 @@
       "name": "TELEGRAM_BOT_USERNAME",
       "required": false,
       "addedIn": "1.17.0"
+    },
+    {
+      "name": "DISCORD_PUBLIC_KEY",
+      "required": false,
+      "addedIn": "2.44.0"
     },
     {
       "name": "SPAM_PROVIDER",
@@ -427,7 +437,8 @@
     "0029_owner_login.sql",
     "0030_thread_and_retention_indexes.sql",
     "0031_admin_list_indexes.sql",
-    "0032_page_engagement_totals.sql"
+    "0032_page_engagement_totals.sql",
+    "0033_discord_links.sql"
   ],
   "breakingChanges": [
     {

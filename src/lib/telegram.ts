@@ -16,6 +16,13 @@
  * token at call time.
  */
 import { log } from "./log";
+import { buttonsFor, type OpButton } from "./opbot/cards";
+import {
+	type OpAction,
+	PAYLOAD_MAX,
+	decodePayload,
+	encodePayload,
+} from "./opbot/codec";
 import type { CommentStatus } from "../db/queries";
 import type { WebhookEvent } from "./webhook";
 
@@ -45,6 +52,7 @@ export type TgMessage = {
 	chat: TgChat;
 	from?: TgUser;
 	text?: string;
+	reply_to_message?: TgMessage;
 };
 
 export type TgCallbackQuery = {
@@ -99,40 +107,42 @@ const timingSafeEqual = (a: string, b: string): boolean => {
 // under the cap. Ban targets the comment too; the handler resolves the author
 // from the comment so we never need to pack a second id.
 
-export type TgAction =
-	| "approve"
-	| "spam"
-	| "delete"
-	| "restore"
-	| "ban"
-	| "resolve";
+export type TgAction = OpAction;
 
-const CALLBACK_PREFIX = "g";
-const TG_ACTIONS: readonly TgAction[] = [
+export const CALLBACK_DATA_MAX = PAYLOAD_MAX.telegram;
+
+export const encodeCallback = (action: TgAction, commentId: string): string =>
+	encodePayload("telegram", action, commentId);
+
+// Actions the Telegram route handles today. Later tasks widen this list as
+// they add handlers; anything else decodes to null.
+const TG_HANDLED: readonly OpAction[] = [
 	"approve",
 	"spam",
 	"delete",
 	"restore",
 	"ban",
+	"banr",
 	"resolve",
-] as const;
+	"rv",
+	"nx",
+	"reply",
+	"sr",
+	"rc",
+];
 
-export const CALLBACK_DATA_MAX = 64;
-
-export const encodeCallback = (action: TgAction, commentId: string): string =>
-	`${CALLBACK_PREFIX}:${action}:${commentId}`;
+// The bot's own user id is the numeric part of its token ("<id>:<secret>").
+export const botIdFromToken = (token: string): number | null => {
+	const n = Number(token.split(":")[0]);
+	return Number.isInteger(n) && n > 0 ? n : null;
+};
 
 export const decodeCallback = (
 	data: string | undefined,
 ): { action: TgAction; commentId: string } | null => {
-	if (typeof data !== "string") return null;
-	const parts = data.split(":");
-	if (parts.length !== 3) return null;
-	const [prefix, action, commentId] = parts;
-	if (prefix !== CALLBACK_PREFIX) return null;
-	if (!TG_ACTIONS.includes(action as TgAction)) return null;
-	if (!commentId) return null;
-	return { action: action as TgAction, commentId };
+	const d = decodePayload(data);
+	if (!d || !TG_HANDLED.includes(d.action)) return null;
+	return { action: d.action, commentId: d.commentId };
 };
 
 // --------------------------- Inline keyboard ------------------------------
@@ -148,38 +158,34 @@ export const decodeCallback = (
 
 export type InlineButton = { text: string; callback_data: string };
 
+export const toInlineKeyboard = (
+	rows: OpButton[][],
+	commentId: string,
+	extra?: string[],
+): { inline_keyboard: InlineButton[][] } => ({
+	inline_keyboard: rows.map((r) =>
+		r.flatMap((b) => {
+			const button = (action: OpButton["action"], text: string) => ({
+				text,
+				callback_data: encodePayload("telegram", action, commentId, extra),
+			});
+			// Telegram-only: a typed ban reason sits right after plain Ban.
+			return b.action === "ban"
+				? [button("ban", b.label), button("banr", "⛔ Ban with reason")]
+				: [button(b.action, b.label)];
+		}),
+	),
+});
+
 export const moderationKeyboard = (
 	event: WebhookEvent,
 	commentId: string,
 	status?: CommentStatus | null,
-): { inline_keyboard: InlineButton[][] } => {
-	const btn = (text: string, action: TgAction): InlineButton => ({
-		text,
-		callback_data: encodeCallback(action, commentId),
-	});
-
-	// Fall back to the full triage when status is unknown (comment row was
-	// unavailable at render time) — better to offer an idempotent Approve than
-	// to hide a needed action.
-	let firstRow: InlineButton[];
-	if (status === "spam") {
-		firstRow = [btn("✅ Not spam", "restore")];
-	} else if (status === "approved") {
-		firstRow = [btn("🚫 Spam", "spam")];
-	} else {
-		firstRow = [btn("✅ Approve", "approve"), btn("🚫 Spam", "spam")];
-	}
-
-	const secondRow: InlineButton[] = [
-		btn("🗑 Delete", "delete"),
-		btn("⛔ Ban author", "ban"),
-	];
-	if (event === "comment.reported") {
-		secondRow.push(btn("📁 Resolve reports", "resolve"));
-	}
-
-	return { inline_keyboard: [firstRow, secondRow] };
-};
+): { inline_keyboard: InlineButton[][] } =>
+	toInlineKeyboard(
+		buttonsFor(status, { reported: event === "comment.reported" }),
+		commentId,
+	);
 
 // ------------------------------ API client --------------------------------
 //
@@ -225,7 +231,13 @@ export const sendMessage = (
 	chatId: string | number,
 	text: string,
 	opts: {
-		replyMarkup?: { inline_keyboard: InlineButton[][] };
+		replyMarkup?:
+			| { inline_keyboard: InlineButton[][] }
+			| {
+					force_reply: true;
+					selective: true;
+					input_field_placeholder?: string;
+			  };
 		disablePreview?: boolean;
 	} = {},
 ): Promise<TgResult> =>
@@ -247,13 +259,14 @@ export const answerCallbackQuery = (
 		...(text ? { text } : {}),
 	});
 
-// Replace a message's text + strip its keyboard after an action resolves, so
-// the buttons can't be tapped twice and the message reflects the outcome.
+// Replace a message's text after an action resolves. Without replyMarkup the
+// keyboard is stripped; with it, the keyboard for the new status is shown.
 export const editMessageText = (
 	token: string,
 	chatId: string | number,
 	messageId: number,
 	text: string,
+	opts: { replyMarkup?: { inline_keyboard: InlineButton[][] } } = {},
 ): Promise<TgResult> =>
 	callTelegram(token, "editMessageText", {
 		chat_id: chatId,
@@ -261,4 +274,5 @@ export const editMessageText = (
 		text,
 		parse_mode: "HTML",
 		disable_web_page_preview: true,
+		...(opts.replyMarkup ? { reply_markup: opts.replyMarkup } : {}),
 	});

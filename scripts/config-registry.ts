@@ -550,6 +550,30 @@ export const CONFIG_REGISTRY: ConfigEntry[] = [
 		addedIn: "1.17.0",
 	},
 
+	// ------------------------------------------------------------ discord
+	{
+		name: "DISCORD_BOT_TOKEN",
+		kind: "secret",
+		required: false,
+		group: "Discord operator bot",
+		hint: "bot token from the Discord developer portal (Bot tab)",
+		description:
+			"Optional. Bot token enabling the Discord operator bot (moderation cards, buttons and slash commands). The bot is active only when `DISCORD_PUBLIC_KEY` is also set. Unset = feature off.",
+		example: "MTE1...fake.token.example",
+		addedIn: "2.44.0",
+	},
+	{
+		name: "DISCORD_PUBLIC_KEY",
+		kind: "var",
+		required: false,
+		group: "Discord operator bot",
+		hint: "application public key (General Information tab), 64 hex characters",
+		description:
+			"Optional. Discord application public key used to verify Ed25519 signatures on inbound interactions. Public, so a plain var. Required together with `DISCORD_BOT_TOKEN`; unset = inbound interactions rejected.",
+		example: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		addedIn: "2.44.0",
+	},
+
 	// ----------------------------------------------------------- anti-spam
 	{
 		name: "SPAM_PROVIDER",

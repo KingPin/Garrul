@@ -15,12 +15,14 @@ import { wellKnown } from "./routes/well-known";
 import { iframe, renderShellFromQuery } from "./routes/embed-iframe";
 import { admin } from "./routes/admin";
 import { telegram } from "./routes/telegram";
+import { discord } from "./routes/discord";
 import { feed } from "./routes/feed";
 import { counts } from "./routes/api.counts";
 import { permalink } from "./routes/permalink";
 import { subscriptions } from "./routes/api.subscriptions";
 import { runDigest } from "./lib/digest";
 import { runModeratorDigest } from "./lib/moderator-digest";
+import { runDiscordDigest } from "./lib/discord-digest";
 import { runTelegramDigest } from "./lib/telegram-digest";
 import { runWebhookRetries } from "./lib/webhook";
 import { runIpRetention } from "./db/ip-retention";
@@ -95,6 +97,13 @@ export type Bindings = {
 	//                             one-tap t.me/<bot>?start=<code> deep link
 	//                             instead of manual /start instructions.
 	TELEGRAM_BOT_USERNAME?: string;
+	// Discord integration (optional; feature is off unless both are set).
+	//   DISCORD_BOT_TOKEN  — bot token; used for REST calls (post cards, edit
+	//                        messages, validate channels).
+	//   DISCORD_PUBLIC_KEY — application public key (hex); the /discord route
+	//                        verifies the Ed25519 signature on every interaction.
+	DISCORD_BOT_TOKEN?: string;
+	DISCORD_PUBLIC_KEY?: string;
 	// Anti-spam (all optional; each feature opts in when its env var is set).
 	SPAM_PROVIDER?: string;
 	AKISMET_API_KEY?: string;
@@ -374,6 +383,7 @@ app.route("/admin", admin);
 // Top-level (outside /api/*) so it bypasses corsAndCsrf + sessionMiddleware;
 // the route authenticates via the Telegram secret-token header instead.
 app.route("/telegram", telegram);
+app.route("/discord", discord);
 
 app.get("/", (c) =>
 	c.text(
@@ -428,6 +438,11 @@ export default {
 		ctx.waitUntil(
 			runTelegramDigest(env).catch((err) => {
 				log.error("scheduled.telegram_digest", { error: String(err) });
+			}),
+		);
+		ctx.waitUntil(
+			runDiscordDigest(env).catch((err) => {
+				log.error("scheduled.discord_digest", { error: String(err) });
 			}),
 		);
 		// Privacy retention. No-ops unless IP_HASH_RETENTION_DAYS (or its

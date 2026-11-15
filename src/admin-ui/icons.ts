@@ -33,6 +33,8 @@ const ICON_PATHS: Record<string, string> = {
 	copy: '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
 	telegram:
 		'<path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4Z"/>',
+	discord:
+		'<path d="M21 5a16 16 0 0 0-4-1l-.5 1a14 14 0 0 0-5 0L11 4a16 16 0 0 0-4 1C4.5 9 3.8 13 4 17a16 16 0 0 0 5 2l1-2"/><path d="M15 19a16 16 0 0 0 5-2c.3-4-.5-8-3-12"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/>',
 	chevron: '<polyline points="6 9 12 15 18 9"/>',
 };
 

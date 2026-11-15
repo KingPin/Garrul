@@ -26,7 +26,9 @@ const VAR_RE_SRC = "\\{(name|post|mod)\\}";
 /** The variables a saved reply may use, in the order the UI lists them. */
 export const REPLY_VARS = ["name", "post", "mod"] as const;
 
-export type ReplyVars = Partial<Record<(typeof REPLY_VARS)[number], string>>;
+export type ReplyVars = Partial<
+	Record<(typeof REPLY_VARS)[number], string | undefined>
+>;
 
 /** Resolve `{name}` / `{post}` / `{mod}` against `vars`. */
 export const applyReplyVars = (body: string, vars: ReplyVars): string =>

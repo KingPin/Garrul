@@ -18,6 +18,7 @@ const ADAPTERS: Array<{ value: string; label: string }> = [
 	{ value: "slack", label: "Slack incoming webhook" },
 	{ value: "discord", label: "Discord webhook" },
 	{ value: "telegram", label: "Telegram bot (chat id in URL field)" },
+	{ value: "discord_bot", label: "Discord bot (channel ID in URL field)" },
 ];
 
 const endpointRow = (e: WebhookEndpoint): string => {
@@ -200,7 +201,9 @@ export const renderWebhookForm = (data: WebhookFormData): string => {
         For the <strong>Telegram</strong> adapter, put the destination
         <code>chat id</code> here (e.g. <code>-1001234567890</code> or
         <code>@yourchannel</code>) — not a URL. The bot token comes from the
-        <code>TELEGRAM_BOT_TOKEN</code> secret.
+        <code>TELEGRAM_BOT_TOKEN</code> secret. For the <strong>Discord
+        bot</strong> adapter, put the <code>Channel ID</code> here; the bot posts
+        alerts with moderation buttons.
       </span>
     </p>
     ${
