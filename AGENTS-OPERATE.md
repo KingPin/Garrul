@@ -1451,7 +1451,12 @@ the strength of the migration alone.
 JSON the CLI prints and the operator card renders reports
 `pages_total` / `new_pages` for rows in `posts` and `comments_total` /
 `new_comments` for rows in `comments`, plus `new_users`,
-`skipped_deleted` and `skipped_spam`. Disqus calls a comment a "post"
+`skipped_deleted` and `skipped_spam`. `existing_comments` counts the
+comments an earlier run already imported and this one left untouched,
+so a re-run of the same export reads `new_comments: 0` with
+`existing_comments` equal to everything that went in the first time.
+Nothing is ever updated, which is why there is no "updated" counter.
+Disqus calls a comment a "post"
 and calls the page a "thread", which put `posts_total` (comments) next
 to `new_posts` (pages) in the same object; if you have a script
 parsing the old field names, that is the rename.
