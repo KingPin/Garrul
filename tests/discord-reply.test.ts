@@ -115,11 +115,11 @@ const base = (dc: string, over: Record<string, unknown> = {}) => ({
 	token: "tok",
 	application_id: "500000000000000001",
 	guild_id: GUILD,
-	member: { user: { id: dc, username: "uname", global_name: "Display" }, roles: [] as string[] },
+	member: { user: { id: dc, username: "testuser", global_name: "Display" }, roles: [] as string[] },
 	...over,
 });
 const asMod = (over: Record<string, unknown> = {}) =>
-	base(MOD_DC, { ...over, member: { user: { id: MOD_DC, username: "modu", global_name: "ModDisplay" }, roles: [MOD_ROLE] } });
+	base(MOD_DC, { ...over, member: { user: { id: MOD_DC, username: "testmod", global_name: "ModDisplay" }, roles: [MOD_ROLE] } });
 
 
 

@@ -105,13 +105,13 @@ const base = (dc: string, over: Record<string, unknown> = {}) => ({
 	token: "tok",
 	application_id: "500000000000000001",
 	guild_id: GUILD,
-	member: { user: { id: dc, username: "uname", global_name: "Display" }, roles: [] as string[] },
+	member: { user: { id: dc, username: "testuser", global_name: "Display" }, roles: [] as string[] },
 	...over,
 });
 const asMod = (over: Record<string, unknown> = {}) =>
-	base(MOD_DC, { ...over, member: { user: { id: MOD_DC, username: "modu", global_name: "ModDisplay" }, roles: [MOD_ROLE] } });
+	base(MOD_DC, { ...over, member: { user: { id: MOD_DC, username: "testmod", global_name: "ModDisplay" }, roles: [MOD_ROLE] } });
 const asAdmin = (over: Record<string, unknown> = {}) =>
-	base(ADMIN_DC, { ...over, member: { user: { id: ADMIN_DC, username: "admu", global_name: null }, roles: [ADMIN_ROLE] } });
+	base(ADMIN_DC, { ...over, member: { user: { id: ADMIN_DC, username: "testadmin", global_name: null }, roles: [ADMIN_ROLE] } });
 
 const command = (who: (o: Record<string, unknown>) => any, name: string, value?: string, optName = "id") =>
 	who({ type: 2, data: { name, options: value === undefined ? [] : [{ name: optName, value }] } });
@@ -394,7 +394,7 @@ describe("POST /discord/interactions", () => {
 		const cid = await seedComment("pending");
 		const OAUTH_DC = "300000000000000009";
 		const asOauth = (over: Record<string, unknown> = {}) =>
-			base(OAUTH_DC, { ...over, member: { user: { id: OAUTH_DC, username: "oa" }, roles: [] as string[] } });
+			base(OAUTH_DC, { ...over, member: { user: { id: OAUTH_DC, username: "testoauth" }, roles: [] as string[] } });
 		sqlite
 			.prepare(
 				"INSERT INTO users (id, provider, provider_id, name, role, is_admin, is_banned, created_at) VALUES ('01HOAUTHADMIN000000000000A', 'discord', ?, 'OA', 'admin', 1, 0, 1)",
@@ -423,7 +423,7 @@ describe("POST /discord/interactions", () => {
 		const cid = await seedComment("pending");
 		const r = await send(await modal(asAdmin, `g:bsub:${cid}`, "spammer"));
 		expect(r.json.type).toBe(7);
-		expect(r.json.data.content).toBe("Banned by admu");
+		expect(r.json.data.content).toBe("Banned by testadmin");
 		expect(isBanned(AUTHOR)).toBe(1);
 		const row = sqlite.prepare("SELECT reason FROM audit_log WHERE action = 'ban'").get() as any;
 		expect(row.reason).toBe("spammer");
