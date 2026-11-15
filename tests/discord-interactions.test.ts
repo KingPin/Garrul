@@ -297,7 +297,9 @@ describe("POST /discord/interactions", () => {
 
 	// Sends one interaction whose every D1 result waits until the defer timer has fired,
 	// then lets the work finish and returns the response plus the late webhook calls.
-	const sendSlow = async (body: unknown) => {
+	// With `latency`, the rate limiter's cache reads and the first D1 call each take
+	// that much fake time instead, and nothing else is slow.
+	const sendSlow = async (body: unknown, latency?: { limiterMs: number; dbMs: number }) => {
 		let open!: () => void;
 		const gate = new Promise<void>((r) => {
 			open = r;
@@ -309,7 +311,12 @@ describe("POST /discord/interactions", () => {
 					if (typeof v !== "function") return v;
 					return (...a: unknown[]) => {
 						const r = v.apply(t, a);
-						if (r instanceof Promise) return gate.then(() => r);
+						if (r instanceof Promise) {
+							if (!latency) return gate.then(() => r);
+							const ms = latency.dbMs;
+							latency.dbMs = 0;
+							return new Promise((ok) => setTimeout(ok, ms)).then(() => r);
+						}
 						return r && typeof r === "object" ? slow(r) : r;
 					};
 				},
@@ -318,6 +325,14 @@ describe("POST /discord/interactions", () => {
 		vi.spyOn(execCtx, "waitUntil").mockImplementation((p: Promise<unknown>) => void waits.push(p));
 		fetchMock.mockImplementation(async () => new Response("{}", { status: 200 }));
 		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+		if (latency) {
+			const cache = (globalThis as unknown as { caches: { default: Cache } }).caches.default;
+			const match = cache.match.bind(cache);
+			vi.spyOn(cache, "match").mockImplementation(async (...a) => {
+				await new Promise((r) => setTimeout(r, latency.limiterMs));
+				return match(...a);
+			});
+		}
 		try {
 			let res: Awaited<ReturnType<typeof send>> | undefined;
 			const p = send(body, { env: { ...env, DB: slow(env.DB) } as Bindings }).then((r) => {
@@ -333,7 +348,16 @@ describe("POST /discord/interactions", () => {
 			}
 			open();
 			await p;
-			await Promise.all(waits);
+			// Late work can still sit on fake timers (the `latency` delays).
+			let settled = false;
+			const all = Promise.all(waits).finally(() => {
+				settled = true;
+			});
+			while (!settled && Date.now() < deadline) {
+				await vi.advanceTimersByTimeAsync(500);
+				await new Promise((r) => setImmediate(r));
+			}
+			await all;
 			return { json: res?.json, calls: fetchMock.mock.calls as [string, RequestInit][] };
 		} finally {
 			open();
@@ -361,6 +385,20 @@ describe("POST /discord/interactions", () => {
 		expect(url).toBe("https://discord.com/api/v10/webhooks/500000000000000001/tok/messages/@original");
 		expect(init.method).toBe("PATCH");
 		expect(JSON.parse(init.body as string).content).toContain("**Stats**");
+	});
+
+	// Two limiter reads (2.2 s) plus one D1 read (0.4 s) pass the 2.5 s budget only
+	// together, so a defer timer started after the limiter would answer directly.
+	it("rate-limiter latency counts toward the defer deadline", async () => {
+		const cid = await seedComment("pending");
+		const { json, calls } = await sendSlow(await component(asMod, `g:approve:${cid}`), {
+			limiterMs: 1100,
+			dbMs: 400,
+		});
+		expect(json).toEqual({ type: 6 });
+		expect(commentStatus(cid)).toBe("approved");
+		expect(calls).toHaveLength(1);
+		expect(calls[0]?.[1].method).toBe("PATCH");
 	});
 
 	it("a slow ephemeral notice on a button goes out as a follow-up", async () => {

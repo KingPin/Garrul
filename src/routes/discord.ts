@@ -121,17 +121,19 @@ discord.post("/interactions", async (c) => {
 	// Anything but a command, component or modal submit: refuse before any lookup.
 	if (i.type !== 2 && i.type !== 3 && i.type !== 5) return c.json(ephemeral(MSG.unknown));
 
-	const uid = senderId(i);
-	if (uid) {
-		const rl = await checkRateLimit(c.req.url, `dc:${uid}`, {
-			scope: "discord",
-			config: OPBOT_RATE_LIMIT,
-			env: c.env,
-		});
-		if (!rl.ok) return c.json(ephemeral(MSG.slow));
-	}
-
-	const work = dispatch({ env: c.env, executionCtx: c.executionCtx, reqUrl: c.req.url }, i).catch((err) => {
+	// The rate limiter is inside `work` so its latency counts toward the deadline.
+	const work = (async (): Promise<Reply> => {
+		const uid = senderId(i);
+		if (uid) {
+			const rl = await checkRateLimit(c.req.url, `dc:${uid}`, {
+				scope: "discord",
+				config: OPBOT_RATE_LIMIT,
+				env: c.env,
+			});
+			if (!rl.ok) return ephemeral(MSG.slow);
+		}
+		return dispatch({ env: c.env, executionCtx: c.executionCtx, reqUrl: c.req.url }, i);
+	})().catch((err) => {
 		log.error("discord.handler", { error: String(err) });
 		return ephemeral("Something went wrong. Try again.");
 	});
