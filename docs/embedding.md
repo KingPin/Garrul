@@ -168,10 +168,16 @@ Parameters:
 - `format`: `json` for JSON Feed. Any other value, or none, serves Atom.
 - `site`: optional. A bare origin such as `https://blog.example.com`
   (scheme and host, plus a port only when it is not the default; no trailing
-  slash). It must equal an entry of `ALLOWED_ORIGINS`, otherwise the response
-  is `400 invalid site`. With `site`, only comments on that site's posts
+  slash), in the browser-serialized origin form (lowercase host). The value
+  and the `ALLOWED_ORIGINS` entry must both use that form. It must equal an
+  entry of `ALLOWED_ORIGINS`, otherwise the response is `400 invalid site`. With `site`, only comments on that site's posts
   appear and every entry links. Without it (or with an empty `site=`) the feed
   covers the whole install.
+
+On a single-origin install, omit `site`. The install-wide feed is the cheap
+query (about 50 index rows). A `?site=` cache miss reads all `posts` rows plus
+every comment on that site's posts. The build-time recipes skip items without
+a `url`, so they work without `site`.
 
 The feed holds the 50 newest approved comments. It is cached at the edge
 (`cache-control: public, max-age=300`). A comment change clears the cache in
