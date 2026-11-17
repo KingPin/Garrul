@@ -17,6 +17,11 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { feed } from "../src/routes/feed";
+import {
+	RECENT_BY_SLUGS_SQL,
+	listPostUrls,
+	listRecentApprovedComments,
+} from "../src/db/queries";
 import type { Bindings } from "../src/index";
 import { installMockCaches, uninstallMockCaches } from "./helpers/mock-caches";
 
@@ -236,6 +241,89 @@ describe("GET /feed/:slug — locale", () => {
 		(env as unknown as Record<string, unknown>).DEFAULT_LOCALE = "kl";
 		const xml = await (await fetchFeed()).text();
 		expect(xml).toContain('xml:lang="en"');
+	});
+});
+
+describe("recent-comments queries", () => {
+	const T0 = 1_700_000_000_000;
+	const db = () => makeD1(sqlite);
+
+	it("install-wide: approved only, newest first, capped at 50, null post fields for an orphan", async () => {
+		seedPost("https://blog.example/post");
+		for (let i = 0; i < 55; i++) {
+			seedComment(`U${i}`, `<p>${i}</p>`, { createdAt: T0 + i });
+		}
+		seedComment("Pend", "<p>p</p>", { status: "pending", createdAt: T0 + 100 });
+		seedComment("Spam", "<p>s</p>", { status: "spam", createdAt: T0 + 101 });
+		seedComment("Del", "<p>d</p>", { status: "deleted", createdAt: T0 + 102 });
+		// comments.post_slug references posts(slug); an orphan needs FKs off.
+		sqlite.exec("PRAGMA foreign_keys = OFF");
+		seedComment("Orph", "<p>o</p>", { slug: "orphan", createdAt: T0 + 200 });
+		sqlite.exec("PRAGMA foreign_keys = ON");
+
+		const rows = await listRecentApprovedComments(db(), 50, null);
+
+		expect(rows).toHaveLength(50);
+		const names = rows.map((r) => r.author_name);
+		expect(names).not.toContain("Pend");
+		expect(names).not.toContain("Spam");
+		expect(names).not.toContain("Del");
+		expect(names[0]).toBe("Orph");
+		expect(rows[0]).toMatchObject({ post_title: null, post_url: null });
+		expect(names[1]).toBe("U54");
+		expect(rows[1]).toMatchObject({
+			post_title: "A post",
+			post_url: "https://blog.example/post",
+		});
+		const times = rows.map((r) => r.created_at);
+		expect(times).toEqual([...times].sort((a, b) => b - a));
+	});
+
+	it("slug list: returns only comments on the given slugs", async () => {
+		seedPost("https://blog.example/a", "a");
+		seedPost("https://blog.example/b", "b");
+		seedPost("https://blog.example/c", "c");
+		seedComment("OnA", "<p>a</p>", { slug: "a", createdAt: T0 + 1 });
+		seedComment("OnB", "<p>b</p>", { slug: "b", createdAt: T0 + 2 });
+		seedComment("OnC", "<p>c</p>", { slug: "c", createdAt: T0 + 3 });
+		seedComment("PendA", "<p>p</p>", { slug: "a", status: "pending", createdAt: T0 + 4 });
+
+		const rows = await listRecentApprovedComments(db(), 50, ["a", "b"]);
+
+		expect(rows.map((r) => r.author_name).sort()).toEqual(["OnA", "OnB"]);
+	});
+
+	it("empty slug list returns [] without running a statement", async () => {
+		const noStatements = {
+			prepare: () => {
+				throw new Error("statement must not run");
+			},
+		} as unknown as D1Database;
+
+		expect(await listRecentApprovedComments(noStatements, 50, [])).toEqual([]);
+	});
+
+	it("listPostUrls: returns slug and url for every post with a non-null url", async () => {
+		seedPost("https://blog.example/one", "one");
+		seedPost(null, "no-url");
+		seedPost("https://blog.example/two", "two");
+
+		const rows = await listPostUrls(db());
+
+		expect([...rows].sort((x, y) => x.slug.localeCompare(y.slug))).toEqual([
+			{ slug: "one", url: "https://blog.example/one" },
+			{ slug: "two", url: "https://blog.example/two" },
+		]);
+	});
+
+	it("per-site statement stays on comments_post_idx", () => {
+		const plan = sqlite
+			.prepare(`EXPLAIN QUERY PLAN ${RECENT_BY_SLUGS_SQL}`)
+			.all(JSON.stringify(["a"]), 50)
+			.map((r) => (r as { detail: string }).detail)
+			.join("\n");
+		expect(plan).toContain("comments_post_idx");
+		expect(plan).not.toContain("comments_status_created_idx");
 	});
 });
 

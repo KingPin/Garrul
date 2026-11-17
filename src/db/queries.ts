@@ -1213,6 +1213,73 @@ export const listLatestApprovedComments = async (
 	return result.results ?? [];
 };
 
+export type RecentComment = {
+	id: string;
+	post_slug: string;
+	body_html: string;
+	created_at: number;
+	edited_at: number | null;
+	author_name: string;
+	post_title: string | null;
+	post_url: string | null;
+};
+
+const RECENT_INSTALL_SQL = `SELECT c.id, c.post_slug, c.body_html, c.created_at, c.edited_at,
+			        u.name AS author_name, p.title AS post_title, p.url AS post_url
+			   FROM comments c
+			   JOIN users u ON u.id = c.user_id
+			   LEFT JOIN posts p ON p.slug = c.post_slug
+			  WHERE c.status = 'approved'
+			  ORDER BY c.created_at DESC, c.id DESC
+			  LIMIT ?`;
+
+/**
+ * Per-site recent approved comments for the site feed. ?1 is a JSON array of
+ * slugs, ?2 the limit. The unary `+` on c.status keeps SQLite on
+ * comments_post_idx, as in listLatestApprovedComments. Cost: the index then
+ * reads every comment row on these posts (all statuses, spam included) and
+ * sorts. That is bounded by the site's total comment count, once per cache
+ * miss. If this shows up in production, an indexed per-site column on posts
+ * is the upgrade path.
+ */
+export const RECENT_BY_SLUGS_SQL = `SELECT c.id, c.post_slug, c.body_html, c.created_at, c.edited_at,
+			        u.name AS author_name, p.title AS post_title, p.url AS post_url
+			   FROM comments c
+			   JOIN users u ON u.id = c.user_id
+			   LEFT JOIN posts p ON p.slug = c.post_slug
+			  WHERE +c.status = 'approved'
+			    AND c.post_slug IN (SELECT value FROM json_each(?1))
+			  ORDER BY c.created_at DESC, c.id DESC
+			  LIMIT ?2`;
+
+/**
+ * Recent approved comments across the install (slugs null) or across the
+ * given slugs. An empty slug list returns [] without a statement.
+ */
+export const listRecentApprovedComments = async (
+	db: D1Database,
+	limit: number,
+	slugs: string[] | null,
+): Promise<RecentComment[]> => {
+	if (slugs !== null && slugs.length === 0) return [];
+	const stmt =
+		slugs === null
+			? db.prepare(RECENT_INSTALL_SQL).bind(limit)
+			: db.prepare(RECENT_BY_SLUGS_SQL).bind(JSON.stringify(slugs), limit);
+	const result = await stmt.all<RecentComment>();
+	return result.results ?? [];
+};
+
+/** Slug and public URL for every post that has one. */
+export const listPostUrls = async (
+	db: D1Database,
+): Promise<{ slug: string; url: string }[]> => {
+	const result = await db
+		.prepare("SELECT slug, url FROM posts WHERE url IS NOT NULL")
+		.all<{ slug: string; url: string }>();
+	return result.results ?? [];
+};
+
 /**
  * Approved comment counts for multiple slugs in one round-trip.
  * Returns a Map keyed by slug; missing/zero slugs are not present.
