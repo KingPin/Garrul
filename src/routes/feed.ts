@@ -20,8 +20,10 @@ import { getPost, listLatestApprovedComments } from "../db/queries";
 import { tFor } from "../i18n";
 import { resolveLocale } from "../i18n/negotiate";
 import { matchCache, putResponse, tryWaitUntil } from "../lib/response-cache";
+import { allowedPostUrl } from "../lib/cors";
 import { loadStrings } from "../lib/settings";
 import { feedCacheKey } from "../lib/tree-cache";
+import { commentAnchorId } from "../widget/permalink";
 
 const feed = new Hono<{ Bindings: Bindings }>();
 
@@ -61,21 +63,24 @@ const cdata = (html: string): string =>
 		.split("]]>")
 		.join("]]]]><![CDATA[>")}]]>`;
 
-// The feed's own links. `post.url` came from the widget's data-url attribute, so
-// re-check the scheme here the way permalink.ts does — an http(s) fallback keeps
-// a `javascript:` row from becoming a clickable link inside a feed reader.
-const safeLink = (url: string | null | undefined, fallback: string): string => {
-	if (!url) return fallback;
-	try {
-		const parsed = new URL(url);
-		if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
-			return fallback;
-		}
-	} catch {
-		return fallback;
-	}
-	return url;
+// Links to the host page come from `post.url`, which the widget took from its
+// data-url attribute. `allowedPostUrl` re-checks scheme and ALLOWED_ORIGINS, so
+// a stale or hostile row yields no link rather than a clickable one. Setting
+// `hash` replaces any fragment the page URL already carries.
+const commentLink = (
+	postUrl: string | null | undefined,
+	commentId: string,
+	allowedOrigins: string | undefined,
+): string | null => {
+	const safe = allowedPostUrl(postUrl, allowedOrigins);
+	if (!safe) return null;
+	const u = new URL(safe);
+	u.hash = commentAnchorId(commentId);
+	return u.toString();
 };
+
+const entryId = (host: string, row: { id: string; created_at: number }): string =>
+	`tag:${host},${new Date(row.created_at).toISOString().slice(0, 10)}:comment/${row.id}`;
 
 feed.get("/:slug", async (c) => {
 	const slug = c.req.param("slug");
@@ -99,7 +104,7 @@ feed.get("/:slug", async (c) => {
 
 	const reqUrl = new URL(c.req.url);
 	const feedSelf = `${reqUrl.protocol}//${reqUrl.host}/feed/${encodeURIComponent(slug)}`;
-	const postLink = safeLink(post?.url, feedSelf);
+	const postLink = allowedPostUrl(post?.url, c.env.ALLOWED_ORIGINS);
 	const title = t("feed.title", { title: post?.title ?? slug });
 	const updated =
 		comments[0] != null
@@ -108,16 +113,15 @@ feed.get("/:slug", async (c) => {
 
 	const entries = comments
 		.map((row) => {
-			const id = `tag:${reqUrl.host},${new Date(row.created_at).toISOString().slice(0, 10)}:comment/${row.id}`;
-			const permalink = `${postLink}${postLink.includes("#") ? "&" : "#"}garrul-comment-${row.id}`;
+			const id = entryId(reqUrl.host, row);
+			const link = commentLink(post?.url, row.id, c.env.ALLOWED_ORIGINS);
 			return `<entry>
   <id>${xmlEscape(id)}</id>
   <title>${xmlEscape(t("feed.entry_title", { author: row.author_name }))}</title>
   <author><name>${xmlEscape(row.author_name)}</name></author>
   <published>${new Date(row.created_at).toISOString()}</published>
   <updated>${new Date(row.edited_at ?? row.created_at).toISOString()}</updated>
-  <link rel="alternate" type="text/html" href="${xmlEscape(permalink)}"/>
-  <content type="html">${cdata(row.body_html)}</content>
+${link ? `  <link rel="alternate" type="text/html" href="${xmlEscape(link)}"/>\n` : ""}  <content type="html">${cdata(row.body_html)}</content>
 </entry>`;
 		})
 		.join("\n");
@@ -128,8 +132,7 @@ feed.get("/:slug", async (c) => {
   <title>${xmlEscape(title)}</title>
   <updated>${updated}</updated>
   <link rel="self" type="application/atom+xml" href="${xmlEscape(feedSelf)}"/>
-  <link rel="alternate" type="text/html" href="${xmlEscape(postLink)}"/>
-  <generator uri="https://github.com/KingPin/Garrul">Garrul</generator>
+${postLink ? `  <link rel="alternate" type="text/html" href="${xmlEscape(postLink)}"/>\n` : ""}  <generator uri="https://github.com/KingPin/Garrul">Garrul</generator>
   ${entries}
 </feed>`;
 

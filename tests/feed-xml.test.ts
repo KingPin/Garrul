@@ -52,13 +52,22 @@ let sqlite: DatabaseSync;
 let env: Bindings;
 let nextId = 0;
 
-const seedPost = (url: string | null) => {
+const seedPost = (url: string | null, slug = SLUG) => {
 	sqlite
 		.prepare("INSERT INTO posts (slug, title, url, created_at) VALUES (?, ?, ?, ?)")
-		.run(SLUG, "A post", url, 1_700_000_000_000);
+		.run(slug, "A post", url, 1_700_000_000_000);
 };
 
-const seedComment = (authorName: string, bodyHtml: string) => {
+const seedComment = (
+	authorName: string,
+	bodyHtml: string,
+	opts: {
+		slug?: string;
+		status?: string;
+		createdAt?: number;
+		editedAt?: number | null;
+	} = {},
+) => {
 	const uid = `01HU00000000000000000${nextId}`;
 	const cid = `01HC00000000000000000${nextId}`;
 	nextId++;
@@ -71,10 +80,19 @@ const seedComment = (authorName: string, bodyHtml: string) => {
 	sqlite
 		.prepare(
 			`INSERT INTO comments (id, post_slug, parent_id, user_id, body_md, body_html,
-			                       renderer_version, status, created_at, depth)
-			 VALUES (?, ?, NULL, ?, 'md', ?, 1, 'approved', ?, 1)`,
+			                       renderer_version, status, created_at, edited_at, depth)
+			 VALUES (?, ?, NULL, ?, 'md', ?, 1, ?, ?, ?, 1)`,
 		)
-		.run(cid, SLUG, uid, bodyHtml, 1_700_000_000_000);
+		.run(
+			cid,
+			opts.slug ?? SLUG,
+			uid,
+			bodyHtml,
+			opts.status ?? "approved",
+			opts.createdAt ?? 1_700_000_000_000,
+			opts.editedAt ?? null,
+		);
+	return cid;
 };
 
 const fetchFeed = () =>
@@ -99,7 +117,12 @@ beforeEach(() => {
 		put: async () => {},
 		delete: async () => {},
 	};
-	env = { DB: makeD1(sqlite), ENV: "dev", TREE_CACHE: kv } as unknown as Bindings;
+	env = {
+		DB: makeD1(sqlite),
+		ENV: "dev",
+		TREE_CACHE: kv,
+		ALLOWED_ORIGINS: "https://blog.example",
+	} as unknown as Bindings;
 });
 
 describe("GET /feed/:slug — XML well-formedness", () => {
@@ -153,16 +176,27 @@ describe("GET /feed/:slug — XML well-formedness", () => {
 		);
 	});
 
-	it("does not emit a javascript: post URL as a link", async () => {
-		// posts.url came from the widget's data-url attribute. The write path
-		// validates the scheme now, but a row from an earlier version may not.
-		seedPost("javascript:alert(1)");
-		seedComment("Bob", "<p>hi</p>");
+	const alternates = (xml: string) => xml.match(/rel="alternate"[^>]*>/g) ?? [];
 
+	it.each([["javascript:alert(1)"], ["https://evil.example/post"], [null]])(
+		"emits no alternate link for post URL %s",
+		async (url) => {
+			seedPost(url);
+			seedComment("Bob", "<p>hi</p>");
+			const xml = await (await fetchFeed()).text();
+			expect(alternates(xml)).toEqual([]);
+			expect(xml).toContain('rel="self"');
+			expect(xml).not.toContain("javascript:");
+			expect(xml).not.toContain("evil.example");
+		},
+	);
+
+	it("replaces an existing fragment with the comment anchor", async () => {
+		seedPost("https://blog.example/post#section");
+		const id = seedComment("Bob", "<p>hi</p>");
 		const xml = await (await fetchFeed()).text();
-		expect(xml).not.toContain("javascript:");
-		// Falls back to the feed's own URL rather than dropping the link element.
-		expect(xml).toContain(`/feed/${SLUG}`);
+		expect(xml).toContain(`href="https://blog.example/post#garrul-comment-${id}"`);
+		expect(xml).not.toContain("&amp;garrul-comment-");
 	});
 
 	it("keeps a valid http(s) post URL", async () => {
