@@ -511,6 +511,10 @@ resort, not the default: every click of `/c/:id` is a Worker
 invocation against the 100,000 requests/day free tier, where the
 host-page anchor costs nothing.
 
+The widget reveals the target on mount and on `hashchange`: it pages
+forward (at most 10 extra `/api/v1/comments` requests) until the comment
+renders, and expands any collapsed or capped reply branch that holds it.
+
 It is also the rung with the most ways to miss, and the failure is
 always a 404 or a link that lands nowhere rather than a wrong comment.
 `/c/:id` 404s when the post has no `url` on file, when that URL fails

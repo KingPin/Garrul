@@ -65,7 +65,14 @@ import {
 	synthesizePosted,
 	topLevelPlacement,
 } from "./comment-node";
-import { commentAnchorId, commentHref, commentIdFromHash } from "./permalink";
+import {
+	commentAnchorId,
+	commentHref,
+	commentIdFromHash,
+	MAX_SEEK_PAGES,
+	seekComment,
+	subtreeHas,
+} from "./permalink";
 import {
 	type EditWindowState,
 	TICK_MS,
@@ -2620,8 +2627,12 @@ const replyMountFor = (
 	const container = el("div", "gr-replies");
 	// Per-comment collapse toggle; auto-collapsed when this node is nested
 	// at/deeper than the configured depth (0 = never auto-collapse).
+	// A branch holding the permalink target never starts collapsed.
+	const target = commentIdFromHash(window.location.hash);
 	const startCollapsed =
-		ctx.autoCollapseDepth > 0 && n.depth >= ctx.autoCollapseDepth;
+		ctx.autoCollapseDepth > 0 &&
+		n.depth >= ctx.autoCollapseDepth &&
+		!(target && n.replies.some((r) => subtreeHas(r, target)));
 	const toggle = buildCollapseToggle(
 		container,
 		countDescendants(n),
@@ -2648,7 +2659,14 @@ const renderReplyList = (
 	ctx: WidgetCtx,
 ): void => {
 	const limit = ctx.repliesPerThread;
-	const initial = limit > 0 && replies.length > limit ? limit : replies.length;
+	// A permalink target past the cap shows every reply: the target must be in
+	// the DOM, and splitting the list around it would hide its siblings oddly.
+	const target = commentIdFromHash(window.location.hash);
+	const showAll =
+		target !== null &&
+		replies.slice(limit).some((r) => subtreeHas(r, target));
+	const initial =
+		limit > 0 && replies.length > limit && !showAll ? limit : replies.length;
 	for (let i = 0; i < initial; i++) {
 		container.appendChild(buildThread(replies[i]!, ctx));
 	}
@@ -3252,6 +3270,9 @@ const loadState = new WeakMap<
 		// revealed for this root — see revealHashTarget below. `null` until a
 		// hash reveal has succeeded at least once.
 		revealedHash: string | null;
+		// Fetches and appends the next top-level page; resolves true when a
+		// page was appended. Never rejects. `null` when no page is left.
+		loadNext: (() => Promise<boolean>) | null;
 	}
 >();
 
@@ -3263,7 +3284,13 @@ const load = async (
 ): Promise<void> => {
 	let st = loadState.get(root);
 	if (!st) {
-		st = { running: false, queued: false, sort: null, revealedHash: null };
+		st = {
+			running: false,
+			queued: false,
+			sort: null,
+			revealedHash: null,
+			loadNext: null,
+		};
 		loadState.set(root, st);
 		// Wire the permalink reveal to same-document fragment navigations here
 		// rather than in init(): a naive addEventListener at the reveal's own
@@ -3275,7 +3302,7 @@ const load = async (
 		// finds it already there), so piggybacking here gets "exactly one
 		// listener per mount" for free, with no second WeakSet just to
 		// remember whether one was already bound.
-		window.addEventListener("hashchange", () => revealHashTarget(root));
+		window.addEventListener("hashchange", () => void seekHashTarget(root));
 	}
 	if (st.running) {
 		st.queued = true;
@@ -3367,8 +3394,9 @@ const focusPostedComment = (root: ShadowRoot, id: string): boolean => {
  * reach into the shadow root to act on itself.
  *
  * Silent no-op when the hash isn't one of ours, or when it is but the
- * comment isn't in the rendered tree — a hash for another page, or one that
- * hasn't loaded yet, must never surface as an error.
+ * comment isn't in the rendered tree — a hash for another page must never
+ * surface as an error. Callers that want an unloaded target fetched first use
+ * `seekHashTarget`, which pages until the target renders and then calls this.
  *
  * Reveals a given hash at most once per root. Scrolling alone was harmless
  * on every reload, because the re-render was already resetting scroll
@@ -3408,6 +3436,26 @@ const revealHashTarget = (root: ShadowRoot): boolean => {
 	// as revealed, so a later Load More or reload can still catch it.
 	if (st) st.revealedHash = anchorId;
 	return true;
+};
+
+/**
+ * Page forward (at most MAX_SEEK_PAGES) until the hash target is in the DOM,
+ * then reveal it. A target in a collapsed or capped reply list is already
+ * rendered open (see replyMountFor / renderReplyList), so only top-level
+ * paging is needed here. An unknown id costs at most MAX_SEEK_PAGES requests.
+ */
+const seekHashTarget = async (root: ShadowRoot): Promise<void> => {
+	const id = commentIdFromHash(window.location.hash);
+	if (!id) return;
+	await seekComment(
+		() => {
+			if (!root.getElementById(commentAnchorId(id))) return false;
+			revealHashTarget(root);
+			return true;
+		},
+		() => loadState.get(root)?.loadNext?.() ?? null,
+		MAX_SEEK_PAGES,
+	);
 };
 
 /** The order the rendered page is actually in; see `loadState`'s `sort`. */
@@ -4006,12 +4054,14 @@ const loadOnce = async (
 
 	wrap.appendChild(list);
 
+	const loadSt = loadState.get(root);
+	if (loadSt) loadSt.loadNext = null;
 	if (data.next_cursor) {
 		const more = el("button", "gr-loadmore", s("w.load_more"));
 		more.type = "button";
 		let cursor: string | null = data.next_cursor;
-		more.addEventListener("click", async () => {
-			if (!cursor) return;
+		const loadNext = async (): Promise<boolean> => {
+			if (!cursor || more.disabled) return false;
 			more.disabled = true;
 			try {
 				const page = await fetchPage(apiBase, slug, cursor, activeSort);
@@ -4021,7 +4071,9 @@ const loadOnce = async (
 					more.disabled = false;
 				} else {
 					more.remove();
+					if (loadSt?.loadNext === loadNext) loadSt.loadNext = null;
 				}
+				return true;
 			} catch (err) {
 				more.disabled = false;
 				const errBox = el(
@@ -4030,8 +4082,11 @@ const loadOnce = async (
 					s("w.load_more_failed", { detail: String(err) }),
 				);
 				more.insertAdjacentElement("afterend", errBox);
+				return false;
 			}
-		});
+		};
+		more.addEventListener("click", () => void loadNext());
+		if (loadSt) loadSt.loadNext = loadNext;
 		wrap.appendChild(more);
 	}
 
@@ -4065,7 +4120,9 @@ const loadOnce = async (
 	//      restoring a hash target they may have long since read past;
 	//   2. otherwise an unrevealed hash target (see revealHashTarget's own
 	//      once-per-hash guard) — covers mount, and any reload while a
-	//      permalink's hash is still set and hasn't been shown yet;
+	//      permalink's hash is still set and hasn't been shown yet. This
+	//      seeks: it pages forward (seekHashTarget) when the target is not on
+	//      the first page;
 	//   3. otherwise nothing; focus is left alone.
 	// Read-then-delete rather than a plain read: this is also what makes the
 	// mechanism correct under the queued-reload race in load() above. If a
@@ -4121,7 +4178,7 @@ const loadOnce = async (
 			}, 0);
 		}
 	} else {
-		revealHashTarget(root);
+		void seekHashTarget(root);
 	}
 
 	// Mint the form-timing token on the reader's first focus anywhere in the
