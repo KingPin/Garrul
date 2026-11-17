@@ -295,6 +295,17 @@ describe("recent-comments queries", () => {
 		expect(rows.map((r) => r.author_name).sort()).toEqual(["OnA", "OnB"]);
 	});
 
+	it("ties on created_at break by id DESC", async () => {
+		seedPost("https://blog.example/post");
+		const first = seedComment("First", "<p>1</p>", { createdAt: T0 });
+		const second = seedComment("Second", "<p>2</p>", { createdAt: T0 });
+		expect(second > first).toBe(true);
+
+		const rows = await listRecentApprovedComments(db(), 50, null);
+
+		expect(rows.map((r) => r.id)).toEqual([second, first]);
+	});
+
 	it("empty slug list returns [] without running a statement", async () => {
 		const noStatements = {
 			prepare: () => {
@@ -403,9 +414,10 @@ describe("GET /feed — site-wide recent comments", () => {
 		expect(names(xml).sort()).toEqual(["B0", "B1", "B2"]);
 		expect(xml).toContain('rel="alternate" type="text/html" href="https://blog.example"');
 
-		// An allowed origin with no posts: empty feed.
+		// The busy site is capped at 50 entries.
 		const empty = await fetchSiteFeed("?site=https://other.example");
 		expect(names(await empty.text())).toHaveLength(50);
+		// An allowed origin with no posts: empty feed.
 		sqlite.exec("DELETE FROM comments WHERE post_slug = 'b'");
 		sqlite.exec("DELETE FROM posts WHERE slug = 'b'");
 		cache.store.clear();
