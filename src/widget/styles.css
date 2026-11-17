@@ -970,3 +970,10 @@ button:active:not([disabled]) { opacity: 0.75; }
    target without moving the line it sits on. 6px each side clears 24px total
    at the 0.8em footer size. */
 .gr-attribution a { padding-block: 6px; }
+/* Touch screens: WCAG 2.5.5 (AAA) asks for 44px targets, and a reader reported
+   misclicking Report next to Reply on a phone. Coarse pointers only, so the
+   desktop layout stays as it is. */
+@media (pointer: coarse) {
+	.gr-actions { column-gap: 1.25rem; }
+	.gr-actions button { min-height: 44px; }
+}
