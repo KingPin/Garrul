@@ -159,7 +159,7 @@ import {
 	textMax,
 	TEXT_KEYS,
 } from "../lib/settings";
-import { bustTreeCache } from "../lib/tree-cache";
+import { bustSiteFeeds, bustTreeCache } from "../lib/tree-cache";
 import { MAX_REPLY_DEPTH } from "../lib/tree";
 import {
 	renderWebhookForm,
@@ -1976,8 +1976,9 @@ admin.post("/api/comments/bulk", async (c) => {
 	});
 	const touched = rows.map((r) => r.id);
 	for (const slug of new Set(rows.map((r) => r.post_slug))) {
-		await bustTreeCache(c.env, c.req.url, slug);
+		await bustTreeCache(c.env, c.req.url, slug, undefined, { siteFeeds: false });
 	}
+	if (rows.length) await bustSiteFeeds(c.env, c.req.url);
 	const webhookEvent: WebhookEvent | null =
 		newStatus === "approved"
 			? "comment.approved"

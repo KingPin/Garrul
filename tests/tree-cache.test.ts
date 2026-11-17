@@ -8,7 +8,7 @@
  * the user-visible path.
  */
 import { describe, it, expect, afterEach } from "vitest";
-import { bustTreeCache, feedCacheKey, treeCacheKey } from "../src/lib/tree-cache";
+import { bustTreeCache, feedCacheKey, siteFeedCacheKey, treeCacheKey } from "../src/lib/tree-cache";
 import { COMMENT_SORTS } from "../src/db/queries";
 import { installMockCaches, uninstallMockCaches } from "./helpers/mock-caches";
 import type { Bindings } from "../src/index";
@@ -132,6 +132,59 @@ describe("bustTreeCache", () => {
 		await expect(bustTreeCache(badEnv, REQ_URL, "hello")).resolves.toBeUndefined();
 		// Page size unknown → no tree page dropped; the feed key needs none.
 		expect(cache.store.has(treeCacheKey(REQ_URL, "hello", "new", 25).url)).toBe(true);
+		expect(cache.store.has(feedCacheKey(REQ_URL, "hello").url)).toBe(false);
+	});
+});
+
+describe("bustTreeCache — site feeds", () => {
+	const ORIGINS = ["https://blog.example", "https://other.example"];
+	const siteKeys = () =>
+		(["atom", "json"] as const).flatMap((f) =>
+			["", ...ORIGINS].map((site) => siteFeedCacheKey(REQ_URL, f, site).url),
+		);
+	const withOrigins = (e: Bindings): Bindings =>
+		({ ...e, ALLOWED_ORIGINS: ORIGINS.join(",") }) as Bindings;
+	const seed = () => {
+		const cache = installMockCaches();
+		for (const u of siteKeys()) cache.store.set(u, new Response("x"));
+		return cache;
+	};
+
+	it("drops every site-feed key", async () => {
+		const cache = seed();
+		await bustTreeCache(withOrigins(env(25)), REQ_URL, "hello");
+		expect(siteKeys()).toHaveLength(6);
+		for (const u of siteKeys()) expect(cache.store.has(u)).toBe(false);
+	});
+
+	it("drops them even when the page size can't be resolved", async () => {
+		const cache = seed();
+		const badEnv = withOrigins({
+			TREE_CACHE: { get: async () => null, put: async () => {} },
+			DB: {
+				prepare: () => ({
+					bind() {
+						return this;
+					},
+					all: async () => {
+						throw new Error("d1 down");
+					},
+				}),
+			},
+		} as unknown as Bindings);
+		await bustTreeCache(badEnv, REQ_URL, "hello");
+		for (const u of siteKeys()) expect(cache.store.has(u)).toBe(false);
+	});
+
+	it("keeps them with siteFeeds:false but still drops tree and feed keys", async () => {
+		const cache = seed();
+		cache.store.set(treeCacheKey(REQ_URL, "hello", "new", 25).url, new Response("{}"));
+		cache.store.set(feedCacheKey(REQ_URL, "hello").url, new Response("<feed/>"));
+		await bustTreeCache(withOrigins(env(25)), REQ_URL, "hello", undefined, {
+			siteFeeds: false,
+		});
+		for (const u of siteKeys()) expect(cache.store.has(u)).toBe(true);
+		expect(cache.store.has(treeCacheKey(REQ_URL, "hello", "new", 25).url)).toBe(false);
 		expect(cache.store.has(feedCacheKey(REQ_URL, "hello").url)).toBe(false);
 	});
 });

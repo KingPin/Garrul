@@ -15,6 +15,7 @@
  * or a same-colo drop) and within the TTL to other readers — the prior
  * "best-effort; a brief stale first page is acceptable" contract.
  */
+import { parseAllowedOrigins } from "./cors";
 import { cacheKey, dropCache } from "./response-cache";
 import { loadNumbers, type ResolvedNumbers } from "./settings";
 import { COMMENT_SORTS, type CommentSort } from "../db/queries";
@@ -70,8 +71,26 @@ export const siteFeedCacheKey = (
 ): Request => cacheKey(reqUrl, "feed-site", { format, site });
 
 /**
+ * Drop every site-wide feed key (atom + json, install-wide plus one per
+ * allowed origin) in the handling colo. Never rejects. Bulk callers use this
+ * once per operation instead of once per slug.
+ */
+export const bustSiteFeeds = async (
+	env: Bindings,
+	reqUrl: string,
+): Promise<void> => {
+	const sites = ["", ...parseAllowedOrigins(env.ALLOWED_ORIGINS)];
+	await Promise.all(
+		(["atom", "json"] as const).flatMap((format) =>
+			sites.map((site) => dropCache(siteFeedCacheKey(reqUrl, format, site))),
+		),
+	);
+};
+
+/**
  * Drop a slug's cached first pages and its feed (every sort, current page size) in the
- * handling colo. Best-effort: never rejects, because every comment mutation
+ * handling colo. Also drops the site-wide feeds unless `opts.siteFeeds` is
+ * false (reactions, and bulk loops that call `bustSiteFeeds` once). Best-effort: never rejects, because every comment mutation
  * awaits it on the user-visible path. Resolving the page size needs a settings
  * read; if that fails we skip the drop and let the TTL expire the entry.
  * `reqUrl` (the mutation's `c.req.url`) keys the deletes on the same Worker
@@ -88,10 +107,14 @@ export const bustTreeCache = async (
 	reqUrl: string,
 	slug: string,
 	resolved?: ResolvedNumbers,
+	opts: { siteFeeds?: boolean } = {},
 ): Promise<void> => {
-	// The feed key has no page size, so it is dropped even when the settings
-	// read below fails.
-	const feed = dropCache(feedCacheKey(reqUrl, slug));
+	// The feed keys have no page size, so they are dropped even when the
+	// settings read below fails.
+	const feed = Promise.all([
+		dropCache(feedCacheKey(reqUrl, slug)),
+		opts.siteFeeds === false ? undefined : bustSiteFeeds(env, reqUrl),
+	]);
 	const numbers = resolved ?? (await loadNumbers(env).catch(() => null));
 	if (!numbers) {
 		await feed;

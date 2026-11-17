@@ -19,6 +19,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { admin } from "../src/routes/admin";
 import { installMockCaches, uninstallMockCaches } from "./helpers/mock-caches";
+import { siteFeedCacheKey } from "../src/lib/tree-cache";
 import type { Bindings } from "../src/index";
 
 const MIGRATIONS_DIR = join(__dirname, "../src/db/migrations");
@@ -73,6 +74,7 @@ const OTHER_COMMENT = "01HCOTHER00000000000000CO";
 const TARGET_EMAIL = "target@example.com";
 const IP = "hash-of-target-ip";
 
+let cache: ReturnType<typeof installMockCaches>;
 let sqlite: DatabaseSync;
 let env: Bindings;
 let sessionStore: Map<string, string>;
@@ -123,7 +125,7 @@ const makeKv = () => {
 };
 
 beforeEach(() => {
-	installMockCaches();
+	cache = installMockCaches();
 	sqlite = new DatabaseSync(":memory:");
 	for (const file of readdirSync(MIGRATIONS_DIR)
 		.filter((f) => f.endsWith(".sql"))
@@ -565,5 +567,38 @@ describe("POST /admin/api/users/:id/erase — guards", () => {
 			target: "01HNOBODY000000000000NOB",
 		});
 		expect(res.status).toBe(404);
+	});
+});
+
+describe("POST /admin/api/users/:id/erase — site-feed busts", () => {
+	it("drops each site-feed key exactly once for comments on 3 posts", async () => {
+		const origins = ["https://blog.example", "https://other.example"];
+		(env as unknown as Record<string, unknown>).ALLOWED_ORIGINS = origins.join(",");
+		const insPost = sqlite.prepare(
+			"INSERT INTO posts (slug, title, url, created_at) VALUES (?, 'T', NULL, 1)",
+		);
+		const insComment = sqlite.prepare(
+			`INSERT INTO comments (id, post_slug, parent_id, user_id, body_md, body_html,
+			                       renderer_version, status, created_at, depth)
+			 VALUES (?, ?, NULL, ?, 'x', '<p>x</p>', 1, 'approved', 1, 1)`,
+		);
+		for (const slug of ["p2", "p3"]) {
+			insPost.run(slug);
+			insComment.run(`c-${slug}`, slug, TARGET_ID);
+		}
+		const deletes = new Map<string, number>();
+		const real = cache.delete.bind(cache);
+		cache.delete = async (req) => {
+			const u = typeof req === "string" ? req : req.url;
+			deletes.set(u, (deletes.get(u) ?? 0) + 1);
+			return real(req);
+		};
+		const res = await erase({ confirm: "ERASE", redact_bodies: false });
+		expect(res.status).toBe(200);
+		const keys = (["atom", "json"] as const).flatMap((f) =>
+			["", ...origins].map((s) => siteFeedCacheKey("http://localhost/", f, s).url),
+		);
+		expect(keys).toHaveLength(6);
+		for (const k of keys) expect(deletes.get(k)).toBe(1);
 	});
 });

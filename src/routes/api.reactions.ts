@@ -95,7 +95,9 @@ reactions.post("/", async (c) => {
 	}
 
 	// Bust the cached first page so reaction counts reflect immediately.
-	await bustTreeCache(c.env, c.req.url, comment.post_slug);
+	await bustTreeCache(c.env, c.req.url, comment.post_slug, undefined, {
+		siteFeeds: false,
+	});
 
 	writeEvent(c.env.ANALYTICS, "reaction.toggled", {
 		post_slug: comment.post_slug,
