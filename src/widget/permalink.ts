@@ -91,3 +91,39 @@ export const commentHref = (id: string, ctx: PermalinkCtx): string => {
 
 	return `${ctx.apiBase.replace(/\/+$/, "")}/c/${id}`;
 };
+
+/**
+ * Upper bound on extra list pages a permalink visit may fetch while it looks
+ * for its target. Each page is one billed Worker request on the 100,000/day
+ * free tier, so a single permalink visit may cost at most this many extra.
+ */
+export const MAX_SEEK_PAGES = 10;
+
+type ThreadLike = { id: string; replies: readonly ThreadLike[] };
+
+/** True when `node` or any descendant has `id`. Structural type: no TreeNode import. */
+export const subtreeHas = (node: ThreadLike, id: string): boolean =>
+	node.id === id || node.replies.some((r) => subtreeHas(r, id));
+
+/**
+ * Call `reveal()`; if false, call `next()` and retry, up to `maxPages` calls of
+ * `next`. Stops early when `next()` returns null (no more pages) or resolves
+ * false (fetch failed). Resolves whether the target was revealed.
+ *
+ * `reveal` is checked before any paging, so a target already on screen costs
+ * no request. The page budget is spent only on `next` calls.
+ */
+export const seekComment = async (
+	reveal: () => boolean,
+	next: () => Promise<boolean> | null,
+	maxPages: number,
+): Promise<boolean> => {
+	if (reveal()) return true;
+	for (let i = 0; i < maxPages; i++) {
+		const more = next();
+		if (more === null) return false;
+		if (!(await more)) return false;
+		if (reveal()) return true;
+	}
+	return false;
+};
