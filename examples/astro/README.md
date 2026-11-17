@@ -99,7 +99,8 @@ const recent = items.filter((i) => i.url).slice(0, 5);
 const excerpt = (html: string) =>
   html
     .replace(/<[^>]*>/g, " ")
-    .replace(/&(#39|quot|lt|gt|amp);/g, (_, e) => ({ "#39": "'", quot: '"', lt: "<", gt: ">", amp: "&" })[e])
+    .replace(/&(#39|quot|lt|gt|amp);/g, (_: string, e: string) =>
+      ({ "#39": "'", quot: '"', lt: "<", gt: ">", amp: "&" } as Record<string, string>)[e])
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 100);
