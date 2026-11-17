@@ -67,3 +67,55 @@ In `_layouts/post.html`, at the bottom of `<article>`:
 - For local dev (`jekyll serve` on `http://localhost:4000`), either
   override `site.garrul.api` in `_config.dev.yml` or add the dev origin
   to `ALLOWED_ORIGINS`.
+
+## Recent comments list (build time)
+
+Garrul serves a site-wide feed at `GET /feed`. This recipe shows the newest
+comments on your home page or sidebar without loading the widget there. It
+runs as a step before `jekyll build`, so it works in safe mode (GitHub Actions
+builds) and needs no `_plugins`. The step needs `curl` and `jq`, both present
+on GitHub-hosted runners.
+
+The feed stays outside the Worker's `/api/*` Origin gate, so a build step with
+no `Origin` header can read it. `site` must be an origin listed in
+`ALLOWED_ORIGINS`, written without a trailing slash.
+
+Run this before `jekyll build` (for example as a workflow step):
+
+```bash
+FEED="https://comments.example.com/feed?format=json&site=https%3A%2F%2Fblog.example.com"
+mkdir -p _data
+if curl --fail --silent --show-error --max-time 10 -o feed.tmp "$FEED" \
+  && jq -e '.items | type == "array"' feed.tmp > /dev/null; then
+  mv feed.tmp _data/recent_comments.json
+else
+  echo "warning: recent comments unavailable, building without them" >&2
+  echo '{"items":[]}' > _data/recent_comments.json
+fi
+rm -f feed.tmp
+```
+
+A network error, a non-2xx status or a body that is not JSON with an `items`
+array all write `{"items":[]}` and the build continues.
+
+Render it where you want the list:
+
+{% raw %}
+```liquid
+{% assign recent = site.data.recent_comments.items | where_exp: "i", "i.url" | slice: 0, 5 %}
+{% if recent.size > 0 %}
+<ul class="recent-comments">
+  {% for c in recent %}
+  <li>
+    <a href="{{ c.url }}">{{ c._garrul.post_title | default: c.title | escape }}</a>
+    <span>{{ c.authors[0].name | escape }}: {{ c.content_html | strip_html | truncate: 100 }}</span>
+  </li>
+  {% endfor %}
+</ul>
+{% endif %}
+```
+{% endraw %}
+
+The list refreshes only when the site rebuilds. Add a scheduled CI rebuild
+(for example a daily `schedule:` cron in the workflow) to keep it current.
+Add `_data/recent_comments.json` to `.gitignore` if the step runs in CI.
