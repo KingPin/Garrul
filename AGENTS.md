@@ -781,7 +781,7 @@ Inside any composer — top-level, reply, or edit:
 | Keys                 | Does                                            |
 | -------------------- | ----------------------------------------------- |
 | `Cmd`/`Ctrl` + `Enter` | Posts the form you are in.                    |
-| `Escape`             | Closes a reply or edit box, discarding its draft. The top-level composer has nothing to back out to and ignores it. |
+| `Escape`             | Closes a reply or edit box. A reply keeps its draft and reopens with it; an edit discards its changes. The top-level composer has nothing to back out to and ignores it. |
 
 Bound on the form, so they work from the name and email fields too, not
 just the textarea. Both are suppressed while an IME composition is

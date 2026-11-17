@@ -2295,11 +2295,11 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	}
 
 	// Escape and the Cancel button are the same act, so they run the same
-	// teardown — dropping the draft, disposing the Turnstile gate and removing
-	// the form. An Escape that only hid the box would leak the gate's global
-	// message listener for the rest of the page's life.
+	// teardown: disposing the Turnstile gate and removing the form. An Escape
+	// that only hid the box would leak the gate's global message listener for
+	// the rest of the page's life. The draft survives a cancel, so reopening
+	// Reply restores it; a successful post clears it (see the submit path).
 	const dismiss = (): void => {
-		clearDraft(dkey);
 		tsGate?.dispose();
 		tsHandle?.destroy();
 		wrap.remove();
