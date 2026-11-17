@@ -84,10 +84,13 @@ Not KV, and never backed up. Four users:
   (`src/lib/response-cache.ts:133`), and busted per slug on write, on
   moderation, and on erasure (`src/lib/moderation.ts:224-226`). Nothing here is
   more exposed than the page a reader already sees.
-- **Atom feeds** — the latest 50 approved comments per post, with bodies and
-  author display names, for 5 minutes (`src/routes/feed.ts`). Dropped with the
-  slug's tree pages by the same bust, so erasure and moderation clear it in
-  the handling colo.
+- **Feeds** — the latest 50 approved comments per post (`/feed/:slug`, Atom),
+  and install-wide or per allowed origin (`/feed`, Atom or JSON Feed), with
+  bodies and author display names, for 5 minutes (`src/routes/feed.ts`). The
+  JSON Feed is served with `Access-Control-Allow-Origin: *`; it carries
+  nothing the public pages don't. Every comment mutation drops the post's feed
+  with its tree pages and the site-wide feeds with `bustSiteFeeds`, so erasure
+  and moderation clear them in the handling colo.
 - **Comment permalinks** — the `/c/:id` redirect target (the post URL plus an
   anchor), for 5 minutes (`src/routes/permalink.ts`). No personal data.
 - **Rate-limit counters** — keyed by identity: `user:<id>` for a signed-in

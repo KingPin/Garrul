@@ -79,9 +79,10 @@ get a seamless experience. Bouncers cost you nothing.
 
 - **Crawler visibility of comment bodies.** Search engines and AI
   crawlers don't scroll, so the comments tree won't be in the rendered
-  HTML they see. Garrul mitigates this with two independent surfaces
-  that *are* always crawlable: the per-post RSS feed (`/feed/:slug`)
-  and the per-comment permalinks (`/c/:id`). If you care strongly about
+  HTML they see. Garrul mitigates this with surfaces that *are* always
+  crawlable: the per-post feed (`/feed/:slug`), the site-wide
+  recent-comments feed (`/feed`), and the per-comment permalinks
+  (`/c/:id`). If you care strongly about
   comment content being indexed inline with the post, skip lazy-loading
   on that page.
 - **Above-the-fold widgets.** Don't use this pattern if the comments
