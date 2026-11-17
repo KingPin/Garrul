@@ -3469,6 +3469,16 @@ const revealHashTarget = (root: ShadowRoot): boolean => {
 	if (st?.revealedHash === anchorId) return false;
 	const target = root.getElementById(anchorId);
 	if (!target) return false;
+	// A target inside an auto-collapsed branch is in the DOM but display:none,
+	// so scroll and focus would do nothing. Open each branch that holds it.
+	for (
+		let a = target.parentElement?.closest<HTMLElement>(".gr-thread") ?? null;
+		a;
+		a = a.parentElement?.closest<HTMLElement>(".gr-thread") ?? null
+	) {
+		const mount = replyMounts.get(a);
+		if (mount?.container.contains(target)) mount.reveal();
+	}
 	// The CSS half of the reduced-motion promise lives in styles.css; scroll
 	// behavior is set here, so it has to be honored here too. `matchMedia` is
 	// guarded because the widget also runs under the iframe route and in test
@@ -3485,7 +3495,7 @@ const revealHashTarget = (root: ShadowRoot): boolean => {
 	focusPostedComment(root, id);
 	// Record only on success: a hash pointing at a comment that hasn't
 	// rendered yet (paged thread, or a reload still in flight) must not count
-	// as revealed, so a later Load More or reload can still catch it.
+	// as revealed, so a reload that renders it can still catch it.
 	if (st) st.revealedHash = anchorId;
 	return true;
 };
@@ -4185,7 +4195,7 @@ const loadOnce = async (
 	//      restoring a hash target they may have long since read past;
 	//   2. otherwise an unrevealed hash target (see revealHashTarget's own
 	//      once-per-hash guard) — covers mount, and any reload while a
-	//      permalink's hash is still set and hasn't been shown yet. This
+	//      permalink's hash is still set and hasn't been sought yet. This
 	//      seeks: it pages forward (seekHashTarget) when the target is not on
 	//      the first page;
 	//   3. otherwise nothing; focus is left alone.

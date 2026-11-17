@@ -511,10 +511,6 @@ resort, not the default: every click of `/c/:id` is a Worker
 invocation against the 100,000 requests/day free tier, where the
 host-page anchor costs nothing.
 
-The widget reveals the target on mount and on `hashchange`: it pages
-forward (at most 10 extra `/api/v1/comments` requests) until the comment
-renders, and expands any collapsed or capped reply branch that holds it.
-
 It is also the rung with the most ways to miss, and the failure is
 always a 404 or a link that lands nowhere rather than a wrong comment.
 `/c/:id` 404s when the post has no `url` on file, when that URL fails
@@ -525,6 +521,12 @@ is not one of those ways: the redirect replaces that fragment rather
 than joining to it with `&`, matching how rungs 1 and 2 build their
 anchors. Rungs 1 and 2 have none of the remaining failure modes, which
 is why they are tried first.
+
+The widget reveals the target on mount and on `hashchange`: it pages
+forward (at most 10 extra `/api/v1/comments` requests) until the comment
+renders. Capped "Show N more replies" batches holding the target are
+opened at render time (mount or reload); a later `hashchange` opens
+collapsed branches only.
 
 The link is a plain `<a href>` — no clipboard-copy JavaScript shim —
 so right-click-copy, middle-click, and Cmd/Ctrl-click all work the way
