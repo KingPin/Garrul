@@ -62,6 +62,13 @@ export const treeCacheKey = (
 export const feedCacheKey = (reqUrl: string, slug: string): Request =>
 	cacheKey(reqUrl, "feed", { slug });
 
+/** Cache-key Request for the site-wide recent-comments feed (routes/feed.ts). */
+export const siteFeedCacheKey = (
+	reqUrl: string,
+	format: "atom" | "json",
+	site: string,
+): Request => cacheKey(reqUrl, "feed-site", { format, site });
+
 /**
  * Drop a slug's cached first pages and its feed (every sort, current page size) in the
  * handling colo. Best-effort: never rejects, because every comment mutation

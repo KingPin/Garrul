@@ -69,4 +69,5 @@ export const ar = {
 	// Atom feed
 	"feed.title": "التعليقات على {title}",
 	"feed.entry_title": "علّق {author}",
+	"feed.site_title": "أحدث التعليقات",
 } satisfies LocaleTable;

@@ -16,6 +16,8 @@ import { Hono } from "hono";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import worker from "../src/index";
+import { TABLES } from "../src/i18n";
 import { feed } from "../src/routes/feed";
 import {
 	RECENT_BY_SLUGS_SQL,
@@ -339,5 +341,267 @@ describe("GET /feed/:slug — edge cache", () => {
 		const second = await fetchFeed();
 		expect(second.headers.get("content-type")).toContain("application/atom+xml");
 		expect(await second.text()).toBe(first);
+	});
+});
+
+const alternatesOf = (xml: string): string[] =>
+	[...xml.matchAll(/<entry>[\s\S]*?<\/entry>/g)].flatMap((m) =>
+		[...m[0].matchAll(/rel="alternate"[^>]*href="([^"]*)"/g)].map((x) =>
+			(x[1] ?? "").replace(/&amp;/g, "&"),
+		),
+	);
+
+describe("GET /feed — site-wide recent comments", () => {
+	const T0 = 1_700_000_000_000;
+	let cache: ReturnType<typeof installMockCaches>;
+
+	const fetchSiteFeed = (qs = "") =>
+		new Hono<{ Bindings: Bindings }>()
+			.route("/feed", feed)
+			.request(`/feed${qs}`, {}, env as unknown as Record<string, unknown>);
+	const names = (xml: string) =>
+		[...xml.matchAll(/<author><name>([^<]*)<\/name>/g)].map((m) => m[1]);
+	const jsonItems = async (qs: string) =>
+		((await (await fetchSiteFeed(qs)).json()) as { items: any[] }).items;
+
+	beforeEach(() => {
+		cache = installMockCaches();
+		(env as unknown as Record<string, unknown>).ALLOWED_ORIGINS =
+			"https://blog.example,https://other.example";
+	});
+	afterEach(uninstallMockCaches);
+
+	it("1: only approved comments, across posts, newest first, capped at 50", async () => {
+		seedPost("https://blog.example/a", "a");
+		seedPost("https://other.example/b", "b");
+		for (let i = 0; i < 55; i++) {
+			seedComment(`U${i}`, "<p>x</p>", { slug: i % 2 ? "a" : "b", createdAt: T0 + i });
+		}
+		seedComment("Pend", "<p>p</p>", { slug: "a", status: "pending", createdAt: T0 + 99 });
+		const res = await fetchSiteFeed();
+		expect(res.headers.get("content-type")).toBe("application/atom+xml; charset=utf-8");
+		expect(res.headers.get("cache-control")).toBe("public, max-age=300");
+		expect(res.headers.get("access-control-allow-origin")).toBeNull();
+		const xml = await res.text();
+		const n = names(xml);
+		expect(n).toHaveLength(50);
+		expect(n[0]).toBe("U54");
+		expect(n).not.toContain("Pend");
+		expect(xml).toContain("<title>Recent comments</title>");
+		expect(xml).toContain('rel="self" type="application/atom+xml" href="http://localhost/feed"');
+		expect(xml).not.toContain('rel="alternate" type="text/html" href="https://blog.example"');
+		expect(xml).toContain(`<updated>${new Date(T0 + 54).toISOString()}</updated>`);
+	});
+
+	it("2: ?site= filters by origin, is not crowded out, and an unknown origin is a 400", async () => {
+		seedPost("https://blog.example/a", "a");
+		seedPost("https://other.example/b", "b");
+		seedPost("https://blog.example/empty-origin-none", "c");
+		for (let i = 0; i < 3; i++) seedComment(`B${i}`, "<p>x</p>", { slug: "a", createdAt: T0 + i });
+		for (let i = 0; i < 60; i++) seedComment(`O${i}`, "<p>x</p>", { slug: "b", createdAt: T0 + 1000 + i });
+		const xml = await (await fetchSiteFeed("?site=https://blog.example")).text();
+		expect(names(xml).sort()).toEqual(["B0", "B1", "B2"]);
+		expect(xml).toContain('rel="alternate" type="text/html" href="https://blog.example"');
+
+		// An allowed origin with no posts: empty feed.
+		const empty = await fetchSiteFeed("?site=https://other.example");
+		expect(names(await empty.text())).toHaveLength(50);
+		sqlite.exec("DELETE FROM comments WHERE post_slug = 'b'");
+		sqlite.exec("DELETE FROM posts WHERE slug = 'b'");
+		cache.store.clear();
+		const none = await fetchSiteFeed("?site=https://other.example");
+		expect(none.status).toBe(200);
+		expect(names(await none.text())).toEqual([]);
+
+		for (let i = 0; i < 2; i++) {
+			const bad = await fetchSiteFeed("?site=https://nope.example");
+			expect(bad.status).toBe(400);
+			expect(await bad.text()).toBe("invalid site");
+		}
+		expect(cache.store.size).toBe(1);
+	});
+
+	it("3: ?site= matches by parsed origin; an over-long URL is excluded", async () => {
+		seedPost("https://BLOG.example/x", "x");
+		seedPost("https://blog.example:443/y", "y");
+		seedPost(`https://blog.example/${"p".repeat(2049)}`, "long");
+		const ix = seedComment("X", "<p>x</p>", { slug: "x", createdAt: T0 + 1 });
+		const iy = seedComment("Y", "<p>y</p>", { slug: "y", createdAt: T0 + 2 });
+		seedComment("L", "<p>l</p>", { slug: "long", createdAt: T0 + 3 });
+		const xml = await (await fetchSiteFeed("?site=https://blog.example")).text();
+		expect(names(xml).sort()).toEqual(["X", "Y"]);
+		expect(xml).toContain(`href="https://blog.example/x#garrul-comment-${ix}"`);
+		expect(xml).toContain(`href="https://blog.example/y#garrul-comment-${iy}"`);
+	});
+
+	it("4: ?format=json serves JSON Feed 1.1; unknown format serves Atom", async () => {
+		seedPost("https://blog.example/a", "a");
+		const plain = seedComment("Ann", "<p>one</p>", { slug: "a", createdAt: T0 + 1 });
+		seedComment("Bob", "<p>two</p>", { slug: "a", createdAt: T0 + 2, editedAt: T0 + 5 });
+		const res = await fetchSiteFeed("?format=json&site=https://blog.example");
+		expect(res.headers.get("content-type")).toMatch(/^application\/feed\+json/);
+		expect(res.headers.get("access-control-allow-origin")).toBe("*");
+		expect(res.headers.get("cache-control")).toBe("public, max-age=300");
+		const body = (await res.json()) as any;
+		expect(body.version).toBe("https://jsonfeed.org/version/1.1");
+		expect(body.title).toBe("Recent comments");
+		expect(body.language).toBe("en");
+		expect(body.home_page_url).toBe("https://blog.example");
+		expect(body.feed_url).toBe(
+			`http://localhost/feed?format=json&site=${encodeURIComponent("https://blog.example")}`,
+		);
+		const [bob, ann] = body.items;
+		expect(bob.title).toBe("Bob commented");
+		expect(bob.authors).toEqual([{ name: "Bob" }]);
+		expect(bob.date_modified).toBe(new Date(T0 + 5).toISOString());
+		expect(bob.date_published).toBe(new Date(T0 + 2).toISOString());
+		expect(bob.content_html).toBe("<p>two</p>");
+		expect(ann).not.toHaveProperty("date_modified");
+		expect(ann.url).toBe(`https://blog.example/a#garrul-comment-${plain}`);
+		expect(ann._garrul).toEqual({
+			post_slug: "a",
+			post_title: "A post",
+			post_url: "https://blog.example/a",
+		});
+		const noSite = (await (await fetchSiteFeed("?format=json")).json()) as any;
+		expect(noSite).not.toHaveProperty("home_page_url");
+		expect(noSite.feed_url).toBe("http://localhost/feed?format=json");
+
+		const atom = await fetchSiteFeed("?format=xml");
+		expect(atom.headers.get("content-type")).toContain("application/atom+xml");
+	});
+
+	it("5: cache keys, normalization and zero D1 statements on a hit", async () => {
+		seedPost("https://blog.example/a", "a");
+		seedPost("https://other.example/b", "b");
+		seedComment("InA", "<p>a</p>", { slug: "a", createdAt: T0 + 1 });
+		seedComment("InB", "<p>b</p>", { slug: "b", createdAt: T0 + 2 });
+		await fetchSiteFeed();
+		await fetchSiteFeed("?format=json");
+		expect(cache.store.size).toBe(2);
+		const a = await (await fetchSiteFeed("?site=https://blog.example")).text();
+		const b = await (await fetchSiteFeed("?site=https://other.example")).text();
+		expect(a).not.toContain("InB");
+		expect(b).not.toContain("InA");
+		expect(cache.store.size).toBe(4);
+		await fetchSiteFeed("?format=json&utm=1");
+		expect(cache.store.size).toBe(4);
+
+		const real = env.DB.prepare.bind(env.DB);
+		let calls = 0;
+		(env.DB as any).prepare = (sql: string) => {
+			calls++;
+			return real(sql);
+		};
+		const hit = await fetchSiteFeed("?format=json&utm=1");
+		expect(hit.status).toBe(200);
+		expect(calls).toBe(0);
+	});
+
+	it("6: unlinked entries in both formats; fragment URL gets the comment anchor", async () => {
+		seedPost(null, "nourl");
+		seedPost("https://evil.example/p", "evil");
+		seedPost("javascript:alert(1)", "js");
+		seedPost("https://blog.example/f#section", "frag");
+		for (const [i, slug] of ["nourl", "evil", "js"].entries()) {
+			seedComment(`N${i}`, "<p>x</p>", { slug, createdAt: T0 + i });
+		}
+		const fid = seedComment("F", "<p>x</p>", { slug: "frag", createdAt: T0 + 10 });
+		const xml = await (await fetchSiteFeed()).text();
+		expect(alternatesOf(xml)).toEqual([`https://blog.example/f#garrul-comment-${fid}`]);
+		expect(xml).not.toContain("javascript:");
+		expect(xml).not.toContain("evil.example");
+		const items = await jsonItems("?format=json");
+		const unlinked = items.filter((i) => i.authors[0].name.startsWith("N"));
+		expect(unlinked).toHaveLength(3);
+		for (const i of unlinked) {
+			expect(i).not.toHaveProperty("url");
+			expect(i._garrul.post_url).toBeNull();
+		}
+		expect(items[0].url).toBe(`https://blog.example/f#garrul-comment-${fid}`);
+	});
+
+	it("7: Atom stays well-formed with a C0 character in an author name", async () => {
+		seedPost("https://blog.example/a", "a");
+		seedComment(`Bob${CTRL}`, "<p>hi</p>", { slug: "a" });
+		const xml = await (await fetchSiteFeed()).text();
+		expect(xml).not.toContain(CTRL);
+		expect(xml).toContain("<name>Bob</name>");
+	});
+
+	it("10: the full app serves /feed with no Origin header", async () => {
+		seedPost("https://blog.example/a", "a");
+		seedComment("Ann", "<p>hi</p>", { slug: "a" });
+		const res = await worker.fetch(
+			new Request("https://comments.example/feed"),
+			{
+				...env,
+				ENV: "production",
+				IP_HASH_SECRET: "test-ip-hash-secret",
+				JWT_SECRET: "test-jwt-secret",
+			} as unknown as Record<string, unknown>,
+			{ waitUntil: () => {} } as unknown as ExecutionContext,
+		);
+		expect(res.status).toBe(200);
+		expect(await res.text()).toContain("<name>Ann</name>");
+	});
+
+	it("11: every locale table carries its own feed.site_title", () => {
+		for (const [loc, table] of Object.entries(TABLES)) {
+			const v = (table as Record<string, unknown>)["feed.site_title"];
+			expect(typeof v, loc).toBe("string");
+			expect((v as string).length, loc).toBeGreaterThan(0);
+		}
+	});
+
+	it("RF1: empty ?site= is the install-wide feed", async () => {
+		seedPost("https://blog.example/a", "a");
+		seedPost("https://other.example/b", "b");
+		seedComment("A", "<p>x</p>", { slug: "a", createdAt: T0 + 1 });
+		seedComment("B", "<p>x</p>", { slug: "b", createdAt: T0 + 2 });
+		const res = await fetchSiteFeed("?site=");
+		expect(res.status).toBe(200);
+		expect(names(await res.text())).toEqual(["B", "A"]);
+		expect(cache.store.size).toBe(1);
+	});
+
+	it("RF2: trailing slash or uppercase host is a 400", async () => {
+		expect((await fetchSiteFeed("?site=https://blog.example/")).status).toBe(400);
+		expect((await fetchSiteFeed("?site=https://BLOG.example")).status).toBe(400);
+	});
+
+	it("RF3: a comment with no posts row appears unlinked with null post_title", async () => {
+		sqlite.exec("PRAGMA foreign_keys = OFF");
+		seedComment("Orph", "<p>o</p>", { slug: "ghost" });
+		sqlite.exec("PRAGMA foreign_keys = ON");
+		const xml = await (await fetchSiteFeed()).text();
+		expect(names(xml)).toEqual(["Orph"]);
+		expect(alternatesOf(xml)).toEqual([]);
+		const [item] = await jsonItems("?format=json");
+		expect(item).not.toHaveProperty("url");
+		expect(item._garrul).toEqual({ post_slug: "ghost", post_title: null, post_url: null });
+	});
+
+	it("RF4: ALLOWED_ORIGINS unset makes every ?site= a 400 and the install-wide feed unlinked", async () => {
+		delete (env as unknown as Record<string, unknown>).ALLOWED_ORIGINS;
+		seedPost("https://blog.example/a", "a");
+		seedComment("Ann", "<p>x</p>", { slug: "a" });
+		expect((await fetchSiteFeed("?site=https://blog.example")).status).toBe(400);
+		const xml = await (await fetchSiteFeed()).text();
+		expect(names(xml)).toEqual(["Ann"]);
+		expect(alternatesOf(xml)).toEqual([]);
+	});
+
+	it("RF5: repeated params resolve to the first value and share its cache entry", async () => {
+		seedPost("https://blog.example/a", "a");
+		seedComment("Ann", "<p>x</p>", { slug: "a" });
+		const first = await fetchSiteFeed("?format=json&format=atom");
+		expect(first.headers.get("content-type")).toMatch(/feed\+json/);
+		const body = await first.text();
+		expect(await (await fetchSiteFeed("?format=json")).text()).toBe(body);
+		expect(cache.store.size).toBe(1);
+		const siteA = await (await fetchSiteFeed("?site=https://blog.example&site=https://other.example")).text();
+		expect(await (await fetchSiteFeed("?site=https://blog.example")).text()).toBe(siteA);
+		expect(cache.store.size).toBe(2);
 	});
 });

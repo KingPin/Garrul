@@ -16,13 +16,19 @@
  */
 import { Hono } from "hono";
 import type { Bindings } from "../index";
-import { getPost, listLatestApprovedComments } from "../db/queries";
-import { tFor } from "../i18n";
+import {
+	type RecentComment,
+	getPost,
+	listLatestApprovedComments,
+	listPostUrls,
+	listRecentApprovedComments,
+} from "../db/queries";
+import { type Translator, tFor } from "../i18n";
 import { resolveLocale } from "../i18n/negotiate";
+import { allowedPostUrl, parseAllowedOrigins } from "../lib/cors";
 import { matchCache, putResponse, tryWaitUntil } from "../lib/response-cache";
-import { allowedPostUrl } from "../lib/cors";
 import { loadStrings } from "../lib/settings";
-import { feedCacheKey } from "../lib/tree-cache";
+import { feedCacheKey, siteFeedCacheKey } from "../lib/tree-cache";
 import { commentAnchorId } from "../widget/permalink";
 
 const feed = new Hono<{ Bindings: Bindings }>();
@@ -82,6 +88,135 @@ const commentLink = (
 const entryId = (host: string, row: { id: string; created_at: number }): string =>
 	`tag:${host},${new Date(row.created_at).toISOString().slice(0, 10)}:comment/${row.id}`;
 
+const generator = `<generator uri="https://github.com/KingPin/Garrul">Garrul</generator>`;
+
+const atomEntry = (
+	row: Pick<
+		RecentComment,
+		"id" | "body_html" | "created_at" | "edited_at" | "author_name"
+	>,
+	link: string | null,
+	t: Translator,
+	host: string,
+): string => `<entry>
+  <id>${xmlEscape(entryId(host, row))}</id>
+  <title>${xmlEscape(t("feed.entry_title", { author: row.author_name }))}</title>
+  <author><name>${xmlEscape(row.author_name)}</name></author>
+  <published>${new Date(row.created_at).toISOString()}</published>
+  <updated>${new Date(row.edited_at ?? row.created_at).toISOString()}</updated>
+${link ? `  <link rel="alternate" type="text/html" href="${xmlEscape(link)}"/>\n` : ""}  <content type="html">${cdata(row.body_html)}</content>
+</entry>`;
+
+// Site-wide recent comments, Atom or JSON Feed. `format` and `site` are
+// normalized before they reach the cache key, so junk query strings cannot
+// mint entries. Operator-default locale only, for the reason the slug route
+// gives below.
+feed.get("/", async (c) => {
+	const rawSite = c.req.query("site") ?? "";
+	let site = "";
+	if (rawSite !== "") {
+		let origin: string | null = null;
+		try {
+			origin = new URL(rawSite).origin;
+		} catch {
+			// invalid below
+		}
+		if (
+			origin !== rawSite ||
+			!parseAllowedOrigins(c.env.ALLOWED_ORIGINS).has(rawSite)
+		) {
+			return c.text("invalid site", 400);
+		}
+		site = rawSite;
+	}
+	const format = c.req.query("format") === "json" ? "json" : "atom";
+
+	const key = siteFeedCacheKey(c.req.url, format, site);
+	const hit = await matchCache(key);
+	if (hit) return hit;
+
+	let comments: RecentComment[];
+	if (site) {
+		const slugs = (await listPostUrls(c.env.DB))
+			.filter(({ url }) => {
+				const safe = allowedPostUrl(url, c.env.ALLOWED_ORIGINS);
+				return safe !== null && new URL(safe).origin === site;
+			})
+			.map((p) => p.slug);
+		comments = await listRecentApprovedComments(c.env.DB, 50, slugs);
+	} else {
+		comments = await listRecentApprovedComments(c.env.DB, 50, null);
+	}
+
+	const { default_locale: operatorDefault } = await loadStrings(c.env);
+	const locale = resolveLocale({ operatorDefault });
+	const t = tFor(locale);
+
+	const reqUrl = new URL(c.req.url);
+	const q = new URLSearchParams();
+	if (format === "json") q.set("format", "json");
+	if (site) q.set("site", site);
+	const qs = q.toString();
+	const feedSelf = `${reqUrl.protocol}//${reqUrl.host}/feed${qs ? `?${qs}` : ""}`;
+	const title = t("feed.site_title");
+	const links = comments.map((row) =>
+		commentLink(row.post_url, row.id, c.env.ALLOWED_ORIGINS),
+	);
+
+	let res: Response;
+	if (format === "json") {
+		const doc = {
+			version: "https://jsonfeed.org/version/1.1",
+			title,
+			...(site ? { home_page_url: site } : {}),
+			feed_url: feedSelf,
+			language: locale,
+			items: comments.map((row, i) => ({
+				id: entryId(reqUrl.host, row),
+				...(links[i] ? { url: links[i] } : {}),
+				title: t("feed.entry_title", { author: row.author_name }),
+				content_html: row.body_html,
+				date_published: new Date(row.created_at).toISOString(),
+				...(row.edited_at != null
+					? { date_modified: new Date(row.edited_at).toISOString() }
+					: {}),
+				authors: [{ name: row.author_name }],
+				_garrul: {
+					post_slug: row.post_slug,
+					post_title: row.post_title ?? null,
+					post_url: allowedPostUrl(row.post_url, c.env.ALLOWED_ORIGINS),
+				},
+			})),
+		};
+		res = new Response(JSON.stringify(doc), {
+			headers: {
+				"content-type": "application/feed+json; charset=utf-8",
+				"cache-control": "public, max-age=300",
+				"access-control-allow-origin": "*",
+			},
+		});
+	} else {
+		const updated = new Date(comments[0]?.created_at ?? Date.now()).toISOString();
+		const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xml:lang="${xmlEscape(locale)}">
+  <id>${xmlEscape(feedSelf)}</id>
+  <title>${xmlEscape(title)}</title>
+  <updated>${updated}</updated>
+  <link rel="self" type="application/atom+xml" href="${xmlEscape(feedSelf)}"/>
+${site ? `  <link rel="alternate" type="text/html" href="${xmlEscape(site)}"/>\n` : ""}  ${generator}
+  ${comments.map((row, i) => atomEntry(row, links[i] ?? null, t, reqUrl.host)).join("\n")}
+</feed>`;
+		res = new Response(xml, {
+			headers: {
+				"content-type": "application/atom+xml; charset=utf-8",
+				"cache-control": "public, max-age=300",
+			},
+		});
+	}
+	await putResponse(key, res, tryWaitUntil(c));
+	return res;
+});
+
 feed.get("/:slug", async (c) => {
 	const slug = c.req.param("slug");
 	if (!slug || slug.length > 200) return c.text("invalid slug", 400);
@@ -112,18 +247,14 @@ feed.get("/:slug", async (c) => {
 			: new Date(post?.created_at ?? Date.now()).toISOString();
 
 	const entries = comments
-		.map((row) => {
-			const id = entryId(reqUrl.host, row);
-			const link = commentLink(post?.url, row.id, c.env.ALLOWED_ORIGINS);
-			return `<entry>
-  <id>${xmlEscape(id)}</id>
-  <title>${xmlEscape(t("feed.entry_title", { author: row.author_name }))}</title>
-  <author><name>${xmlEscape(row.author_name)}</name></author>
-  <published>${new Date(row.created_at).toISOString()}</published>
-  <updated>${new Date(row.edited_at ?? row.created_at).toISOString()}</updated>
-${link ? `  <link rel="alternate" type="text/html" href="${xmlEscape(link)}"/>\n` : ""}  <content type="html">${cdata(row.body_html)}</content>
-</entry>`;
-		})
+		.map((row) =>
+			atomEntry(
+				row,
+				commentLink(post?.url, row.id, c.env.ALLOWED_ORIGINS),
+				t,
+				reqUrl.host,
+			),
+		)
 		.join("\n");
 
 	const xml = `<?xml version="1.0" encoding="UTF-8"?>
@@ -132,7 +263,7 @@ ${link ? `  <link rel="alternate" type="text/html" href="${xmlEscape(link)}"/>\n
   <title>${xmlEscape(title)}</title>
   <updated>${updated}</updated>
   <link rel="self" type="application/atom+xml" href="${xmlEscape(feedSelf)}"/>
-${postLink ? `  <link rel="alternate" type="text/html" href="${xmlEscape(postLink)}"/>\n` : ""}  <generator uri="https://github.com/KingPin/Garrul">Garrul</generator>
+${postLink ? `  <link rel="alternate" type="text/html" href="${xmlEscape(postLink)}"/>\n` : ""}  ${generator}
   ${entries}
 </feed>`;
 
