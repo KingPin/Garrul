@@ -2008,6 +2008,14 @@ const buildActions = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): HTMLEleme
 		};
 		const send = async (): Promise<void> => {
 			cancel();
+			// The report is on its way: retire Undo now so it cannot restore Report
+			// while the POST is in flight. Keep focus on a live node.
+			const hadFocus = (undoBtn.getRootNode() as Document | ShadowRoot).activeElement === undoBtn;
+			undoBtn.remove();
+			if (hadFocus) {
+				done.tabIndex = -1;
+				done.focus();
+			}
 			let ok = false;
 			try {
 				// The endpoint returns 200 for both new and duplicate reports and
@@ -2028,17 +2036,10 @@ const buildActions = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): HTMLEleme
 			} catch {
 				// Network failure: fall through to the retry path below.
 			}
-			if (ok) {
-				// Keep a non-interactive confirmation in place of the button so a
-				// reader can't report-bomb one comment from the UI. (Server-side
-				// dedup + rate-limit are the real guard; this is just UX.)
-				const hadFocus = (undoBtn.getRootNode() as Document | ShadowRoot).activeElement === undoBtn;
-				undoBtn.remove();
-				if (hadFocus) {
-					done.tabIndex = -1;
-					done.focus();
-				}
-			} else {
+			// On success the non-interactive "Reported" span stays, so a reader
+			// can't report-bomb one comment from the UI. (Server-side dedup +
+			// rate-limit are the real guard; this is just UX.)
+			if (!ok) {
 				// A real refusal (429, 4xx/5xx, dropped network): don't claim
 				// success; restore the button so the reader can retry.
 				done.replaceWith(reportBtn);
