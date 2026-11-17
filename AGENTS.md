@@ -262,6 +262,9 @@ when the comments section is below the fold. Replace the
       s.defer = true;
       document.body.appendChild(s);
     }
+    // A shared comment link (#garrul-comment-<id>) must mount now, or the
+    // widget never gets to scroll to it.
+    if (location.hash.indexOf("#garrul-comment-") === 0) { load(); return; }
     if ("IntersectionObserver" in window) {
       var io = new IntersectionObserver(function (entries) {
         if (entries.some(function (e) { return e.isIntersecting; })) {
