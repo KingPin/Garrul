@@ -53,7 +53,8 @@ dashboard page); every other integration is optional.
   nothing; closed threads stay closed and spam stays out of the public tree
 - **Admin UI**: moderation queue, user management, and settings you
   change without a redeploy
-- **RSS feeds**, comment counts, permalinks
+- **RSS feeds**, comment counts, permalinks, and a site-wide recent-comments
+  feed at `GET /feed` (Atom or JSON Feed) for build-time lists
 - **Webhook out** on every comment event: generic, Slack, Discord, or
   Telegram
 - **Telegram operator bot**: moderate from your phone with inline

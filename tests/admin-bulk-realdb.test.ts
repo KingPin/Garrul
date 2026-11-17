@@ -9,12 +9,16 @@ import { comments } from "../src/routes/api.comments";
 import { bustSettingsCache } from "../src/lib/settings";
 import { ADMIN_ID, adminHarness } from "./helpers/admin-sqlite";
 import { installMockCaches, uninstallMockCaches } from "./helpers/mock-caches";
+import { siteFeedCacheKey } from "../src/lib/tree-cache";
 
-beforeEach(() => installMockCaches());
+let cache: ReturnType<typeof installMockCaches>;
+beforeEach(() => {
+	cache = installMockCaches();
+});
 afterEach(() => uninstallMockCaches());
 
-const seeded = (n: number) => {
-	const h = adminHarness();
+const seeded = (n: number, extraEnv: Record<string, unknown> = {}) => {
+	const h = adminHarness(extraEnv);
 	h.sqlite.exec(
 		"INSERT INTO users (id, provider, provider_id, name, created_at) VALUES ('u1', 'anon', NULL, 'Ann', 1)",
 	);
@@ -162,5 +166,39 @@ describe("POST /admin/api/comments/bulk — delete keeps a hidden parent masked"
 			author: { id: "", name: "[deleted]" },
 		});
 		expect(JSON.stringify(page)).not.toContain("Hidden Author");
+	});
+});
+
+describe("POST /admin/api/comments/bulk — site-feed busts", () => {
+	it("drops each site-feed key exactly once across comments on 3 posts", async () => {
+		const origins = ["https://blog.example", "https://other.example"];
+		const { h, bulk } = seeded(0, { ALLOWED_ORIGINS: origins.join(",") });
+		const ins = h.sqlite.prepare(
+			`INSERT INTO comments (id, post_slug, parent_id, user_id, body_md, body_html, status, created_at, depth)
+			 VALUES (?, ?, NULL, 'u1', 'x', '<p>x</p>', 'approved', 1, 1)`,
+		);
+		const ids: string[] = [];
+		for (const slug of ["a", "b", "c"]) {
+			h.sqlite.exec(
+				`INSERT INTO posts (slug, title, url, created_at) VALUES ('${slug}', 'T', NULL, 1)`,
+			);
+			for (const n of [1, 2]) {
+				ins.run(`${slug}${n}`, slug);
+				ids.push(`${slug}${n}`);
+			}
+		}
+		const deletes = new Map<string, number>();
+		const real = cache.delete.bind(cache);
+		cache.delete = async (req) => {
+			const u = typeof req === "string" ? req : req.url;
+			deletes.set(u, (deletes.get(u) ?? 0) + 1);
+			return real(req);
+		};
+		expect((await bulk({ ids, action: "spam" })).status).toBe(200);
+		const keys = (["atom", "json"] as const).flatMap((f) =>
+			["", ...origins].map((s) => siteFeedCacheKey("http://localhost/", f, s).url),
+		);
+		expect(keys).toHaveLength(6);
+		for (const k of keys) expect(deletes.get(k)).toBe(1);
 	});
 });

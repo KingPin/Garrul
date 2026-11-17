@@ -104,4 +104,5 @@ export const nb = {
 	// Atom feed
 	"feed.title": "Kommentarer til {title}",
 	"feed.entry_title": "{author} kommenterte",
+	"feed.site_title": "Siste kommentarer",
 } satisfies LocaleTable;

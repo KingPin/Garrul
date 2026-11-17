@@ -103,6 +103,7 @@ export const en = {
 	// varying it per request would serve one reader's language to the next.
 	"feed.title": "Comments on {title}",
 	"feed.entry_title": "{author} commented",
+	"feed.site_title": "Recent comments",
 
 	// Telegram operator bot (admin-facing; shown in the bot chat, not in logs)
 	"telegram.not_linked":

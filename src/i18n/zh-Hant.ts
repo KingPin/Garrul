@@ -46,4 +46,5 @@ export const zhHant = {
 	// Atom feed
 	"feed.title": "「{title}」的留言",
 	"feed.entry_title": "{author} 發表了留言",
+	"feed.site_title": "最新留言",
 } satisfies LocaleTable;

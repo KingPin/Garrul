@@ -86,4 +86,5 @@ export const fr = {
 	// Atom feed
 	"feed.title": "Commentaires sur {title}",
 	"feed.entry_title": "{author} a commenté",
+	"feed.site_title": "Commentaires récents",
 } satisfies LocaleTable;

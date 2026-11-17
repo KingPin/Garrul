@@ -153,6 +153,86 @@ on bouncers. [`../examples/lazy-load`](../examples/lazy-load/README.md) has
 two deferred-loading patterns, a scroll-into-view loader (recommended) and
 a click-to-load button, with the trade-offs of each.
 
+## Recent comments
+
+`GET /feed` is a site-wide feed of the newest approved comments across all
+posts. It complements the per-post `GET /feed/:slug`.
+
+| URL | Returns |
+|---|---|
+| `https://comments.example.com/feed` | Atom (`application/atom+xml`) |
+| `https://comments.example.com/feed?format=json` | JSON Feed 1.1 (`application/feed+json`, `access-control-allow-origin: *`) |
+
+Parameters:
+
+- `format`: `json` for JSON Feed. Any other value, or none, serves Atom.
+- `site`: optional. A bare origin such as `https://blog.example.com`
+  (scheme and host, plus a port only when it is not the default; no trailing
+  slash), in the browser-serialized origin form (lowercase host). The value
+  and the `ALLOWED_ORIGINS` entry must both use that form. It must equal an
+  entry of `ALLOWED_ORIGINS`, otherwise the response is `400 invalid site`. With `site`, only comments on that site's posts
+  appear and every entry links. Without it (or with an empty `site=`) the feed
+  covers the whole install.
+
+On a single-origin install, omit `site`. The install-wide feed is the cheap
+query (about 50 index rows). A `?site=` cache miss reads all `posts` rows plus
+every comment on that site's posts. The build-time recipes skip items without
+a `url`, so they work without `site`.
+
+The feed holds the 50 newest approved comments. It is cached at the edge
+(`cache-control: public, max-age=300`). A comment change clears the cache in
+the data center that handled it. Other locations can serve a feed up to five
+minutes old. The language is the operator's default locale.
+
+JSON shape (`?format=json&site=https://blog.example.com`):
+
+```json
+{
+  "version": "https://jsonfeed.org/version/1.1",
+  "title": "Recent comments",
+  "home_page_url": "https://blog.example.com",
+  "feed_url": "https://comments.example.com/feed?format=json&site=https%3A%2F%2Fblog.example.com",
+  "language": "en",
+  "items": [
+    {
+      "id": "tag:comments.example.com,2026-11-16:comment/01J...",
+      "url": "https://blog.example.com/post/#garrul-comment-01J...",
+      "title": "Ada commented",
+      "content_html": "<p>...</p>",
+      "date_published": "2026-11-16T12:00:00.000Z",
+      "date_modified": "2026-11-16T12:05:00.000Z",
+      "authors": [{ "name": "Ada" }],
+      "_garrul": {
+        "post_slug": "hello-world",
+        "post_title": "Hello world",
+        "post_url": "https://blog.example.com/post/"
+      }
+    }
+  ]
+}
+```
+
+`home_page_url` appears only with `site`. `date_modified` appears only for
+edited comments. `_garrul.post_title` is `null` when the post has no title.
+
+The install-wide feed can contain unlinked entries: comments on a post with no
+URL, or a URL outside `ALLOWED_ORIGINS`. Such an entry has no `url` and
+`_garrul.post_url` is `null`. Skip them when you render a list. A `?site=` feed
+always links every entry.
+
+`/feed` sits outside the `/api/*` Origin gate, so a build step with no `Origin`
+header can fetch it (`/api/v1/*` answers those with 403). Build-time recipes
+that render a list and keep the build green when Garrul is down:
+[Astro](../examples/astro/README.md#recent-comments-list-build-time),
+[Hugo](../examples/hugo/README.md#recent-comments-list-build-time),
+[Jekyll](../examples/jekyll/README.md#recent-comments-list-build-time). The
+list refreshes only when the site rebuilds; schedule a CI rebuild to keep it
+current.
+
+There is no live "recent comments" widget on purpose. Mounting one on every
+page would add a Worker request per pageview and roughly halve the free-tier
+capacity (see [Lazy-loading](#lazy-loading)).
+
 ## Using an AI assistant
 
 Garrul ships an AI-targeted integration guide at

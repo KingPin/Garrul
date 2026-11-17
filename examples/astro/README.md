@@ -67,6 +67,70 @@ const { entry } = Astro.props;
 <Comments slug={entry.slug} title={entry.data.title} published={entry.data.pubDate} />
 ```
 
+## Recent comments list (build time)
+
+Garrul serves a site-wide feed at `GET /feed`. This component shows the
+newest comments on your home page or sidebar without loading the widget
+there. The feed stays outside the Worker's `/api/*` Origin gate, so a build
+with no `Origin` header can read it. `site` must be an origin listed in
+`ALLOWED_ORIGINS`, written without a trailing slash. On a single-origin install, drop `site` from the URL: see
+`docs/embedding.md` (Recent comments).
+
+`src/components/RecentComments.astro`:
+
+```astro
+---
+const feed =
+  "https://comments.yourdomain.com/feed?format=json&site=" +
+  encodeURIComponent("https://yourblog.com");
+
+let items: any[] = [];
+try {
+  const res = await fetch(feed, { signal: AbortSignal.timeout(10_000) });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json();
+  if (!Array.isArray(data.items)) throw new Error("no items array");
+  items = data.items;
+} catch (err) {
+  console.warn(`recent comments unavailable: ${err}`);
+}
+
+const recent = items.filter((i) => i.url).slice(0, 5);
+const excerpt = (html: string) =>
+  html
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&(#39|quot|lt|gt|amp);/g, (_: string, e: string) =>
+      ({ "#39": "'", quot: '"', lt: "<", gt: ">", amp: "&" } as Record<string, string>)[e])
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 100);
+---
+{recent.length > 0 && (
+  <ul class="recent-comments">
+    {recent.map((c) => (
+      <li>
+        <a href={c.url}>{c._garrul?.post_title ?? c.title}</a>
+        <span>{c.authors?.[0]?.name}: {excerpt(c.content_html)}</span>
+      </li>
+    ))}
+  </ul>
+)}
+```
+
+A network error, a timeout, a non-2xx status or a body without an `items`
+array logs a warning and renders no list. The build still succeeds. The text
+is plain: the excerpt strips tags, then decodes the five entities Garrul's
+renderer emits (`&#39;`, `&quot;`, `&lt;`, `&gt;`, `&amp;`) in one pass, so
+readers see `Don't` and not `Don&#39;t`. Astro escapes the result once, so the
+excerpt cannot inject markup.
+
+Use this only on prerendered (static) pages. With `output: "server"` or an
+on-demand page, the frontmatter fetch runs on every page view and adds one
+Worker request per view, the cost this design avoids.
+
+The list refreshes only when the site rebuilds. Add a scheduled CI rebuild
+(for example a daily cron) to keep it current.
+
 ## Notes
 
 - The `data-slug` is the unique identifier for the post's comment

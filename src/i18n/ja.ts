@@ -99,4 +99,5 @@ export const ja = {
 	// Atom feed
 	"feed.title": "「{title}」へのコメント",
 	"feed.entry_title": "{author}がコメントしました",
+	"feed.site_title": "最近のコメント",
 } satisfies LocaleTable;

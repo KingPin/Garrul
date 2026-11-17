@@ -469,8 +469,9 @@ Rules:
   `GET /api/v1/auth/*/{start,callback}` bypass the gate because they're
   invoked without an `Origin` header (uptime probes + top-level OAuth).
 
-Four more surfaces are reachable without an `Origin` because they sit
+Five more surfaces are reachable without an `Origin` because they sit
 outside the `/api/*` gate entirely, not because of a carve-out:
+`GET /feed` (site-wide recent comments, Atom or `?format=json`),
 `GET /feed/:slug` (Atom), `GET /c/:id` (comment permalinks),
 `GET /embed/:slug` (the iframe variant) and `GET /embed.js` (the widget
 bundle). Each is meant to be fetched by readers, feed readers and
@@ -478,7 +479,9 @@ crawlers, so none of them can require one.
 
 **Build-time fetchers get 403s.** A static-site generator that reads
 comments at deploy time looks exactly like a scraper to the Worker: no
-`Origin`, gated path. Consume `GET /feed/:slug` instead until the planned
+`Origin`, gated path. Consume `GET /feed?format=json&site=<origin>`
+(site-wide, 50 newest, `site` must be in `ALLOWED_ORIGINS`) or
+`GET /feed/:slug` (one post) instead until the planned
 API-keys system ships; the design is in
 [`docs/api-keys-design.md`](docs/api-keys-design.md) and is **not**
 implemented.
@@ -503,8 +506,8 @@ curl -i https://comments.example.com/api/v1/comments?slug=hello
 ```
 
 Build-time fetchers (SSGs reading comments at deploy time) will get 403s
-here — workaround is the ungated `GET /feed/:slug` Atom feed until the
-API-keys system ships (`docs/api-keys-design.md`).
+here — workaround is the ungated `GET /feed?format=json` (site-wide) or
+`GET /feed/:slug` Atom feed until the API-keys system ships (`docs/api-keys-design.md`).
 
 ## 7. Turnstile
 

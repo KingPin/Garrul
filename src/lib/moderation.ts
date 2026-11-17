@@ -29,7 +29,7 @@ import {
 import { t } from "../i18n";
 import type { Bindings } from "../index";
 import { revokeUserSessions } from "./session";
-import { bustTreeCache } from "./tree-cache";
+import { bustSiteFeeds, bustTreeCache } from "./tree-cache";
 import { fireWebhook, type WebhookEvent } from "./webhook";
 
 /** waitUntil-capable context (Hono's c.executionCtx). */
@@ -338,7 +338,8 @@ export const eraseUser = async (args: {
 	// The author name — and the bodies, if redacted — just changed on every
 	// thread they appear in, and those first pages are served from the edge.
 	for (const slug of slugs) {
-		await bustTreeCache(env, args.reqUrl, slug);
+		await bustTreeCache(env, args.reqUrl, slug, undefined, { siteFeeds: false });
 	}
+	if (slugs.length) await bustSiteFeeds(env, args.reqUrl);
 	return { ok: true, id: userId, counts };
 };

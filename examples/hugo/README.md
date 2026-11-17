@@ -63,3 +63,75 @@ override per-deployment via `HUGO_PARAMS_GARRULAPI`:
 - For `hugo server` local dev, you can either point `garrulApi` at
   `http://localhost:8787` temporarily or add the dev origin
   (`http://localhost:1313`) to `ALLOWED_ORIGINS` alongside prod.
+
+## Recent comments list (build time)
+
+Garrul serves a site-wide feed at `GET /feed`. This recipe shows the newest
+comments on your home page or sidebar without loading the widget there. It
+needs **Hugo 0.141 or newer**: from that release the resource returned by
+`resources.GetRemote` no longer carries an `.Err`, so errors are caught with
+`try`.
+
+The feed stays outside the Worker's `/api/*` Origin gate, so a build with no
+`Origin` header can read it. `site` must be an origin listed in
+`ALLOWED_ORIGINS`, written without a trailing slash. On a single-origin install, drop `site` from the URL: see
+`docs/embedding.md` (Recent comments).
+
+Set a finite remote-fetch cache lifetime in `hugo.toml`. Hugo's default for
+this cache never expires, so a rebuild on a persistent cache would reuse the
+old feed. Hugo's `timeout` setting limits how long the build waits (default
+`60s`); lower it if you want a faster failure:
+
+```toml
+timeout = "15s"
+
+[caches.getresource]
+  maxAge = "5m"
+```
+
+`layouts/partials/recent-comments.html`:
+
+```go-html-template
+{{- $url := "https://comments.example.com/feed?format=json&site=https%3A%2F%2Fblog.example.com" -}}
+{{- $items := slice -}}
+{{- with try (resources.GetRemote $url) -}}
+  {{- if .Err -}}
+    {{- warnf "recent comments: fetch failed: %s" .Err -}}
+  {{- else with .Value -}}
+    {{- with try (transform.Unmarshal .Content) -}}
+      {{- if .Err -}}
+        {{- warnf "recent comments: bad JSON: %s" .Err -}}
+      {{- else with .Value -}}
+        {{- if reflect.IsSlice .items -}}
+          {{- $items = .items -}}
+        {{- else -}}
+          {{- warnf "recent comments: no items array" -}}
+        {{- end -}}
+      {{- end -}}
+    {{- end -}}
+  {{- else -}}
+    {{- warnf "recent comments: empty response (HTTP error?)" -}}
+  {{- end -}}
+{{- end -}}
+{{- $linked := slice -}}
+{{- range $items -}}
+  {{- if .url }}{{ $linked = $linked | append . }}{{ end -}}
+{{- end -}}
+{{- with first 5 $linked -}}
+<ul class="recent-comments">
+  {{- range . }}
+  <li>
+    <a href="{{ .url }}">{{ with ._garrul.post_title }}{{ . }}{{ else }}{{ .title }}{{ end }}</a>
+    <span>{{ (index .authors 0).name }}: {{ .content_html | plainify | htmlUnescape | truncate 100 }}</span>
+  </li>
+  {{- end }}
+</ul>
+{{- end -}}
+```
+
+Call it with `{{ partial "recent-comments.html" . }}`. A network error, a
+non-2xx status, bad JSON or a missing `items` array logs a warning and renders
+no list. The build still succeeds.
+
+The list refreshes only when the site rebuilds. Add a scheduled CI rebuild
+(for example a daily cron) to keep it current.

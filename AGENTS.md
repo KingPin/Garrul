@@ -283,7 +283,9 @@ When **not** to use the lazy loader:
   immediately and you've saved nothing.
 - The integrator explicitly wants comments visible to crawlers in the
   rendered HTML of the post page. The per-post RSS feed
-  (`/feed/:slug`) and per-comment permalinks (`/c/:id`) remain
+  (`/feed/:slug`), the site-wide `GET /feed` (add `?format=json` for JSON
+  Feed, `&site=<origin>` to filter; recipes in `docs/embedding.md`) and
+  per-comment permalinks (`/c/:id`) remain
   crawler-visible either way, but the comment tree inline with the
   post is only present when the script has run.
 

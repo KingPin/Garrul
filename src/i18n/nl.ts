@@ -101,4 +101,5 @@ export const nl = {
 	// Atom feed
 	"feed.title": "Reacties op {title}",
 	"feed.entry_title": "{author} heeft gereageerd",
+	"feed.site_title": "Recente reacties",
 } satisfies LocaleTable;
