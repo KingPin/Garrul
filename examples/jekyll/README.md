@@ -78,7 +78,8 @@ on GitHub-hosted runners.
 
 The feed stays outside the Worker's `/api/*` Origin gate, so a build step with
 no `Origin` header can read it. `site` must be an origin listed in
-`ALLOWED_ORIGINS`, written without a trailing slash.
+`ALLOWED_ORIGINS`, written without a trailing slash. On a single-origin install, drop `site` from the URL: see
+`docs/embedding.md` (Recent comments).
 
 Run this before `jekyll build` (for example as a workflow step):
 
@@ -107,8 +108,8 @@ Render it where you want the list:
 <ul class="recent-comments">
   {% for c in recent %}
   <li>
-    <a href="{{ c.url }}">{{ c._garrul.post_title | default: c.title | escape }}</a>
-    <span>{{ c.authors[0].name | escape }}: {{ c.content_html | strip_html | truncate: 100 }}</span>
+    <a href="{{ c.url | escape }}">{{ c._garrul.post_title | default: c.title | escape }}</a>
+    <span>{{ c.authors[0].name | escape }}: {{ c.content_html | strip_html | truncatewords: 20 }}</span>
   </li>
   {% endfor %}
 </ul>

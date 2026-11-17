@@ -73,7 +73,8 @@ Garrul serves a site-wide feed at `GET /feed`. This component shows the
 newest comments on your home page or sidebar without loading the widget
 there. The feed stays outside the Worker's `/api/*` Origin gate, so a build
 with no `Origin` header can read it. `site` must be an origin listed in
-`ALLOWED_ORIGINS`, written without a trailing slash.
+`ALLOWED_ORIGINS`, written without a trailing slash. On a single-origin install, drop `site` from the URL: see
+`docs/embedding.md` (Recent comments).
 
 `src/components/RecentComments.astro`:
 
@@ -96,7 +97,12 @@ try {
 
 const recent = items.filter((i) => i.url).slice(0, 5);
 const excerpt = (html: string) =>
-  html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim().slice(0, 100);
+  html
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&(#39|quot|lt|gt|amp);/g, (_, e) => ({ "#39": "'", quot: '"', lt: "<", gt: ">", amp: "&" })[e])
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 100);
 ---
 {recent.length > 0 && (
   <ul class="recent-comments">
@@ -112,7 +118,14 @@ const excerpt = (html: string) =>
 
 A network error, a timeout, a non-2xx status or a body without an `items`
 array logs a warning and renders no list. The build still succeeds. The text
-is plain (Astro escapes it), so the excerpt cannot inject markup.
+is plain: the excerpt strips tags, then decodes the five entities Garrul's
+renderer emits (`&#39;`, `&quot;`, `&lt;`, `&gt;`, `&amp;`) in one pass, so
+readers see `Don't` and not `Don&#39;t`. Astro escapes the result once, so the
+excerpt cannot inject markup.
+
+Use this only on prerendered (static) pages. With `output: "server"` or an
+on-demand page, the frontmatter fetch runs on every page view and adds one
+Worker request per view, the cost this design avoids.
 
 The list refreshes only when the site rebuilds. Add a scheduled CI rebuild
 (for example a daily cron) to keep it current.

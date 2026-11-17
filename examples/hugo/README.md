@@ -74,12 +74,13 @@ needs **Hugo 0.141 or newer**: from that release the resource returned by
 
 The feed stays outside the Worker's `/api/*` Origin gate, so a build with no
 `Origin` header can read it. `site` must be an origin listed in
-`ALLOWED_ORIGINS`, written without a trailing slash.
+`ALLOWED_ORIGINS`, written without a trailing slash. On a single-origin install, drop `site` from the URL: see
+`docs/embedding.md` (Recent comments).
 
 Set a finite remote-fetch cache lifetime in `hugo.toml`. Hugo's default for
 this cache never expires, so a rebuild on a persistent cache would reuse the
-old feed. The global `timeout` bounds each fetch (default `60s`); lower it if
-you want a faster failure:
+old feed. Hugo's `timeout` setting limits how long the build waits (default
+`60s`); lower it if you want a faster failure:
 
 ```toml
 timeout = "15s"
@@ -121,7 +122,7 @@ timeout = "15s"
   {{- range . }}
   <li>
     <a href="{{ .url }}">{{ with ._garrul.post_title }}{{ . }}{{ else }}{{ .title }}{{ end }}</a>
-    <span>{{ (index .authors 0).name }}: {{ .content_html | plainify | truncate 100 }}</span>
+    <span>{{ (index .authors 0).name }}: {{ .content_html | plainify | htmlUnescape | truncate 100 }}</span>
   </li>
   {{- end }}
 </ul>
