@@ -350,8 +350,8 @@ const clearDraft = (key: string): void => {
 
 /**
  * Wire a textarea to localStorage: restore any saved draft on mount, then
- * persist (debounced) on input. Returns the storage key so the submit/cancel
- * paths can clear it. All storage access is wrapped — a throwing localStorage
+ * persist (debounced) on input. Returns the storage key so the submit path
+ * can clear it (reply cancel keeps the draft). All storage access is wrapped — a throwing localStorage
  * (Safari private mode, quota, disabled) degrades to no autosave, never breaks
  * the composer.
  */
@@ -1991,68 +1991,80 @@ const buildActions = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): HTMLEleme
 	if (n.status !== "deleted" && !isOwnComment) {
 		const reportBtn = el("button", "gr-report", s("w.report"));
 		reportBtn.type = "button";
-	reportBtn.addEventListener("click", () => {
-		// Report is delayed REPORT_UNDO_MS so a misclick can be taken back
-		// with no request sent. Leaving the page sends it at once (keepalive)
-		// so a deliberate report is not lost.
-		const done = el("span", "gr-reported", `${s("w.reported")} \u00b7 `);
-		const undoBtn = el("button", undefined, s("w.undo"));
-		undoBtn.type = "button";
-		done.appendChild(undoBtn);
-		reportBtn.replaceWith(done);
-		undoBtn.focus();
-		// One of timer / pagehide / Undo wins; each removes the others.
-		const cancel = (): void => {
-			clearTimeout(timer);
-			window.removeEventListener("pagehide", send);
-		};
-		const send = async (): Promise<void> => {
-			cancel();
-			// The report is on its way: retire Undo now so it cannot restore Report
-			// while the POST is in flight. Keep focus on a live node.
-			const hadFocus = (undoBtn.getRootNode() as Document | ShadowRoot).activeElement === undoBtn;
-			undoBtn.remove();
-			if (hadFocus) {
-				done.tabIndex = -1;
-				done.focus();
-			}
-			let ok = false;
-			try {
-				// The endpoint returns 200 for both new and duplicate reports and
-				// never discloses which (anti-enumeration), so a 2xx is the only
-				// success signal we get. fetch does NOT reject on a 4xx/5xx, so
-				// inspect res.ok explicitly.
-				const res = await apiFetch(
-					ctx.apiBase,
-					`/api/v1/comments/${encodeURIComponent(n.id)}/report`,
-					{
-						method: "POST",
-						headers: { "content-type": "application/json" },
-						body: "{}",
-						keepalive: true,
-					},
-				);
-				ok = res.ok;
-			} catch {
-				// Network failure: fall through to the retry path below.
-			}
-			// On success the non-interactive "Reported" span stays, so a reader
-			// can't report-bomb one comment from the UI. (Server-side dedup +
-			// rate-limit are the real guard; this is just UX.)
-			if (!ok) {
-				// A real refusal (429, 4xx/5xx, dropped network): don't claim
-				// success; restore the button so the reader can retry.
+		reportBtn.addEventListener("click", () => {
+			// Report is delayed REPORT_UNDO_MS so a misclick can be taken back
+			// with no request sent. Leaving the page sends it at once (keepalive)
+			// so a deliberate report is not lost.
+			const done = el("span", "gr-reported", `${s("w.reported")} \u00b7 `);
+			const undoBtn = el("button", undefined, s("w.undo"));
+			undoBtn.type = "button";
+			// Screen readers would otherwise announce only "Undo".
+			const said = el("span", undefined, s("w.reported"));
+			said.id = `gr-rep-${n.id}`;
+			said.hidden = true;
+			undoBtn.setAttribute("aria-describedby", said.id);
+			done.append(said, undoBtn);
+			reportBtn.replaceWith(done);
+			undoBtn.focus();
+			// One of timer / pagehide / Undo wins; each removes the others.
+			const cancel = (): void => {
+				clearTimeout(timer);
+				window.removeEventListener("pagehide", send);
+			};
+			const send = async (): Promise<void> => {
+				cancel();
+				// The report is on its way: retire Undo now so it cannot restore Report
+				// while the POST is in flight. Keep focus on a live node.
+				const hadFocus = (undoBtn.getRootNode() as Document | ShadowRoot).activeElement === undoBtn;
+				// Drops Undo, its description and the separator in one go.
+				done.textContent = s("w.reported");
+				if (hadFocus) {
+					done.tabIndex = -1;
+					done.focus();
+				}
+				let ok = false;
+				try {
+					// The endpoint returns 200 for both new and duplicate reports and
+					// never discloses which (anti-enumeration), so a 2xx is the only
+					// success signal we get. fetch does NOT reject on a 4xx/5xx, so
+					// inspect res.ok explicitly.
+					const res = await apiFetch(
+						ctx.apiBase,
+						`/api/v1/comments/${encodeURIComponent(n.id)}/report`,
+						{
+							method: "POST",
+							// No headers or body: that keeps this a CORS "simple request", so
+							// the pagehide flush needs no preflight. A missing body means
+							// reason=null server-side.
+							keepalive: true,
+						},
+					);
+					ok = res.ok;
+				} catch {
+					// Network failure: fall through to the retry path below.
+				}
+				// On success the non-interactive "Reported" span stays, so a reader
+				// can't report-bomb one comment from the UI. (Server-side dedup +
+				// rate-limit are the real guard; this is just UX.)
+				if (!ok) {
+					// A real refusal (429, 4xx/5xx, dropped network): don't claim
+					// success; restore the button so the reader can retry.
+					// A report pending when a re-render detaches this node and whose
+					// POST then fails is lost silently; server dedup and rate-limit
+					// are the real guard.
+					const hadFocusNow = (done.getRootNode() as Document | ShadowRoot).activeElement === done;
+					done.replaceWith(reportBtn);
+					if (hadFocusNow) reportBtn.focus();
+				}
+			};
+			const timer = setTimeout(send, REPORT_UNDO_MS);
+			window.addEventListener("pagehide", send);
+			undoBtn.addEventListener("click", () => {
+				cancel();
 				done.replaceWith(reportBtn);
-			}
-		};
-		const timer = setTimeout(send, REPORT_UNDO_MS);
-		window.addEventListener("pagehide", send);
-		undoBtn.addEventListener("click", () => {
-			cancel();
-			done.replaceWith(reportBtn);
-			reportBtn.focus();
+				reportBtn.focus();
+			});
 		});
-	});
 		row.appendChild(reportBtn);
 	}
 
