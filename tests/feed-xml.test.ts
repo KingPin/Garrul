@@ -301,9 +301,13 @@ describe("recent-comments queries", () => {
 		const second = seedComment("Second", "<p>2</p>", { createdAt: T0 });
 		expect(second > first).toBe(true);
 
-		const rows = await listRecentApprovedComments(db(), 50, null);
-
-		expect(rows.map((r) => r.id)).toEqual([second, first]);
+		// The per-site statement sorts in a temp B-tree, which returns ties in
+		// scan (insertion) order, so only `c.id DESC` puts `second` first there.
+		// The install-wide statement gets id order from comments_status_created_idx.
+		for (const slugs of [null, [SLUG]]) {
+			const rows = await listRecentApprovedComments(db(), 50, slugs);
+			expect(rows.map((r) => r.id)).toEqual([second, first]);
+		}
 	});
 
 	it("empty slug list returns [] without running a statement", async () => {
