@@ -129,6 +129,7 @@ let langHint = "";
 let maxBodyChars = 10_000;
 /** How close to the ceiling the counter appears. Silent above this. */
 const COUNT_WARN_AT = 500;
+const REPORT_UNDO_MS = 5000;
 
 /** Operator override for the staff badge (config `staff_badge_label`); null = locale string. */
 let staffLabel: string | null = null;
@@ -1990,34 +1991,67 @@ const buildActions = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): HTMLEleme
 	if (n.status !== "deleted" && !isOwnComment) {
 		const reportBtn = el("button", "gr-report", s("w.report"));
 		reportBtn.type = "button";
-		reportBtn.addEventListener("click", async () => {
-			reportBtn.disabled = true;
+	reportBtn.addEventListener("click", () => {
+		// Report is delayed REPORT_UNDO_MS so a misclick can be taken back
+		// with no request sent. Leaving the page sends it at once (keepalive)
+		// so a deliberate report is not lost.
+		const done = el("span", "gr-reported", `${s("w.reported")} \u00b7 `);
+		const undoBtn = el("button", undefined, s("w.undo"));
+		undoBtn.type = "button";
+		done.appendChild(undoBtn);
+		reportBtn.replaceWith(done);
+		undoBtn.focus();
+		// One of timer / pagehide / Undo wins; each removes the others.
+		const cancel = (): void => {
+			clearTimeout(timer);
+			window.removeEventListener("pagehide", send);
+		};
+		const send = async (): Promise<void> => {
+			cancel();
 			let ok = false;
 			try {
 				// The endpoint returns 200 for both new and duplicate reports and
 				// never discloses which (anti-enumeration), so a 2xx is the only
-				// success signal we get — and the only one we need. fetch does NOT
-				// reject on a 4xx/5xx, so we must inspect res.ok explicitly.
-				const res = await apiJson(
+				// success signal we get. fetch does NOT reject on a 4xx/5xx, so
+				// inspect res.ok explicitly.
+				const res = await apiFetch(
 					ctx.apiBase,
 					`/api/v1/comments/${encodeURIComponent(n.id)}/report`,
-					{},
+					{
+						method: "POST",
+						headers: { "content-type": "application/json" },
+						body: "{}",
+						keepalive: true,
+					},
 				);
 				ok = res.ok;
 			} catch {
-				// Network failure — fall through to the retry path below.
+				// Network failure: fall through to the retry path below.
 			}
 			if (ok) {
-				// Replace the button with a non-interactive confirmation so a
+				// Keep a non-interactive confirmation in place of the button so a
 				// reader can't report-bomb one comment from the UI. (Server-side
 				// dedup + rate-limit are the real guard; this is just UX.)
-				reportBtn.replaceWith(el("span", "gr-reported", s("w.reported")));
+				const hadFocus = (undoBtn.getRootNode() as Document | ShadowRoot).activeElement === undoBtn;
+				undoBtn.remove();
+				if (hadFocus) {
+					done.tabIndex = -1;
+					done.focus();
+				}
 			} else {
-				// A real refusal (429 rate-limit, 4xx/5xx, or a dropped network
-				// call) — don't claim success; re-enable so the reader can retry.
-				reportBtn.disabled = false;
+				// A real refusal (429, 4xx/5xx, dropped network): don't claim
+				// success; restore the button so the reader can retry.
+				done.replaceWith(reportBtn);
 			}
+		};
+		const timer = setTimeout(send, REPORT_UNDO_MS);
+		window.addEventListener("pagehide", send);
+		undoBtn.addEventListener("click", () => {
+			cancel();
+			done.replaceWith(reportBtn);
+			reportBtn.focus();
 		});
+	});
 		row.appendChild(reportBtn);
 	}
 

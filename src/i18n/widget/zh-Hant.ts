@@ -74,6 +74,7 @@ export const zhHant = {
 	"w.delete_confirm": "確定要刪除這則留言嗎？",
 	"w.report": "檢舉",
 	"w.reported": "已檢舉，謝謝",
+	"w.undo": "復原",
 
 	// ── Votes and reactions ─────────────────────────────────────────────────
 	"w.vote.up": "支持",

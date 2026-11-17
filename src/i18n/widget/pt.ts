@@ -125,6 +125,7 @@ export const pt = {
 	"w.delete_confirm": "Apagar este comentário?",
 	"w.report": "Denunciar",
 	"w.reported": "Denunciado, obrigado",
+	"w.undo": "Desfazer",
 
 	// ── Votes and reactions ─────────────────────────────────────────────────
 	"w.vote.up": "Votar a favor",

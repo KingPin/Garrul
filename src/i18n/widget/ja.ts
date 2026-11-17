@@ -110,6 +110,7 @@ export const ja = {
 	"w.delete_confirm": "このコメントを削除しますか？",
 	"w.report": "報告",
 	"w.reported": "報告しました。ありがとうございます",
+	"w.undo": "元に戻す",
 
 	// ── Votes and reactions ─────────────────────────────────────────────────
 	"w.vote.up": "高評価",

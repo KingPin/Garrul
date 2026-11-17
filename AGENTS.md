@@ -749,6 +749,15 @@ Cancel, and `Escape` backs out. Before v2.9.0 this was `window.confirm()`,
 which is suppressed entirely in some webviews and in cross-origin iframes
 without user activation — where the button appeared to do nothing.
 
+### Reporting a comment
+
+Any reader can report a visible comment that is not their own, signed in
+or not. The widget holds the report for 5 seconds and shows "Reported,
+thanks · Undo". Undo cancels it and no request is sent. When the timer
+ends, or the reader leaves the page first, the widget sends one
+`POST /api/v1/comments/:id/report` (with `keepalive`). On touch screens
+(`pointer: coarse`) the comment action buttons are 44 px tall.
+
 ### Removed comments and their replies (since v2.37.0)
 
 A comment marked spam, or held for moderation, no longer takes its replies

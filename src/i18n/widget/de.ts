@@ -86,6 +86,7 @@ export const de = {
 	"w.delete_confirm": "Diesen Kommentar löschen?",
 	"w.report": "Melden",
 	"w.reported": "Gemeldet, danke",
+	"w.undo": "Rückgängig",
 
 	// ── Votes and reactions ─────────────────────────────────────────────────
 	"w.vote.up": "Positiv bewerten",

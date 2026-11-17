@@ -82,6 +82,7 @@ export const ar = {
 	"w.delete_confirm": "هل تريد حذف هذا التعليق؟",
 	"w.report": "إبلاغ",
 	"w.reported": "تم الإبلاغ، شكرًا",
+	"w.undo": "تراجع",
 
 	// ── Votes and reactions ─────────────────────────────────────────────────
 	"w.vote.up": "تصويت إيجابي",
