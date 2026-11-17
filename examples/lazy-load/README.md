@@ -114,18 +114,20 @@ Render a button; mount the widget only after a click.
 </section>
 
 <script>
-  function show() {
-    document.getElementById("garrul-load").remove();
-    document.getElementById("garrul").hidden = false;
-    var s = document.createElement("script");
-    s.src = "https://comments.example.com/embed.js";
-    s.defer = true;
-    document.body.appendChild(s);
-  }
-  document.getElementById("garrul-load").addEventListener("click", show);
-  // A shared comment link (#garrul-comment-<id>) must mount now, or the
-  // widget never gets to scroll to it.
-  if (location.hash.indexOf("#garrul-comment-") === 0) show();
+  (function () {
+    function show() {
+      document.getElementById("garrul-load").remove();
+      document.getElementById("garrul").hidden = false;
+      var s = document.createElement("script");
+      s.src = "https://comments.example.com/embed.js";
+      s.defer = true;
+      document.body.appendChild(s);
+    }
+    document.getElementById("garrul-load").addEventListener("click", show);
+    // A shared comment link (#garrul-comment-<id>) must mount now, or the
+    // widget never gets to scroll to it.
+    if (location.hash.indexOf("#garrul-comment-") === 0) show();
+  })();
 </script>
 ```
 
