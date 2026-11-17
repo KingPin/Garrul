@@ -9,7 +9,8 @@
  *
  * Invalidation is best-effort and current-colo only: the Cache API can't be
  * listed or globally busted. Every comment mutation (create / edit / delete /
- * moderate / react) drops the slug's first-page entries in the handling colo,
+ * moderate / react) drops the slug's first-page entries, its post feed and the
+ * site-wide feeds in the handling colo,
  * and the short max-age (`TREE_CACHE_TTL`) bounds staleness everywhere else. A
  * just-posted comment shows immediately to its author (signed-in → uncached,
  * or a same-colo drop) and within the TTL to other readers — the prior
@@ -88,19 +89,20 @@ export const bustSiteFeeds = async (
 };
 
 /**
- * Drop a slug's cached first pages and its feed (every sort, current page size) in the
- * handling colo. Also drops the site-wide feeds unless `opts.siteFeeds` is
- * false (reactions, and bulk loops that call `bustSiteFeeds` once). Best-effort: never rejects, because every comment mutation
- * awaits it on the user-visible path. Resolving the page size needs a settings
- * read; if that fails we skip the drop and let the TTL expire the entry.
- * `reqUrl` (the mutation's `c.req.url`) keys the deletes on the same Worker
- * origin the GET reads used.
+ * Drop a slug's cached first pages and its feed (every sort, current page
+ * size) in the handling colo. Also drops the site-wide feeds unless
+ * `opts.siteFeeds` is false (reactions, and bulk loops that call
+ * `bustSiteFeeds` once). Best-effort: never rejects, because every comment
+ * mutation awaits it on the user-visible path. Resolving the page size needs a
+ * settings read; if that fails we skip the drop and let the TTL expire the
+ * entry. `reqUrl` (the mutation's `c.req.url`) keys the deletes on the same
+ * Worker origin the GET reads used.
  *
- * `resolved` lets a caller that already holds the settings hand them over. Without it a handler that
- * resolved settings for its own gates may pay a second derive here once the
- * memo window lapses — on the write
- * path, after the insert, where the user is waiting. Callers with nothing in
- * hand (the delete path, reactions, admin) omit it and take the read.
+ * `resolved` lets a caller that already holds the settings hand them over.
+ * Without it a handler that resolved settings for its own gates may pay a
+ * second derive here once the memo window lapses — on the write path, after
+ * the insert, where the user is waiting. Callers with nothing in hand (the
+ * delete path, reactions, admin) omit it and take the read.
  */
 export const bustTreeCache = async (
 	env: Bindings,

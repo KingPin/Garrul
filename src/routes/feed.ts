@@ -2,6 +2,12 @@
  * GET /feed/:slug — Atom 1.0 feed of the most recent approved comments
  * for a post.
  *
+ * GET /feed — site-wide recent-comments feed: Atom by default, JSON Feed 1.1
+ * with `?format=json` (served with access-control-allow-origin: *). Optional
+ * `?site=<origin>` limits it to that site's posts; the value must be an
+ * ALLOWED_ORIGINS entry, otherwise 400. 50 items, same 5-minute edge cache,
+ * dropped in the handling colo by bustSiteFeeds on every comment mutation.
+ *
  * Atom over RSS 2.0 because Atom is XML-namespaced (cleaner validation),
  * has a real id field, and is what every modern feed reader prefers.
  *

@@ -1239,7 +1239,7 @@ const RECENT_INSTALL_SQL = `SELECT c.id, c.post_slug, c.body_html, c.created_at,
  * comments_post_idx, as in listLatestApprovedComments. Cost: the index then
  * reads every comment row on these posts (all statuses, spam included) and
  * sorts. That is bounded by the site's total comment count, once per cache
- * miss. If this shows up in production, an indexed per-site column on posts
+ * miss. If this shows up in production, a future indexed `posts.origin` column
  * is the upgrade path.
  */
 export const RECENT_BY_SLUGS_SQL = `SELECT c.id, c.post_slug, c.body_html, c.created_at, c.edited_at,
