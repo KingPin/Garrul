@@ -3273,6 +3273,10 @@ const loadState = new WeakMap<
 		// Fetches and appends the next top-level page; resolves true when a
 		// page was appended. Never rejects. `null` when no page is left.
 		loadNext: (() => Promise<boolean>) | null;
+		// The anchor id of the last hash a seek finished for, found or not. A
+		// reload must not re-page for a hash already sought: an unknown or
+		// deleted id would otherwise cost MAX_SEEK_PAGES requests per reload.
+		soughtHash: string | null;
 	}
 >();
 
@@ -3290,6 +3294,7 @@ const load = async (
 			sort: null,
 			revealedHash: null,
 			loadNext: null,
+			soughtHash: null,
 		};
 		loadState.set(root, st);
 		// Wire the permalink reveal to same-document fragment navigations here
@@ -3445,10 +3450,22 @@ const revealHashTarget = (root: ShadowRoot): boolean => {
  * paging is needed here. An unknown id costs at most MAX_SEEK_PAGES requests.
  */
 const seekHashTarget = async (root: ShadowRoot): Promise<void> => {
-	const id = commentIdFromHash(window.location.hash);
-	if (!id) return;
+	const startId = commentIdFromHash(window.location.hash);
+	if (!startId) return;
+	const anchorId = commentAnchorId(startId);
+	const st = loadState.get(root);
+	// Already revealed, or already sought and not found: a reload (reply, sort
+	// change) must not page again for the same hash. A different hash differs
+	// here, so a hashchange still seeks.
+	if (st && (st.revealedHash === anchorId || st.soughtHash === anchorId)) return;
 	await seekComment(
 		() => {
+			// Re-read the hash on every call: a hashchange can land mid-seek, and
+			// revealHashTarget acts on the current hash, so this must check the
+			// same one. The new hashchange's own seek returns at once while a
+			// fetch is in flight and relies on this loop to carry it.
+			const id = commentIdFromHash(window.location.hash);
+			if (!id) return true;
 			if (!root.getElementById(commentAnchorId(id))) return false;
 			revealHashTarget(root);
 			return true;
@@ -3456,6 +3473,7 @@ const seekHashTarget = async (root: ShadowRoot): Promise<void> => {
 		() => loadState.get(root)?.loadNext?.() ?? null,
 		MAX_SEEK_PAGES,
 	);
+	if (st) st.soughtHash = anchorId;
 };
 
 /** The order the rendered page is actually in; see `loadState`'s `sort`. */
