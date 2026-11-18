@@ -43,7 +43,7 @@
 import { loadErrorMessage } from "./load-error";
 import { watchForSignIn } from "./auth-recovery";
 import { autoSizeTextarea } from "./autosize";
-import { DRAFT_MAX, adoptLegacyDraft, draftKey, legacyDraftKey } from "./drafts";
+import { adoptLegacyDraft, draftKey, draftSaver, legacyDraftKey } from "./drafts";
 import { authorKey, readAuthor, rememberAuthor } from "./author";
 import { createTurnstileGate, type TurnstileGate } from "./turnstile-gate";
 import { makeS, type StringTable, type WidgetKey } from "./strings";
@@ -350,12 +350,16 @@ const clearDraft = (key: string): void => {
 
 /**
  * Wire a textarea to localStorage: restore any saved draft on mount, then
- * persist (debounced) on input. Returns the storage key so the submit path
- * can clear it (reply cancel keeps the draft). All storage access is wrapped — a throwing localStorage
- * (Safari private mode, quota, disabled) degrades to no autosave, never breaks
- * the composer.
+ * persist (debounced) on input. Returns the saver so the reply form can flush
+ * on Cancel and drop on a successful post (see draftSaver). All storage access
+ * is wrapped — a throwing localStorage (Safari private mode, quota, disabled)
+ * degrades to no autosave, never breaks the composer.
  */
-const attachDraft = (ta: HTMLTextAreaElement, key: string, legacyKey: string): string => {
+const attachDraft = (
+	ta: HTMLTextAreaElement,
+	key: string,
+	legacyKey: string,
+): ReturnType<typeof draftSaver> => {
 	try {
 		// Inside the try on purpose: the `localStorage` getter itself throws
 		// where storage is blocked, and that has to degrade like every other
@@ -375,20 +379,9 @@ const attachDraft = (ta: HTMLTextAreaElement, key: string, legacyKey: string): s
 	} catch {
 		// Storage unavailable — skip restore.
 	}
-	let timer: ReturnType<typeof setTimeout> | undefined;
-	ta.addEventListener("input", () => {
-		if (timer) clearTimeout(timer);
-		timer = setTimeout(() => {
-			try {
-				const v = ta.value;
-				if (v) localStorage.setItem(key, v.slice(0, DRAFT_MAX));
-				else localStorage.removeItem(key);
-			} catch {
-				// Quota/disabled: drop this save silently.
-			}
-		}, 400);
-	});
-	return key;
+	const saver = draftSaver(() => localStorage, key, () => ta.value);
+	ta.addEventListener("input", saver.schedule);
+	return saver;
 };
 
 // ── Remembered author ───────────────────────────────────────────────────────
@@ -2231,7 +2224,7 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	ta.placeholder = s("w.reply_ph", { name: parent.author.name });
 	ta.setAttribute("aria-label", s("w.reply_ph", { name: parent.author.name }));
 	ta.required = true;
-	const dkey = attachDraft(
+	const draft = attachDraft(
 		ta,
 		draftKey(ctx.apiOrigin, ctx.slug, parent.id),
 		legacyDraftKey(ctx.slug, parent.id),
@@ -2345,14 +2338,21 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	// teardown: disposing the Turnstile gate and removing the form. An Escape
 	// that only hid the box would leak the gate's global message listener for
 	// the rest of the page's life. The draft survives a cancel, so reopening
-	// Reply restores it; a successful post clears it (see the submit path).
+	// Reply restores it: the cancel flushes first, because the debounced save
+	// may not have run yet and the reopened form reads storage at once. A
+	// successful post drops the draft instead (see the submit path), so its
+	// teardown is `dismiss` alone.
 	const dismiss = (): void => {
 		tsGate?.dispose();
 		tsHandle?.destroy();
 		wrap.remove();
 	};
-	cancel.addEventListener("click", dismiss);
-	bindComposerKeys(wrap, dismiss);
+	const cancelReply = (): void => {
+		draft.flush();
+		dismiss();
+	};
+	cancel.addEventListener("click", cancelReply);
+	bindComposerKeys(wrap, cancelReply);
 
 	// Same precedence as the top-level composer: the Turnstile failure message
 	// is sticky, so nothing here overwrites it or hands the button back.
@@ -2436,8 +2436,9 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 				tsGate?.clear();
 				return;
 			}
-			// Reply landed — drop the saved draft before the list re-renders.
-			clearDraft(dkey);
+			// Reply landed — drop the saved draft (and any pending save of it)
+			// before the list re-renders.
+			draft.drop();
 			if (nameInput)
 				rememberAuthor(authorStore(ctx.host), authorKey(ctx.apiOrigin), { name: nameInput.value });
 			// The 201 carries the whole comment, so render it rather than paying a
