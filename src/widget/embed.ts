@@ -3510,6 +3510,11 @@ const revealHashTarget = (root: ShadowRoot): boolean => {
 const seekHashTarget = async (root: ShadowRoot): Promise<void> => {
 	const startId = commentIdFromHash(window.location.hash);
 	if (!startId) return;
+	// No tree yet: a hashchange that lands while the first load is in flight
+	// has nothing to search and no pager to search with, so recording the hash
+	// as sought here would make the first render's own seek return early and
+	// leave the target unrevealed. That render seeks the current hash itself.
+	if (!mountCtx.has(root)) return;
 	const anchorId = commentAnchorId(startId);
 	const st = loadState.get(root);
 	// Already revealed, or already sought and not found: a reload (reply, sort
