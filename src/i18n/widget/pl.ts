@@ -116,6 +116,7 @@ export const pl = {
 	"w.delete_confirm": "Usunąć ten komentarz?",
 	"w.report": "Zgłoś",
 	"w.reported": "Zgłoszono, dzięki",
+	"w.undo": "Cofnij",
 
 	// ── Votes and reactions ─────────────────────────────────────────────────
 	"w.vote.up": "Oceń pozytywnie",

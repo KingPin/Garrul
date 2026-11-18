@@ -105,6 +105,7 @@ export const it = {
 	"w.delete_confirm": "Eliminare questo commento?",
 	"w.report": "Segnala",
 	"w.reported": "Segnalato, grazie",
+	"w.undo": "Annulla",
 
 	// ── Votes and reactions ─────────────────────────────────────────────────
 	"w.vote.up": "Vota a favore",

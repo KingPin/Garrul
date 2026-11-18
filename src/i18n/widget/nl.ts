@@ -103,6 +103,7 @@ export const nl = {
 	"w.delete_confirm": "Deze reactie verwijderen?",
 	"w.report": "Melden",
 	"w.reported": "Gemeld, bedankt",
+	"w.undo": "Ongedaan maken",
 
 	// ── Votes and reactions ─────────────────────────────────────────────────
 	"w.vote.up": "Positief beoordelen",

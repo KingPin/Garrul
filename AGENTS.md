@@ -262,6 +262,9 @@ when the comments section is below the fold. Replace the
       s.defer = true;
       document.body.appendChild(s);
     }
+    // A shared comment link (#garrul-comment-<id>) must mount now, or the
+    // widget never gets to scroll to it.
+    if (location.hash.indexOf("#garrul-comment-") === 0) { load(); return; }
     if ("IntersectionObserver" in window) {
       var io = new IntersectionObserver(function (entries) {
         if (entries.some(function (e) { return e.isIntersecting; })) {
@@ -519,6 +522,12 @@ than joining to it with `&`, matching how rungs 1 and 2 build their
 anchors. Rungs 1 and 2 have none of the remaining failure modes, which
 is why they are tried first.
 
+The widget reveals the target on mount and on `hashchange`: it pages
+forward (at most 10 extra `/api/v1/comments` requests) until the comment
+renders. Capped "Show N more replies" batches holding the target are
+opened at render time (mount or reload); a later `hashchange` opens
+collapsed branches only.
+
 The link is a plain `<a href>` — no clipboard-copy JavaScript shim —
 so right-click-copy, middle-click, and Cmd/Ctrl-click all work the way
 a reader expects. `#garrul-comment-<id>` is the `id` the widget already
@@ -742,6 +751,15 @@ Cancel, and `Escape` backs out. Before v2.9.0 this was `window.confirm()`,
 which is suppressed entirely in some webviews and in cross-origin iframes
 without user activation — where the button appeared to do nothing.
 
+### Reporting a comment
+
+Any reader can report a visible comment that is not their own, signed in
+or not. The widget holds the report for 5 seconds and shows "Reported,
+thanks · Undo". Undo cancels it and no request is sent. When the timer
+ends, or the reader leaves the page first, the widget sends one
+`POST /api/v1/comments/:id/report` (with `keepalive`). On touch screens
+(`pointer: coarse`) the comment action buttons are 44 px tall.
+
 ### Removed comments and their replies (since v2.37.0)
 
 A comment marked spam, or held for moderation, no longer takes its replies
@@ -774,7 +792,7 @@ Inside any composer — top-level, reply, or edit:
 | Keys                 | Does                                            |
 | -------------------- | ----------------------------------------------- |
 | `Cmd`/`Ctrl` + `Enter` | Posts the form you are in.                    |
-| `Escape`             | Closes a reply or edit box, discarding its draft. The top-level composer has nothing to back out to and ignores it. |
+| `Escape`             | Closes a reply or edit box. A reply keeps its draft and reopens with it; an edit discards its changes. The top-level composer has nothing to back out to and ignores it. |
 
 Bound on the form, so they work from the name and email fields too, not
 just the textarea. Both are suppressed while an IME composition is

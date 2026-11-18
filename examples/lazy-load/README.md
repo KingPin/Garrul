@@ -59,6 +59,9 @@ get a seamless experience. Bouncers cost you nothing.
       s.defer = true;
       document.body.appendChild(s);
     }
+    // A shared comment link (#garrul-comment-<id>) must mount now, or the
+    // widget never gets to scroll to it.
+    if (location.hash.indexOf("#garrul-comment-") === 0) { load(); return; }
 
     if ("IntersectionObserver" in window) {
       var io = new IntersectionObserver(function (entries) {
@@ -74,6 +77,8 @@ get a seamless experience. Bouncers cost you nothing.
   })();
 </script>
 ```
+
+A shared comment link (`#garrul-comment-<id>`) mounts the widget at once, because the widget must be on the page before it can scroll to that comment.
 
 ### What you give up
 
@@ -109,14 +114,20 @@ Render a button; mount the widget only after a click.
 </section>
 
 <script>
-  document.getElementById("garrul-load").addEventListener("click", function () {
-    this.remove();
-    document.getElementById("garrul").hidden = false;
-    var s = document.createElement("script");
-    s.src = "https://comments.example.com/embed.js";
-    s.defer = true;
-    document.body.appendChild(s);
-  });
+  (function () {
+    function show() {
+      document.getElementById("garrul-load").remove();
+      document.getElementById("garrul").hidden = false;
+      var s = document.createElement("script");
+      s.src = "https://comments.example.com/embed.js";
+      s.defer = true;
+      document.body.appendChild(s);
+    }
+    document.getElementById("garrul-load").addEventListener("click", show);
+    // A shared comment link (#garrul-comment-<id>) must mount now, or the
+    // widget never gets to scroll to it.
+    if (location.hash.indexOf("#garrul-comment-") === 0) show();
+  })();
 </script>
 ```
 

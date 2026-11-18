@@ -100,6 +100,7 @@ export const nb = {
 	"w.delete_confirm": "Slette denne kommentaren?",
 	"w.report": "Rapporter",
 	"w.reported": "Rapportert, takk",
+	"w.undo": "Angre",
 
 	// ── Votes and reactions ─────────────────────────────────────────────────
 	"w.vote.up": "Stem opp",

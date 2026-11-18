@@ -43,7 +43,7 @@
 import { loadErrorMessage } from "./load-error";
 import { watchForSignIn } from "./auth-recovery";
 import { autoSizeTextarea } from "./autosize";
-import { DRAFT_MAX, adoptLegacyDraft, draftKey, legacyDraftKey } from "./drafts";
+import { adoptLegacyDraft, draftKey, draftSaver, legacyDraftKey } from "./drafts";
 import { authorKey, readAuthor, rememberAuthor } from "./author";
 import { createTurnstileGate, type TurnstileGate } from "./turnstile-gate";
 import { makeS, type StringTable, type WidgetKey } from "./strings";
@@ -65,7 +65,14 @@ import {
 	synthesizePosted,
 	topLevelPlacement,
 } from "./comment-node";
-import { commentAnchorId, commentHref, commentIdFromHash } from "./permalink";
+import {
+	commentAnchorId,
+	commentHref,
+	commentIdFromHash,
+	MAX_SEEK_PAGES,
+	seekComment,
+	subtreeHas,
+} from "./permalink";
 import {
 	type EditWindowState,
 	TICK_MS,
@@ -122,6 +129,7 @@ let langHint = "";
 let maxBodyChars = 10_000;
 /** How close to the ceiling the counter appears. Silent above this. */
 const COUNT_WARN_AT = 500;
+const REPORT_UNDO_MS = 5000;
 
 /** Operator override for the staff badge (config `staff_badge_label`); null = locale string. */
 let staffLabel: string | null = null;
@@ -342,12 +350,16 @@ const clearDraft = (key: string): void => {
 
 /**
  * Wire a textarea to localStorage: restore any saved draft on mount, then
- * persist (debounced) on input. Returns the storage key so the submit/cancel
- * paths can clear it. All storage access is wrapped — a throwing localStorage
- * (Safari private mode, quota, disabled) degrades to no autosave, never breaks
- * the composer.
+ * persist (debounced) on input. Returns the saver so the reply form can flush
+ * on Cancel and drop on a successful post (see draftSaver). All storage access
+ * is wrapped — a throwing localStorage (Safari private mode, quota, disabled)
+ * degrades to no autosave, never breaks the composer.
  */
-const attachDraft = (ta: HTMLTextAreaElement, key: string, legacyKey: string): string => {
+const attachDraft = (
+	ta: HTMLTextAreaElement,
+	key: string,
+	legacyKey: string,
+): ReturnType<typeof draftSaver> => {
 	try {
 		// Inside the try on purpose: the `localStorage` getter itself throws
 		// where storage is blocked, and that has to degrade like every other
@@ -367,20 +379,9 @@ const attachDraft = (ta: HTMLTextAreaElement, key: string, legacyKey: string): s
 	} catch {
 		// Storage unavailable — skip restore.
 	}
-	let timer: ReturnType<typeof setTimeout> | undefined;
-	ta.addEventListener("input", () => {
-		if (timer) clearTimeout(timer);
-		timer = setTimeout(() => {
-			try {
-				const v = ta.value;
-				if (v) localStorage.setItem(key, v.slice(0, DRAFT_MAX));
-				else localStorage.removeItem(key);
-			} catch {
-				// Quota/disabled: drop this save silently.
-			}
-		}, 400);
-	});
-	return key;
+	const saver = draftSaver(() => localStorage, key, () => ta.value);
+	ta.addEventListener("input", saver.schedule);
+	return saver;
 };
 
 // ── Remembered author ───────────────────────────────────────────────────────
@@ -1983,33 +1984,79 @@ const buildActions = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): HTMLEleme
 	if (n.status !== "deleted" && !isOwnComment) {
 		const reportBtn = el("button", "gr-report", s("w.report"));
 		reportBtn.type = "button";
-		reportBtn.addEventListener("click", async () => {
-			reportBtn.disabled = true;
-			let ok = false;
-			try {
-				// The endpoint returns 200 for both new and duplicate reports and
-				// never discloses which (anti-enumeration), so a 2xx is the only
-				// success signal we get — and the only one we need. fetch does NOT
-				// reject on a 4xx/5xx, so we must inspect res.ok explicitly.
-				const res = await apiJson(
-					ctx.apiBase,
-					`/api/v1/comments/${encodeURIComponent(n.id)}/report`,
-					{},
-				);
-				ok = res.ok;
-			} catch {
-				// Network failure — fall through to the retry path below.
-			}
-			if (ok) {
-				// Replace the button with a non-interactive confirmation so a
-				// reader can't report-bomb one comment from the UI. (Server-side
-				// dedup + rate-limit are the real guard; this is just UX.)
-				reportBtn.replaceWith(el("span", "gr-reported", s("w.reported")));
-			} else {
-				// A real refusal (429 rate-limit, 4xx/5xx, or a dropped network
-				// call) — don't claim success; re-enable so the reader can retry.
-				reportBtn.disabled = false;
-			}
+		reportBtn.addEventListener("click", () => {
+			// Report is delayed REPORT_UNDO_MS so a misclick can be taken back
+			// with no request sent. Leaving the page sends it at once (keepalive)
+			// so a deliberate report is not lost.
+			const done = el("span", "gr-reported", `${s("w.reported")} \u00b7 `);
+			const undoBtn = el("button", undefined, s("w.undo"));
+			undoBtn.type = "button";
+			// Screen readers would otherwise announce only "Undo".
+			const said = el("span", undefined, s("w.reported"));
+			said.id = `gr-rep-${n.id}`;
+			said.hidden = true;
+			undoBtn.setAttribute("aria-describedby", said.id);
+			done.append(said, undoBtn);
+			reportBtn.replaceWith(done);
+			undoBtn.focus();
+			// One of timer / pagehide / Undo wins; each removes the others.
+			const cancel = (): void => {
+				clearTimeout(timer);
+				window.removeEventListener("pagehide", send);
+			};
+			const send = async (): Promise<void> => {
+				cancel();
+				// The report is on its way: retire Undo now so it cannot restore Report
+				// while the POST is in flight. Keep focus on a live node.
+				const hadFocus = (undoBtn.getRootNode() as Document | ShadowRoot).activeElement === undoBtn;
+				// Drops Undo, its description and the separator in one go.
+				done.textContent = s("w.reported");
+				if (hadFocus) {
+					done.tabIndex = -1;
+					done.focus();
+				}
+				let ok = false;
+				try {
+					// The endpoint returns 200 for both new and duplicate reports and
+					// never discloses which (anti-enumeration), so a 2xx is the only
+					// success signal we get. fetch does NOT reject on a 4xx/5xx, so
+					// inspect res.ok explicitly.
+					const res = await apiFetch(
+						ctx.apiBase,
+						`/api/v1/comments/${encodeURIComponent(n.id)}/report`,
+						{
+							method: "POST",
+							// No headers or body: that keeps this a CORS "simple request", so
+							// the pagehide flush needs no preflight. A missing body means
+							// reason=null server-side.
+							keepalive: true,
+						},
+					);
+					ok = res.ok;
+				} catch {
+					// Network failure: fall through to the retry path below.
+				}
+				// On success the non-interactive "Reported" span stays, so a reader
+				// can't report-bomb one comment from the UI. (Server-side dedup +
+				// rate-limit are the real guard; this is just UX.)
+				if (!ok) {
+					// A real refusal (429, 4xx/5xx, dropped network): don't claim
+					// success; restore the button so the reader can retry.
+					// A report pending when a re-render detaches this node and whose
+					// POST then fails is lost silently; server dedup and rate-limit
+					// are the real guard.
+					const hadFocusNow = (done.getRootNode() as Document | ShadowRoot).activeElement === done;
+					done.replaceWith(reportBtn);
+					if (hadFocusNow) reportBtn.focus();
+				}
+			};
+			const timer = setTimeout(send, REPORT_UNDO_MS);
+			window.addEventListener("pagehide", send);
+			undoBtn.addEventListener("click", () => {
+				cancel();
+				done.replaceWith(reportBtn);
+				reportBtn.focus();
+			});
 		});
 		row.appendChild(reportBtn);
 	}
@@ -2177,7 +2224,7 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	ta.placeholder = s("w.reply_ph", { name: parent.author.name });
 	ta.setAttribute("aria-label", s("w.reply_ph", { name: parent.author.name }));
 	ta.required = true;
-	const dkey = attachDraft(
+	const draft = attachDraft(
 		ta,
 		draftKey(ctx.apiOrigin, ctx.slug, parent.id),
 		legacyDraftKey(ctx.slug, parent.id),
@@ -2288,17 +2335,24 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	}
 
 	// Escape and the Cancel button are the same act, so they run the same
-	// teardown — dropping the draft, disposing the Turnstile gate and removing
-	// the form. An Escape that only hid the box would leak the gate's global
-	// message listener for the rest of the page's life.
+	// teardown: disposing the Turnstile gate and removing the form. An Escape
+	// that only hid the box would leak the gate's global message listener for
+	// the rest of the page's life. The draft survives a cancel, so reopening
+	// Reply restores it: the cancel flushes first, because the debounced save
+	// may not have run yet and the reopened form reads storage at once. A
+	// successful post drops the draft instead (see the submit path), so its
+	// teardown is `dismiss` alone.
 	const dismiss = (): void => {
-		clearDraft(dkey);
 		tsGate?.dispose();
 		tsHandle?.destroy();
 		wrap.remove();
 	};
-	cancel.addEventListener("click", dismiss);
-	bindComposerKeys(wrap, dismiss);
+	const cancelReply = (): void => {
+		draft.flush();
+		dismiss();
+	};
+	cancel.addEventListener("click", cancelReply);
+	bindComposerKeys(wrap, cancelReply);
 
 	// Same precedence as the top-level composer: the Turnstile failure message
 	// is sticky, so nothing here overwrites it or hands the button back.
@@ -2382,8 +2436,9 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 				tsGate?.clear();
 				return;
 			}
-			// Reply landed — drop the saved draft before the list re-renders.
-			clearDraft(dkey);
+			// Reply landed — drop the saved draft (and any pending save of it)
+			// before the list re-renders.
+			draft.drop();
 			if (nameInput)
 				rememberAuthor(authorStore(ctx.host), authorKey(ctx.apiOrigin), { name: nameInput.value });
 			// The 201 carries the whole comment, so render it rather than paying a
@@ -2620,8 +2675,12 @@ const replyMountFor = (
 	const container = el("div", "gr-replies");
 	// Per-comment collapse toggle; auto-collapsed when this node is nested
 	// at/deeper than the configured depth (0 = never auto-collapse).
+	// A branch holding the permalink target never starts collapsed.
+	const target = commentIdFromHash(window.location.hash);
 	const startCollapsed =
-		ctx.autoCollapseDepth > 0 && n.depth >= ctx.autoCollapseDepth;
+		ctx.autoCollapseDepth > 0 &&
+		n.depth >= ctx.autoCollapseDepth &&
+		!(target && n.replies.some((r) => subtreeHas(r, target)));
 	const toggle = buildCollapseToggle(
 		container,
 		countDescendants(n),
@@ -2648,7 +2707,14 @@ const renderReplyList = (
 	ctx: WidgetCtx,
 ): void => {
 	const limit = ctx.repliesPerThread;
-	const initial = limit > 0 && replies.length > limit ? limit : replies.length;
+	// A permalink target past the cap shows every reply: the target must be in
+	// the DOM, and splitting the list around it would hide its siblings oddly.
+	const target = commentIdFromHash(window.location.hash);
+	const showAll =
+		target !== null &&
+		replies.slice(limit).some((r) => subtreeHas(r, target));
+	const initial =
+		limit > 0 && replies.length > limit && !showAll ? limit : replies.length;
 	for (let i = 0; i < initial; i++) {
 		container.appendChild(buildThread(replies[i]!, ctx));
 	}
@@ -3252,6 +3318,13 @@ const loadState = new WeakMap<
 		// revealed for this root — see revealHashTarget below. `null` until a
 		// hash reveal has succeeded at least once.
 		revealedHash: string | null;
+		// Fetches and appends the next top-level page; resolves true when a
+		// page was appended. Never rejects. `null` when no page is left.
+		loadNext: (() => Promise<boolean>) | null;
+		// The anchor id of the last hash a seek finished for, found or not. A
+		// reload must not re-page for a hash already sought: an unknown or
+		// deleted id would otherwise cost MAX_SEEK_PAGES requests per reload.
+		soughtHash: string | null;
 	}
 >();
 
@@ -3263,7 +3336,14 @@ const load = async (
 ): Promise<void> => {
 	let st = loadState.get(root);
 	if (!st) {
-		st = { running: false, queued: false, sort: null, revealedHash: null };
+		st = {
+			running: false,
+			queued: false,
+			sort: null,
+			revealedHash: null,
+			loadNext: null,
+			soughtHash: null,
+		};
 		loadState.set(root, st);
 		// Wire the permalink reveal to same-document fragment navigations here
 		// rather than in init(): a naive addEventListener at the reveal's own
@@ -3275,7 +3355,7 @@ const load = async (
 		// finds it already there), so piggybacking here gets "exactly one
 		// listener per mount" for free, with no second WeakSet just to
 		// remember whether one was already bound.
-		window.addEventListener("hashchange", () => revealHashTarget(root));
+		window.addEventListener("hashchange", () => void seekHashTarget(root));
 	}
 	if (st.running) {
 		st.queued = true;
@@ -3367,8 +3447,9 @@ const focusPostedComment = (root: ShadowRoot, id: string): boolean => {
  * reach into the shadow root to act on itself.
  *
  * Silent no-op when the hash isn't one of ours, or when it is but the
- * comment isn't in the rendered tree — a hash for another page, or one that
- * hasn't loaded yet, must never surface as an error.
+ * comment isn't in the rendered tree — a hash for another page must never
+ * surface as an error. Callers that want an unloaded target fetched first use
+ * `seekHashTarget`, which pages until the target renders and then calls this.
  *
  * Reveals a given hash at most once per root. Scrolling alone was harmless
  * on every reload, because the re-render was already resetting scroll
@@ -3389,6 +3470,16 @@ const revealHashTarget = (root: ShadowRoot): boolean => {
 	if (st?.revealedHash === anchorId) return false;
 	const target = root.getElementById(anchorId);
 	if (!target) return false;
+	// A target inside an auto-collapsed branch is in the DOM but display:none,
+	// so scroll and focus would do nothing. Open each branch that holds it.
+	for (
+		let a = target.parentElement?.closest<HTMLElement>(".gr-thread") ?? null;
+		a;
+		a = a.parentElement?.closest<HTMLElement>(".gr-thread") ?? null
+	) {
+		const mount = replyMounts.get(a);
+		if (mount?.container.contains(target)) mount.reveal();
+	}
 	// The CSS half of the reduced-motion promise lives in styles.css; scroll
 	// behavior is set here, so it has to be honored here too. `matchMedia` is
 	// guarded because the widget also runs under the iframe route and in test
@@ -3405,9 +3496,47 @@ const revealHashTarget = (root: ShadowRoot): boolean => {
 	focusPostedComment(root, id);
 	// Record only on success: a hash pointing at a comment that hasn't
 	// rendered yet (paged thread, or a reload still in flight) must not count
-	// as revealed, so a later Load More or reload can still catch it.
+	// as revealed, so a reload that renders it can still catch it.
 	if (st) st.revealedHash = anchorId;
 	return true;
+};
+
+/**
+ * Page forward (at most MAX_SEEK_PAGES) until the hash target is in the DOM,
+ * then reveal it. A target in a collapsed or capped reply list is already
+ * rendered open (see replyMountFor / renderReplyList), so only top-level
+ * paging is needed here. An unknown id costs at most MAX_SEEK_PAGES requests.
+ */
+const seekHashTarget = async (root: ShadowRoot): Promise<void> => {
+	const startId = commentIdFromHash(window.location.hash);
+	if (!startId) return;
+	// No tree yet: a hashchange that lands while the first load is in flight
+	// has nothing to search and no pager to search with, so recording the hash
+	// as sought here would make the first render's own seek return early and
+	// leave the target unrevealed. That render seeks the current hash itself.
+	if (!mountCtx.has(root)) return;
+	const anchorId = commentAnchorId(startId);
+	const st = loadState.get(root);
+	// Already revealed, or already sought and not found: a reload (reply, sort
+	// change) must not page again for the same hash. A different hash differs
+	// here, so a hashchange still seeks.
+	if (st && (st.revealedHash === anchorId || st.soughtHash === anchorId)) return;
+	await seekComment(
+		() => {
+			// Re-read the hash on every call: a hashchange can land mid-seek, and
+			// revealHashTarget acts on the current hash, so this must check the
+			// same one. The new hashchange's own seek returns at once while a
+			// fetch is in flight and relies on this loop to carry it.
+			const id = commentIdFromHash(window.location.hash);
+			if (!id) return true;
+			if (!root.getElementById(commentAnchorId(id))) return false;
+			revealHashTarget(root);
+			return true;
+		},
+		() => loadState.get(root)?.loadNext?.() ?? null,
+		MAX_SEEK_PAGES,
+	);
+	if (st) st.soughtHash = anchorId;
 };
 
 /** The order the rendered page is actually in; see `loadState`'s `sort`. */
@@ -4006,12 +4135,14 @@ const loadOnce = async (
 
 	wrap.appendChild(list);
 
+	const loadSt = loadState.get(root);
+	if (loadSt) loadSt.loadNext = null;
 	if (data.next_cursor) {
 		const more = el("button", "gr-loadmore", s("w.load_more"));
 		more.type = "button";
 		let cursor: string | null = data.next_cursor;
-		more.addEventListener("click", async () => {
-			if (!cursor) return;
+		const loadNext = async (): Promise<boolean> => {
+			if (!cursor || more.disabled) return false;
 			more.disabled = true;
 			try {
 				const page = await fetchPage(apiBase, slug, cursor, activeSort);
@@ -4021,7 +4152,9 @@ const loadOnce = async (
 					more.disabled = false;
 				} else {
 					more.remove();
+					if (loadSt?.loadNext === loadNext) loadSt.loadNext = null;
 				}
+				return true;
 			} catch (err) {
 				more.disabled = false;
 				const errBox = el(
@@ -4030,8 +4163,11 @@ const loadOnce = async (
 					s("w.load_more_failed", { detail: String(err) }),
 				);
 				more.insertAdjacentElement("afterend", errBox);
+				return false;
 			}
-		});
+		};
+		more.addEventListener("click", () => void loadNext());
+		if (loadSt) loadSt.loadNext = loadNext;
 		wrap.appendChild(more);
 	}
 
@@ -4065,7 +4201,9 @@ const loadOnce = async (
 	//      restoring a hash target they may have long since read past;
 	//   2. otherwise an unrevealed hash target (see revealHashTarget's own
 	//      once-per-hash guard) — covers mount, and any reload while a
-	//      permalink's hash is still set and hasn't been shown yet;
+	//      permalink's hash is still set and hasn't been sought yet. This
+	//      seeks: it pages forward (seekHashTarget) when the target is not on
+	//      the first page;
 	//   3. otherwise nothing; focus is left alone.
 	// Read-then-delete rather than a plain read: this is also what makes the
 	// mechanism correct under the queued-reload race in load() above. If a
@@ -4121,7 +4259,7 @@ const loadOnce = async (
 			}, 0);
 		}
 	} else {
-		revealHashTarget(root);
+		void seekHashTarget(root);
 	}
 
 	// Mint the form-timing token on the reader's first focus anywhere in the

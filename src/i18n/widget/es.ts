@@ -83,6 +83,7 @@ export const es = {
 	"w.delete_confirm": "¿Eliminar este comentario?",
 	"w.report": "Denunciar",
 	"w.reported": "Denunciado, gracias",
+	"w.undo": "Deshacer",
 
 	// ── Votes and reactions ─────────────────────────────────────────────────
 	"w.vote.up": "Votar a favor",

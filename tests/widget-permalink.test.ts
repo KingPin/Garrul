@@ -6,8 +6,15 @@
  * invocation against the 100k/day free-tier ceiling. /c/:id survives only as
  * the last rung, for the iframe embed standing on the Worker's own origin.
  */
-import { describe, it, expect } from "vitest";
-import { commentAnchorId, commentHref, commentIdFromHash } from "../src/widget/permalink";
+import { describe, it, expect, vi } from "vitest";
+import {
+	MAX_SEEK_PAGES,
+	commentAnchorId,
+	commentHref,
+	commentIdFromHash,
+	seekComment,
+	subtreeHas,
+} from "../src/widget/permalink";
 
 const API = "https://comments.example.com";
 const ID = "01JQZ8X4M2";
@@ -127,5 +134,43 @@ describe("commentIdFromHash", () => {
 		// `#foo-garrul-comment-bar`. Anchoring the match at the start of the
 		// hash is the behaviour under test.
 		expect(commentIdFromHash(`#existing&${commentAnchorId(ID)}`)).toBeNull();
+	});
+});
+
+describe("subtreeHas", () => {
+	const t = { id: "a", replies: [{ id: "b", replies: [{ id: "c", replies: [] }] }] };
+	it("matches the node itself", () => expect(subtreeHas(t, "a")).toBe(true));
+	it("matches a grandchild", () => expect(subtreeHas(t, "c")).toBe(true));
+	it("misses an absent id", () => expect(subtreeHas(t, "z")).toBe(false));
+	it("handles a leaf", () => expect(subtreeHas({ id: "x", replies: [] }, "y")).toBe(false));
+});
+
+describe("seekComment", () => {
+	it("caps the page budget at 10 requests", () => expect(MAX_SEEK_PAGES).toBe(10));
+	it("reveals without paging when the target is on screen", async () => {
+		const next = vi.fn(() => Promise.resolve(true));
+		expect(await seekComment(() => true, next, 10)).toBe(true);
+		expect(next).not.toHaveBeenCalled();
+	});
+	it("pages until the target appears", async () => {
+		let pages = 0;
+		const next = vi.fn(() => { pages++; return Promise.resolve(true); });
+		expect(await seekComment(() => pages === 2, next, 10)).toBe(true);
+		expect(next).toHaveBeenCalledTimes(2);
+	});
+	it("stops after maxPages", async () => {
+		const next = vi.fn(() => Promise.resolve(true));
+		expect(await seekComment(() => false, next, 10)).toBe(false);
+		expect(next).toHaveBeenCalledTimes(10);
+	});
+	it("stops when there are no more pages", async () => {
+		const next = vi.fn(() => null);
+		expect(await seekComment(() => false, next, 10)).toBe(false);
+		expect(next).toHaveBeenCalledTimes(1);
+	});
+	it("stops when a page fetch fails", async () => {
+		const next = vi.fn(() => Promise.resolve(false));
+		expect(await seekComment(() => false, next, 10)).toBe(false);
+		expect(next).toHaveBeenCalledTimes(1);
 	});
 });

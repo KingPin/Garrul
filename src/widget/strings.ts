@@ -127,6 +127,7 @@ export const EN = {
 	"w.delete_confirm": "Delete this comment?",
 	"w.report": "Report",
 	"w.reported": "Reported, thanks",
+	"w.undo": "Undo",
 
 	// ── Votes and reactions ─────────────────────────────────────────────────
 	"w.vote.up": "Upvote",

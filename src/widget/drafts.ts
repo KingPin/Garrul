@@ -53,3 +53,50 @@ export const adoptLegacyDraft = (
 		// Storage unavailable — nothing to adopt.
 	}
 };
+
+/**
+ * The debounced autosave behind one textarea. `schedule` on every input;
+ * `flush` writes the pending value now (a reply Cancel, so reopening Reply
+ * inside the debounce window restores what was typed); `drop` cancels the
+ * pending write and removes the stored draft (a successful post, which must
+ * not be re-saved by a timer that fires after it). Storage is fetched per
+ * write because the `localStorage` getter itself can throw; every failure is
+ * swallowed like the rest of this module.
+ */
+export const draftSaver = (
+	storage: () => DraftStorage,
+	key: string,
+	read: () => string,
+	delayMs = 400,
+): { schedule: () => void; flush: () => void; drop: () => void } => {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const cancel = (): void => {
+		if (timer !== undefined) clearTimeout(timer);
+		timer = undefined;
+	};
+	const write = (v: string | null): void => {
+		try {
+			if (v) storage().setItem(key, v.slice(0, DRAFT_MAX));
+			else storage().removeItem(key);
+		} catch {
+			// Quota/disabled: drop this save silently.
+		}
+	};
+	return {
+		schedule: () => {
+			cancel();
+			timer = setTimeout(() => {
+				timer = undefined;
+				write(read());
+			}, delayMs);
+		},
+		flush: () => {
+			cancel();
+			write(read());
+		},
+		drop: () => {
+			cancel();
+			write(null);
+		},
+	};
+};

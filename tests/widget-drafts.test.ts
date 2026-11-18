@@ -4,8 +4,8 @@
  * migration, say) cannot restore each other's text. Legacy keys (no origin)
  * are adopted once so an upgrade does not lose a half-typed comment.
  */
-import { describe, it, expect } from "vitest";
-import { draftKey, legacyDraftKey, adoptLegacyDraft } from "../src/widget/drafts";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { draftKey, draftSaver, legacyDraftKey, adoptLegacyDraft } from "../src/widget/drafts";
 
 const fakeStorage = (init: Record<string, string> = {}) => {
 	const m = new Map(Object.entries(init));
@@ -71,5 +71,74 @@ describe("adoptLegacyDraft", () => {
 			removeItem: () => {},
 		};
 		expect(() => adoptLegacyDraft(throwing, "a", "b")).not.toThrow();
+	});
+});
+
+describe("draftSaver", () => {
+	afterEach(() => vi.useRealTimers());
+
+	const setup = () => {
+		vi.useFakeTimers();
+		const store = fakeStorage();
+		let value = "";
+		const saver = draftSaver(() => store, "k", () => value);
+		const type = (v: string): void => {
+			value = v;
+			saver.schedule();
+		};
+		return { store, saver, type };
+	};
+
+	it("saves only after the debounce", () => {
+		const { store, type } = setup();
+		type("hel");
+		type("hello");
+		vi.advanceTimersByTime(399);
+		expect(store.dump()).toEqual({});
+		vi.advanceTimersByTime(1);
+		expect(store.dump()).toEqual({ k: "hello" });
+	});
+
+	it("flush writes a pending value at once (Cancel, then reopen inside the window)", () => {
+		const { store, saver, type } = setup();
+		type("half a reply");
+		saver.flush();
+		expect(store.getItem("k")).toBe("half a reply");
+		// The pending timer is gone, so it cannot overwrite a later draft.
+		store.setItem("k", "typed in the reopened form");
+		vi.advanceTimersByTime(1000);
+		expect(store.getItem("k")).toBe("typed in the reopened form");
+	});
+
+	it("drop removes the draft and a pending save cannot bring it back", () => {
+		const { store, saver, type } = setup();
+		store.setItem("k", "older");
+		type("posted text");
+		saver.drop();
+		vi.advanceTimersByTime(1000);
+		expect(store.dump()).toEqual({});
+	});
+
+	it("an emptied field removes the draft", () => {
+		const { store, saver, type } = setup();
+		store.setItem("k", "older");
+		type("");
+		saver.flush();
+		expect(store.dump()).toEqual({});
+	});
+
+	it("swallows storage errors, including a throwing getter", () => {
+		vi.useFakeTimers();
+		const saver = draftSaver(
+			() => {
+				throw new Error("blocked");
+			},
+			"k",
+			() => "x",
+		);
+		expect(() => saver.flush()).not.toThrow();
+		expect(() => saver.drop()).not.toThrow();
+		saver.schedule();
+		expect(() => vi.advanceTimersByTime(400)).not.toThrow();
 	});
 });

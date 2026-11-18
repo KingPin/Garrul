@@ -85,6 +85,7 @@ export const fr = {
 	"w.delete_confirm": "Supprimer ce commentaire ?",
 	"w.report": "Signaler",
 	"w.reported": "Signalé, merci",
+	"w.undo": "Annuler",
 
 	// ── Votes and reactions ─────────────────────────────────────────────────
 	"w.vote.up": "Voter pour",
