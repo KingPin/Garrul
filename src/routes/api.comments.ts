@@ -1565,17 +1565,26 @@ comments.delete("/:id", async (c) => {
 	// ancestry pruning and on rows the reader never sees. `thread: null` means
 	// the whole thread is pruned. Both fields are additive (older widgets read
 	// `ok` only), and an unresolvable root omits them, which the widget reads
-	// as "reload".
-	const rootId = await getThreadRootId(c.env.DB, id, MAX_REPLY_DEPTH);
-	if (!rootId) return c.json({ ok: true });
-	const { flags } = await loadSettings(c.env);
-	const { threads } = await renderThreads(
-		c.env,
-		[rootId],
-		sessionUserId,
-		flags.show_deleted_placeholders,
-	);
-	return c.json({ ok: true, root_id: rootId, thread: threads[0] ?? null });
+	// as "reload". So does a render that throws: the delete already happened, and
+	// a 5xx here would have the widget put the Delete button back on it.
+	try {
+		const rootId = await getThreadRootId(c.env.DB, id, MAX_REPLY_DEPTH);
+		if (!rootId) return c.json({ ok: true });
+		const { flags } = await loadSettings(c.env);
+		const { threads } = await renderThreads(
+			c.env,
+			[rootId],
+			sessionUserId,
+			flags.show_deleted_placeholders,
+		);
+		return c.json({ ok: true, root_id: rootId, thread: threads[0] ?? null });
+	} catch (err) {
+		log.warn("comment.delete_render_failed", {
+			comment_id: id,
+			error: err instanceof Error ? err.name : "unknown",
+		});
+		return c.json({ ok: true });
+	}
 });
 
 export { comments };

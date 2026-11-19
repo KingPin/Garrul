@@ -129,6 +129,27 @@ const deleteAndList = async (id: string, rootId: string) => {
 
 afterEach(() => uninstallMockCaches());
 
+it("a render that throws still answers 200 ok, without a thread", async () => {
+	setup(false);
+	const id = add("01HC00000000000000000BOOM1", null);
+	// Fail only the reads after the delete; the delete itself goes through.
+	const prepare = env.DB.prepare.bind(env.DB);
+	(env.DB as { prepare: unknown }).prepare = (sql: string) => {
+		if (sql.includes("WITH RECURSIVE thread_level")) throw new Error("D1 down");
+		return prepare(sql);
+	};
+	const res = await app().request(
+		`http://localhost/api/v1/comments/${id}`,
+		{ method: "DELETE", headers: { cookie: `garrul_sess=${SID}` } },
+		env as unknown as Record<string, unknown>,
+		execCtx,
+	);
+	expect(res.status).toBe(200);
+	expect(await res.json()).toEqual({ ok: true });
+	const row = sqlite.prepare("SELECT status FROM comments WHERE id = ?").get(id) as { status: string };
+	expect(row.status).toBe("deleted");
+});
+
 it("a parent cycle stops at the depth cap and answers ok without a thread", async () => {
 	setup(false);
 	add("01HC00000000000000000CYCA", null);

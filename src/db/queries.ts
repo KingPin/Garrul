@@ -3973,13 +3973,6 @@ export const adminSpamThread = async (
 };
 
 /**
- * A comment plus every descendant, any status, for the spam-thread cascade.
- * The LIMIT inside the CTE bounds the rows returned, so a caller that passes
- * cap + 1 learns "too big". It does not bound the read: SQLite keeps
- * iterating the parent index past a recursive LIMIT, so the cost still
- * scales with the root's fan-out. Acceptable on this admin-only, capped path.
- */
-/**
  * The top-level ancestor of comment `id`, or null when there is none within
  * `maxHops` steps up `parent_id` (missing row, or a malformed chain). The hop
  * cap is what stops a parent cycle from looping; callers pass the reply-depth
@@ -4006,6 +3999,13 @@ export const getThreadRootId = async (
 	return row?.id ?? null;
 };
 
+/**
+ * A comment plus every descendant, any status, for the spam-thread cascade.
+ * The LIMIT inside the CTE bounds the rows returned, so a caller that passes
+ * cap + 1 learns "too big". It does not bound the read: SQLite keeps
+ * iterating the parent index past a recursive LIMIT, so the cost still
+ * scales with the root's fan-out. Acceptable on this admin-only, capped path.
+ */
 export const listSubtreeForCascade = async (
 	db: D1Database,
 	rootId: string,
