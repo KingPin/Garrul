@@ -2443,10 +2443,12 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 	save.type = "submit";
 	const cancel = el("button", undefined, s("w.cancel"));
 	cancel.type = "button";
-	// One dismissal path for the button and for Escape. An abandoned edit keeps
-	// nothing: the original body is still on the node, and the box was never a
-	// draft surface (attachDraft is only on the reply and top-level composers).
+	// One dismissal path for the button and for Escape. The rewrite is kept as a
+	// draft (attached once the prefill lands) and flushed here, because the
+	// debounced save may not have run and a reopened editor reads storage at once.
+	let draft: DraftSaver | null = null;
 	const dismiss = (): void => {
+		draft?.flush();
 		wrap.remove();
 		main.querySelector<HTMLElement>(".gr-edit-window button")?.focus();
 	};
@@ -2546,6 +2548,11 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 				showStatus(errBox, s("w.edit_load_failed"));
 				return;
 			}
+			// Attach only now: a saver on the still-empty field could write "" over a
+			// real draft. A stored draft that differs from the fetched source wins.
+			const saved = draftStorage().getItem(key);
+			if (saved && saved !== ta.value) ta.value = saved;
+			draft = attachDraft(ta, key, legacyDraftKey(ctx.slug, `edit:${n.id}`));
 			ta.disabled = false;
 			save.disabled = false;
 			ta.placeholder = s("w.edit_ph");
@@ -2578,14 +2585,16 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 		}
 		save.disabled = true;
 		clearStatus(errBox);
+		const sent = ta.value;
 		try {
 			const res = await apiJson(
 				ctx.apiBase,
 				`/api/v1/comments/${encodeURIComponent(n.id)}`,
-				{ body: ta.value },
+				{ body: sent },
 				"PATCH",
 			);
 			if (res.ok) {
+				draft?.dropIf(sent);
 				// Focus only, no announcement: focusing the article makes
 				// assistive tech read the edited body, which is itself the
 				// confirmation, and it adds no new string to a bundle under a

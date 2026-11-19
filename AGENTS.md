@@ -882,7 +882,7 @@ Inside any composer — top-level, reply, or edit:
 | Keys                 | Does                                            |
 | -------------------- | ----------------------------------------------- |
 | `Cmd`/`Ctrl` + `Enter` | Posts the form you are in. A held key (auto-repeat) never submits again. |
-| `Escape`             | Closes a reply or edit box. A reply keeps its draft and reopens with it; an edit discards its changes. The top-level composer has nothing to back out to and ignores it. It also does nothing while a post is sending. |
+| `Escape`             | Closes a reply or edit box. A reply keeps its draft and reopens with it; an edit keeps its text as a draft and restores it when reopened, if it differs from the saved comment. The top-level composer has nothing to back out to and ignores it. It also does nothing while a post is sending. |
 
 Bound on the form, so they work from the name and email fields too, not
 just the textarea. Both are suppressed while an IME composition is
@@ -1482,7 +1482,7 @@ both `data-api` and the `<script src>`.
   it through `new URL(...)` and uses the origin verbatim for CORS-cred
   requests; mixed-content or scheme-relative values will fail.
 - Don't assume comment drafts survive a `data-api` change. Draft
-  autosave keys are `garrul:draft:<api origin>:<slug>[:<parent>]` (since
+  autosave keys are `garrul:draft:<api origin>:<slug>[:<parent>]`, or `...:<slug>:edit:<comment id>` for an edit box (since
   v2.27.0), so a draft belongs to one Worker origin. Pre-v2.27.0 drafts
   (`garrul:draft:<slug>`) are adopted once on the next mount.
   Drafts are flushed on every teardown (re-render) and on `pagehide`. A

@@ -33,6 +33,14 @@ describe("draftKey", () => {
 		);
 	});
 
+	it("keys an edit draft apart from the reply under the same comment", () => {
+		expect(draftKey("https://c.example", "post", "edit:01H")).toBe(
+			"garrul:draft:https://c.example:post:edit:01H",
+		);
+		expect(draftKey("https://c.example", "post", "edit:01H")).not.toBe(
+			draftKey("https://c.example", "post", "01H"),
+		);
+	});
 	it("differs across origins for the same slug", () => {
 		expect(draftKey("https://a.example", "post", null)).not.toBe(
 			draftKey("https://b.example", "post", null),
