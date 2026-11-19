@@ -62,6 +62,10 @@ get a seamless experience. Bouncers cost you nothing.
     // A shared comment link (#garrul-comment-<id>) must mount now, or the
     // widget never gets to scroll to it.
     if (location.hash.indexOf("#garrul-comment-") === 0) { load(); return; }
+    // A later comment link on the same page (hash changed) mounts at once too.
+    window.addEventListener("hashchange", function () {
+      if (location.hash.indexOf("#garrul-comment-") === 0) load();
+    });
 
     if ("IntersectionObserver" in window) {
       var io = new IntersectionObserver(function (entries) {
@@ -115,7 +119,10 @@ Render a button; mount the widget only after a click.
 
 <script>
   (function () {
+    var shown = false;
     function show() {
+      if (shown) return;
+      shown = true;
       document.getElementById("garrul-load").remove();
       document.getElementById("garrul").hidden = false;
       var s = document.createElement("script");
@@ -127,6 +134,10 @@ Render a button; mount the widget only after a click.
     // A shared comment link (#garrul-comment-<id>) must mount now, or the
     // widget never gets to scroll to it.
     if (location.hash.indexOf("#garrul-comment-") === 0) show();
+    // A later comment link on the same page (hash changed) mounts at once too.
+    window.addEventListener("hashchange", function () {
+      if (location.hash.indexOf("#garrul-comment-") === 0) show();
+    });
   })();
 </script>
 ```
