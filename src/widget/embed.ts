@@ -3575,7 +3575,10 @@ const renderError = (root: ShadowRoot, err: unknown, retry: () => void) => {
 	};
 	onlineRetry.set(root, go);
 	window.addEventListener("online", go);
-	again.addEventListener("click", go);
+	again.addEventListener("click", () => {
+		again.disabled = true;
+		go();
+	});
 	wrap.appendChild(again);
 	root.append(style, wrap);
 };
@@ -3885,12 +3888,28 @@ const revealHashTarget = (root: ShadowRoot, again = false): boolean => {
 const targetTimers = new WeakMap<HTMLElement, ReturnType<typeof setTimeout>>();
 
 /**
- * The composer's status box, the one live region a permalink notice may use.
- * Not a bare `.gr-error`: Load more's failure box and inline form boxes share
- * that class. A closed thread has no composer, so the notice is skipped there.
+ * The page-level status box: the composer's, or the one made below for a thread
+ * without a composer (closed). Not a bare `.gr-error`: Load more's failure box
+ * and inline row/form boxes share that class.
  */
 const permalinkStatus = (root: ShadowRoot): HTMLElement | null =>
-	root.querySelector<HTMLElement>(".gr-form > .gr-error");
+	root.querySelector<HTMLElement>(".gr-form > .gr-error, .gr-page-status");
+
+/** Write to the page status box, making it on first use (filled a tick later so screen readers announce it). */
+const writePageStatus = (
+	root: ShadowRoot,
+	message: string,
+	kind: "error" | "notice" = "error",
+): void => {
+	const box = permalinkStatus(root);
+	if (box) {
+		showStatus(box, message, kind);
+		return;
+	}
+	const made = statusBox("gr-error is-inline gr-page-status");
+	root.querySelector(".gr-root")?.prepend(made);
+	setTimeout(() => showStatus(made, message, kind), 0);
+};
 
 /**
  * The thread node for comment `id`, or null. A target in a capped reply list
@@ -3958,10 +3977,8 @@ const seekHashTarget = async (root: ShadowRoot): Promise<void> => {
 	// skipped if the reader has already moved on to another hash.
 	const missed = window.location.hash;
 	setTimeout(() => {
-		const box = permalinkStatus(root);
-		if (box && window.location.hash === missed) {
-			showStatus(box, s("w.permalink_missing"), "notice");
-		}
+		if (window.location.hash === missed)
+			writePageStatus(root, s("w.permalink_missing"), "notice");
 	}, 0);
 };
 
@@ -4208,11 +4225,11 @@ const loadOnce = async (
 	// A reload that fails keeps the tree the reader is looking at and says so in
 	// its existing status box; only a mount with nothing on screen is replaced.
 	const loadFailed = (err: unknown): void => {
-		const box = mountCtx.has(root)
-			? root.querySelector<HTMLElement>(".gr-error")
-			: null;
-		if (box) {
-			showStatus(box, loadErrorMessage(err, s));
+		if (mountCtx.has(root)) {
+			// A reveal queued for the reload that just failed must not fire on the
+			// next unrelated one.
+			pendingReveal.delete(root);
+			writePageStatus(root, loadErrorMessage(err, s));
 			return;
 		}
 		// renderError replaces the shadow tree, so the composer this handle
