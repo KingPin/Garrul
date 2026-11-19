@@ -179,4 +179,13 @@ describe("runDigest — locale", () => {
 
 		expect(sent).toHaveLength(1);
 	});
+
+	it("builds permalinks without a doubled slash when PUBLIC_BASE_URL ends in /", async () => {
+		queue(1);
+		await runDigest({ ...(env() as object), PUBLIC_BASE_URL: "https://x.test/" } as never, NOW);
+
+		const html = (sent[0] as { html: string }).html;
+		expect(html).toContain("https://x.test/c/");
+		expect(html).not.toContain("//c/");
+	});
 });

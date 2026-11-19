@@ -214,6 +214,7 @@ import { sendEmail } from "../lib/email";
 import { log } from "../lib/log";
 import { postModeratorReply } from "../lib/opbot/reply";
 import { fillSubject, subjectTitle } from "../lib/post-title";
+import { publicBaseUrl } from "../lib/public-base";
 import { FALLBACK_LOCALE, tFor } from "../i18n";
 
 const admin = new Hono<{ Bindings: Bindings }>();
@@ -932,7 +933,7 @@ admin.get("/discord", async (c) => {
 		getDiscordLinkByUser(c.env.DB, user.id),
 		loadDiscordSettings(c.env),
 	]);
-	const base = (c.env.PUBLIC_BASE_URL ?? "").replace(/\/+$/, "");
+	const base = publicBaseUrl(c.env) ?? "";
 	return c.html(
 		renderPage(
 			c,
@@ -2526,7 +2527,7 @@ admin.post("/api/subscriptions/:id", async (c) => {
 	}
 
 	// resend: rotate confirm_token + re-issue the confirmation email.
-	const publicBase = c.env.PUBLIC_BASE_URL;
+	const publicBase = publicBaseUrl(c.env);
 	const from = c.env.EMAIL_FROM;
 	if (!publicBase || !from) {
 		return c.json({ error: "email_not_configured" }, 503);

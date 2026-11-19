@@ -54,6 +54,7 @@ import {
 import { log } from "./log";
 import { DISCORD_API, discordEnabled } from "./discord";
 import { SNOWFLAKE_RE } from "./opbot/codec";
+import { publicBaseUrl } from "./public-base";
 import { checkOutboundUrl } from "./url-safety";
 import {
 	type AdapterOpts,
@@ -338,7 +339,7 @@ const dispatchToEndpoint = async (
 ): Promise<void> => {
 	if (!matchesEventFilter(endpoint, payload.event)) return;
 	const body = await renderBody(env.DB, endpoint.adapter, payload, {
-		baseUrl: env.PUBLIC_BASE_URL,
+		baseUrl: publicBaseUrl(env) ?? undefined,
 		// Telegram stores its destination chat id in the endpoint url column.
 		chatId: endpoint.adapter === "telegram" ? endpoint.url : undefined,
 	});

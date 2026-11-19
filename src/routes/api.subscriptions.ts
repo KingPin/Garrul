@@ -74,6 +74,7 @@ import { loadNumbers } from "../lib/settings";
 import { FALLBACK_LOCALE, LOCALES, type Translator, tFor } from "../i18n";
 import { matchLocale } from "../i18n/negotiate";
 import type { LocaleVars } from "../lib/locale";
+import { publicBaseUrl } from "../lib/public-base";
 
 const subscriptions = new Hono<{ Bindings: Bindings; Variables: LocaleVars }>();
 
@@ -224,7 +225,7 @@ subscriptions.post("/", async (c) => {
 	// Without these we'd persist a pending row that the user can never
 	// confirm (no email sent), and after five attempts the pending-cap
 	// would lock the address out entirely.
-	const publicBase = c.env.PUBLIC_BASE_URL;
+	const publicBase = publicBaseUrl(c.env);
 	const from = c.env.EMAIL_FROM;
 	if (!autoConfirm && (!publicBase || !from)) {
 		return c.json({ error: t("err.internal") }, 503);

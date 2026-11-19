@@ -28,6 +28,7 @@ import {
 import { FALLBACK_LOCALE, type Translator, tFor } from "../i18n";
 import { sendEmail } from "./email";
 import { sanitizeForEmail } from "./markdown";
+import { publicBaseUrl } from "./public-base";
 import { fillSubject, subjectTitle, substituteTitle } from "./post-title";
 
 type DigestEnv = {
@@ -126,7 +127,7 @@ const renderDigestHtml = (params: {
 export const runDigest = async (env: DigestEnv, now: number = Date.now()): Promise<void> => {
 	if (env.EMAIL_PROVIDER !== "resend" || !env.RESEND_API_KEY) return;
 	const from = env.EMAIL_FROM;
-	const publicBase = env.PUBLIC_BASE_URL;
+	const publicBase = publicBaseUrl(env);
 	if (!from || !publicBase) return;
 
 	const digests = await listPendingDigests(

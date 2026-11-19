@@ -8,6 +8,7 @@ import {
 } from "../../db/queries";
 import type { Bindings } from "../../index";
 import { banUser, moderateComment, resolveReports, type WaitUntilCtx } from "../moderation";
+import { publicBaseUrl } from "../public-base";
 import type { OpAction } from "./codec";
 import type { OpActor } from "./identity";
 
@@ -88,7 +89,7 @@ export const runOpAction = async (args: {
 		const res = await moderateComment({
 			env,
 			executionCtx: args.executionCtx,
-			reqUrl: args.reqUrl ?? env.PUBLIC_BASE_URL ?? "https://localhost",
+			reqUrl: args.reqUrl ?? publicBaseUrl(env) ?? "https://localhost",
 			adminId,
 			commentId,
 			action,

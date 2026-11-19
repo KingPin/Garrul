@@ -36,6 +36,7 @@ import { sendEmail } from "./email";
 import { reserveSend, type SendBudget } from "./email-budget";
 import { log } from "./log";
 import { sanitizeForEmail } from "./markdown";
+import { publicBaseUrl } from "./public-base";
 import { loadFlags } from "./settings";
 import type { Bindings } from "../index";
 
@@ -167,7 +168,7 @@ export const runModeratorDigest = async (
 ): Promise<void> => {
 	if (env.EMAIL_PROVIDER !== "resend" || !env.RESEND_API_KEY) return;
 	const from = env.EMAIL_FROM;
-	const publicBase = env.PUBLIC_BASE_URL;
+	const publicBase = publicBaseUrl(env);
 	if (!from || !publicBase) return;
 
 	// The flag before the query: an instance with the feature off should cost one

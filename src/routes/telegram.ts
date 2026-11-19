@@ -61,6 +61,7 @@ import {
 	presetVisible,
 	replyRefusalText,
 } from "../lib/opbot/reply";
+import { publicBaseUrl } from "../lib/public-base";
 import { checkRateLimit } from "../lib/ratelimit";
 import {
 	answerCallbackQuery,
@@ -601,10 +602,10 @@ const commandHelpText = (): string =>
 		"/unban &lt;id&gt; — lift a ban",
 	].join("\n");
 
-const adminCommentUrl = (env: Bindings, id: string): string | null =>
-	env.PUBLIC_BASE_URL
-		? `${env.PUBLIC_BASE_URL.replace(/\/$/, "")}/admin/comments/${encodeURIComponent(id)}`
-		: null;
+const adminCommentUrl = (env: Bindings, id: string): string | null => {
+	const base = publicBaseUrl(env);
+	return base ? `${base}/admin/comments/${encodeURIComponent(id)}` : null;
+};
 
 const renderQueueText = async (env: Bindings): Promise<string> => {
 	const q = await readQueue(env);
