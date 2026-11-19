@@ -661,6 +661,10 @@ const bindComposerKeys = (
 // the posts themselves: loadOnce waits them out before tearing the tree down.
 const busyKeys = new Set<string>();
 const inflight = new Set<Promise<void>>();
+// Handed-off forms, locked until the reload replaces them. A reload that fails
+// keeps the tree (and so these forms): loadFailed unlocks them, loadOnce's
+// teardown drops them.
+const heldForms = new Set<() => void>();
 
 /**
  * Run `run` as the one post for composer `key`; a submit while it runs is
@@ -678,7 +682,7 @@ const inflight = new Set<Promise<void>>();
 const postOnce = (
 	form: HTMLFormElement,
 	key: string,
-	run: (handOff: () => void) => Promise<void>,
+	run: (handOff: (restore?: () => void) => void) => Promise<void>,
 	cancel?: HTMLButtonElement,
 ): void => {
 	const ta = form.querySelector("textarea");
@@ -714,9 +718,19 @@ const postOnce = (
 	busyKeys.add(key);
 	inflight.add(p);
 	lock(true);
-	void run(() => {
+	// `restore` undoes what a post that landed consumed (the sent text), for a
+	// reload that fails and so leaves this form on screen. Not passed when the
+	// post did not land: the reader keeps the text.
+	void run((restore) => {
 		handedOff = true;
 		leave();
+		heldForms.add(() => {
+			restore?.();
+			lock(false);
+			if (!form.hasAttribute("data-expired"))
+				for (const b of form.querySelectorAll<HTMLButtonElement>("button[type=submit]"))
+					b.disabled = false;
+		});
 	}).finally(() => {
 		leave();
 		busyKeys.delete(key);
@@ -2803,7 +2817,7 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 		submit.disabled = false;
 	};
 
-	const post = async (handOff: () => void): Promise<void> => {
+	const post = async (handOff: (restore?: () => void) => void): Promise<void> => {
 		submit.disabled = true;
 		if (!tsGate?.failed) clearStatus(errBox);
 
@@ -2902,7 +2916,12 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 			// Echo unusable, or the parent is no longer on screen. Fall back to the
 			// reload, and to the parent comment's id so focus still lands somewhere
 			// sensible on a response that omits the new comment's own.
-			handOff();
+			handOff(() => {
+				ta.value = "";
+				ta.dispatchEvent(new Event("input"));
+				tsHandle?.reset();
+				tsGate?.clear();
+			});
 			ctx.revealAfterReload(json?.comment?.id ?? parent.id, s("w.posted"));
 			ctx.reload();
 		} catch (err) {
@@ -4413,6 +4432,10 @@ const loadOnce = async (
 			// A reveal queued for the reload that just failed must not fire on the
 			// next unrelated one.
 			pendingReveal.delete(root);
+			// The forms a post handed off to this reload stay on screen: give them back.
+			const held = [...heldForms];
+			heldForms.clear();
+			for (const unlock of held) unlock();
 			writePageStatus(root, loadErrorMessage(err, s));
 			return;
 		}
@@ -4651,6 +4674,7 @@ const loadOnce = async (
 			await loadOnce(root, slug, apiBase, host, activeSort);
 		return;
 	}
+	heldForms.clear();
 	destroyTopComposerTurnstile();
 	// The textareas are about to be detached: save what is pending, retire the
 	// savers so a stale timer cannot re-save text from a dead field.
@@ -5078,7 +5102,7 @@ const submit = async (
 	apiBase: string,
 	apiOrigin: string,
 	host: HTMLElement,
-	handOff: () => void,
+	handOff: (restore?: () => void) => void,
 ) => {
 	// Two things write to this box: submit failures, and Turnstile. Precedence:
 	// the "anti-spam check failed to load" message wins and is sticky. It means
@@ -5248,14 +5272,11 @@ const submit = async (
 		// transient notice.
 		const posted = readPostedEcho(json?.comment);
 		const ctx = mountCtx.get(root);
-		if (posted && ctx && insertPostedNode(ctx, posted, null)) {
-			// The reload used to hand the composer back by rebuilding it. What is
-			// left to undo is what the post consumed: the text, the disabled
-			// button, and the Turnstile token — single-use once siteverify has seen
-			// it, so a composer holding a spent one can only produce a rejected post.
-			const bodyInput = form.querySelector(
-				".gr-body-input",
-			) as HTMLTextAreaElement | null;
+		// What the post consumed: the text, the disabled button, and the Turnstile
+		// token — single-use once siteverify has seen it, so a composer holding a
+		// spent one can only produce a rejected post.
+		const consumed = (): void => {
+			const bodyInput = form.querySelector(".gr-body-input") as HTMLTextAreaElement | null;
 			if (bodyInput) {
 				bodyInput.value = "";
 				// Re-fires what buildWritePreview listens for: shrinks the box back
@@ -5265,6 +5286,11 @@ const submit = async (
 			if (submitBtn) submitBtn.disabled = false;
 			ts?.reset();
 			ts?.gate.clear();
+		};
+		if (posted && ctx && insertPostedNode(ctx, posted, null)) {
+			// The reload used to hand the composer back by rebuilding it. What is
+			// left to undo is what the post consumed.
+			consumed();
 			return;
 		}
 
@@ -5277,7 +5303,7 @@ const submit = async (
 		// loadOnce call actually renders last — this one, or the queued
 		// follow-up — is the one that consumes it; see the arbitration at the
 		// tail of loadOnce.
-		handOff();
+		handOff(consumed);
 		revealAfterReload(root, json?.comment?.id ?? null, s("w.posted"));
 		await load(root, slug, apiBase, host);
 	} catch (err) {
