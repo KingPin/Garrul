@@ -819,6 +819,7 @@ const buildWritePreview = (
 		pane.hidden = true;
 	};
 
+	let previewSeq = 0;
 	const showPreview = async (): Promise<void> => {
 		previewTab.classList.add("gr-tab-active");
 		writeTab.classList.remove("gr-tab-active");
@@ -829,6 +830,9 @@ const buildWritePreview = (
 		toolbar.hidden = true;
 		writePanel.hidden = true;
 		pane.hidden = false;
+		// Every request takes a number; only the latest may write the pane, so a
+		// slow earlier response cannot overwrite a newer preview.
+		const seq = ++previewSeq;
 		const body = textarea.value.trim();
 		if (!body) {
 			pane.textContent = s("w.preview.empty");
@@ -839,10 +843,11 @@ const buildWritePreview = (
 			const res = await apiJson(apiBase, "/api/v1/preview", { body });
 			if (!res.ok) throw new Error(String(res.status));
 			const data = (await res.json()) as { html?: string };
+			if (seq !== previewSeq) return;
 			pane.textContent = "";
 			pane.appendChild(parseTrustedHtml(data.html ?? ""));
 		} catch {
-			pane.textContent = s("w.preview.failed");
+			if (seq === previewSeq) pane.textContent = s("w.preview.failed");
 		}
 	};
 
@@ -1683,6 +1688,8 @@ const buildPageEngagement = (ctx: WidgetCtx): HTMLElement => {
  * every click, and read back as never-subscribed no matter what. They get the
  * anonymous bell, which works.
  */
+const bellRefresh = new WeakMap<HTMLElement, () => Promise<void>>();
+
 const buildSubscribeBell = (
 	apiBase: string,
 	slug: string,
@@ -2047,6 +2054,14 @@ const buildSubscribeBell = (
 	});
 
 	renderBell();
+	// The composer's subscribe cannot know the id or pending-vs-confirmed; it
+	// asks the bell to re-read instead.
+	if (managed) {
+		bellRefresh.set(wrap, async () => {
+			await loadState();
+			invalidatePanel();
+		});
+	}
 	wrap.append(btn);
 	if (managed) wrap.append(manageBtn);
 	wrap.append(form, status);
@@ -3430,9 +3445,13 @@ const buildForm = (
 			emailInput.setAttribute("aria-label", s("w.email_label"));
 			emailInput.autocomplete = "email";
 			emailInput.hidden = true;
+			// Disabled while unticked: a hidden field that fails native validation
+			// would otherwise block the post with no visible reason.
+			emailInput.disabled = true;
 			notifyCb.addEventListener("change", () => {
 				emailInput.hidden = !notifyCb.checked;
 				emailInput.required = notifyCb.checked;
+				emailInput.disabled = !notifyCb.checked;
 			});
 			card.appendChild(emailInput);
 		}
@@ -5177,11 +5196,32 @@ const submit = async (
 			// silent no-op for every signed-in reader.
 			const email = emailInput?.value.trim() ?? "";
 			if (email || !emailInput) {
-				void apiJson(
-					apiBase,
-					"/api/v1/subscribe",
-					email ? { post_slug: slug, email } : { post_slug: slug },
-				).catch(() => {});
+				const say = (m: string): void => {
+					if (errEl && !ts?.gate.failed) showStatus(errEl, m, "notice");
+				};
+				void (async () => {
+					try {
+						const r = await apiJson(
+							apiBase,
+							"/api/v1/subscribe",
+							email ? { post_slug: slug, email } : { post_slug: slug },
+						);
+						// Never `error` here: it can be a machine code ("invalid_email").
+						if (!r.ok) {
+							say(r.status === 429 ? s("w.subscribe.ratelimit") : s("w.subscribe.failed"));
+							return;
+						}
+						const j = (await r.json().catch(() => null)) as { message?: string } | null;
+						say(j?.message ?? s("w.subscribe.done"));
+						// No email field = managed reader: let the bell re-read its state.
+						if (!emailInput) {
+							const bell = root.querySelector(".gr-subscribe") as HTMLElement | null;
+							await (bell && bellRefresh.get(bell))?.();
+						}
+					} catch {
+						say(s("w.subscribe.failed"));
+					}
+				})();
 			}
 		}
 		// The address is remembered only when the reader used it for notify.
