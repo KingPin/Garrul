@@ -949,7 +949,7 @@ let topComposerTurnstile: {
 	form: HTMLFormElement;
 	gate: TurnstileGate;
 	/** No-op until the gate arms and the frame actually mounts. */
-	reset: () => void;
+	reset: (force?: boolean) => void;
 	destroy: () => void;
 } | null = null;
 
@@ -981,7 +981,11 @@ const turnstileFor = (
  * existing `cf-turnstile-response` input keeps working unchanged.
  */
 type TurnstileFrameHandle = {
-	reset: () => void;
+	/**
+	 * `force` reloads even a live frame. A request that threw (offline) may have
+	 * re-armed the challenge into a dead network, with no error to say so.
+	 */
+	reset: (force?: boolean) => void;
 	destroy: () => void;
 };
 
@@ -1006,6 +1010,11 @@ type TurnstileFrameListener = {
 	onReady?: () => void;
 	/** The challenge needs a human to act before a token can exist. */
 	onInteractive?: () => void;
+	/**
+	 * The network came back while the frame was not alive; it has been reloaded.
+	 * The caller undoes whatever it showed for the outage.
+	 */
+	onRecovered?: () => void;
 };
 
 const mountTurnstileFrame = (
@@ -1051,6 +1060,17 @@ const mountTurnstileFrame = (
 	container.appendChild(tokenInput);
 
 	const ac = new AbortController();
+	// Alive = the frame document is running and has not since errored. A frame
+	// that loaded offline or errored on a dropped network cannot take a reset
+	// message, so it is reloaded instead.
+	let alive = false;
+	const reload = (): void => {
+		alive = false;
+		// Assigning the same URL navigates again; a plain reload() would be
+		// cross-origin.
+		const src = frame.src;
+		frame.src = src;
+	};
 	const onMessage = (e: MessageEvent): void => {
 		if (e.origin !== apiOrigin) return;
 		if (e.source !== frame.contentWindow) return;
@@ -1061,6 +1081,7 @@ const mountTurnstileFrame = (
 		if (!data || typeof data.type !== "string") return;
 		switch (data.type) {
 			case "garrul:turnstile-token":
+				alive = true;
 				if (typeof data.token === "string") {
 					tokenInput.value = data.token;
 					listener.onToken?.(data.token);
@@ -1073,6 +1094,7 @@ const mountTurnstileFrame = (
 				listener.onExpired?.();
 				return;
 			case "garrul:turnstile-error":
+				alive = false;
 				// Anything that isn't a string is treated as no code at all, which
 				// is the latching path — a frame that can't name its error doesn't
 				// get to ask for a retry.
@@ -1084,18 +1106,31 @@ const mountTurnstileFrame = (
 			// can tell "the challenge wants a click" from "the frame never came
 			// up" — see the wire protocol in src/routes/embed-iframe.ts.
 			case "garrul:turnstile-ready":
+				alive = true;
 				listener.onReady?.();
 				return;
 			case "garrul:turnstile-interactive":
+				alive = true;
 				listener.onInteractive?.();
 				return;
 		}
 	};
 	window.addEventListener("message", onMessage, { signal: ac.signal });
+	// Per handle, removed with the message listener by destroy().
+	window.addEventListener(
+		"online",
+		() => {
+			if (alive) return;
+			reload();
+			listener.onRecovered?.();
+		},
+		{ signal: ac.signal },
+	);
 
 	return {
-		reset: () => {
+		reset: (force) => {
 			tokenInput.value = "";
+			if (force || !alive) return reload();
 			// contentWindow is null only if the iframe was detached; in
 			// that case there's nothing to reset.
 			frame.contentWindow?.postMessage(
@@ -2379,6 +2414,14 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 					onError: (code) => tsGate?.signal("error", code),
 					onReady: () => tsGate?.signal("ready"),
 					onInteractive: () => tsGate?.signal("interactive"),
+					onRecovered: () => {
+						const recovered = tsGate?.recover();
+						tsGate?.clear();
+						if (!recovered) return;
+						tsSlot.hidden = false;
+						submit.disabled = false;
+						clearStatus(errBox);
+					},
 				});
 			},
 			// Turnstile said to retry, and the gate has budget for it. Re-arm the
@@ -2537,7 +2580,7 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 			if (tsGate?.failed) return;
 			showStatus(errBox, String(err));
 			submit.disabled = false;
-			tsHandle?.reset();
+			tsHandle?.reset(true);
 			tsGate?.clear();
 		}
 	};
@@ -4401,6 +4444,15 @@ const loadOnce = async (
 					onError: (code) => gate.signal("error", code),
 					onReady: () => gate.signal("ready"),
 					onInteractive: () => gate.signal("interactive"),
+					onRecovered: () => {
+						const recovered = gate.recover();
+						gate.clear();
+						if (!recovered) return;
+						tsBox.hidden = false;
+						if (submitBtn) submitBtn.disabled = false;
+						const errEl = form.querySelector(".gr-error") as HTMLElement | null;
+						if (errEl) clearStatus(errEl);
+					},
 				});
 			},
 			// Turnstile said to retry, and the gate has budget for it. Re-arm the
@@ -4443,7 +4495,7 @@ const loadOnce = async (
 		topComposerTurnstile = {
 			form,
 			gate,
-			reset: () => handle?.reset(),
+			reset: (force) => handle?.reset(force),
 			destroy: () => {
 				form.removeEventListener("focusin", onFocusIn);
 				gate.dispose();
@@ -4653,7 +4705,7 @@ const submit = async (
 		if (ts?.gate.failed) return;
 		if (errEl) showStatus(errEl, String(err));
 		if (submitBtn) submitBtn.disabled = false;
-		ts?.reset();
+		ts?.reset(true);
 		ts?.gate.clear();
 	}
 };

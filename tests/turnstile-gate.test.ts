@@ -495,6 +495,50 @@ describe("createTurnstileGate", () => {
 		});
 	});
 
+	describe("recovering from an outage", () => {
+		it("recover() after a code-less error clears failed", async () => {
+			const { gate, failures, retries } = makeGate();
+			gate.arm();
+			gate.signal("error");
+			expect(gate.failedKind).toBe("transient");
+			expect(gate.recover()).toBe(true);
+			expect(gate.failed).toBe(false);
+			expect(gate.failedKind).toBeNull();
+			// The failure can be reported again, and the token is gone.
+			gate.token("t1");
+			gate.clear();
+			gate.signal("error");
+			expect(failures()).toBe(2);
+			expect(retries()).toBe(0);
+		});
+
+		it("recover() after a non-retryable code returns false and wait() still rejects", async () => {
+			const { gate } = makeGate();
+			gate.arm();
+			gate.signal("error", PERMANENT_CODE);
+			expect(gate.failedKind).toBe("permanent");
+			expect(gate.recover()).toBe(false);
+			expect(gate.failed).toBe(true);
+			await expect(gate.wait()).resolves.toEqual({
+				ok: false,
+				reason: "failed",
+			});
+		});
+
+		it("recover() restores the retry budget", async () => {
+			const { gate, retries } = makeGate();
+			gate.arm();
+			gate.signal("error", RETRYABLE_CODE);
+			gate.signal("error", RETRYABLE_CODE);
+			expect(gate.failedKind).toBe("transient");
+			expect(retries()).toBe(1);
+			expect(gate.recover()).toBe(true);
+			gate.signal("error", RETRYABLE_CODE);
+			expect(retries()).toBe(2);
+			expect(gate.failed).toBe(false);
+		});
+	});
+
 	describe("dispose", () => {
 		it("releases pending waiters and stops the timer", async () => {
 			const { gate } = makeGate();
