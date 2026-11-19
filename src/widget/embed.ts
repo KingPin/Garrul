@@ -1048,7 +1048,7 @@ const formToken = createFormTokenCache(async () => {
 	} catch {
 		return null;
 	}
-}, Date.now);
+}, Date.now, () => document.hidden);
 /**
  * Apply the config's answer for this mount. `loadOnce` runs on every reload,
  * so the flag can flip between mounts on one page. A flip from disabled back
@@ -1065,12 +1065,12 @@ const getFormToken = (apiBase: string): Promise<string> => {
 };
 // Retry a failed mint, or refresh an old token, when the network returns or a
 // suspended tab wakes (its timers did not run). Once per document, like pagehide.
-const retryFormToken = (): void => {
-	if (formTokenBase) formToken.ensure();
+const retryFormToken = (force: boolean): void => {
+	if (formTokenBase) formToken.ensure(force);
 };
-window.addEventListener("online", retryFormToken);
+window.addEventListener("online", () => retryFormToken(true));
 document.addEventListener("visibilitychange", () => {
-	if (document.visibilityState === "visible") retryFormToken();
+	if (document.visibilityState === "visible") retryFormToken(false);
 });
 
 /**

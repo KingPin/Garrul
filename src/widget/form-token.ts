@@ -7,16 +7,22 @@ import {
 
 /** Start a background refresh once the current token is this old. */
 const REFRESH_MS = 50 * 60_000;
+/** After a failed mint, triggers (focus) leave the endpoint alone this long. */
+const RETRY_AFTER_FAIL_MS = 30_000;
 
 /**
- * Two-slot form-token cache. DOM-free: `mint` and `now` are injected.
+ * Two-slot form-token cache. DOM-free: `mint`, `now` and `hidden` are injected.
  * A failed mint (null) caches nothing and is retried only by `ensure()` (the
- * caller wires it to composer focus, `online`, visible). `token()` is the one
- * path that mints at submit time, and only when no cached token is usable.
+ * caller wires it to composer focus, `online`, visible), and not within
+ * RETRY_AFTER_FAIL_MS unless `ensure(true)` says the network just returned.
+ * `token()` is the one path that mints at submit time, and only when no cached
+ * token is usable. The timer never refreshes a hidden tab: becoming visible
+ * calls `ensure()`.
  */
 export const createFormTokenCache = (
 	mint: () => Promise<string | null>,
 	now: () => number,
+	hidden: () => boolean = () => false,
 ) => {
 	let enabled = true;
 	let current: FormTokenSlot = null;
@@ -24,6 +30,7 @@ export const createFormTokenCache = (
 	let pending: Promise<void> | null = null;
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	let epoch = 0;
+	let failedAt: number | null = null;
 
 	const schedule = (): void => {
 		clearTimeout(timer);
@@ -35,7 +42,9 @@ export const createFormTokenCache = (
 				: Number.NEGATIVE_INFINITY;
 		// Already due and nothing to promote: a failed refresh waits for a trigger.
 		if (at <= t) return;
-		timer = setTimeout(sync, at - t);
+		timer = setTimeout(() => {
+			if (!hidden()) sync();
+		}, at - t);
 	};
 
 	const fetchInto = (into: "current" | "next"): Promise<void> => {
@@ -46,6 +55,7 @@ export const createFormTokenCache = (
 			.then((token) => {
 				if (e !== epoch) return;
 				pending = null;
+				failedAt = token ? null : now();
 				if (!token) return;
 				const slot = { token, mintedAt: now() };
 				if (into === "current") current = slot;
@@ -56,7 +66,7 @@ export const createFormTokenCache = (
 		return p;
 	};
 
-	const sync = (): void => {
+	const sync = (force = false): void => {
 		if (!enabled) return;
 		if (pickFormToken(current, next, now()) === "next") {
 			current = next;
@@ -67,19 +77,23 @@ export const createFormTokenCache = (
 		const t = now();
 		if (next && t - next.mintedAt >= FORM_TOKEN_MAX_MS) next = null;
 		if (current && t - current.mintedAt >= FORM_TOKEN_MAX_MS) current = null;
-		if (!current && !next) void fetchInto("current");
-		else if (current && !next && now() - current.mintedAt >= REFRESH_MS) void fetchInto("next");
+		const backedOff = !force && failedAt != null && now() - failedAt < RETRY_AFTER_FAIL_MS;
+		if (!backedOff) {
+			if (!current && !next) void fetchInto("current");
+			else if (current && !next && now() - current.mintedAt >= REFRESH_MS) void fetchInto("next");
+		}
 		schedule();
 	};
 
 	return {
 		/** Mint if there is no token, refresh if the current one is old. No-op when healthy. */
-		ensure: sync,
+		ensure: (force = false): void => sync(force),
 		/** A flip from disabled to enabled drops both slots (and any in-flight mint). */
 		setEnabled(wanted: boolean): void {
 			if (wanted && !enabled) {
 				current = next = null;
 				pending = null;
+				failedAt = null;
 				epoch++;
 			}
 			enabled = wanted;

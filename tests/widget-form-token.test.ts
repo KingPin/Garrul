@@ -61,10 +61,46 @@ describe("createFormTokenCache", () => {
 		const { mint, cache } = make([null, "A"]);
 		cache.ensure();
 		await vi.advanceTimersByTimeAsync(0);
+		await vi.advanceTimersByTimeAsync(30_000);
 		cache.ensure();
 		await vi.advanceTimersByTimeAsync(0);
 		expect(mint).toHaveBeenCalledTimes(2);
 		expect(await cache.token()).toBe("A");
+		expect(mint).toHaveBeenCalledTimes(2);
+	});
+
+	it("a failing endpoint is left alone for 30 s, except when the network returns", async () => {
+		const { mint, cache } = make([null, null, "A"]);
+		cache.ensure();
+		await vi.advanceTimersByTimeAsync(0);
+		for (let i = 0; i < 5; i++) cache.ensure(); // five more focuses
+		await vi.advanceTimersByTimeAsync(29_000);
+		cache.ensure();
+		await vi.advanceTimersByTimeAsync(0);
+		expect(mint).toHaveBeenCalledTimes(1);
+		cache.ensure(true); // `online`
+		await vi.advanceTimersByTimeAsync(0);
+		expect(mint).toHaveBeenCalledTimes(2);
+		await vi.advanceTimersByTimeAsync(30_000);
+		cache.ensure();
+		await vi.advanceTimersByTimeAsync(0);
+		expect(mint).toHaveBeenCalledTimes(3);
+		expect(await cache.token()).toBe("A");
+	});
+
+	it("the refresh timer skips a hidden tab; becoming visible refreshes", async () => {
+		let hidden = false;
+		let n = 0;
+		const mint = vi.fn(async () => `T${n++}`);
+		const cache = createFormTokenCache(mint, Date.now, () => hidden);
+		cache.ensure();
+		await vi.advanceTimersByTimeAsync(0);
+		hidden = true;
+		await vi.advanceTimersByTimeAsync(120 * MIN);
+		expect(mint).toHaveBeenCalledTimes(1);
+		hidden = false;
+		cache.ensure(); // visibilitychange
+		await vi.advanceTimersByTimeAsync(0);
 		expect(mint).toHaveBeenCalledTimes(2);
 	});
 
