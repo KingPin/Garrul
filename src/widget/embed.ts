@@ -386,6 +386,55 @@ const lazyActionStatus = (
 };
 
 /**
+ * The "<label> \u00b7 Undo" mark that replaces a delayed action's button (Report,
+ * row Unsubscribe). `restore` is the button Undo brings back. A null `pending`
+ * draws the settled, Undo-less form (a rebuild while the request is in flight).
+ */
+const undoMark = (label: string, id: string, restore: HTMLElement, pending: Pending | null): HTMLElement => {
+	const done = el("span", "gr-reported", pending ? `${label} \u00b7 ` : label);
+	if (!pending) return done;
+	const undoBtn = el("button", undefined, s("w.undo"));
+	undoBtn.type = "button";
+	// Screen readers would otherwise announce only "Undo".
+	const said = el("span", undefined, label);
+	said.id = id;
+	said.hidden = true;
+	undoBtn.setAttribute("aria-describedby", id);
+	done.append(said, undoBtn);
+	undoBtn.addEventListener("click", () => {
+		pending.cancel();
+		// A no-op once the request went out: Undo is retired by then.
+		if (done.isConnected) {
+			done.replaceWith(restore);
+			restore.focus();
+		}
+	});
+	return done;
+};
+
+const markHasFocus = (mark: HTMLElement): boolean => {
+	const active = (mark.getRootNode() as Document | ShadowRoot).activeElement;
+	return active === mark || (active != null && active === mark.querySelector("button"));
+};
+
+/** The request is on its way: drop Undo, its description and the separator, keeping focus on a live node. */
+const retireUndo = (mark: HTMLElement, label: string): void => {
+	const hadFocus = markHasFocus(mark);
+	mark.textContent = label;
+	if (hadFocus) {
+		mark.tabIndex = -1;
+		mark.focus();
+	}
+};
+
+/** The request failed: put the button back, and focus with it if focus was on the mark. */
+const restoreFromMark = (mark: HTMLElement, restore: HTMLElement): void => {
+	const hadFocus = markHasFocus(mark);
+	mark.replaceWith(restore);
+	if (hadFocus) restore.focus();
+};
+
+/**
  * Parse a TRUSTED HTML chunk into a DocumentFragment. Use only for content
  * we control (style tag) or server-sanitized output (body_html, identicon SVG).
  */
@@ -1844,35 +1893,14 @@ const buildSubscribeBell = (
 			const drop = el("button", "gr-subscribe-drop", s("w.unsubscribe.row"));
 			drop.type = "button";
 			let mark: HTMLElement | null = null;
-			const showUnsubscribed = (p: Pending | null): HTMLElement => {
-				const done = el("span", "gr-reported", p ? `${s("w.unsubscribed")} \u00b7 ` : s("w.unsubscribed"));
-				mark = done;
-				if (!p) return done;
-				const undoBtn = el("button", undefined, s("w.undo"));
-				undoBtn.type = "button";
-				// Screen readers would otherwise announce only "Undo".
-				const said = el("span", undefined, s("w.unsubscribed"));
-				said.id = `gr-unsub-${row.id}`;
-				said.hidden = true;
-				undoBtn.setAttribute("aria-describedby", said.id);
-				done.append(said, undoBtn);
-				undoBtn.addEventListener("click", () => {
-					p.cancel();
-					// A no-op once the DELETE went out: Undo is retired by then.
-					if (done.isConnected) {
-						done.replaceWith(drop);
-						drop.focus();
-					}
-				});
-				return done;
-			};
+			const showUnsubscribed = (p: Pending | null): HTMLElement =>
+				(mark = undoMark(s("w.unsubscribed"), `gr-unsub-${row.id}`, drop, p));
 			rowUi.set(row.id, {
-				// The DELETE is on its way: drop Undo, its description and separator.
 				sent: () => {
-					if (mark?.isConnected) mark.textContent = s("w.unsubscribed");
+					if (mark?.isConnected) retireUndo(mark, s("w.unsubscribed"));
 				},
 				fail: (msg) => {
-					if (mark?.isConnected) mark.replaceWith(drop);
+					if (mark?.isConnected) restoreFromMark(mark, drop);
 					errs.fail(null, { error: msg });
 				},
 			});
@@ -2323,26 +2351,8 @@ const buildActions = (
 		// this closure, so a re-render that rebuilds this row redraws the same
 		// "Reported · Undo" state (see the pendingFor check below). Leaving the
 		// page sends it at once (keepalive) so a deliberate report is not lost.
-		const showReported = (pending: Pending): HTMLElement => {
-			const done = el("span", "gr-reported", `${s("w.reported")} \u00b7 `);
-			const undoBtn = el("button", undefined, s("w.undo"));
-			undoBtn.type = "button";
-			// Screen readers would otherwise announce only "Undo".
-			const said = el("span", undefined, s("w.reported"));
-			said.id = `gr-rep-${n.id}`;
-			said.hidden = true;
-			undoBtn.setAttribute("aria-describedby", said.id);
-			done.append(said, undoBtn);
-			undoBtn.addEventListener("click", () => {
-				pending.cancel();
-				// A no-op after the report was sent: Undo is retired by then.
-				if (done.isConnected) {
-					done.replaceWith(reportBtn);
-					reportBtn.focus();
-				}
-			});
-			return done;
-		};
+		const showReported = (pending: Pending): HTMLElement =>
+			undoMark(s("w.reported"), `gr-rep-${n.id}`, reportBtn, pending);
 		// The settled result must land on the row on screen now, not on the
 		// node this closure was built with (a re-render may have replaced it).
 		const liveReported = (): HTMLElement | null =>
@@ -2353,15 +2363,7 @@ const buildActions = (
 			// The report is on its way: retire Undo now so it cannot restore Report
 			// while the POST is in flight. Keep focus on a live node.
 			const done0 = liveReported();
-			if (done0) {
-				const hadFocus = (done0.getRootNode() as Document | ShadowRoot).activeElement === done0.querySelector("button");
-				// Drops Undo, its description and the separator in one go.
-				done0.textContent = s("w.reported");
-				if (hadFocus) {
-					done0.tabIndex = -1;
-					done0.focus();
-				}
-			}
+			if (done0) retireUndo(done0, s("w.reported"));
 			let ok = false;
 			try {
 				// The endpoint returns 200 for both new and duplicate reports and
@@ -2388,11 +2390,7 @@ const buildActions = (
 				// is gone (a re-render without it) the failure is lost silently;
 				// server dedup and rate-limit are the real guard.
 				const done = liveReported();
-				if (done) {
-					const hadFocusNow = (done.getRootNode() as Document | ShadowRoot).activeElement === done;
-					done.replaceWith(reportBtn);
-					if (hadFocusNow) reportBtn.focus();
-				}
+				if (done) restoreFromMark(done, reportBtn);
 			}
 		};
 		reportBtn.addEventListener("click", () => {
