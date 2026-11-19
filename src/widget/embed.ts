@@ -1999,14 +1999,18 @@ const buildActions = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): HTMLEleme
 		// The class is how an in-place swap reopens a reply form (see swapCtx).
 		const replyBtn = el("button", "gr-reply-btn", s("w.reply"));
 		replyBtn.type = "button";
-		replyBtn.addEventListener("click", () => {
+		replyBtn.addEventListener("click", (e) => {
 			// Editor forms share the `gr-reply-form` class (and styling) but tag
 			// themselves with `data-mode="edit"` — narrow the guard so an open
 			// editor doesn't silently swallow Reply clicks.
 			if (main.querySelector('.gr-reply-form:not([data-mode="edit"])')) {
 				return;
 			}
-			main.appendChild(buildReplyForm(n, ctx));
+			const form = buildReplyForm(n, ctx);
+			main.appendChild(form);
+			// Only a reader's own click moves focus: swapCtx reopens forms with a
+			// synthetic .click(), which must not pull focus off what they are on.
+			if (e.isTrusted) form.querySelector("textarea")?.focus();
 		});
 		row.appendChild(replyBtn);
 	}
@@ -2239,7 +2243,10 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 	// One dismissal path for the button and for Escape. An abandoned edit keeps
 	// nothing: the original body is still on the node, and the box was never a
 	// draft surface (attachDraft is only on the reply and top-level composers).
-	const dismiss = (): void => wrap.remove();
+	const dismiss = (): void => {
+		wrap.remove();
+		main.querySelector<HTMLElement>(".gr-edit-window button")?.focus();
+	};
 	cancel.addEventListener("click", dismiss);
 	const key = draftKey(ctx.apiOrigin, ctx.slug, `edit:${n.id}`);
 	bindComposerKeys(wrap, key, dismiss);
@@ -2527,9 +2534,16 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 		tsHandle?.destroy();
 		wrap.remove();
 	};
+	const parentReplyBtn = (): HTMLElement | null =>
+		ctx.root
+			.getElementById(commentAnchorId(parent.id))
+			?.querySelector<HTMLElement>(":scope > .gr-comment .gr-reply-btn") ??
+		null;
 	const cancelReply = (): void => {
 		draft.flush();
 		dismiss();
+		// The form (and the focus in it) is gone: hand focus back to the opener.
+		parentReplyBtn()?.focus();
 	};
 	cancel.addEventListener("click", cancelReply);
 	bindComposerKeys(wrap, key, cancelReply);
@@ -3630,7 +3644,12 @@ const setSort = (root: ShadowRoot, sort: SortKey): void => {
 // whichever render happened to run first. A WeakMap already keyed by root
 // does this for free: whichever loadOnce runs last reads-and-deletes
 // whatever is there, with no separate flag needed to track who "owns" it.
-type PendingReveal = { id: string | null; announce?: string };
+type PendingReveal = {
+	id: string | null;
+	announce?: string;
+	/** Selector inside the new tree to focus when there is no `id` to reveal. */
+	focus?: string;
+};
 const pendingReveal = new WeakMap<ShadowRoot, PendingReveal>();
 
 /**
@@ -3643,11 +3662,16 @@ const revealAfterReload = (
 	root: ShadowRoot,
 	id: string | null,
 	announce?: string,
+	focus?: string,
 ): void => {
 	// Built conditionally rather than `{ id, announce }`: exactOptionalPropertyTypes
 	// treats an explicit `announce: undefined` as different from the key being
 	// absent, and PendingReveal's `announce?` means the latter.
-	pendingReveal.set(root, announce !== undefined ? { id, announce } : { id });
+	pendingReveal.set(root, {
+		id,
+		...(announce !== undefined ? { announce } : {}),
+		...(focus !== undefined ? { focus } : {}),
+	});
 };
 
 /**
@@ -4328,7 +4352,12 @@ const loadOnce = async (
 	if (pageReactionsEnabled || pageVotesEnabled) {
 		wrap.appendChild(buildPageEngagement(ctx));
 	}
-	const authBlock = buildAuthBlock(me, apiBase, providers, reload, reload);
+	// The block is rebuilt by the reload, so land on its first control after.
+	const authReload = (): void => {
+		revealAfterReload(root, null, undefined, ".gr-signed button, .gr-signin button, .gr-body-input");
+		reload();
+	};
+	const authBlock = buildAuthBlock(me, apiBase, providers, authReload, authReload);
 	// The composer is always built (its submit/Turnstile wiring lives further
 	// down) but only mounted when comments are enabled. When disabled, existing
 	// comments stay visible (read-only) and we show a "closed" notice instead.
@@ -4444,6 +4473,7 @@ const loadOnce = async (
 				const picked = opts.find(([value]) => value === sel.value);
 				if (!picked) return;
 				setSort(root, picked[0]);
+				revealAfterReload(root, null, undefined, ".gr-sort select");
 				reload();
 			});
 			bar.appendChild(sortWrap);
@@ -4470,10 +4500,15 @@ const loadOnce = async (
 		let inflight: Promise<boolean> | null = null;
 		const fetchNext = async (): Promise<boolean> => {
 			if (!cursor) return false;
+			// Read before disabling: a disabled button gives up focus.
+			const hadFocus = root.activeElement === more;
 			more.disabled = true;
 			try {
 				const page = await fetchPage(apiBase, slug, cursor, activeSort);
 				appendThreads(list, page.threads, ctx);
+				const firstNew = page.threads[0];
+				// Only the reader's own Load more moves focus; a seek keeps its target.
+				if (hadFocus && firstNew) focusPostedComment(root, firstNew.id);
 				cursor = page.next_cursor;
 				if (cursor) {
 					more.disabled = false;
@@ -4550,7 +4585,12 @@ const loadOnce = async (
 	const pending = pendingReveal.get(root);
 	pendingReveal.delete(root);
 	if (pending) {
-		const revealed = pending.id != null && focusPostedComment(root, pending.id);
+		let revealed = pending.id != null && focusPostedComment(root, pending.id);
+		if (!revealed && pending.id == null && pending.focus) {
+			const target = root.querySelector<HTMLElement>(pending.focus);
+			target?.focus();
+			revealed = !!target;
+		}
 		// Query from `root`, not `form`: buildForm always builds the composer,
 		// but it is only appended into `wrap` when accepting comments (see
 		// below), so a reload that closes the thread in the same round-trip as
