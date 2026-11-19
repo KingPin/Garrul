@@ -265,6 +265,10 @@ when the comments section is below the fold. Replace the
     // A shared comment link (#garrul-comment-<id>) must mount now, or the
     // widget never gets to scroll to it.
     if (location.hash.indexOf("#garrul-comment-") === 0) { load(); return; }
+    // A later comment link on the same page (hash changed) mounts at once too.
+    window.addEventListener("hashchange", function () {
+      if (location.hash.indexOf("#garrul-comment-") === 0) load();
+    });
     if ("IntersectionObserver" in window) {
       var io = new IntersectionObserver(function (entries) {
         if (entries.some(function (e) { return e.isIntersecting; })) {
@@ -989,7 +993,7 @@ fills the composer card, notice boxes, and now code as well.
 
 For hosts where you cannot inject `<script>` (strict CSP, locked-down
 CMS, sandboxed editor), point an iframe at the Worker's embed page and
-listen for height messages:
+listen for height and scroll messages:
 
 ```html
 <iframe
@@ -1008,19 +1012,42 @@ listen for height messages:
     src.searchParams.set("url", window.location.href);
     src.searchParams.set("published", "2026-09-11T12:00:00Z"); // optional
     src.searchParams.set("parent_origin", window.location.origin);
+    // A comment permalink (#garrul-comment-<id>) on this page is
+    // forwarded into the frame as its fragment, on load and on later
+    // hash changes. A fragment-only change does not reload the frame.
+    var PREFIX = "#garrul-comment-";
+    if (location.hash.indexOf(PREFIX) === 0) src.hash = location.hash;
     f.src = src.toString();
+    window.addEventListener("hashchange", function () {
+      if (location.hash.indexOf(PREFIX) !== 0) return;
+      var next = new URL(f.src);
+      next.hash = location.hash;
+      f.src = next.toString();
+    });
 
+    // Auto-resize the iframe to match the inner widget's content height.
+    // The iframe posts `{type:"garrul:height", height}` whenever its
+    // content resizes; we mirror that onto the iframe element.
     var apiOrigin = new URL(f.src).origin;
     window.addEventListener("message", function (e) {
-      if (e.origin !== apiOrigin) return;
+      if (e.origin !== apiOrigin || e.source !== f.contentWindow) return;
       var data = e.data;
-      if (!data || data.type !== "garrul:height") return;
-      if (typeof data.height !== "number") return;
+      if (!data) return;
+      if (data.type === "garrul:scroll" && Number.isFinite(data.top)) {
+        // Permalink target: bring it into the host page's viewport.
+        var y = f.getBoundingClientRect().top + window.scrollY + data.top;
+        window.scrollTo(0, Math.max(0, y - window.innerHeight / 3));
+        return;
+      }
+      if (data.type !== "garrul:height") return;
+      if (!Number.isFinite(data.height)) return;
       f.style.height = data.height + "px";
     });
   })();
 </script>
 ```
+
+The frame sets `<base target="_top">`, so a comment timestamp or permalink opens on the host page; comment-body links still open in a new tab. When a permalink is opened, the frame posts `{type:"garrul:scroll", top}` and the listener above scrolls the host page to that comment.
 
 Route: `{{INSTANCE_URL}}/embed/?slug=…`. It is a static page (Workers
 Static Assets) when the operator's `wrangler.toml` has the `[assets]`
