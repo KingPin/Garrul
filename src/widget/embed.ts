@@ -540,18 +540,23 @@ const inflight = new Set<Promise<void>>();
  * Run `run` as the one post for composer `key`; a submit while it runs is
  * dropped (Ctrl+Enter three times used to send three). The textarea is
  * read-only and the toolbar and `cancel` disabled until it settles, so nothing
- * typed mid-post is lost to the clear that follows success. `run` must call
- * the `release` it gets before it reloads: loadOnce waits on every post still
- * in `inflight`, its own included. Releasing twice is a no-op.
+ * typed mid-post is lost to the clear that follows success.
+ *
+ * `run` must call the `handOff` it gets before it reloads: loadOnce waits on
+ * every post still in `inflight`, its own included. Handing off leaves the
+ * form locked for good — the reload is about to replace it, and until then it
+ * still holds the text just sent, so unlocking it is an invitation to send it
+ * twice. A read-only textarea is also what refuses that form's next submit
+ * once `key` is free again; the form the reload builds starts unlocked.
  */
 const postOnce = (
 	form: HTMLFormElement,
 	key: string,
-	run: (release: () => void) => Promise<void>,
+	run: (handOff: () => void) => Promise<void>,
 	cancel?: HTMLButtonElement,
 ): void => {
-	if (busyKeys.has(key)) return;
 	const ta = form.querySelector("textarea");
+	if (busyKeys.has(key) || ta?.readOnly) return;
 	const locked = [...form.querySelectorAll<HTMLButtonElement>(".gr-toolbar-btn")];
 	if (cancel) locked.push(cancel);
 	const lock = (on: boolean): void => {
@@ -562,19 +567,22 @@ const postOnce = (
 	const p = new Promise<void>((r) => {
 		settle = r;
 	});
-	let held = true;
-	const release = (): void => {
-		if (!held) return;
-		held = false;
-		busyKeys.delete(key);
+	let handedOff = false;
+	const leave = (): void => {
 		inflight.delete(p);
-		lock(false);
 		settle();
 	};
 	busyKeys.add(key);
 	inflight.add(p);
 	lock(true);
-	void run(release).finally(release);
+	void run(() => {
+		handedOff = true;
+		leave();
+	}).finally(() => {
+		leave();
+		busyKeys.delete(key);
+		if (!handedOff) lock(false);
+	});
 };
 
 /**
@@ -2231,7 +2239,7 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 		return false;
 	}, countdownStartsIn(n.created_at, ctx.editWindowMs, Date.now()));
 
-	const post = async (release: () => void): Promise<void> => {
+	const post = async (handOff: () => void): Promise<void> => {
 		// The tick only re-reads the clock every 15 seconds, so a submit can land
 		// in the gap between the window closing and the tick noticing. Ask the
 		// clock directly and take the editor down here rather than send a PATCH
@@ -2254,7 +2262,7 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 				// assistive tech read the edited body, which is itself the
 				// confirmation, and it adds no new string to a bundle under a
 				// hard size budget.
-				release();
+				handOff();
 				ctx.revealAfterReload(n.id);
 				ctx.reload();
 				return;
@@ -2421,7 +2429,7 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 		submit.disabled = false;
 	};
 
-	const post = async (release: () => void): Promise<void> => {
+	const post = async (handOff: () => void): Promise<void> => {
 		submit.disabled = true;
 		if (!tsGate?.failed) clearStatus(errBox);
 
@@ -2513,7 +2521,7 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 			// Echo unusable, or the parent is no longer on screen. Fall back to the
 			// reload, and to the parent comment's id so focus still lands somewhere
 			// sensible on a response that omits the new comment's own.
-			release();
+			handOff();
 			ctx.revealAfterReload(json.comment?.id ?? parent.id, s("w.posted"));
 			ctx.reload();
 		} catch (err) {
@@ -4436,8 +4444,8 @@ const loadOnce = async (
 	const key = draftKey(apiOrigin, slug, null);
 	form.addEventListener("submit", (e) => {
 		e.preventDefault();
-		postOnce(form, key, (release) =>
-			submit(form, root, slug, apiBase, apiOrigin, host, release),
+		postOnce(form, key, (handOff) =>
+			submit(form, root, slug, apiBase, apiOrigin, host, handOff),
 		);
 	});
 
@@ -4453,7 +4461,7 @@ const submit = async (
 	apiBase: string,
 	apiOrigin: string,
 	host: HTMLElement,
-	release: () => void,
+	handOff: () => void,
 ) => {
 	// Two things write to this box: submit failures, and Turnstile. Precedence:
 	// the "anti-spam check failed to load" message wins and is sticky. It means
@@ -4623,7 +4631,7 @@ const submit = async (
 		// loadOnce call actually renders last — this one, or the queued
 		// follow-up — is the one that consumes it; see the arbitration at the
 		// tail of loadOnce.
-		release();
+		handOff();
 		revealAfterReload(root, json.comment?.id ?? null, s("w.posted"));
 		await load(root, slug, apiBase, host);
 	} catch (err) {
