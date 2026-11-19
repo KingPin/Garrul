@@ -346,15 +346,28 @@ type ActionStatus = {
  */
 const lazyActionStatus = (host: () => HTMLElement): ActionStatus => {
 	let box: HTMLElement | null = null;
+	let text = "";
+	// The first message is written a tick after the box joins the tree: a live
+	// region that appears already filled is the case screen readers miss.
+	let flush: ReturnType<typeof setTimeout> | null = null;
 	return {
 		fail: (err, body) => {
-			if (!box) {
-				box = statusBox("gr-error is-inline");
-				host().appendChild(box);
+			text = actionErrorMessage(err, body, s);
+			if (box) {
+				if (flush === null) showStatus(box, text);
+				return;
 			}
-			showStatus(box, actionErrorMessage(err, body, s));
+			const made = statusBox("gr-error is-inline");
+			box = made;
+			host().appendChild(made);
+			flush = setTimeout(() => {
+				flush = null;
+				showStatus(made, text);
+			}, 0);
 		},
 		clear: () => {
+			if (flush !== null) clearTimeout(flush);
+			flush = null;
 			if (box) clearStatus(box);
 		},
 	};
@@ -2122,6 +2135,9 @@ const buildActions = (
 				no.disabled = true;
 				let failure: unknown = null;
 				let failBody: { error?: string } | null = null;
+				// Set once the server has confirmed the delete. A throw after that
+				// is a render problem, not a failed delete: reload, never "failed".
+				let landed = false;
 				try {
 					const res = await apiFetch(
 						ctx.apiBase,
@@ -2129,6 +2145,7 @@ const buildActions = (
 						{ method: "DELETE" },
 					);
 					if (res.ok) {
+						landed = true;
 						// The server answers with the re-rendered thread (null: pruned
 						// whole), so only that thread changes and the reader keeps
 						// their place. No `thread` key is a Worker older than this
@@ -2163,6 +2180,10 @@ const buildActions = (
 					}
 					failBody = await res.json().catch(() => null);
 				} catch (err) {
+					if (landed) {
+						ctx.reload();
+						return;
+					}
 					// Network failure — same handling as a refusal below.
 					failure = err;
 				}
