@@ -421,6 +421,9 @@ type MdFormat = {
  * preview/required state stays in sync.
  */
 const applyMarkdown = (ta: HTMLTextAreaElement, fmt: MdFormat): void => {
+	// A locked field (post in flight, prefill loading, edit window closed) takes
+	// no edits from any path, not just the ones that type.
+	if (ta.readOnly || ta.disabled) return;
 	const { selectionStart, selectionEnd, value } = ta;
 	if (fmt.linePrefix) {
 		const lineStart = value.lastIndexOf("\n", selectionStart - 1) + 1;
@@ -496,17 +499,23 @@ const buildToolbar = (ta: HTMLTextAreaElement): HTMLElement => {
  * Bound on the form, not the textarea, so it works from the name field and the
  * notify checkbox too.
  */
-const bindComposerKeys = (form: HTMLFormElement, onCancel?: () => void): void => {
+const bindComposerKeys = (
+	form: HTMLFormElement,
+	key: string,
+	onCancel?: () => void,
+): void => {
 	form.addEventListener("keydown", (e) => {
 		// An IME candidate window owns both keys while composing; Enter picks a
 		// candidate and Escape cancels the composition. Posting half a word of
 		// Japanese because the widget grabbed the keystroke is the failure mode.
 		if (e.isComposing) return;
+		const busy = busyKeys.has(key);
 		if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
 			e.preventDefault();
 			// requestSubmit(), not submit(): submit() skips the submit event, and
 			// the submit event is where every form in this widget does its work.
-			form.requestSubmit();
+			// A held key auto-repeats, and each repeat used to be another post.
+			if (!e.repeat && !busy) form.requestSubmit();
 			return;
 		}
 		if (e.key === "Escape" && onCancel) {
@@ -515,9 +524,57 @@ const bindComposerKeys = (form: HTMLFormElement, onCancel?: () => void): void =>
 			// modal). Closing a reply box should not also close whatever the
 			// reader has open around it.
 			e.stopPropagation();
-			onCancel();
+			// Mid-post the box stays: its text is what is being sent.
+			if (!busy) onCancel();
 		}
 	});
+};
+
+// Composers with a post in flight, keyed by draft key rather than by form, so
+// a form a reload rebuilds is still the same busy composer. `inflight` holds
+// the posts themselves: loadOnce waits them out before tearing the tree down.
+const busyKeys = new Set<string>();
+const inflight = new Set<Promise<void>>();
+
+/**
+ * Run `run` as the one post for composer `key`; a submit while it runs is
+ * dropped (Ctrl+Enter three times used to send three). The textarea is
+ * read-only and the toolbar and `cancel` disabled until it settles, so nothing
+ * typed mid-post is lost to the clear that follows success. `run` must call
+ * the `release` it gets before it reloads: loadOnce waits on every post still
+ * in `inflight`, its own included. Releasing twice is a no-op.
+ */
+const postOnce = (
+	form: HTMLFormElement,
+	key: string,
+	run: (release: () => void) => Promise<void>,
+	cancel?: HTMLButtonElement,
+): void => {
+	if (busyKeys.has(key)) return;
+	const ta = form.querySelector("textarea");
+	const locked = [...form.querySelectorAll<HTMLButtonElement>(".gr-toolbar-btn")];
+	if (cancel) locked.push(cancel);
+	const lock = (on: boolean): void => {
+		if (ta) ta.readOnly = on;
+		for (const b of locked) b.disabled = on;
+	};
+	let settle = (): void => {};
+	const p = new Promise<void>((r) => {
+		settle = r;
+	});
+	let held = true;
+	const release = (): void => {
+		if (!held) return;
+		held = false;
+		busyKeys.delete(key);
+		inflight.delete(p);
+		lock(false);
+		settle();
+	};
+	busyKeys.add(key);
+	inflight.add(p);
+	lock(true);
+	void run(release).finally(release);
 };
 
 /**
@@ -2087,7 +2144,8 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 	// draft surface (attachDraft is only on the reply and top-level composers).
 	const dismiss = (): void => wrap.remove();
 	cancel.addEventListener("click", dismiss);
-	bindComposerKeys(wrap, dismiss);
+	const key = draftKey(ctx.apiOrigin, ctx.slug, `edit:${n.id}`);
+	bindComposerKeys(wrap, key, dismiss);
 	actions.append(save, cancel);
 
 	// Unlike the chip in the actions row, this one IS a live region: the window
@@ -2173,8 +2231,7 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 		return false;
 	}, countdownStartsIn(n.created_at, ctx.editWindowMs, Date.now()));
 
-	wrap.addEventListener("submit", async (e) => {
-		e.preventDefault();
+	const post = async (release: () => void): Promise<void> => {
 		// The tick only re-reads the clock every 15 seconds, so a submit can land
 		// in the gap between the window closing and the tick noticing. Ask the
 		// clock directly and take the editor down here rather than send a PATCH
@@ -2197,6 +2254,7 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 				// assistive tech read the edited body, which is itself the
 				// confirmation, and it adds no new string to a bundle under a
 				// hard size budget.
+				release();
 				ctx.revealAfterReload(n.id);
 				ctx.reload();
 				return;
@@ -2211,6 +2269,10 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 			showStatus(errBox, String(err));
 			save.disabled = false;
 		}
+	};
+	wrap.addEventListener("submit", (e) => {
+		e.preventDefault();
+		postOnce(wrap, key, post, cancel);
 	});
 	bodyEl.insertAdjacentElement("afterend", wrap);
 };
@@ -2224,11 +2286,8 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	ta.placeholder = s("w.reply_ph", { name: parent.author.name });
 	ta.setAttribute("aria-label", s("w.reply_ph", { name: parent.author.name }));
 	ta.required = true;
-	const draft = attachDraft(
-		ta,
-		draftKey(ctx.apiOrigin, ctx.slug, parent.id),
-		legacyDraftKey(ctx.slug, parent.id),
-	);
+	const key = draftKey(ctx.apiOrigin, ctx.slug, parent.id);
+	const draft = attachDraft(ta, key, legacyDraftKey(ctx.slug, parent.id));
 
 	let nameInput: HTMLInputElement | null = null;
 	if (!ctx.me) {
@@ -2352,7 +2411,7 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 		dismiss();
 	};
 	cancel.addEventListener("click", cancelReply);
-	bindComposerKeys(wrap, cancelReply);
+	bindComposerKeys(wrap, key, cancelReply);
 
 	// Same precedence as the top-level composer: the Turnstile failure message
 	// is sticky, so nothing here overwrites it or hands the button back.
@@ -2362,8 +2421,7 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 		submit.disabled = false;
 	};
 
-	wrap.addEventListener("submit", async (e) => {
-		e.preventDefault();
+	const post = async (release: () => void): Promise<void> => {
 		submit.disabled = true;
 		if (!tsGate?.failed) clearStatus(errBox);
 
@@ -2455,6 +2513,7 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 			// Echo unusable, or the parent is no longer on screen. Fall back to the
 			// reload, and to the parent comment's id so focus still lands somewhere
 			// sensible on a response that omits the new comment's own.
+			release();
 			ctx.revealAfterReload(json.comment?.id ?? parent.id, s("w.posted"));
 			ctx.reload();
 		} catch (err) {
@@ -2464,6 +2523,10 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 			tsHandle?.reset();
 			tsGate?.clear();
 		}
+	};
+	wrap.addEventListener("submit", (e) => {
+		e.preventDefault();
+		postOnce(wrap, key, post, cancel);
 	});
 
 	return wrap;
@@ -3987,6 +4050,17 @@ const loadOnce = async (
 	// Last point of no return before the old tree goes away. Deliberately not at
 	// the top of loadOnce: the awaited fetches above take hundreds of ms, during
 	// which the currently-displayed composer must keep working.
+	//
+	// Nor while a post is in flight: tearing down its composer abandons it
+	// mid-send and rebuilds the box with the posted text restored as a draft.
+	// What was fetched above predates that post, so once it settles fetch again,
+	// unless a reload already queued behind this one will.
+	if (inflight.size) {
+		await Promise.allSettled(inflight);
+		if (!loadState.get(root)?.queued)
+			await loadOnce(root, slug, apiBase, host, activeSort);
+		return;
+	}
 	destroyTopComposerTurnstile();
 
 	root.replaceChildren();
@@ -4359,14 +4433,17 @@ const loadOnce = async (
 		};
 	}
 
+	const key = draftKey(apiOrigin, slug, null);
 	form.addEventListener("submit", (e) => {
 		e.preventDefault();
-		void submit(form, root, slug, apiBase, apiOrigin, host);
+		postOnce(form, key, (release) =>
+			submit(form, root, slug, apiBase, apiOrigin, host, release),
+		);
 	});
 
 	// No cancel handler: the top-level composer is the page's resting state, so
 	// Escape has nothing to back out to. Cmd/Ctrl+Enter still posts.
-	bindComposerKeys(form);
+	bindComposerKeys(form, key);
 };
 
 const submit = async (
@@ -4376,6 +4453,7 @@ const submit = async (
 	apiBase: string,
 	apiOrigin: string,
 	host: HTMLElement,
+	release: () => void,
 ) => {
 	// Two things write to this box: submit failures, and Turnstile. Precedence:
 	// the "anti-spam check failed to load" message wins and is sticky. It means
@@ -4429,9 +4507,8 @@ const submit = async (
 		waitedToken = waited.token;
 	}
 
-	// Read the fields *after* the wait: the visitor can keep typing while it
-	// runs, and posting a pre-wait snapshot would then clearDraft() over text
-	// that never made it to the server.
+	// Read the fields *after* the wait. The body is read-only by now (postOnce),
+	// but the name field is not, and a pre-wait snapshot would post a stale one.
 	const nameInput = form.querySelector(".gr-name-input") as HTMLInputElement | null;
 	const name = nameInput?.value ?? "";
 	const body = (form.querySelector(".gr-body-input") as HTMLTextAreaElement).value;
@@ -4546,6 +4623,7 @@ const submit = async (
 		// loadOnce call actually renders last — this one, or the queued
 		// follow-up — is the one that consumes it; see the arbitration at the
 		// tail of loadOnce.
+		release();
 		revealAfterReload(root, json.comment?.id ?? null, s("w.posted"));
 		await load(root, slug, apiBase, host);
 	} catch (err) {
