@@ -639,7 +639,17 @@ const postOnce = (
 	const lock = (on: boolean): void => {
 		// An expired editor stays closed: the settle after a refused save must not
 		// hand back a field the window has shut (expire() marks the form).
-		if (!on && form.hasAttribute("data-expired")) return;
+		if (!on && form.hasAttribute("data-expired")) {
+			// Cancel is the only way out of a closed editor, so it comes back.
+			if (cancel) {
+				cancel.disabled = false;
+				// Save was disabled while focused. Chrome can still report it as the active
+				// element until focus fixup runs, so test for a disabled one too.
+				const active = (form.getRootNode() as Document | ShadowRoot).activeElement;
+				if (!active || (active as HTMLButtonElement).disabled) cancel.focus();
+			}
+			return;
+		}
 		if (ta) ta.readOnly = on;
 		for (const b of locked) b.disabled = on;
 	};
@@ -2395,6 +2405,9 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 		ta.disabled = false;
 		ta.readOnly = true;
 		for (const b of wrap.querySelectorAll<HTMLButtonElement>(".gr-toolbar-btn")) b.disabled = true;
+		// Disabling the focused Save would drop focus to <body>, and Escape then reaches
+		// nothing. Cancel stays enabled, so it takes the focus instead.
+		if ((wrap.getRootNode() as Document | ShadowRoot).activeElement === save) cancel.focus();
 		save.disabled = true;
 		// An editor opened after expiry never gets its prefill, so the field is
 		// empty and the placeholder is the only thing in it — "Loading…", for a
