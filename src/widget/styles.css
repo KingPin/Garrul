@@ -507,6 +507,10 @@ button:active:not([disabled]) { opacity: 0.75; }
    wrong side of the replies it indents on an RTL host page. */
 .gr-replies { display: flex; flex-direction: column; gap: 0.75rem; margin-top: 0.5rem; padding-inline-start: 1.25rem; border-inline-start: 2px solid var(--gr-border); }
 .gr-comment { display: flex; gap: 0.75rem; }
+/* The comment a permalink just landed on, for 2 s (revealHashTarget in
+   embed.ts). A static outline, no transition: nothing moves, so reduced
+   motion needs no override. */
+.gr-target { outline: 2px solid var(--gr-accent); outline-offset: 4px; }
 /* The reader's own comment, rendered from the POST echo rather than fetched
    back (see insertPostedNode). It stays marked until the next real load
    replaces the tree, because under `old` and `top` its position is provisional

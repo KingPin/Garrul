@@ -114,6 +114,7 @@ export const fr = {
 		other: "Afficher {n} réponses de plus",
 	},
 	"w.loading_comments": "Chargement des commentaires",
+	"w.permalink_missing": "Ce commentaire n'est pas disponible.",
 	"w.empty.open": "Soyez la première personne à commenter.",
 	"w.empty.closed": "Aucun commentaire pour le moment.",
 	"w.closed.post": "Les commentaires sont fermés pour cet article.",

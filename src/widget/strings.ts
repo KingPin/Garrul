@@ -158,6 +158,7 @@ export const EN = {
 	"w.more_replies": { one: "Show {n} more reply", other: "Show {n} more replies" },
 	"w.loading_comments": "Loading comments",
 	"w.permalink": "Permalink to @{name}'s comment, {time}",
+	"w.permalink_missing": "That comment is not available.",
 	// Names the comments region for assistive tech. Never rendered visually —
 	// see `.gr-sr` — so it exists to give screen readers and rotor
 	// navigation a landmark, not to put a title on the operator's page.

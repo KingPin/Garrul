@@ -112,6 +112,7 @@ export const es = {
 		other: "Mostrar {n} respuestas más",
 	},
 	"w.loading_comments": "Cargando comentarios",
+	"w.permalink_missing": "Este comentario no está disponible.",
 	"w.empty.open": "Sé la primera persona en comentar.",
 	"w.empty.closed": "Aún no hay comentarios.",
 	"w.closed.post": "Los comentarios están cerrados en esta entrada.",

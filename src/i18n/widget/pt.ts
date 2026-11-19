@@ -158,6 +158,7 @@ export const pt = {
 	},
 	"w.loading_comments": "Carregando comentários",
 	"w.permalink": "Link permanente para o comentário de @{name}, {time}",
+	"w.permalink_missing": "Este comentário não está disponível.",
 	"w.region": "Comentários",
 	// Impersonal, so the label does not have to gender the reader the way
 	// "Seja o primeiro a comentar" would.

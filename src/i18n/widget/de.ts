@@ -115,6 +115,7 @@ export const de = {
 		other: "{n} weitere Antworten anzeigen",
 	},
 	"w.loading_comments": "Kommentare werden geladen",
+	"w.permalink_missing": "Dieser Kommentar ist nicht verfügbar.",
 	// Infinitive, not "Schreib" — the file's no-direct-address rule, and this
 	// was the one line that broke it with a du-imperative.
 	"w.empty.open": "Den ersten Kommentar schreiben.",

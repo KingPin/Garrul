@@ -126,6 +126,7 @@ export const nb = {
 	"w.more_replies": { one: "Vis {n} svar til", other: "Vis {n} svar til" },
 	"w.loading_comments": "Laster kommentarer",
 	"w.permalink": "Permalenke til kommentaren fra @{name}, {time}",
+	"w.permalink_missing": "Denne kommentaren er ikke tilgjengelig.",
 	"w.region": "Kommentarer",
 	"w.empty.open": "Bli den første som kommenterer.",
 	"w.empty.closed": "Ingen kommentarer ennå.",

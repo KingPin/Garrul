@@ -83,9 +83,10 @@ import {
 	commentAnchorId,
 	commentHref,
 	commentIdFromHash,
+	hashAction,
+	listHolds,
 	MAX_SEEK_PAGES,
 	seekComment,
-	subtreeHas,
 } from "./permalink";
 import {
 	type EditWindowState,
@@ -2695,9 +2696,16 @@ const buildComment = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	// The timestamp is the permalink, the way Reddit/HN/Disqus do it — a plain
 	// anchor, so right-click-copy, middle-click and Cmd-click all work natively
 	// and we spend no bytes on a clipboard shim. Clicking it is handled by the
-	// existing hash-scroll at the bottom of this file.
+	// existing hash-scroll at the bottom of this file — except a click on the
+	// hash already in the URL, which fires no hashchange, so it reveals here.
 	const permalink = el("a", "gr-permalink");
 	permalink.href = ctx.permalinkFor(n.id);
+	permalink.addEventListener("click", () => {
+		const r = permalink.getRootNode();
+		if (permalink.hash === window.location.hash && r instanceof ShadowRoot) {
+			revealHashTarget(r, true);
+		}
+	});
 	// The visible label is relative ("6 minutes ago"), which collides across
 	// comments on an active thread and says nothing about where the link goes —
 	// a links-list reads as a column of bare durations. The name carries the
@@ -2841,6 +2849,8 @@ type ReplyMount = {
 };
 
 const replyMounts = new WeakMap<HTMLElement, ReplyMount>();
+/** Each capped list's "Show N more" button -> the replies it still hides. */
+const hiddenReplies = new WeakMap<HTMLElement, TreeNode[]>();
 
 /**
  * The reply list for `n`, mounting the container and its toggle on first use.
@@ -2861,11 +2871,10 @@ const replyMountFor = (
 	// Per-comment collapse toggle; auto-collapsed when this node is nested
 	// at/deeper than the configured depth (0 = never auto-collapse).
 	// A branch holding the permalink target never starts collapsed.
-	const target = commentIdFromHash(window.location.hash);
 	const startCollapsed =
 		ctx.autoCollapseDepth > 0 &&
 		n.depth >= ctx.autoCollapseDepth &&
-		!(target && n.replies.some((r) => subtreeHas(r, target)));
+		!listHolds(n.replies, commentIdFromHash(window.location.hash));
 	const toggle = buildCollapseToggle(
 		container,
 		countDescendants(n),
@@ -2894,10 +2903,10 @@ const renderReplyList = (
 	const limit = ctx.repliesPerThread;
 	// A permalink target past the cap shows every reply: the target must be in
 	// the DOM, and splitting the list around it would hide its siblings oddly.
-	const target = commentIdFromHash(window.location.hash);
-	const showAll =
-		target !== null &&
-		replies.slice(limit).some((r) => subtreeHas(r, target));
+	const showAll = listHolds(
+		replies.slice(limit),
+		commentIdFromHash(window.location.hash),
+	);
 	const initial =
 		limit > 0 && replies.length > limit && !showAll ? limit : replies.length;
 	for (let i = 0; i < initial; i++) {
@@ -2908,6 +2917,8 @@ const renderReplyList = (
 		const more = el("button", "gr-showmore") as HTMLButtonElement;
 		more.type = "button";
 		more.textContent = s("w.more_replies", { n: hidden.length });
+		// A hash that arrives after this render opens the batch (findHashTarget).
+		hiddenReplies.set(more, hidden);
 		more.addEventListener("click", () => {
 			// Same arbitration as `appendThreads`, on the reply side: this batch was
 			// captured when the list rendered, and `insertPostedNode` can have put
@@ -3575,7 +3586,7 @@ const load = async (
 		// finds it already there), so piggybacking here gets "exactly one
 		// listener per mount" for free, with no second WeakSet just to
 		// remember whether one was already bound.
-		window.addEventListener("hashchange", () => void seekHashTarget(root));
+		window.addEventListener("hashchange", () => onHashChange(root));
 	}
 	if (st.running) {
 		st.queued = true;
@@ -3682,13 +3693,15 @@ const focusPostedComment = (root: ShadowRoot, id: string): boolean => {
  * revealed anything, so loadOnce's arbitration can fall through when it
  * didn't.
  */
-const revealHashTarget = (root: ShadowRoot): boolean => {
+const revealHashTarget = (root: ShadowRoot, again = false): boolean => {
 	const id = commentIdFromHash(window.location.hash);
 	if (!id) return false;
 	const anchorId = commentAnchorId(id);
 	const st = loadState.get(root);
-	if (st?.revealedHash === anchorId) return false;
-	const target = root.getElementById(anchorId);
+	// `again`: the reader clicked the timestamp of the comment already in the
+	// URL — a fresh request to see it, not a reload re-running the reveal.
+	if (!again && st?.revealedHash === anchorId) return false;
+	const target = findHashTarget(root, id);
 	if (!target) return false;
 	// A target inside an auto-collapsed branch is in the DOM but display:none,
 	// so scroll and focus would do nothing. Open each branch that holds it.
@@ -3714,6 +3727,16 @@ const revealHashTarget = (root: ShadowRoot): boolean => {
 	// Scrolling alone only serves a sighted mouse user; move the caret too so
 	// keyboard and screen-reader users land on the comment (WCAG 2.4.3).
 	focusPostedComment(root, id);
+	// Outline it for 2 s so the eye finds it once the scroll stops.
+	const article = target.querySelector<HTMLElement>(".gr-comment");
+	if (article) {
+		clearTimeout(targetTimers.get(article));
+		article.classList.add("gr-target");
+		targetTimers.set(
+			article,
+			setTimeout(() => article.classList.remove("gr-target"), 2000),
+		);
+	}
 	// Record only on success: a hash pointing at a comment that hasn't
 	// rendered yet (paged thread, or a reload still in flight) must not count
 	// as revealed, so a reload that renders it can still catch it.
@@ -3721,19 +3744,41 @@ const revealHashTarget = (root: ShadowRoot): boolean => {
 	return true;
 };
 
+const targetTimers = new WeakMap<HTMLElement, ReturnType<typeof setTimeout>>();
+
+/**
+ * The thread node for comment `id`, or null. A target in a capped reply list
+ * that rendered before the hash pointed at it sits behind "Show N more": open
+ * that batch (its replies render with the current hash, so any capped list
+ * nested inside opens too). Collapsed branches are opened by the caller.
+ */
+const findHashTarget = (root: ShadowRoot, id: string): HTMLElement | null => {
+	const anchorId = commentAnchorId(id);
+	if (!root.getElementById(anchorId)) {
+		for (const b of root.querySelectorAll<HTMLElement>(".gr-showmore")) {
+			if (listHolds(hiddenReplies.get(b) ?? [], id)) {
+				b.click();
+				break;
+			}
+		}
+	}
+	return root.getElementById(anchorId);
+};
+
 /**
  * Page forward (at most MAX_SEEK_PAGES) until the hash target is in the DOM,
- * then reveal it. A target in a collapsed or capped reply list is already
- * rendered open (see replyMountFor / renderReplyList), so only top-level
- * paging is needed here. An unknown id costs at most MAX_SEEK_PAGES requests.
+ * then reveal it. A capped reply list is opened by findHashTarget and a
+ * collapsed branch by revealHashTarget, so only top-level paging is needed
+ * here. An unknown id
+ * costs at most MAX_SEEK_PAGES requests, then says so in the status box.
  */
 const seekHashTarget = async (root: ShadowRoot): Promise<void> => {
 	const startId = commentIdFromHash(window.location.hash);
 	if (!startId) return;
-	// No tree yet: a hashchange that lands while the first load is in flight
-	// has nothing to search and no pager to search with, so recording the hash
-	// as sought here would make the first render's own seek return early and
-	// leave the target unrevealed. That render seeks the current hash itself.
+	// No tree yet (onHashChange defers while a load runs; this also covers a
+	// first load that failed): nothing to search and no pager to search with,
+	// so recording the hash as sought here would make the next render's own
+	// seek return early and leave the target unrevealed.
 	if (!mountCtx.has(root)) return;
 	const anchorId = commentAnchorId(startId);
 	const st = loadState.get(root);
@@ -3741,7 +3786,7 @@ const seekHashTarget = async (root: ShadowRoot): Promise<void> => {
 	// change) must not page again for the same hash. A different hash differs
 	// here, so a hashchange still seeks.
 	if (st && (st.revealedHash === anchorId || st.soughtHash === anchorId)) return;
-	await seekComment(
+	const found = await seekComment(
 		() => {
 			// Re-read the hash on every call: a hashchange can land mid-seek, and
 			// revealHashTarget acts on the current hash, so this must check the
@@ -3749,7 +3794,7 @@ const seekHashTarget = async (root: ShadowRoot): Promise<void> => {
 			// fetch is in flight and relies on this loop to carry it.
 			const id = commentIdFromHash(window.location.hash);
 			if (!id) return true;
-			if (!root.getElementById(commentAnchorId(id))) return false;
+			if (!findHashTarget(root, id)) return false;
 			revealHashTarget(root);
 			return true;
 		},
@@ -3757,6 +3802,32 @@ const seekHashTarget = async (root: ShadowRoot): Promise<void> => {
 		MAX_SEEK_PAGES,
 	);
 	if (st) st.soughtHash = anchorId;
+	if (found) return;
+	// The reader left the last revealed comment for one that is not here, so
+	// coming back to it is a fresh visit (see hashAction's "none").
+	if (st) st.revealedHash = null;
+	// A macrotask, for the same live-region reason as loadOnce's announce.
+	setTimeout(() => {
+		const box = root.querySelector(".gr-error") as HTMLElement | null;
+		if (box) showStatus(box, s("w.permalink_missing"), "notice");
+	}, 0);
+};
+
+/**
+ * `hashchange`: act on a link the reader just followed. While a load runs,
+ * leave the hash to that load's post-render arbitration — a seek now would
+ * search a tree about to be torn down and could mark the hash sought unseen.
+ */
+const onHashChange = (root: ShadowRoot): void => {
+	const st = loadState.get(root);
+	if (!st) return;
+	const act = hashAction(st.revealedHash, window.location.hash);
+	if (act === "reset") {
+		st.revealedHash = null;
+		st.soughtHash = null;
+	} else if (act === "reveal" && !st.running) {
+		void seekHashTarget(root);
+	}
 };
 
 /** The order the rendered page is actually in; see `loadState`'s `sort`. */
@@ -4375,8 +4446,9 @@ const loadOnce = async (
 		const more = el("button", "gr-loadmore", s("w.load_more"));
 		more.type = "button";
 		let cursor: string | null = data.next_cursor;
-		const loadNext = async (): Promise<boolean> => {
-			if (!cursor || more.disabled) return false;
+		let inflight: Promise<boolean> | null = null;
+		const fetchNext = async (): Promise<boolean> => {
+			if (!cursor) return false;
 			more.disabled = true;
 			try {
 				const page = await fetchPage(apiBase, slug, cursor, activeSort);
@@ -4400,6 +4472,13 @@ const loadOnce = async (
 				return false;
 			}
 		};
+		// One fetch at a time, shared: a seek that starts while the reader's own
+		// Load more is in flight awaits that page and then looks, instead of
+		// reading the busy button as "no more pages" and giving up unseen.
+		const loadNext = (): Promise<boolean> =>
+			(inflight ??= fetchNext().finally(() => {
+				inflight = null;
+			}));
 		more.addEventListener("click", () => void loadNext());
 		if (loadSt) loadSt.loadNext = loadNext;
 		wrap.appendChild(more);

@@ -138,6 +138,7 @@ export const it = {
 	},
 	"w.loading_comments": "Caricamento dei commenti",
 	"w.permalink": "Permalink al commento di @{name}, {time}",
+	"w.permalink_missing": "Questo commento non è disponibile.",
 	"w.region": "Commenti",
 	"w.empty.open": "Scrivi il primo commento.",
 	"w.empty.closed": "Ancora nessun commento.",

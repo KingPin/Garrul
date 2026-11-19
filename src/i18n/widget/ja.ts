@@ -137,6 +137,7 @@ export const ja = {
 	"w.more_replies": { other: "さらに{n}件の返信を表示" },
 	"w.loading_comments": "コメントを読み込んでいます",
 	"w.permalink": "@{name}のコメントへのパーマリンク、{time}",
+	"w.permalink_missing": "このコメントは利用できません。",
 	"w.region": "コメント",
 	"w.empty.open": "最初のコメントを投稿してみてください。",
 	"w.empty.closed": "まだコメントはありません。",
