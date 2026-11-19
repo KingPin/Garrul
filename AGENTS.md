@@ -713,6 +713,16 @@ honestly:
 
 So posting costs one request in the ordinary case and two in those.
 
+**Refusals carry a localized `error`; one also carries a `code`.** A
+signed-out `POST /api/v1/comments` with no `name` answers
+`400 {"error": "<localized>", "code": "name_required"}`. `error` is
+unchanged and `code` is additive. It is the first refusal such a request
+reaches, so a widget that believes it is signed in (and so sends no name)
+treats it, like a `401`, as a session lost in another tab: it reloads
+with the draft kept and shows the sign-in-again notice. No other `400`
+(body length, Turnstile, parent checks, a name that is too long or
+reserved) carries a `code`.
+
 ### Markdown preview (since v1.10.0)
 
 The composer (and the reply/edit forms) include a **Write | Preview** tab

@@ -568,7 +568,10 @@ comments.post("/", async (c) => {
 		const nameCheck = validName(body.name);
 		if (!nameCheck.ok) {
 			const args = nameCheck.max != null ? { max: nameCheck.max } : undefined;
-			return c.json({ error: t(nameCheck.key, args) }, 400);
+			// Only the empty-name refusal carries a code: a signed-in widget sends no
+			// name, so this 400 is how it learns its session is gone.
+			const code = nameCheck.key === "err.name.required" ? { code: "name_required" } : {};
+			return c.json({ error: t(nameCheck.key, args), ...code }, 400);
 		}
 
 		if (!body.turnstile_token) {
