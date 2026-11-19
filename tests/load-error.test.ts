@@ -10,12 +10,62 @@
  * and that the status code never reaches the reader either way.
  */
 import { describe, it, expect } from "vitest";
-import { loadErrorMessage } from "../src/widget/load-error";
+import {
+	actionErrorMessage,
+	HttpStatusError,
+	loadErrorMessage,
+} from "../src/widget/load-error";
 import { EN, makeS } from "../src/widget/strings";
+import { TABLES } from "../src/i18n";
 
 const { s } = makeS();
 const TRANSIENT = EN["w.err.transient"];
 const GENERIC = EN["w.err.generic"];
+const MACHINE_CODE = /^[a-z][a-z0-9_]*$/;
+
+describe("actionErrorMessage", () => {
+	it("prefers the server's localized error", () => {
+		expect(
+			actionErrorMessage(null, { error: "Comment is too long (max 4000 characters)." }, s),
+		).toBe("Comment is too long (max 4000 characters).");
+	});
+
+	it("a machine code (invalid_email, voting_disabled) maps to w.err.action", () => {
+		expect(actionErrorMessage(null, { error: "invalid_email" }, s)).toBe(EN["w.err.action"]);
+		expect(actionErrorMessage(null, { error: "voting_disabled" }, s)).toBe(EN["w.err.action"]);
+	});
+
+	it("TypeError maps to w.err.network", () => {
+		expect(actionErrorMessage(new TypeError("Failed to fetch"), null, s)).toBe(
+			EN["w.err.network"],
+		);
+	});
+
+	it("SyntaxError maps to w.err.action", () => {
+		expect(actionErrorMessage(new SyntaxError("Unexpected token '<'"), null, s)).toBe(
+			EN["w.err.action"],
+		);
+	});
+
+	it("no server err.* string in any locale is a machine code", () => {
+		// The machine-code guard relies on every human sentence failing the
+		// pattern. A single-word lowercase ASCII translation would be shown as a
+		// raw code-looking token instead of falling through to w.err.action.
+		const offenders: string[] = [];
+		for (const [locale, table] of Object.entries(TABLES)) {
+			for (const [key, value] of Object.entries(table)) {
+				if (!key.startsWith("err.") || value === undefined) continue;
+				const forms = typeof value === "string" ? [value] : Object.values(value);
+				for (const form of forms) {
+					if (typeof form === "string" && MACHINE_CODE.test(form)) {
+						offenders.push(`${locale} ${key}: ${form}`);
+					}
+				}
+			}
+		}
+		expect(offenders).toEqual([]);
+	});
+});
 
 describe("loadErrorMessage", () => {
 	it("shows transient copy for a 500 (the D1-outage case)", () => {
@@ -43,6 +93,11 @@ describe("loadErrorMessage", () => {
 				String(status),
 			);
 		}
+	});
+
+	it("classifies a non-2xx comments fetch by its status, not by message text", () => {
+		expect(loadErrorMessage(new HttpStatusError(503), s)).toBe(TRANSIENT);
+		expect(loadErrorMessage(new HttpStatusError(404), s)).toBe(GENERIC);
 	});
 
 	it("tolerates a non-Error thrown value", () => {

@@ -142,6 +142,8 @@ export const fr = {
 	"w.err.transient":
 		"Les commentaires sont temporairement indisponibles. Revenez dans quelques minutes.",
 	"w.err.generic": "Impossible de charger les commentaires.",
+	"w.err.network": "Impossible de joindre le serveur. Vérifiez votre connexion et réessayez.",
+	"w.err.action": "Une erreur s'est produite. Veuillez réessayer.",
 
 	// ── Attribution ─────────────────────────────────────────────────────────
 	// "Garrul" is a product name and stays untranslated inside {link}.

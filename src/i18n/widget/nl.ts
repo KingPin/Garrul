@@ -181,6 +181,8 @@ export const nl = {
 	"w.err.transient":
 		"Reacties zijn tijdelijk niet beschikbaar. Kom over een paar minuten terug.",
 	"w.err.generic": "De reacties konden niet worden geladen.",
+	"w.err.network": "De server kon niet worden bereikt. Controleer je verbinding en probeer het opnieuw.",
+	"w.err.action": "Er ging iets mis. Probeer het opnieuw.",
 
 	// ── Attribution ─────────────────────────────────────────────────────────
 	// "Garrul" is a product name and stays untranslated inside {link}.

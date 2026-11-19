@@ -217,6 +217,8 @@ export const EN = {
 	"w.err.transient":
 		"Comments are temporarily unavailable. Please check back in a few minutes.",
 	"w.err.generic": "Could not load comments.",
+	"w.err.network": "Could not reach the server. Check your connection and try again.",
+	"w.err.action": "Something went wrong. Please try again.",
 
 	// ── Attribution ─────────────────────────────────────────────────────────
 	// "Garrul" is the product name and is never translated; it renders inside

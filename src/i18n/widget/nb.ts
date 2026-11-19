@@ -165,6 +165,8 @@ export const nb = {
 	"w.err.transient":
 		"Kommentarene er midlertidig utilgjengelige. Prøv igjen om noen minutter.",
 	"w.err.generic": "Kunne ikke laste kommentarene.",
+	"w.err.network": "Kunne ikke nå serveren. Sjekk tilkoblingen og prøv igjen.",
+	"w.err.action": "Noe gikk galt. Prøv igjen.",
 
 	// ── Attribution ─────────────────────────────────────────────────────────
 	// "Garrul" is a product name and stays untranslated inside {link}.

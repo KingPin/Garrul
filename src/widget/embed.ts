@@ -40,7 +40,7 @@
  * (docs/THEMING.md).
  */
 
-import { loadErrorMessage } from "./load-error";
+import { actionErrorMessage, HttpStatusError, loadErrorMessage } from "./load-error";
 import { watchForSignIn } from "./auth-recovery";
 import { autoSizeTextarea } from "./autosize";
 import {
@@ -2381,11 +2381,11 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 			// Every other refusal — a 429, a body that failed validation, a spam
 			// verdict — used to re-enable Save and say nothing, which reads as the
 			// button not working. The server's message is already localized.
-			const json = (await res.json().catch(() => ({}))) as { error?: string };
-			showStatus(errBox, json.error ?? `HTTP ${res.status}`);
+			const json = (await res.json().catch(() => null)) as { error?: string } | null;
+			showStatus(errBox, actionErrorMessage(null, json, s));
 			save.disabled = false;
 		} catch (err) {
-			showStatus(errBox, String(err));
+			showStatus(errBox, actionErrorMessage(err, null, s));
 			save.disabled = false;
 		}
 	};
@@ -2615,13 +2615,13 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 				...asStaffField(wrap),
 				...postMetaFromDataset(ctx.host.dataset),
 			});
-			const json = (await res.json()) as {
+			const json = (await res.json().catch(() => null)) as {
 				error?: string;
 				comment?: { id?: string; status?: string };
-			};
+			} | null;
 			if (!res.ok) {
 				if (tsGate?.failed) return;
-				showStatus(errBox, json.error ?? `HTTP ${res.status}`);
+				showStatus(errBox, actionErrorMessage(null, json, s));
 				submit.disabled = false;
 				// Single-use once siteverify has seen it: re-challenge, and make the
 				// next wait actually wait instead of replaying the spent token.
@@ -2638,7 +2638,7 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 			// GET to read it back (see insertPostedNode). Pending replies take the
 			// same path as approved ones: `status` comes from the echo, so the
 			// "Pending approval" badge is drawn from the server's verdict either way.
-			const posted = readPostedEcho(json.comment);
+			const posted = readPostedEcho(json?.comment);
 			if (posted && insertPostedNode(ctx, posted, parent)) {
 				// The reload used to take this form down with the rest of the tree,
 				// gate and all. Nothing does now, so it dismisses itself.
@@ -2649,11 +2649,11 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 			// reload, and to the parent comment's id so focus still lands somewhere
 			// sensible on a response that omits the new comment's own.
 			handOff();
-			ctx.revealAfterReload(json.comment?.id ?? parent.id, s("w.posted"));
+			ctx.revealAfterReload(json?.comment?.id ?? parent.id, s("w.posted"));
 			ctx.reload();
 		} catch (err) {
 			if (tsGate?.failed) return;
-			showStatus(errBox, String(err));
+			showStatus(errBox, actionErrorMessage(err, null, s));
 			submit.disabled = false;
 			// Only a network failure can have left the challenge re-armed into a dead
 			// connection; a server rejection keeps the cheap message reset.
@@ -3483,7 +3483,7 @@ const fetchPage = async (
 	if (cursor) qs.set("before", cursor);
 	if (sort) qs.set("sort", sort);
 	const res = await apiFetch(apiBase, `/api/v1/comments?${qs.toString()}`);
-	if (!res.ok) throw new Error(`HTTP ${res.status}`);
+	if (!res.ok) throw new HttpStatusError(res.status);
 	return (await res.json()) as ListResponse;
 };
 
@@ -4522,7 +4522,7 @@ const loadOnce = async (
 				const errBox = el(
 					"div",
 					"gr-error",
-					s("w.load_more_failed", { detail: String(err) }),
+					s("w.load_more_failed", { detail: actionErrorMessage(err, null, s) }),
 				);
 				more.insertAdjacentElement("afterend", errBox);
 				return false;
@@ -4850,14 +4850,14 @@ const submit = async (
 			...asStaffField(form),
 			...postMetaFromDataset(host.dataset),
 		});
-		const json = (await res.json()) as {
+		const json = (await res.json().catch(() => null)) as {
 			error?: string;
 			comment?: { id?: string; status?: string };
-		};
+		} | null;
 		if (!res.ok) {
 			// A Turnstile error can arrive while this request is in flight.
 			if (ts?.gate.failed) return;
-			if (errEl) showStatus(errEl, json.error ?? `HTTP ${res.status}`);
+			if (errEl) showStatus(errEl, actionErrorMessage(null, json, s));
 			if (submitBtn) submitBtn.disabled = false;
 			// The token is single-use once siteverify has seen it, so re-challenge
 			// and make the next wait actually wait rather than replay it.
@@ -4903,7 +4903,7 @@ const submit = async (
 		// from the echo, so the "Pending approval" badge is the server's verdict
 		// either way, and a persistent badge stays the confirmation rather than a
 		// transient notice.
-		const posted = readPostedEcho(json.comment);
+		const posted = readPostedEcho(json?.comment);
 		const ctx = mountCtx.get(root);
 		if (posted && ctx && insertPostedNode(ctx, posted, null)) {
 			// The reload used to hand the composer back by rebuilding it. What is
@@ -4935,14 +4935,14 @@ const submit = async (
 		// follow-up — is the one that consumes it; see the arbitration at the
 		// tail of loadOnce.
 		handOff();
-		revealAfterReload(root, json.comment?.id ?? null, s("w.posted"));
+		revealAfterReload(root, json?.comment?.id ?? null, s("w.posted"));
 		await load(root, slug, apiBase, host);
 	} catch (err) {
 		// Same race, and the one that actually bit: a Turnstile error landing
-		// mid-submit had its message replaced by String(err) here, and the
+		// mid-submit had its message replaced by the raw exception text here, and the
 		// composer was handed back to the visitor with a dead anti-spam widget.
 		if (ts?.gate.failed) return;
-		if (errEl) showStatus(errEl, String(err));
+		if (errEl) showStatus(errEl, actionErrorMessage(err, null, s));
 		if (submitBtn) submitBtn.disabled = false;
 		ts?.reset(err instanceof TypeError);
 		ts?.gate.clear();

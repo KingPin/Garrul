@@ -176,6 +176,8 @@ export const ja = {
 	"w.err.transient":
 		"コメントは一時的に利用できません。数分後にもう一度ご覧ください。",
 	"w.err.generic": "コメントを読み込めませんでした。",
+	"w.err.network": "サーバーに接続できませんでした。通信環境を確認して、もう一度お試しください。",
+	"w.err.action": "問題が発生しました。もう一度お試しください。",
 
 	// ── Attribution ─────────────────────────────────────────────────────────
 	// "Garrul" is a product name and stays untranslated inside {link}.
