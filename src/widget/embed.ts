@@ -105,6 +105,7 @@ import {
 	formTokenWanted,
 	postMetaFromDataset,
 } from "./boot";
+import { createFormTokenCache } from "./form-token";
 // Generated from styles.css by scripts/build-styles.ts (gitignored, rebuilt by
 // build:assets). Edit styles.css, never the .gen file.
 import { STYLE_CSS } from "./styles.gen";
@@ -889,47 +890,43 @@ type WidgetCtx = {
  * When anti-spam timing is disabled the route 404s and we resolve to
  * an empty string — the server then ignores the absent `form_ts`.
  */
-let formTokenPromise: Promise<string> | null = null;
-// Set from config at mount via `setFormTokenEnabled`. Default true so a mount
-// that never reads config (should not happen — mount aborts without one) keeps
-// the legacy fetch.
-let formTokenEnabled = true;
+// Cache + refresh state machine lives in form-token.ts (DOM-free, unit-tested).
+// `formTokenBase` is the apiBase of the last caller; the triggers below stay
+// inert until the first composer focus has set it, so nothing mints at mount.
+let formTokenBase = "";
+const formToken = createFormTokenCache(async () => {
+	try {
+		const res = await apiFetch(formTokenBase, "/api/v1/comments/form-token");
+		if (!res.ok) return null;
+		const json = (await res.json()) as { token?: string };
+		return json.token || null;
+	} catch {
+		return null;
+	}
+}, Date.now);
 /**
  * Apply the config's answer for this mount. `loadOnce` runs on every reload,
- * so the flag can flip between mounts on one page. The disabled path parks a
- * resolved empty promise in the cache and `prefetchFormToken` treats any cached
- * promise as done, so a flip back to enabled has to drop that stub or no token
- * is ever requested and the server's timing check holds every later post.
- * An enabled→enabled reload keeps its cached token, which is the whole point
- * of the cache.
+ * so the flag can flip between mounts on one page. A flip from disabled back
+ * to enabled drops both cached slots; an enabled-to-enabled reload keeps them.
  */
-const setFormTokenEnabled = (wanted: boolean): void => {
-	if (wanted && !formTokenEnabled) formTokenPromise = null;
-	formTokenEnabled = wanted;
-};
+const setFormTokenEnabled = (wanted: boolean): void => formToken.setEnabled(wanted);
 const prefetchFormToken = (apiBase: string): void => {
-	if (formTokenPromise) return;
-	if (!formTokenEnabled) {
-		// The server told us the route 404s on this install. Resolve to the same
-		// empty token the 404 path returns, without spending the request.
-		formTokenPromise = Promise.resolve("");
-		return;
-	}
-	formTokenPromise = (async () => {
-		try {
-			const res = await apiFetch(apiBase, "/api/v1/comments/form-token");
-			if (!res.ok) return "";
-			const json = (await res.json()) as { token?: string };
-			return json.token ?? "";
-		} catch {
-			return "";
-		}
-	})();
+	formTokenBase = apiBase;
+	formToken.ensure();
 };
 const getFormToken = (apiBase: string): Promise<string> => {
-	prefetchFormToken(apiBase);
-	return formTokenPromise as Promise<string>;
+	formTokenBase = apiBase;
+	return formToken.token();
 };
+// Retry a failed mint, or refresh an old token, when the network returns or a
+// suspended tab wakes (its timers did not run). Once per document, like pagehide.
+const retryFormToken = (): void => {
+	if (formTokenBase) formToken.ensure();
+};
+window.addEventListener("online", retryFormToken);
+document.addEventListener("visibilitychange", () => {
+	if (document.visibilityState === "visible") retryFormToken();
+});
 
 /**
  * The live top-level composer's Turnstile handle. The submit handler runs as a
@@ -4369,19 +4366,18 @@ const loadOnce = async (
 	// start time (CLAUDE.md: never fold form-token into bootstrap). A draft
 	// restored by attachDraft fires no focusin and the submit button is excluded,
 	// so a pre-filled composer mints now instead of waiting for a focus.
-	if (acceptingComments && composer?.value) {
-		prefetchFormToken(apiBase);
-	} else if (acceptingComments) {
+	if (acceptingComments) {
+		if (composer?.value) prefetchFormToken(apiBase);
 		const tokenSubmit = form.querySelector("button[type=submit]");
-		const onTokenFocus = (e: Event): void => {
+		// Every focus calls ensure(), which is a no-op while a token is cached:
+		// that is what retries a failed mint.
+		form.addEventListener("focusin", (e: Event) => {
 			// Same submit-button exclusion as the Turnstile listener: a submit
 			// with no prior focus mints at submit and is flagged — that is the
 			// heuristic working, not something to paper over here.
 			if (e.target === tokenSubmit) return;
 			prefetchFormToken(apiBase);
-			form.removeEventListener("focusin", onTokenFocus);
-		};
-		form.addEventListener("focusin", onTokenFocus);
+		});
 	}
 	// Turnstile mounts on the visitor's first composer focus, not here. api.js
 	// plus the challenge platform it pulls in is larger than this entire widget,

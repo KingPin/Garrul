@@ -317,3 +317,28 @@ export const postMetaFromDataset = (ds: Record<string, string | undefined>): Pos
 	post_url: ds.url ?? null,
 	post_published: ds.published ?? null,
 });
+
+/** A minted form token plus the client clock when its response arrived. */
+export type FormTokenSlot = { token: string; mintedAt: number } | null;
+
+/** Server flags a token older than 60 min; 5 minutes of margin for clock skew. */
+export const FORM_TOKEN_MAX_MS = 55 * 60_000;
+/** The settings maximum for `spam_honeypot_min_ms`: older than this is never "too fast". */
+export const FORM_TOKEN_MATURE_MS = 60_000;
+
+/**
+ * Which cached token a submit should send. A mature `next` takes over; else an
+ * unexpired `current`; else an unexpired `next` even if young. Maturity only
+ * decides when `next` takes over: it never discards the only token.
+ */
+export const pickFormToken = (
+	current: FormTokenSlot,
+	next: FormTokenSlot,
+	now: number,
+): "current" | "next" | "none" => {
+	const age = (s: FormTokenSlot): number => (s ? now - s.mintedAt : Number.POSITIVE_INFINITY);
+	if (age(next) >= FORM_TOKEN_MATURE_MS && age(next) < FORM_TOKEN_MAX_MS) return "next";
+	if (age(current) < FORM_TOKEN_MAX_MS) return "current";
+	if (age(next) < FORM_TOKEN_MAX_MS) return "next";
+	return "none";
+};
