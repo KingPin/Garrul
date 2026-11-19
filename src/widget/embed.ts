@@ -3487,6 +3487,7 @@ const revealHashTarget = (root: ShadowRoot): boolean => {
 	const still = window.matchMedia?.(
 		"(prefers-reduced-motion: reduce)",
 	)?.matches;
+	// The iframe shells hook this single scrollIntoView call to scroll the host page (garrul:scroll).
 	target.scrollIntoView({
 		block: "center",
 		behavior: still ? "auto" : "smooth",

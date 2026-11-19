@@ -95,6 +95,27 @@ window.addEventListener("hashchange", function () {
 });
 ```
 
+The listener below handles both messages. It accepts only the frame's own
+window and origin, and only finite numbers:
+
+```js
+var apiOrigin = new URL(f.src).origin;
+window.addEventListener("message", function (e) {
+  if (e.origin !== apiOrigin || e.source !== f.contentWindow) return;
+  var data = e.data;
+  if (!data) return;
+  if (data.type === "garrul:scroll" && Number.isFinite(data.top)) {
+    // Permalink target: bring it into the host page's viewport.
+    var y = f.getBoundingClientRect().top + window.scrollY + data.top;
+    window.scrollTo(0, Math.max(0, y - window.innerHeight / 3));
+    return;
+  }
+  if (data.type !== "garrul:height") return;
+  if (!Number.isFinite(data.height)) return;
+  f.style.height = data.height + "px";
+});
+```
+
 The frame scrolls nothing itself, so it posts
 `{type:"garrul:scroll", top}` (to the `parent_origin` only) and the same
 listener scrolls the host page to it. Timestamp links open in the top
