@@ -67,10 +67,14 @@ import {
 // from the DOM-free test pool — see the module header.
 import {
 	type PostedEcho,
+	type SwapCtx,
 	type TreeAuthor,
 	type TreeNode,
+	mergeEdited,
 	prependAnchor,
 	readPostedEcho,
+	replaceCommentInPlace,
+	replaceThreadInPlace,
 	synthesizePosted,
 	topLevelPlacement,
 } from "./comment-node";
@@ -2063,10 +2067,30 @@ const buildActions = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): HTMLEleme
 						{ method: "DELETE" },
 					);
 					if (res.ok) {
-						// Focus only, no announcement: the row usually survives as a
-						// tombstone, and landing focus on the updated comment is the
-						// confirmation for assistive tech. If it doesn't survive, the
-						// status-box fallback in loadOnce catches it.
+						// The server answers with the re-rendered thread (null: pruned
+						// whole), so only that thread changes and the reader keeps
+						// their place. No `thread` key is a Worker older than this
+						// widget: reload as before.
+						const json = (await res.json().catch(() => ({}))) as {
+							root_id?: string;
+							thread?: TreeNode | null;
+						};
+						const next = ctx.root.getElementById(
+							commentAnchorId(json.root_id ?? ""),
+						)?.nextElementSibling;
+						if (
+							json.root_id &&
+							json.thread !== undefined &&
+							replaceThreadInPlace(swapCtx(ctx), json.root_id, json.thread)
+						) {
+							// Focus only, no announcement: landing on the tombstone (or
+							// what is left of the thread) is the confirmation for
+							// assistive tech. A thread that went away hands focus to the
+							// next thread's first control.
+							if (!focusPostedComment(ctx.root, n.id) && !focusPostedComment(ctx.root, json.root_id))
+								next?.querySelector<HTMLElement>("button, a[href]")?.focus();
+							return;
+						}
 						ctx.revealAfterReload(n.id);
 						ctx.reload();
 						return;
@@ -2305,6 +2329,21 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 				// assistive tech read the edited body, which is itself the
 				// confirmation, and it adds no new string to a bundle under a
 				// hard size budget.
+				//
+				// Redraw just this comment from the echo, so the reader keeps their
+				// place. Not a hand-off: the form leaves with the old row, and
+				// postOnce frees the key when this returns. A status change (a spam
+				// re-check sent it to the queue) reloads, as does a missing row.
+				const echo = readPostedEcho(
+					((await res.json().catch(() => null)) as { comment?: unknown } | null)?.comment,
+				);
+				if (
+					echo?.status === n.status &&
+					replaceCommentInPlace(swapCtx(ctx), n.id, mergeEdited(n, echo))
+				) {
+					focusPostedComment(ctx.root, n.id);
+					return;
+				}
 				handOff();
 				ctx.revealAfterReload(n.id);
 				ctx.reload();
@@ -2886,6 +2925,23 @@ const buildThread = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	}
 	return wrap;
 };
+
+/**
+ * The DOM side of the in-place swaps in comment-node.ts. Before an element
+ * leaves, the draft savers of the forms inside it flush and retire — the same
+ * thing loadOnce's `disposeAllDrafts` does for the whole tree — so an open reply
+ * comes back from its draft when the reader opens it again.
+ */
+const swapCtx = (ctx: WidgetCtx): SwapCtx<HTMLElement> => ({
+	find: (id) => ctx.root.getElementById(commentAnchorId(id)),
+	row: (thread) => thread.querySelector(":scope > .gr-comment"),
+	build: (n, thread) => (thread ? buildThread : buildComment)(n, ctx),
+	swap: (old, next) => {
+		for (const ta of old.querySelectorAll("textarea")) draftOf.get(ta)?.dispose();
+		if (next) old.replaceWith(next);
+		else old.remove();
+	},
+});
 
 // Mirror of src/lib/oauth.ts ProviderId. The widget is bundled separately
 // (no server imports) so the union is duplicated here. The server's

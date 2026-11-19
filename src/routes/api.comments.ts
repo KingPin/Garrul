@@ -31,6 +31,7 @@ import {
 	getPinnedThreadRef,
 	getPost,
 	getThreadCreatedAt,
+	getThreadRootId,
 	getUser,
 	getUserVotesOnComments,
 	insertComment,
@@ -1037,6 +1038,61 @@ export type TreePageResult =
 	| { payload: ListPayload; store: Request | null };
 
 /**
+ * Render the given top-level threads as the list serves them: subtrees, authors,
+ * reactions, the viewer's votes, then `buildTree`. Threads come back in the
+ * builder's order (created_at ASC), and a thread pruned whole is simply absent.
+ *
+ * Shared by the list (via `buildTreePage`) and by DELETE, which answers with the
+ * deleted comment's re-rendered thread so the widget can swap it in place. One
+ * function is what keeps the two byte-identical.
+ */
+export const renderThreads = async (
+	env: Bindings,
+	rootIds: string[],
+	viewerId: string | null,
+	/** `show_deleted_placeholders`: keep every deleted comment as a placeholder
+	 *  (leaf deletions included) rather than pruning it. */
+	keepAllDeleted: boolean,
+): Promise<{ threads: TreeNode[]; truncated: boolean }> => {
+	const { rows, truncated } = await listCommentsForThreads(
+		env.DB,
+		rootIds,
+		viewerId,
+		keepAllDeleted,
+	);
+	const authors = await loadAuthors(env.DB, rows);
+
+	// Engagement is loaded for these threads only. `rows` is every comment
+	// listCommentsForThreads returned for them (top-level and replies), so ids
+	// here are exactly what buildTree will render.
+	const pageIds = rows.map((r) => r.id);
+	const reactionRows = await listReactionsForComments(env.DB, pageIds);
+	const mineSet = viewerId
+		? await listUserReactionsOnComments(env.DB, pageIds, viewerId)
+		: new Set<string>();
+	const reactionsById = new Map<string, ReactionCount[]>();
+	for (const r of reactionRows) {
+		const list = reactionsById.get(r.comment_id) ?? [];
+		list.push({
+			kind: r.kind,
+			count: r.count,
+			mine: mineSet.has(`${r.comment_id}|${r.kind}`),
+		});
+		reactionsById.set(r.comment_id, list);
+	}
+
+	const myVotes = viewerId
+		? await getUserVotesOnComments(env.DB, pageIds, viewerId)
+		: new Map<string, -1 | 1>();
+
+	const { threads } = buildTree(rows, authors, reactionsById, myVotes, {
+		keepAllDeleted,
+		viewerId,
+	});
+	return { threads, truncated };
+};
+
+/**
  * Build one page of the comment tree, including the edge-cache read and the
  * decision about whether the result may be written back.
  *
@@ -1168,13 +1224,11 @@ export const buildTreePage = async (
 	// When the operator opts in, keep every deleted comment as a placeholder
 	// (leaf deletions included) rather than pruning them. A toggle change is
 	// reflected for anonymous viewers within the tree-cache TTL.
-	const keepAllDeleted = flags.show_deleted_placeholders;
-
-	const { rows, truncated } = await listCommentsForThreads(
-		env.DB,
+	const { threads: allThreads, truncated } = await renderThreads(
+		env,
 		shownRefs.map((r) => r.id),
 		viewerId,
-		keepAllDeleted,
+		flags.show_deleted_placeholders,
 	);
 	if (truncated) {
 		log.warn("comments.page_truncated", {
@@ -1185,35 +1239,6 @@ export const buildTreePage = async (
 			scan_limit: TREE_SCAN_LIMIT,
 		});
 	}
-	const authors = await loadAuthors(env.DB, rows);
-
-	// Engagement is loaded for the comments on this page only. `rows` is every
-	// comment listCommentsForThreads returned for the page's threads (top-level
-	// and replies), so ids here are exactly what buildTree will render.
-	const pageIds = rows.map((r) => r.id);
-	const reactionRows = await listReactionsForComments(env.DB, pageIds);
-	const mineSet = session
-		? await listUserReactionsOnComments(env.DB, pageIds, session.user_id)
-		: new Set<string>();
-	const reactionsById = new Map<string, ReactionCount[]>();
-	for (const r of reactionRows) {
-		const list = reactionsById.get(r.comment_id) ?? [];
-		list.push({
-			kind: r.kind,
-			count: r.count,
-			mine: mineSet.has(`${r.comment_id}|${r.kind}`),
-		});
-		reactionsById.set(r.comment_id, list);
-	}
-
-	const myVotes = session
-		? await getUserVotesOnComments(env.DB, pageIds, session.user_id)
-		: new Map<string, -1 | 1>();
-
-	const { threads: allThreads } = buildTree(rows, authors, reactionsById, myVotes, {
-		keepAllDeleted,
-		viewerId,
-	});
 
 	// SQL already ordered and sliced the threads; restore that order over the
 	// builder's output, which always comes back created_at ASC. Replies stay
@@ -1533,7 +1558,24 @@ comments.delete("/:id", async (c) => {
 		user_id: existing.user_id,
 		ts: Date.now(),
 	});
-	return c.json({ ok: true });
+
+	// Answer with the deleted comment's re-rendered thread, so the widget swaps
+	// that one thread in place instead of reloading page one. The widget cannot
+	// work the row's fate out itself: it hinges on the placeholder flag, on
+	// ancestry pruning and on rows the reader never sees. `thread: null` means
+	// the whole thread is pruned. Both fields are additive (older widgets read
+	// `ok` only), and an unresolvable root omits them, which the widget reads
+	// as "reload".
+	const rootId = await getThreadRootId(c.env.DB, id, MAX_REPLY_DEPTH);
+	if (!rootId) return c.json({ ok: true });
+	const { flags } = await loadSettings(c.env);
+	const { threads } = await renderThreads(
+		c.env,
+		[rootId],
+		sessionUserId,
+		flags.show_deleted_placeholders,
+	);
+	return c.json({ ok: true, root_id: rootId, thread: threads[0] ?? null });
 });
 
 export { comments };

@@ -201,14 +201,16 @@ When the endpoint answers a 404 — what a Worker without the route
 returns — the widget silently falls back to exactly the pre-v2.15.0
 call sequence. So does a 200 whose body carries no comment tree, and a
 request that never lands. The 404 is remembered per API base, so a
-reader on such a Worker probes once and every later reload — editing,
-deleting, changing sort — goes straight to the legacy calls. Posting has
+reader on such a Worker probes once and every later reload — changing
+sort, or a fallback below — goes straight to the legacy calls. Posting has
 left that list in the normal case: since v2.20.0 a successful post
 renders from its own `201` and reloads nothing on either path. It still
 falls back to a reload when that echo cannot be rendered where it
 belongs — an old or malformed payload, or a parent no longer on screen
 (§4, *Posting a comment*) — so budget one request per comment and a
-second only on those paths.
+second only on those paths. Editing and deleting left it too: both swap
+the one comment or thread in place from their own response (§4,
+*Editing your own comment* and *Deleting your own comment*).
 
 Any **other** non-2xx does not fall back: it surfaces as an error, the
 same one a failed `/api/v1/comments` would render. The fallback is only
@@ -751,6 +753,13 @@ Two caveats worth knowing:
   verdict — now renders in that same box. Before v2.21.0 the editor had no
   status surface at all and those failures silently re-enabled Save.
 
+A saved edit **updates the comment in place**: the widget redraws that one
+comment from the `PATCH` echo (`{ comment }`), keeps its replies, and focuses
+it. Scroll position, loaded pages and open forms elsewhere stay as they were;
+before, every save reloaded page one. An echo whose `status` differs from what
+the reader saw (a spam re-check sent the edit to the queue), or a comment no
+longer on screen, falls back to the old reload.
+
 ### Deleting your own comment (since v2.9.0)
 
 Delete asks for confirmation **in place**: the button becomes
@@ -758,6 +767,17 @@ Delete asks for confirmation **in place**: the button becomes
 Cancel, and `Escape` backs out. Before v2.9.0 this was `window.confirm()`,
 which is suppressed entirely in some webviews and in cross-origin iframes
 without user activation — where the button appeared to do nothing.
+
+`DELETE /api/v1/comments/:id` answers
+`{ ok: true, root_id, thread }`: the id of the deleted comment's top-level
+thread, and that thread re-rendered exactly as `GET /api/v1/comments` would
+now serve it to this viewer (placeholders, pruning and hidden rows included).
+`thread` is `null` when the whole thread is pruned. The widget swaps that one
+thread in place — or removes it on `null` and focuses the next thread — so a
+delete no longer resets the reader to page one. Both fields are additive:
+a response without `thread` (a Worker older than the widget, or a root that
+cannot be resolved) makes the widget reload as before, and older widgets read
+`ok` only. The tree cache is busted exactly as before.
 
 ### Reporting a comment
 

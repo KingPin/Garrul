@@ -268,3 +268,56 @@ export const synthesizePosted = (
 		slot,
 	};
 };
+
+/**
+ * The node to redraw after a saved edit: the `PATCH` echo's body, edit time and
+ * status over the node already on screen, whose replies and counts the echo
+ * does not carry. The caller compares `status` to fall back to a reload when a
+ * spam re-check moved the comment to the queue.
+ */
+export const mergeEdited = (n: TreeNode, echo: PostedEcho): TreeNode => ({
+	...n,
+	body_html: echo.body_html,
+	edited_at: echo.edited_at,
+	status: echo.status,
+});
+
+/**
+ * What the in-place swaps need from the rendered tree. Generic over the element
+ * type so the node test pool can drive them without a DOM.
+ */
+export type SwapCtx<E> = {
+	/** A comment's `.gr-thread`, or null when it is not on screen. */
+	find: (id: string) => E | null;
+	/** The thread's own comment row (its replies are siblings of the row). */
+	row: (thread: E) => E | null;
+	build: (n: TreeNode, thread: boolean) => E;
+	/** Retire what lives inside `old` (draft savers), then put `next` in its
+	 *  place, or remove `old` when `next` is null. */
+	swap: (old: E, next: E | null) => void;
+};
+
+/** Redraw comment `id` after an edit, keeping its replies. False: not on screen. */
+export const replaceCommentInPlace = <E>(ctx: SwapCtx<E>, id: string, node: TreeNode): boolean => {
+	const thread = ctx.find(id);
+	const row = thread && ctx.row(thread);
+	if (!row) return false;
+	ctx.swap(row, ctx.build(node, false));
+	return true;
+};
+
+/**
+ * Swap thread `rootId` for the server's re-render after a delete, or remove it
+ * when the delete pruned it (`thread` null). The id is explicit so the null case
+ * still knows what to remove. False: not on screen.
+ */
+export const replaceThreadInPlace = <E>(
+	ctx: SwapCtx<E>,
+	rootId: string,
+	thread: TreeNode | null,
+): boolean => {
+	const el = ctx.find(rootId);
+	if (!el) return false;
+	ctx.swap(el, thread && ctx.build(thread, true));
+	return true;
+};
