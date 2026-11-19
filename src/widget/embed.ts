@@ -523,10 +523,10 @@ const applyMarkdown = (ta: HTMLTextAreaElement, fmt: MdFormat): void => {
 	// Where execCommand is unavailable or refuses, fall back to setRangeText.
 	if (!document.execCommand("insertText", false, text)) {
 		ta.setRangeText(text, from, selectionEnd, "end");
+		ta.dispatchEvent(new Event("input", { bubbles: true }));
 	}
 	ta.selectionStart = keep[0];
 	ta.selectionEnd = keep[1];
-	ta.dispatchEvent(new Event("input", { bubbles: true }));
 };
 
 // Toolbar buttons, left to right. `label` is the visible glyph — untranslated,
@@ -637,6 +637,9 @@ const postOnce = (
 	const locked = [...form.querySelectorAll<HTMLButtonElement>(".gr-toolbar-btn")];
 	if (cancel) locked.push(cancel);
 	const lock = (on: boolean): void => {
+		// An expired editor stays closed: the settle after a refused save must not
+		// hand back a field the window has shut (expire() marks the form).
+		if (!on && form.hasAttribute("data-expired")) return;
 		if (ta) ta.readOnly = on;
 		for (const b of locked) b.disabled = on;
 	};
@@ -697,7 +700,7 @@ const buildWritePreview = (
 	const toolbar = buildToolbar(textarea);
 	// Every composer in the widget (top-level, reply, edit) is wrapped here, so
 	// this is the one place that has to grow the box while the author types.
-	// applyMarkdown re-fires `input`, so toolbar insertions size too.
+	// applyMarkdown fires `input` (execCommand does it itself), so toolbar insertions size too.
 	textarea.addEventListener("input", () => autoSize(textarea));
 	// One row under the box: what you can write on the left, how to send it on
 	// the right. The whole row hides together in Preview mode.
@@ -2386,6 +2389,7 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 	 * to notice, and re-showing the same string is a no-op.
 	 */
 	const expire = (): void => {
+		wrap.setAttribute("data-expired", "");
 		// Read-only, not disabled: a disabled field cannot be selected or copied,
 		// and the text is the only thing the author has left to take away.
 		ta.disabled = false;
@@ -2464,6 +2468,10 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 		return false;
 	}, countdownStartsIn(n.created_at, ctx.editWindowMs, Date.now()));
 
+	// Save comes back after a refused save, unless the window has closed meanwhile.
+	const reopenSave = (): void => {
+		if (!wrap.hasAttribute("data-expired")) save.disabled = false;
+	};
 	const post = async (handOff: () => void): Promise<void> => {
 		// The tick only re-reads the clock every 15 seconds, so a submit can land
 		// in the gap between the window closing and the tick noticing. Ask the
@@ -2518,10 +2526,10 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 				return;
 			}
 			showStatus(errBox, actionErrorMessage(null, json, s));
-			save.disabled = false;
+			reopenSave();
 		} catch (err) {
 			showStatus(errBox, actionErrorMessage(err, null, s));
-			save.disabled = false;
+			reopenSave();
 		}
 	};
 	wrap.addEventListener("submit", (e) => {
