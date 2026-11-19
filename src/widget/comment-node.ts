@@ -293,23 +293,24 @@ export type SwapCtx<E> = {
 	row: (thread: E) => E | null;
 	build: (n: TreeNode, thread: boolean) => E;
 	/** Retire what lives inside `old` (draft savers), then put `next` in its
-	 *  place, or remove `old` when `next` is null. */
-	swap: (old: E, next: E | null) => void;
+	 *  place, or remove `old` when `next` is null. False, touching nothing,
+	 *  when `old` holds a form with a post in flight. */
+	swap: (old: E, next: E | null) => boolean;
 };
 
-/** Redraw comment `id` after an edit, keeping its replies. False: not on screen. */
+/** Redraw comment `id` after an edit, keeping its replies. False: not on
+ *  screen, or a post in flight inside it. */
 export const replaceCommentInPlace = <E>(ctx: SwapCtx<E>, id: string, node: TreeNode): boolean => {
 	const thread = ctx.find(id);
 	const row = thread && ctx.row(thread);
-	if (!row) return false;
-	ctx.swap(row, ctx.build(node, false));
-	return true;
+	return !!row && ctx.swap(row, ctx.build(node, false));
 };
 
 /**
  * Swap thread `rootId` for the server's re-render after a delete, or remove it
  * when the delete pruned it (`thread` null). The id is explicit so the null case
- * still knows what to remove. False: not on screen.
+ * still knows what to remove. False: not on screen, or a post in flight
+ * inside it.
  */
 export const replaceThreadInPlace = <E>(
 	ctx: SwapCtx<E>,
@@ -317,7 +318,5 @@ export const replaceThreadInPlace = <E>(
 	thread: TreeNode | null,
 ): boolean => {
 	const el = ctx.find(rootId);
-	if (!el) return false;
-	ctx.swap(el, thread && ctx.build(thread, true));
-	return true;
+	return !!el && ctx.swap(el, thread && ctx.build(thread, true));
 };

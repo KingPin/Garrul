@@ -1994,7 +1994,8 @@ const buildActions = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): HTMLEleme
 	// survives only as the fallback for edge-cached payloads that predate the field.
 	const canReply = n.can_reply ?? n.depth < 4;
 	if (ctx.acceptingComments && canReply && n.status !== "deleted") {
-		const replyBtn = el("button", undefined, s("w.reply"));
+		// The class is how an in-place swap reopens a reply form (see swapCtx).
+		const replyBtn = el("button", "gr-reply-btn", s("w.reply"));
 		replyBtn.type = "button";
 		replyBtn.addEventListener("click", () => {
 			// Editor forms share the `gr-reply-form` class (and styling) but tag
@@ -2078,9 +2079,13 @@ const buildActions = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): HTMLEleme
 						const next = ctx.root.getElementById(
 							commentAnchorId(json.root_id ?? ""),
 						)?.nextElementSibling;
+						// Removing the page's only thread would leave a bare list with no
+						// "no comments yet": reload for that one.
 						if (
 							json.root_id &&
 							json.thread !== undefined &&
+							(json.thread ||
+								ctx.root.querySelectorAll(".gr-list > .gr-thread").length > 1) &&
 							replaceThreadInPlace(swapCtx(ctx), json.root_id, json.thread)
 						) {
 							// Focus only, no announcement: landing on the tombstone (or
@@ -2339,7 +2344,7 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 				);
 				if (
 					echo?.status === n.status &&
-					replaceCommentInPlace(swapCtx(ctx), n.id, mergeEdited(n, echo))
+					replaceCommentInPlace(swapCtx(ctx, key), n.id, mergeEdited(n, echo))
 				) {
 					focusPostedComment(ctx.root, n.id);
 					return;
@@ -2927,19 +2932,37 @@ const buildThread = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 };
 
 /**
- * The DOM side of the in-place swaps in comment-node.ts. Before an element
- * leaves, the draft savers of the forms inside it flush and retire — the same
- * thing loadOnce's `disposeAllDrafts` does for the whole tree — so an open reply
- * comes back from its draft when the reader opens it again.
+ * The DOM side of the in-place swaps in comment-node.ts.
+ *
+ * A form inside `old` with a post in flight refuses the swap, so the caller
+ * falls back to the reload (loadOnce waits posts out); `ownKey` exempts the
+ * edit doing the swap. Otherwise the draft savers inside flush and retire — what
+ * loadOnce's `disposeAllDrafts` does for the whole tree — and each reply form
+ * that was open reopens on its comment, if it is still there and repliable,
+ * restoring its text from that draft.
  */
-const swapCtx = (ctx: WidgetCtx): SwapCtx<HTMLElement> => ({
+const swapCtx = (ctx: WidgetCtx, ownKey?: string): SwapCtx<HTMLElement> => ({
 	find: (id) => ctx.root.getElementById(commentAnchorId(id)),
 	row: (thread) => thread.querySelector(":scope > .gr-comment"),
 	build: (n, thread) => (thread ? buildThread : buildComment)(n, ctx),
 	swap: (old, next) => {
+		const forms = [...old.querySelectorAll<HTMLElement>(".gr-reply-form")].map((f) => {
+			const id = f.closest<HTMLElement>(".gr-comment")?.dataset.id ?? "";
+			const edit = f.dataset.mode === "edit";
+			return { id, edit, key: draftKey(ctx.apiOrigin, ctx.slug, edit ? `edit:${id}` : id) };
+		});
+		if (forms.some((f) => f.key !== ownKey && busyKeys.has(f.key))) return false;
 		for (const ta of old.querySelectorAll("textarea")) draftOf.get(ta)?.dispose();
 		if (next) old.replaceWith(next);
 		else old.remove();
+		for (const f of forms) {
+			if (f.edit) continue;
+			ctx.root
+				.getElementById(commentAnchorId(f.id))
+				?.querySelector<HTMLElement>(":scope > .gr-comment .gr-reply-btn")
+				?.click();
+		}
+		return true;
 	},
 });
 

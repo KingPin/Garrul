@@ -758,7 +758,9 @@ comment from the `PATCH` echo (`{ comment }`), keeps its replies, and focuses
 it. Scroll position, loaded pages and open forms elsewhere stay as they were;
 before, every save reloaded page one. An echo whose `status` differs from what
 the reader saw (a spam re-check sent the edit to the queue), or a comment no
-longer on screen, falls back to the old reload.
+longer on screen, falls back to the old reload. So does a reply to that comment
+that is still posting. A reply form left open on the comment reopens after the
+redraw with its text, restored from the saved draft.
 
 ### Deleting your own comment (since v2.9.0)
 
@@ -775,9 +777,13 @@ now serve it to this viewer (placeholders, pruning and hidden rows included).
 `thread` is `null` when the whole thread is pruned. The widget swaps that one
 thread in place — or removes it on `null` and focuses the next thread — so a
 delete no longer resets the reader to page one. Both fields are additive:
-a response without `thread` (a Worker older than the widget, or a root that
-cannot be resolved) makes the widget reload as before, and older widgets read
-`ok` only. The tree cache is busted exactly as before.
+a response without `thread` (a Worker older than the widget, a root that
+cannot be resolved, or a render that failed after the delete went through)
+makes the widget reload as before, and older widgets read `ok` only. The
+widget also reloads when the delete would empty the page, or when a reply
+inside the thread is still posting. Reply forms open in the thread reopen with
+their text if their comment survives. The tree cache is busted exactly as
+before.
 
 ### Reporting a comment
 

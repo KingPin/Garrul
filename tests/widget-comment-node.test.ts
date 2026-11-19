@@ -333,14 +333,16 @@ describe("mergeEdited", () => {
 
 describe("in-place swaps", () => {
 	/** A fake page: thread "id" holds row "id/row"; swaps are logged. */
-	const page = (ids: string[]) => {
+	const page = (ids: string[], busy = false) => {
 		const log: string[] = [];
 		const ctx: SwapCtx<string> = {
 			find: (id) => (ids.includes(id) ? id : null),
 			row: (thread) => `${thread}/row`,
 			build: (n, thread) => `${thread ? "thread" : "row"}:${n.id}`,
 			swap: (old, next) => {
+				if (busy) return false;
 				log.push(`${old} -> ${next ?? "removed"}`);
+				return true;
 			},
 		};
 		return { ctx, log };
@@ -367,6 +369,13 @@ describe("in-place swaps", () => {
 
 	it("both answer false when the target is not on screen", () => {
 		const { ctx, log } = page([]);
+		expect(replaceThreadInPlace(ctx, "a", null)).toBe(false);
+		expect(replaceCommentInPlace(ctx, "a", node("a"))).toBe(false);
+		expect(log).toEqual([]);
+	});
+
+	it("both answer false when a post is in flight inside the target", () => {
+		const { ctx, log } = page(["a"], true);
 		expect(replaceThreadInPlace(ctx, "a", null)).toBe(false);
 		expect(replaceCommentInPlace(ctx, "a", node("a"))).toBe(false);
 		expect(log).toEqual([]);
