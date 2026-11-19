@@ -147,6 +147,7 @@ export const ar = {
 	"w.unsubscribe.done": "لن تصلك رسائل أخرى عن هذا النقاش.",
 	"w.unsubscribe.failed": "تعذّر إلغاء الاشتراك. حاول مرة أخرى.",
 	"w.unsubscribe.row": "إلغاء الاشتراك",
+	"w.unsubscribed": "أُلغي الاشتراك",
 	"w.manage": "إدارة الاشتراكات",
 	"w.manage.empty": "لا تتابع أي نقاشات.",
 	"w.manage.failed": "تعذّر تحميل اشتراكاتك.",

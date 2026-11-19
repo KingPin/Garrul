@@ -188,6 +188,7 @@ export const pt = {
 	"w.unsubscribe.done": "Não chegarão mais e-mails sobre este tópico.",
 	"w.unsubscribe.failed": "Não foi possível cancelar a inscrição. Tente novamente.",
 	"w.unsubscribe.row": "Cancelar inscrição",
+	"w.unsubscribed": "Inscrição cancelada",
 	// Brazilian "Gerenciar", not European "Gerir" — see the header.
 	"w.manage": "Gerenciar inscrições",
 	"w.manage.empty": "Nenhum tópico seguido.",

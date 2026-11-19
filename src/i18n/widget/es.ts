@@ -130,6 +130,7 @@ export const es = {
 	"w.subscribe.done": "Revisa tu correo para confirmar.",
 	"w.subscribe.failed": "No se pudo suscribir. Inténtalo de nuevo.",
 	"w.subscribe.ratelimit": "Demasiadas solicitudes. Inténtalo más tarde.",
+	"w.unsubscribed": "Suscripción cancelada",
 	"w.load_more": "Cargar comentarios anteriores",
 	"w.load_more_failed": "No se pudieron cargar más: {detail}",
 	"w.retry": "Intentar de nuevo",

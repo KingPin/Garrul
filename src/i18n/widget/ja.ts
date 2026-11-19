@@ -163,6 +163,7 @@ export const ja = {
 	"w.unsubscribe.done": "このスレッドのメール通知を停止しました。",
 	"w.unsubscribe.failed": "解除できませんでした。もう一度お試しください。",
 	"w.unsubscribe.row": "解除",
+	"w.unsubscribed": "配信を停止しました",
 	"w.manage": "通知の管理",
 	"w.manage.empty": "フォロー中のスレッドはありません。",
 	"w.manage.failed": "登録中のスレッドを読み込めませんでした。",

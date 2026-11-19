@@ -125,6 +125,7 @@ export const zhHant = {
 	"w.unsubscribe.done": "你將不再收到此討論串的電子郵件。",
 	"w.unsubscribe.failed": "無法取消訂閱，請再試一次。",
 	"w.unsubscribe.row": "取消訂閱",
+	"w.unsubscribed": "已取消訂閱",
 	"w.manage": "管理訂閱",
 	"w.manage.empty": "你尚未追蹤任何討論串。",
 	"w.manage.failed": "無法載入你的訂閱。",

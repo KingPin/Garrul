@@ -135,6 +135,7 @@ export const de = {
 	"w.subscribe.done": "Bitte bestätige die E-Mail, die wir dir geschickt haben.",
 	"w.subscribe.failed": "Abonnieren fehlgeschlagen. Bitte erneut versuchen.",
 	"w.subscribe.ratelimit": "Zu viele Anfragen. Bitte später erneut versuchen.",
+	"w.unsubscribed": "Abgemeldet",
 	"w.load_more": "Ältere Kommentare laden",
 	"w.load_more_failed": "Konnte nicht mehr laden: {detail}",
 	"w.retry": "Erneut versuchen",

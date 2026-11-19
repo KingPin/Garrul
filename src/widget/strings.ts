@@ -202,6 +202,7 @@ export const EN = {
 	// Panel rows sit under a heading that already says what the list is, so the
 	// row button is a bare verb rather than repeating the thread title.
 	"w.unsubscribe.row": "Unsubscribe",
+	"w.unsubscribed": "Unsubscribed",
 	"w.manage": "Manage subscriptions",
 	"w.manage.empty": "You're not following any threads.",
 	"w.manage.failed": "Could not load your subscriptions.",

@@ -1791,6 +1791,41 @@ const buildSubscribeBell = (
 
 	type PanelRow = { id: string; post_slug: string; title: string | null };
 
+	// Row unsubscribes are delayed so a misclick can be taken back (the same
+	// pending registry Report uses). Their DELETE does not go through `cancel`:
+	// that one refuses while its shared flag is set, which would silently drop a
+	// second row maturing during a slow DELETE. In flight is tracked per id, and
+	// the settle hooks are looked up by id so a rebuilt panel gets the result.
+	const unsubbing = new Set<string>();
+	const rowUi = new Map<string, { sent(): void; fail(msg: string): void }>();
+	const sendUnsubscribe = async (id: string): Promise<void> => {
+		if (unsubbing.has(id)) return;
+		unsubbing.add(id);
+		rowUi.get(id)?.sent();
+		let failure: "w.subscribe.ratelimit" | "w.unsubscribe.failed" | null = null;
+		try {
+			const res = await apiFetch(apiBase, `/api/v1/subscribe/mine/${encodeURIComponent(id)}`, {
+				method: "DELETE",
+				// The pagehide flush must survive the page leaving.
+				keepalive: true,
+			});
+			if (!res.ok) failure = res.status === 429 ? "w.subscribe.ratelimit" : "w.unsubscribe.failed";
+		} catch {
+			failure = "w.unsubscribe.failed";
+		}
+		unsubbing.delete(id);
+		if (failure) {
+			rowUi.get(id)?.fail(s(failure));
+			return;
+		}
+		// The bell tracks this thread; a row unsubscribed from the panel may be it.
+		if (subId === id) {
+			subId = null;
+			pending = false;
+			renderBell();
+		}
+	};
+
 	const renderPanel = (rows: PanelRow[]): void => {
 		panel.textContent = "";
 		if (rows.length === 0) {
@@ -1800,24 +1835,58 @@ const buildSubscribeBell = (
 		const ul = el("ul", "gr-subscribe-list");
 		for (const row of rows) {
 			const li = el("li");
+			const key = `unsub:${row.id}`;
 			// `title` is null until the host page has told the server one, so the
 			// slug is the honest fallback — a row with no label is a row the reader
 			// cannot tell apart from the next one.
 			li.appendChild(el("span", "gr-subscribe-title", row.title || row.post_slug));
+			const errs = lazyActionStatus(() => li);
 			const drop = el("button", "gr-subscribe-drop", s("w.unsubscribe.row"));
 			drop.type = "button";
-			drop.addEventListener("click", () => {
-				drop.disabled = true;
-				void cancel(row.id).then((ok) => {
-					if (!ok) {
-						drop.disabled = false;
-						return;
+			let mark: HTMLElement | null = null;
+			const showUnsubscribed = (p: Pending | null): HTMLElement => {
+				const done = el("span", "gr-reported", p ? `${s("w.unsubscribed")} \u00b7 ` : s("w.unsubscribed"));
+				mark = done;
+				if (!p) return done;
+				const undoBtn = el("button", undefined, s("w.undo"));
+				undoBtn.type = "button";
+				// Screen readers would otherwise announce only "Undo".
+				const said = el("span", undefined, s("w.unsubscribed"));
+				said.id = `gr-unsub-${row.id}`;
+				said.hidden = true;
+				undoBtn.setAttribute("aria-describedby", said.id);
+				done.append(said, undoBtn);
+				undoBtn.addEventListener("click", () => {
+					p.cancel();
+					// A no-op once the DELETE went out: Undo is retired by then.
+					if (done.isConnected) {
+						done.replaceWith(drop);
+						drop.focus();
 					}
-					li.remove();
-					if (!ul.firstChild) renderPanel([]);
 				});
+				return done;
+			};
+			rowUi.set(row.id, {
+				// The DELETE is on its way: drop Undo, its description and separator.
+				sent: () => {
+					if (mark?.isConnected) mark.textContent = s("w.unsubscribed");
+				},
+				fail: (msg) => {
+					if (mark?.isConnected) mark.replaceWith(drop);
+					errs.fail(null, { error: msg });
+				},
 			});
-			li.appendChild(drop);
+			drop.addEventListener("click", () => {
+				errs.clear();
+				const done = showUnsubscribed(schedulePending(key, () => void sendUnsubscribe(row.id), REPORT_UNDO_MS));
+				drop.replaceWith(done);
+				(done.lastElementChild as HTMLElement).focus();
+			});
+			const live = pendingFor(key);
+			// Rebuilt mid-window or mid-DELETE: redraw the state, no focus grab.
+			if (live) li.appendChild(showUnsubscribed(live));
+			else if (unsubbing.has(row.id)) li.appendChild(showUnsubscribed(null));
+			else li.appendChild(drop);
 			ul.appendChild(li);
 		}
 		panel.appendChild(ul);

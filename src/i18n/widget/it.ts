@@ -166,6 +166,7 @@ export const it = {
 	"w.unsubscribe.done": "Non riceverai più email su questa discussione.",
 	"w.unsubscribe.failed": "Impossibile annullare l'iscrizione. Riprova.",
 	"w.unsubscribe.row": "Annulla iscrizione",
+	"w.unsubscribed": "Iscrizione annullata",
 	"w.manage": "Gestisci le iscrizioni",
 	"w.manage.empty": "Non segui nessuna discussione.",
 	"w.manage.failed": "Impossibile caricare le tue iscrizioni.",

@@ -166,6 +166,7 @@ export const nl = {
 	"w.unsubscribe.done": "Je krijgt geen e-mail meer over deze discussie.",
 	"w.unsubscribe.failed": "Afmelden is mislukt. Probeer het opnieuw.",
 	"w.unsubscribe.row": "Afmelden",
+	"w.unsubscribed": "Afgemeld",
 	"w.manage": "Abonnementen beheren",
 	"w.manage.empty": "Je volgt nog geen discussies.",
 	"w.manage.failed": "De abonnementen konden niet worden geladen.",

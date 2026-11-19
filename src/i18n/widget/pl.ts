@@ -175,6 +175,7 @@ export const pl = {
 	"w.unsubscribe.done": "Powiadomienia o tym wątku nie będą już wysyłane.",
 	"w.unsubscribe.failed": "Nie udało się anulować subskrypcji. Spróbuj ponownie.",
 	"w.unsubscribe.row": "Anuluj subskrypcję",
+	"w.unsubscribed": "Zrezygnowano z subskrypcji",
 	"w.manage": "Zarządzaj subskrypcjami",
 	"w.manage.empty": "Brak obserwowanych wątków.",
 	"w.manage.failed": "Nie udało się wczytać subskrypcji.",

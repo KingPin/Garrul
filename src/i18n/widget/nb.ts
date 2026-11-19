@@ -150,6 +150,7 @@ export const nb = {
 	"w.unsubscribe.done": "Du får ikke flere e-poster om denne tråden.",
 	"w.unsubscribe.failed": "Kunne ikke melde av. Prøv igjen.",
 	"w.unsubscribe.row": "Meld av",
+	"w.unsubscribed": "Avmeldt",
 	"w.manage": "Administrer abonnementer",
 	"w.manage.empty": "Du følger ingen tråder.",
 	"w.manage.failed": "Kunne ikke laste abonnementene dine.",
