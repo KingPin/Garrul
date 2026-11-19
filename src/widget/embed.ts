@@ -53,6 +53,7 @@ import {
 	flushAllDrafts,
 	legacyDraftKey,
 } from "./drafts";
+import { fireAllPending, type Pending, pendingFor, schedulePending } from "./pending-action";
 import { authorKey, readAuthor, rememberAuthor } from "./author";
 import { createTurnstileGate, type TurnstileGate } from "./turnstile-gate";
 import { makeS, type StringTable, type WidgetKey } from "./strings";
@@ -2121,10 +2122,13 @@ const buildActions = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): HTMLEleme
 	if (n.status !== "deleted" && !isOwnComment) {
 		const reportBtn = el("button", "gr-report", s("w.report"));
 		reportBtn.type = "button";
-		reportBtn.addEventListener("click", () => {
-			// Report is delayed REPORT_UNDO_MS so a misclick can be taken back
-			// with no request sent. Leaving the page sends it at once (keepalive)
-			// so a deliberate report is not lost.
+		const key = `report:${n.id}`;
+		// Report is delayed REPORT_UNDO_MS so a misclick can be taken back
+		// with no request sent. The timer lives in the pending registry, not in
+		// this closure, so a re-render that rebuilds this row redraws the same
+		// "Reported · Undo" state (see the pendingFor check below). Leaving the
+		// page sends it at once (keepalive) so a deliberate report is not lost.
+		const showReported = (pending: Pending): HTMLElement => {
 			const done = el("span", "gr-reported", `${s("w.reported")} \u00b7 `);
 			const undoBtn = el("button", undefined, s("w.undo"));
 			undoBtn.type = "button";
@@ -2134,68 +2138,80 @@ const buildActions = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): HTMLEleme
 			said.hidden = true;
 			undoBtn.setAttribute("aria-describedby", said.id);
 			done.append(said, undoBtn);
-			reportBtn.replaceWith(done);
-			undoBtn.focus();
-			// One of timer / pagehide / Undo wins; each removes the others.
-			const cancel = (): void => {
-				clearTimeout(timer);
-				window.removeEventListener("pagehide", send);
-			};
-			const send = async (): Promise<void> => {
-				cancel();
-				// The report is on its way: retire Undo now so it cannot restore Report
-				// while the POST is in flight. Keep focus on a live node.
-				const hadFocus = (undoBtn.getRootNode() as Document | ShadowRoot).activeElement === undoBtn;
+			undoBtn.addEventListener("click", () => {
+				pending.cancel();
+				// A no-op after the report was sent: Undo is retired by then.
+				if (done.isConnected) {
+					done.replaceWith(reportBtn);
+					reportBtn.focus();
+				}
+			});
+			return done;
+		};
+		// The settled result must land on the row on screen now, not on the
+		// node this closure was built with (a re-render may have replaced it).
+		const liveReported = (): HTMLElement | null =>
+			ctx.root
+				.getElementById(commentAnchorId(n.id))
+				?.querySelector<HTMLElement>(":scope > .gr-comment .gr-reported") ?? null;
+		const send = async (): Promise<void> => {
+			// The report is on its way: retire Undo now so it cannot restore Report
+			// while the POST is in flight. Keep focus on a live node.
+			const done0 = liveReported();
+			if (done0) {
+				const hadFocus = (done0.getRootNode() as Document | ShadowRoot).activeElement === done0.querySelector("button");
 				// Drops Undo, its description and the separator in one go.
-				done.textContent = s("w.reported");
+				done0.textContent = s("w.reported");
 				if (hadFocus) {
-					done.tabIndex = -1;
-					done.focus();
+					done0.tabIndex = -1;
+					done0.focus();
 				}
-				let ok = false;
-				try {
-					// The endpoint returns 200 for both new and duplicate reports and
-					// never discloses which (anti-enumeration), so a 2xx is the only
-					// success signal we get. fetch does NOT reject on a 4xx/5xx, so
-					// inspect res.ok explicitly.
-					const res = await apiFetch(
-						ctx.apiBase,
-						`/api/v1/comments/${encodeURIComponent(n.id)}/report`,
-						{
-							method: "POST",
-							// No headers or body: that keeps this a CORS "simple request", so
-							// the pagehide flush needs no preflight. A missing body means
-							// reason=null server-side.
-							keepalive: true,
-						},
-					);
-					ok = res.ok;
-				} catch {
-					// Network failure: fall through to the retry path below.
-				}
-				// On success the non-interactive "Reported" span stays, so a reader
-				// can't report-bomb one comment from the UI. (Server-side dedup +
-				// rate-limit are the real guard; this is just UX.)
-				if (!ok) {
-					// A real refusal (429, 4xx/5xx, dropped network): don't claim
-					// success; restore the button so the reader can retry.
-					// A report pending when a re-render detaches this node and whose
-					// POST then fails is lost silently; server dedup and rate-limit
-					// are the real guard.
+			}
+			let ok = false;
+			try {
+				// The endpoint returns 200 for both new and duplicate reports and
+				// never discloses which (anti-enumeration), so a 2xx is the only
+				// success signal we get. fetch does NOT reject on a 4xx/5xx, so
+				// inspect res.ok explicitly.
+				const res = await apiFetch(ctx.apiBase, `/api/v1/comments/${encodeURIComponent(n.id)}/report`, {
+					method: "POST",
+					// No headers or body: that keeps this a CORS "simple request", so
+					// the pagehide flush needs no preflight. A missing body means
+					// reason=null server-side.
+					keepalive: true,
+				});
+				ok = res.ok;
+			} catch {
+				// Network failure: fall through to the retry path below.
+			}
+			// On success the non-interactive "Reported" span stays, so a reader
+			// can't report-bomb one comment from the UI. (Server-side dedup +
+			// rate-limit are the real guard; this is just UX.)
+			if (!ok) {
+				// A real refusal (429, 4xx/5xx, dropped network): don't claim
+				// success; restore the button so the reader can retry. If the row
+				// is gone (a re-render without it) the failure is lost silently;
+				// server dedup and rate-limit are the real guard.
+				const done = liveReported();
+				if (done) {
 					const hadFocusNow = (done.getRootNode() as Document | ShadowRoot).activeElement === done;
 					done.replaceWith(reportBtn);
 					if (hadFocusNow) reportBtn.focus();
 				}
-			};
-			const timer = setTimeout(send, REPORT_UNDO_MS);
-			window.addEventListener("pagehide", send);
-			undoBtn.addEventListener("click", () => {
-				cancel();
-				done.replaceWith(reportBtn);
-				reportBtn.focus();
-			});
+			}
+		};
+		reportBtn.addEventListener("click", () => {
+			const done = showReported(schedulePending(key, send, REPORT_UNDO_MS));
+			reportBtn.replaceWith(done);
+			(done.lastElementChild as HTMLElement).focus();
 		});
-		row.appendChild(reportBtn);
+		const pending = pendingFor(key);
+		if (pending) {
+			// Rebuilt while a report is in its Undo window: no focus grab.
+			row.appendChild(showReported(pending));
+		} else {
+			row.appendChild(reportBtn);
+		}
 	}
 
 	return row;
@@ -4796,6 +4812,8 @@ const submit = async (
 // pagehide also fires on entering the bfcache; flush retires nothing, so the
 // restored page keeps saving.
 window.addEventListener("pagehide", flushAllDrafts);
+// Same for reports still in their Undo window: a deliberate Report is sent, not lost.
+window.addEventListener("pagehide", fireAllPending);
 
 // Runs now, at script-execution time — that is the whole point of it.
 reserveSpace();
