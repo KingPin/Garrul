@@ -180,7 +180,13 @@ a saved draft is restored); the minimum-elapsed-time clock starts at that
 mint. A long-open tab refreshes the token in the background once it is
 about 50 minutes old (the server rejects tokens older than 60), so after
 that first focus it makes roughly one extra form-token request per 50
-minutes. The Workers free tier allows 100,000 requests/day, so the ceiling is
+minutes (only while the tab is visible: the timer skips a hidden tab, and
+the tab becoming visible calls the refresh check). Two other requests are
+automatic and start without a reader action: a retryable Turnstile error
+reloads the frame (one `/embed/turnstile-frame` request, at most once per
+gate), and a mount that failed and rendered the error box retries once when
+the browser fires `online` (one more mount payload, then it is spent). The
+Workers free tier allows 100,000 requests/day, so the ceiling is
 roughly **100k pageviews/day** minus the readers who focus the composer —
 up from ~25k at the four requests a default install used to make, and
 ~16k with page reactions/votes and subscriptions on.
@@ -225,7 +231,9 @@ is why the form token is a separate request (made on first composer focus,
 a reply-form open, or at mount when a saved draft is restored) when the
 timing heuristic is on. A failed mint is not cached: it is retried on the
 next composer focus, `online` event, or the tab becoming visible, and a
-submit mints one only when no usable token exists. Its signed timestamp feeds the anti-spam minimum-elapsed-time
+submit mints one only when no usable token exists. After a failed mint,
+focus and visible leave the endpoint alone for 30 seconds (an `online` event
+retries at once), so a failing endpoint is not asked again on every focus. Its signed timestamp feeds the anti-spam minimum-elapsed-time
 heuristic, and baking one into a shared payload would hand every reader
 the same start time. When the heuristic is off (no `SPAM_FORM_TS_SECRET`
 or `SPAM_HONEYPOT_MIN_MS` is `0`) the config payload carries
@@ -233,6 +241,21 @@ or `SPAM_HONEYPOT_MIN_MS` is `0`) the config payload carries
 (since v2.27.0); before that the route 404'd and the 404 still cost a
 request. A widget that sees no `form_token_enabled` field at all (older
 server) keeps requesting the token.
+
+**Failures stay visible and in place.** Action errors (vote, reaction,
+page reactions and votes, delete, edit) are the translated, reader-facing
+text, never the raw exception or status: a 5xx or an unreachable backend reads
+as a transient problem, anything else as a plain failure. A failed vote,
+reaction or delete shows its message in a status box beside that comment's
+action row; a failed page reaction or vote shows it beside the page
+engagement bar. A reload that fails (sort change, sign-in, a post that
+fell back to a reload) keeps the tree on screen and writes the message to the
+page status box; a composer a post had handed to that reload is unlocked
+again (its text cleared if the post landed, kept if the session had ended).
+Only a mount with nothing on screen is replaced by the error box, and that box
+has a "Try again" button. The button, or the browser's `online` event, retries
+the mount once; a failed retry draws a fresh box and arms a fresh retry, so an
+edge that keeps refusing is asked once per reader action, never in a loop.
 
 ### Lazy-loading (recommended for read-heavy hosts)
 
@@ -251,7 +274,9 @@ comment box, so a reader who never comments never downloads it. Expect
 those requests to appear on first focus rather than on page load. If the
 network drops, the frame reloads itself when it comes back (an extra
 `/embed/turnstile-frame` request) so posting works without a page reload;
-a server rejection (4xx/5xx) does not reload it.
+a server rejection (4xx/5xx) does not reload it. A Turnstile error that
+Cloudflare marks retryable also reloads the frame, once per gate; a second
+one shows the sticky failure message.
 
 **Default to deferring the script load via `IntersectionObserver`**
 when the comments section is below the fold. Replace the
@@ -546,8 +571,10 @@ when its link is already in the URL.
 The revealed comment gets a 2-second outline (class `gr-target`) so the
 eye finds it once the scroll stops. If the target is still missing after
 the page cap, the composer's status box shows "That comment is not
-available." A closed thread has no composer, so it shows nothing there.
-The notice clears when a later link resolves.
+available." A closed thread has no composer, so the widget makes a page status box
+(`.gr-page-status`) at the top of the thread and writes it there. The same
+box takes any other page-level message once the composer's Turnstile gate has
+failed, so the sticky anti-spam failure text is never replaced. The notice clears when a later link resolves.
 
 The link is a plain `<a href>` — no clipboard-copy JavaScript shim —
 so right-click-copy, middle-click, and Cmd/Ctrl-click all work the way
@@ -660,7 +687,17 @@ restores the button. When the 5 seconds end, or the page is left, the
 unsubscribe is sent. If it fails, the row comes back with an error. The
 Undo state survives a panel redraw while its window is open. When the
 unsubscribed thread is the one the bell shows, the bell updates once the
-unsubscribe succeeds.
+unsubscribe succeeds. A redraw during the window leaves the old bell to send
+the request; its result reaches the row the new bell drew, and an Undo clicked
+after the request went out is retired instead of restoring the button. The
+bell's own cancel of a thread also cancels that thread's open row, so one
+unsubscribe sends one DELETE.
+
+Limit: the unsubscribe sent when the page is left is a credentialed `DELETE`
+with `keepalive`. Unlike Report's simple `POST`, it needs a CORS preflight,
+and browsers differ on whether a preflighted `keepalive` request still leaves
+the page. An unsubscribe pending at that moment can be lost; the thread then
+stays subscribed. The method and the API do not change for this.
 
 The endpoints behind the second bell are `GET /api/v1/subscribe/mine`
 (the list), `GET /api/v1/subscribe/mine?post_slug=` (one thread's state:
