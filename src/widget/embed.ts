@@ -334,6 +334,32 @@ const clearStatus = (box: HTMLElement): void => {
 	box.classList.remove("is-notice");
 };
 
+/** Why an action did not go through (`fail`), or drop that message (`clear`). */
+type ActionStatus = {
+	fail: (err: unknown, body: { error?: string } | null) => void;
+	clear: () => void;
+};
+
+/**
+ * One error box for a row or bar. It is made on the first failure, appended to
+ * `host()`, and reused after that, so a row that never fails has no box at all.
+ */
+const lazyActionStatus = (host: () => HTMLElement): ActionStatus => {
+	let box: HTMLElement | null = null;
+	return {
+		fail: (err, body) => {
+			if (!box) {
+				box = statusBox("gr-error is-inline");
+				host().appendChild(box);
+			}
+			showStatus(box, actionErrorMessage(err, body, s));
+		},
+		clear: () => {
+			if (box) clearStatus(box);
+		},
+	};
+};
+
 /**
  * Parse a TRUSTED HTML chunk into a DocumentFragment. Use only for content
  * we control (style tag) or server-sanitized output (body_html, identicon SVG).
@@ -1159,7 +1185,7 @@ const reactionsByKind = (rs: ReactionCount[]): Map<string, ReactionCount> => {
 // rather than reloading the whole list: the vote endpoint does not bust
 // the tree cache by design, so a reload would just re-fetch the stale
 // counters until the next comment-write triggers invalidation.
-const buildVotes = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
+const buildVotes = (n: TreeNode, ctx: WidgetCtx, status: ActionStatus): HTMLElement => {
 	const wrap = el("div", "gr-votes");
 	const score = n.score_up - n.score_down;
 
@@ -1192,8 +1218,12 @@ const buildVotes = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 		down.disabled = true;
 		try {
 			const res = await apiJson(ctx.apiBase, "/api/v1/votes", { comment_id: n.id, value });
-			if (!res.ok) return;
+			if (!res.ok) {
+				status.fail(null, await res.json().catch(() => null));
+				return;
+			}
 			const body = (await res.json()) as VoteResponse;
+			status.clear();
 			// Mutate the node so a later re-render (Load more, reload) reflects
 			// the new state, and patch the DOM directly so the user sees the
 			// change without a full list reload.
@@ -1203,8 +1233,9 @@ const buildVotes = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 			scoreEl.textContent = String(body.score_up - body.score_down);
 			markVote(up, body.my_vote === 1);
 			markVote(down, body.my_vote === -1);
-		} catch {
-			// Network/parse failure: leave UI untouched; user can retry.
+		} catch (err) {
+			// Network/parse failure: the UI is left as it was; say why and let the user retry.
+			status.fail(err, null);
 		} finally {
 			up.disabled = false;
 			down.disabled = false;
@@ -1230,7 +1261,7 @@ const buildVotes = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 // the whole shadow tree, so the most frequent interaction in the widget was
 // also the most destructive one — it dropped scroll position and any open
 // composer with a half-typed draft in it.
-const buildReactions = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
+const buildReactions = (n: TreeNode, ctx: WidgetCtx, status: ActionStatus): HTMLElement => {
 	const wrap = el("div", "gr-reactions");
 	const cells = new Map<
 		string,
@@ -1290,7 +1321,10 @@ const buildReactions = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 					"/api/v1/reactions",
 					{ comment_id: n.id, kind },
 				);
-				if (!res.ok) return;
+				if (!res.ok) {
+					status.fail(null, await res.json().catch(() => null));
+					return;
+				}
 				const body = (await res.json()) as ReactionResponse;
 				// No counts to patch from means an API older than this bundle;
 				// fall back to the reload this used to do rather than merging
@@ -1313,8 +1347,10 @@ const buildReactions = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 					body.added,
 				);
 				paint();
-			} catch {
-				// Network/parse failure: leave the UI untouched; user can retry.
+				status.clear();
+			} catch (err) {
+				// Network/parse failure: the UI is left as it was; say why and let the user retry.
+				status.fail(err, null);
 			} finally {
 				btn.disabled = false;
 			}
@@ -1335,6 +1371,8 @@ const buildReactions = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
  */
 const buildPageEngagement = (ctx: WidgetCtx): HTMLElement => {
 	const wrap = el("div", "gr-page-engage");
+	// Reactions and votes share the bar's one error box.
+	const barStatus = lazyActionStatus(() => wrap);
 
 	// --- reactions ---
 	const reactCells = new Map<
@@ -1396,7 +1434,10 @@ const buildPageEngagement = (ctx: WidgetCtx): HTMLElement => {
 				"/api/v1/page-engagement/reactions",
 				{ slug: ctx.slug, kind },
 			);
-			if (!res.ok) return;
+			if (!res.ok) {
+				barStatus.fail(null, await res.json().catch(() => null));
+				return;
+			}
 			const body = (await res.json()) as {
 				added: boolean;
 				reactions: Record<string, number>;
@@ -1407,8 +1448,10 @@ const buildPageEngagement = (ctx: WidgetCtx): HTMLElement => {
 			if (body.added) cell.btn.dataset.mine = "1";
 			else delete cell.btn.dataset.mine;
 			cell.btn.setAttribute("aria-pressed", body.added ? "true" : "false");
-		} catch {
-			// leave UI as-is; user can retry
+			barStatus.clear();
+		} catch (err) {
+			// The UI is left as it was; say why and let the user retry.
+			barStatus.fail(err, null);
 		} finally {
 			cell.btn.disabled = false;
 		}
@@ -1441,10 +1484,15 @@ const buildPageEngagement = (ctx: WidgetCtx): HTMLElement => {
 				"/api/v1/page-engagement/votes",
 				{ slug: ctx.slug, value },
 			);
-			if (!res.ok) return;
+			if (!res.ok) {
+				barStatus.fail(null, await res.json().catch(() => null));
+				return;
+			}
 			setVote((await res.json()) as PageVoteState);
-		} catch {
-			// leave UI as-is
+			barStatus.clear();
+		} catch (err) {
+			// The UI is left as it was; say why and let the user retry.
+			barStatus.fail(err, null);
 		} finally {
 			up.disabled = false;
 			down.disabled = false;
@@ -1987,7 +2035,12 @@ const buildEditControl = (
 	return wrap;
 };
 
-const buildActions = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): HTMLElement => {
+const buildActions = (
+	n: TreeNode,
+	ctx: WidgetCtx,
+	main: HTMLElement,
+	status: ActionStatus,
+): HTMLElement => {
 	const row = el("div", "gr-actions");
 
 	// `can_reply` is server-computed from the real stored depth. Past the flatten
@@ -2067,6 +2120,8 @@ const buildActions = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): HTMLEleme
 			yes.addEventListener("click", async () => {
 				yes.disabled = true;
 				no.disabled = true;
+				let failure: unknown = null;
+				let failBody: { error?: string } | null = null;
 				try {
 					const res = await apiFetch(
 						ctx.apiBase,
@@ -2106,13 +2161,16 @@ const buildActions = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): HTMLEleme
 						ctx.reload();
 						return;
 					}
-				} catch {
+					failBody = await res.json().catch(() => null);
+				} catch (err) {
 					// Network failure — same handling as a refusal below.
+					failure = err;
 				}
 				// The delete did not happen, so do not leave the row looking like
 				// it is mid-flight. Back out to the button the reader started
-				// from; a second attempt is one click away.
+				// from; a second attempt is one click away. Say why beside it.
 				dismiss();
+				status.fail(failure, failBody);
 			});
 		});
 		row.appendChild(delBtn);
@@ -2787,11 +2845,14 @@ const buildComment = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 
 	// Votes/reactions only on public (approved) comments — a pending comment
 	// isn't visible to anyone but its author, so engagement is meaningless.
+	// One error box per row, in the actions row beside the control that failed.
+	const rowStatus = lazyActionStatus(() => actions);
 	if (n.status === "approved") {
-		if (ctx.votingEnabled) main.appendChild(buildVotes(n, ctx));
-		if (ctx.reactionsEnabled) main.appendChild(buildReactions(n, ctx));
+		if (ctx.votingEnabled) main.appendChild(buildVotes(n, ctx, rowStatus));
+		if (ctx.reactionsEnabled) main.appendChild(buildReactions(n, ctx, rowStatus));
 	}
-	main.appendChild(buildActions(n, ctx, main));
+	const actions = buildActions(n, ctx, main, rowStatus);
+	main.appendChild(actions);
 
 	row.appendChild(main);
 	return row;
