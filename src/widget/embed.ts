@@ -43,7 +43,16 @@
 import { loadErrorMessage } from "./load-error";
 import { watchForSignIn } from "./auth-recovery";
 import { autoSizeTextarea } from "./autosize";
-import { adoptLegacyDraft, draftKey, draftSaver, legacyDraftKey } from "./drafts";
+import {
+	adoptLegacyDraft,
+	type DraftSaver,
+	disposeAllDrafts,
+	draftKey,
+	draftSaver,
+	draftStorage,
+	flushAllDrafts,
+	legacyDraftKey,
+} from "./drafts";
 import { authorKey, readAuthor, rememberAuthor } from "./author";
 import { createTurnstileGate, type TurnstileGate } from "./turnstile-gate";
 import { makeS, type StringTable, type WidgetKey } from "./strings";
@@ -340,6 +349,9 @@ const autoSize = (ta: HTMLTextAreaElement): void =>
 // textarea.value (never as HTML), so no XSS surface. Key shape and legacy
 // (slug-only) adoption live in ./drafts (DOM-free, unit-tested).
 
+// The saver behind each draft textarea, so submit() can reach the top one.
+const draftOf = new WeakMap<HTMLTextAreaElement, DraftSaver>();
+
 const clearDraft = (key: string): void => {
 	try {
 		localStorage.removeItem(key);
@@ -359,13 +371,12 @@ const attachDraft = (
 	ta: HTMLTextAreaElement,
 	key: string,
 	legacyKey: string,
-): ReturnType<typeof draftSaver> => {
+): DraftSaver => {
 	try {
-		// Inside the try on purpose: the `localStorage` getter itself throws
-		// where storage is blocked, and that has to degrade like every other
-		// storage failure here rather than abort the mount.
-		adoptLegacyDraft(localStorage, key, legacyKey);
-		const saved = localStorage.getItem(key);
+		// draftStorage() absorbs a throwing `localStorage` getter or a full
+		// quota, so a blocked store degrades to a page-lifetime copy.
+		adoptLegacyDraft(draftStorage(), key, legacyKey);
+		const saved = draftStorage().getItem(key);
 		// Only restore into an empty field so we never clobber a server-provided
 		// or already-typed value.
 		if (saved && !ta.value) {
@@ -379,8 +390,9 @@ const attachDraft = (
 	} catch {
 		// Storage unavailable — skip restore.
 	}
-	const saver = draftSaver(() => localStorage, key, () => ta.value);
+	const saver = draftSaver(draftStorage, key, () => ta.value);
 	ta.addEventListener("input", saver.schedule);
+	draftOf.set(ta, saver);
 	return saver;
 };
 
@@ -2504,7 +2516,7 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 			}
 			// Reply landed — drop the saved draft (and any pending save of it)
 			// before the list re-renders.
-			draft.drop();
+			draft.dropIf(ta.value);
 			if (nameInput)
 				rememberAuthor(authorStore(ctx.host), authorKey(ctx.apiOrigin), { name: nameInput.value });
 			// The 201 carries the whole comment, so render it rather than paying a
@@ -4070,6 +4082,9 @@ const loadOnce = async (
 		return;
 	}
 	destroyTopComposerTurnstile();
+	// The textareas are about to be detached: save what is pending, retire the
+	// savers so a stale timer cannot re-save text from a dead field.
+	disposeAllDrafts();
 
 	root.replaceChildren();
 	const style = el("style");
@@ -4566,7 +4581,8 @@ const submit = async (
 
 		// Comment landed — drop the saved composer draft so the reload starts
 		// from a clean field.
-		clearDraft(draftKey(apiOrigin, slug, null));
+		const draftTa = form.querySelector(".gr-body-input") as HTMLTextAreaElement | null;
+		if (draftTa) draftOf.get(draftTa)?.dropIf(draftTa.value);
 
 		// Fire-and-forget subscription — failure here doesn't roll back
 		// the comment. The widget already has both inputs handy.
@@ -4645,6 +4661,10 @@ const submit = async (
 		ts?.gate.clear();
 	}
 };
+
+// pagehide also fires on entering the bfcache; flush retires nothing, so the
+// restored page keeps saving.
+window.addEventListener("pagehide", flushAllDrafts);
 
 // Runs now, at script-execution time — that is the whole point of it.
 reserveSpace();
