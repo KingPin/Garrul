@@ -534,7 +534,9 @@ in v1.
 widget mounts its `/embed/turnstile-frame` iframe (which in turn fetches
 Cloudflare's `api.js`) only once the visitor focuses the comment box, so
 readers who never comment never download it. Expect no `turnstile`
-requests in a DevTools trace of a page load. A submit that arrives before
+requests in a DevTools trace of a page load. After a network drop the
+frame reloads itself when the network returns, so posting works without
+a page reload; a server rejection (4xx/5xx) does not reload it. A submit that arrives before
 a token exists waits up to 9 seconds and then reports one of four
 distinct messages — see `docs/ANTISPAM.md` § "Turnstile mount timing" for
 the table mapping each to the operator action, and note that only one of
@@ -1827,7 +1829,10 @@ rendered:
   chunks a page needs.
 - `GET /api/v1/comments/form-token` — the signed form-render timestamp
   behind the anti-spam timing heuristic, minted on first composer focus
-  (or when a reply form opens, or at mount when a saved draft is restored). It stays a separate call on purpose: a shared timestamp would
+  (or when a reply form opens, or at mount when a saved draft is restored). A failed mint is retried on the next focus, `online` or
+  tab-visible, and a long-open tab refreshes it in the background at ~50
+  minutes (one extra request per ~50 min after the first focus). It stays a
+  separate call on purpose: a shared timestamp would
   hand every reader the same start time and defeat the check. The widget
   skips it when `/api/v1/config` reports `form_token_enabled: false`
   (heuristic off), so on the default install a mount is one request.
