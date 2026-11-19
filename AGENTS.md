@@ -534,9 +534,20 @@ is why they are tried first.
 
 The widget reveals the target on mount and on `hashchange`: it pages
 forward (at most 10 extra `/api/v1/comments` requests) until the comment
-renders. Capped "Show N more replies" batches holding the target are
-opened at render time (mount or reload); a later `hashchange` opens
-collapsed branches only.
+renders. A capped "Show N more replies" batch holding the target is
+opened, on mount, on reload, or on a later `hashchange`, and a collapsed
+branch holding it opens too. A `hashchange` that lands during a load
+(mount, reload, sort change or Load more) is handled once that load has
+rendered. A seek that starts during a Load more waits for that page
+instead of giving up. Going from a comment to `#top` and back to it
+reveals it again, and a click on a comment's own timestamp re-reveals it
+when its link is already in the URL.
+
+The revealed comment gets a 2-second outline (class `gr-target`) so the
+eye finds it once the scroll stops. If the target is still missing after
+the page cap, the composer's status box shows "That comment is not
+available." A closed thread has no composer, so it shows nothing there.
+The notice clears when a later link resolves.
 
 The link is a plain `<a href>` — no clipboard-copy JavaScript shim —
 so right-click-copy, middle-click, and Cmd/Ctrl-click all work the way
@@ -791,7 +802,9 @@ Any reader can report a visible comment that is not their own, signed in
 or not. The widget holds the report for 5 seconds and shows "Reported,
 thanks · Undo". Undo cancels it and no request is sent. When the timer
 ends, or the reader leaves the page first, the widget sends one
-`POST /api/v1/comments/:id/report` (with `keepalive`). On touch screens
+`POST /api/v1/comments/:id/report` (with `keepalive`). The Undo window
+survives any re-render (a sort change, a reload, or an in-place edit or
+delete), so the row keeps its Undo until the timer ends. On touch screens
 (`pointer: coarse`) the comment action buttons are 44 px tall.
 
 ### Removed comments and their replies (since v2.37.0)
@@ -838,6 +851,25 @@ A composer sends one POST per submit. While a post is in flight the
 textarea is read-only and the toolbar and the reply/edit Cancel button
 are disabled, so nothing typed mid-post is lost and a repeat submit is
 dropped.
+
+### Keyboard focus after an action
+
+After each action the widget moves focus to a live control, so a keyboard
+or screen-reader user does not land on the page body:
+
+- **Cancel or `Escape` in a reply box** returns focus to that comment's
+  Reply button. **Cancel or `Escape` in an edit box** returns focus to its
+  Edit button.
+- **Opening Reply** focuses the reply textarea. Only the reader's own click
+  does this. A form the widget reopens after a re-render does not take focus.
+- **Load more** moves focus to the first newly loaded comment, but only when
+  the button had focus. A permalink seek keeps its own target.
+- **A sort change** returns focus to the sort select.
+- **Sign in or sign out** moves focus to the first control in the sign-in
+  block, or to the composer when that block has none.
+- **Report** moves focus to Undo. **Undo** returns focus to Report. When the
+  report is sent while focus is on that row, focus moves to the "Reported"
+  text.
 
 ### Composer sizing (since v2.0.3)
 
