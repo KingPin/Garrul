@@ -402,8 +402,13 @@ const undoMark = (label: string, id: string, restore: HTMLElement, pending: Pend
 	undoBtn.setAttribute("aria-describedby", id);
 	done.append(said, undoBtn);
 	undoBtn.addEventListener("click", () => {
+		// The request already went out (a rebuild kept this mark past its window):
+		// Undo undoes nothing, so retire it instead of restoring the button.
+		if (pending.settled) {
+			if (done.isConnected) retireUndo(done, label);
+			return;
+		}
 		pending.cancel();
-		// A no-op once the request went out: Undo is retired by then.
 		if (done.isConnected) {
 			done.replaceWith(restore);
 			restore.focus();
@@ -411,6 +416,11 @@ const undoMark = (label: string, id: string, restore: HTMLElement, pending: Pend
 	});
 	return done;
 };
+
+// Per-row settle hooks, by subscription id. Module-level because a reload
+// rebuilds the bell during a row's Undo window: the old bell's DELETE must reach
+// the row the new bell drew.
+const unsubRowUi = new Map<string, { sent(): void; fail(msg: string): void }>();
 
 const markHasFocus = (mark: HTMLElement): boolean => {
 	const active = (mark.getRootNode() as Document | ShadowRoot).activeElement;
@@ -1843,6 +1853,8 @@ const buildSubscribeBell = (
 				return false;
 			}
 			say(s("w.unsubscribe.done"));
+			// An open row for this thread must not send the same DELETE again.
+			pendingFor(`unsub:${id}`)?.cancel();
 			// The bell tracks this thread; a row cancelled from the panel may be it.
 			if (subId === id) {
 				subId = null;
@@ -1867,11 +1879,10 @@ const buildSubscribeBell = (
 	// second row maturing during a slow DELETE. In flight is tracked per id, and
 	// the settle hooks are looked up by id so a rebuilt panel gets the result.
 	const unsubbing = new Set<string>();
-	const rowUi = new Map<string, { sent(): void; fail(msg: string): void }>();
 	const sendUnsubscribe = async (id: string): Promise<void> => {
 		if (unsubbing.has(id)) return;
 		unsubbing.add(id);
-		rowUi.get(id)?.sent();
+		unsubRowUi.get(id)?.sent();
 		let failure: "w.subscribe.ratelimit" | "w.unsubscribe.failed" | null = null;
 		try {
 			const res = await apiFetch(apiBase, `/api/v1/subscribe/mine/${encodeURIComponent(id)}`, {
@@ -1885,7 +1896,7 @@ const buildSubscribeBell = (
 		}
 		unsubbing.delete(id);
 		if (failure) {
-			rowUi.get(id)?.fail(s(failure));
+			unsubRowUi.get(id)?.fail(s(failure));
 			return;
 		}
 		// The bell tracks this thread; a row unsubscribed from the panel may be it.
@@ -1916,7 +1927,7 @@ const buildSubscribeBell = (
 			let mark: HTMLElement | null = null;
 			const showUnsubscribed = (p: Pending | null): HTMLElement =>
 				(mark = undoMark(s("w.unsubscribed"), `gr-unsub-${row.id}`, drop, p));
-			rowUi.set(row.id, {
+			unsubRowUi.set(row.id, {
 				sent: () => {
 					if (mark?.isConnected) retireUndo(mark, s("w.unsubscribed"));
 				},
@@ -4104,7 +4115,11 @@ const writePageStatus = (
 	message: string,
 	kind: "error" | "notice" = "error",
 ): void => {
-	const box = permalinkStatus(root);
+	// A failed anti-spam gate owns the composer's box with a sticky message that
+	// explains the disabled Submit: page messages go to their own box then.
+	const box = topComposerTurnstile?.gate.failed
+		? root.querySelector<HTMLElement>(".gr-page-status")
+		: permalinkStatus(root);
 	if (box) {
 		showStatus(box, message, kind);
 		return;
@@ -4841,7 +4856,7 @@ const loadOnce = async (
 		more.type = "button";
 		const moreStatus = lazyActionStatus(() => wrap, "w.load_more_failed");
 		let cursor: string | null = data.next_cursor;
-		let inflight: Promise<boolean> | null = null;
+		let pageFetch: Promise<boolean> | null = null;
 		const fetchNext = async (): Promise<boolean> => {
 			if (!cursor) return false;
 			// Read before disabling: a disabled button gives up focus.
@@ -4872,8 +4887,8 @@ const loadOnce = async (
 		// Load more is in flight awaits that page and then looks, instead of
 		// reading the busy button as "no more pages" and giving up unseen.
 		const loadNext = (): Promise<boolean> =>
-			(inflight ??= fetchNext().finally(() => {
-				inflight = null;
+			(pageFetch ??= fetchNext().finally(() => {
+				pageFetch = null;
 			}));
 		more.addEventListener("click", () => void loadNext());
 		if (loadSt) loadSt.loadNext = loadNext;
@@ -5028,7 +5043,8 @@ const loadOnce = async (
 						if (submitBtn && !busyKeys.has(draftKey(apiOrigin, slug, null)))
 							submitBtn.disabled = false;
 						const errEl = form.querySelector(".gr-error") as HTMLElement | null;
-						if (errEl) clearStatus(errEl);
+						// Only the failure text this gate wrote, not an unrelated message.
+						if (errEl?.textContent === s("w.ts.failed")) clearStatus(errEl);
 						return true;
 					},
 				});
