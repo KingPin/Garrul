@@ -166,6 +166,7 @@ export const ja = {
 	"w.manage.failed": "登録中のスレッドを読み込めませんでした。",
 	"w.load_more": "以前のコメントを読み込む",
 	"w.load_more_failed": "追加で読み込めませんでした：{detail}",
+	"w.retry": "再試行",
 
 	// ── Identity ────────────────────────────────────────────────────────────
 	"w.posting_as": "{name}として投稿します",

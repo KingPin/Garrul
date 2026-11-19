@@ -153,6 +153,7 @@ export const nb = {
 	"w.manage.failed": "Kunne ikke laste abonnementene dine.",
 	"w.load_more": "Last eldre kommentarer",
 	"w.load_more_failed": "Kunne ikke laste mer: {detail}",
+	"w.retry": "Prøv igjen",
 
 	// ── Identity ────────────────────────────────────────────────────────────
 	"w.posting_as": "Publiserer som {name}",

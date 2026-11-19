@@ -178,6 +178,7 @@ export const pl = {
 	"w.manage.failed": "Nie udało się wczytać subskrypcji.",
 	"w.load_more": "Wczytaj starsze komentarze",
 	"w.load_more_failed": "Nie udało się wczytać więcej: {detail}",
+	"w.retry": "Spróbuj ponownie",
 
 	// ── Identity ────────────────────────────────────────────────────────────
 	"w.posting_as": "Publikowanie jako {name}",

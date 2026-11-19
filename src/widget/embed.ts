@@ -344,7 +344,10 @@ type ActionStatus = {
  * One error box for a row or bar. It is made on the first failure, appended to
  * `host()`, and reused after that, so a row that never fails has no box at all.
  */
-const lazyActionStatus = (host: () => HTMLElement): ActionStatus => {
+const lazyActionStatus = (
+	host: () => HTMLElement,
+	key?: "w.load_more_failed",
+): ActionStatus => {
 	let box: HTMLElement | null = null;
 	let text = "";
 	// The first message is written a tick after the box joins the tree: a live
@@ -352,7 +355,8 @@ const lazyActionStatus = (host: () => HTMLElement): ActionStatus => {
 	let flush: ReturnType<typeof setTimeout> | null = null;
 	return {
 		fail: (err, body) => {
-			text = actionErrorMessage(err, body, s);
+			const detail = actionErrorMessage(err, body, s);
+			text = key ? s(key, { detail }) : detail;
 			if (box) {
 				if (flush === null) showStatus(box, text);
 				return;
@@ -3546,12 +3550,33 @@ const releaseSpace = (host: HTMLElement) => {
 	reservedHeight = false;
 };
 
-const renderError = (root: ShadowRoot, err: unknown) => {
+// One pending `online` retry per root, so repeated failures never stack them.
+const onlineRetry = new WeakMap<ShadowRoot, () => void>();
+
+const renderError = (root: ShadowRoot, err: unknown, retry: () => void) => {
+	mountCtx.delete(root);
 	root.replaceChildren();
 	const style = el("style");
 	style.textContent = STYLE_CSS;
 	const wrap = el("div", "gr-root");
 	wrap.appendChild(el("div", "gr-error", loadErrorMessage(err, s)));
+	const again = el("button", "gr-loadmore", s("w.retry"));
+	again.type = "button";
+	// Once per click or per reconnect, then it is spent: a failed retry renders a
+	// fresh error and arms a fresh one, so an edge that keeps refusing is asked
+	// once per reader action, never in a loop.
+	const prev = onlineRetry.get(root);
+	if (prev) window.removeEventListener("online", prev);
+	const go = (): void => {
+		window.removeEventListener("online", go);
+		onlineRetry.delete(root);
+		// A reconnect after something else already rendered the thread is a no-op.
+		if (!mountCtx.has(root)) retry();
+	};
+	onlineRetry.set(root, go);
+	window.addEventListener("online", go);
+	again.addEventListener("click", go);
+	wrap.appendChild(again);
 	root.append(style, wrap);
 };
 
@@ -4180,6 +4205,21 @@ const loadOnce = async (
 	let autoCollapseDepth = 3;
 	let communityMinVotes = 5;
 	let communityCollapseRatio = 0;
+	// A reload that fails keeps the tree the reader is looking at and says so in
+	// its existing status box; only a mount with nothing on screen is replaced.
+	const loadFailed = (err: unknown): void => {
+		const box = mountCtx.has(root)
+			? root.querySelector<HTMLElement>(".gr-error")
+			: null;
+		if (box) {
+			showStatus(box, loadErrorMessage(err, s));
+			return;
+		}
+		// renderError replaces the shadow tree, so the composer this handle
+		// belongs to is about to vanish.
+		destroyTopComposerTurnstile();
+		renderError(root, err, () => void load(root, slug, apiBase, host));
+	};
 	// The mount request. `null` means this Worker cannot answer it, and every
 	// branch below then does exactly what it did before the endpoint existed. A
 	// throw means the edge answered and refused, where the fallback would only
@@ -4196,10 +4236,7 @@ const loadOnce = async (
 			reactionsOnly ? "engagement" : null,
 		);
 	} catch (err) {
-		// renderError replaces the shadow tree, so the composer this handle
-		// belongs to is about to vanish.
-		destroyTopComposerTurnstile();
-		renderError(root, err as Error);
+		loadFailed(err);
 		return;
 	}
 	try {
@@ -4373,10 +4410,7 @@ const loadOnce = async (
 			fetchPage(apiBase, slug, null, sort).catch((err: unknown) => err),
 		]);
 		if (dataResult instanceof Error) {
-			// renderError replaces the shadow tree, so the composer this handle
-			// belongs to is about to vanish.
-			destroyTopComposerTurnstile();
-			renderError(root, dataResult);
+			loadFailed(dataResult);
 			return;
 		}
 		me = meResult;
@@ -4578,6 +4612,7 @@ const loadOnce = async (
 	if (data.next_cursor) {
 		const more = el("button", "gr-loadmore", s("w.load_more"));
 		more.type = "button";
+		const moreStatus = lazyActionStatus(() => wrap, "w.load_more_failed");
 		let cursor: string | null = data.next_cursor;
 		let inflight: Promise<boolean> | null = null;
 		const fetchNext = async (): Promise<boolean> => {
@@ -4591,6 +4626,7 @@ const loadOnce = async (
 				const firstNew = page.threads[0];
 				// Only the reader's own Load more moves focus; a seek keeps its target.
 				if (hadFocus && firstNew) focusPostedComment(root, firstNew.id);
+				moreStatus.clear();
 				cursor = page.next_cursor;
 				if (cursor) {
 					more.disabled = false;
@@ -4601,12 +4637,7 @@ const loadOnce = async (
 				return true;
 			} catch (err) {
 				more.disabled = false;
-				const errBox = el(
-					"div",
-					"gr-error",
-					s("w.load_more_failed", { detail: actionErrorMessage(err, null, s) }),
-				);
-				more.insertAdjacentElement("afterend", errBox);
+				moreStatus.fail(err, null);
 				return false;
 			}
 		};

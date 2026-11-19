@@ -169,6 +169,7 @@ export const nl = {
 	"w.manage.failed": "De abonnementen konden niet worden geladen.",
 	"w.load_more": "Oudere reacties laden",
 	"w.load_more_failed": "Er kon niet meer worden geladen: {detail}",
+	"w.retry": "Opnieuw proberen",
 
 	// ── Identity ────────────────────────────────────────────────────────────
 	"w.posting_as": "Plaatsen als {name}",

@@ -192,6 +192,7 @@ export const pt = {
 	"w.manage.failed": "Não foi possível carregar as inscrições.",
 	"w.load_more": "Carregar comentários anteriores",
 	"w.load_more_failed": "Não foi possível carregar mais: {detail}",
+	"w.retry": "Tentar novamente",
 
 	// ── Identity ────────────────────────────────────────────────────────────
 	"w.posting_as": "Publicando como {name}",

@@ -128,6 +128,7 @@ export const zhHant = {
 	"w.manage.failed": "無法載入你的訂閱。",
 	"w.load_more": "載入較早的留言",
 	"w.load_more_failed": "無法載入更多留言：{detail}",
+	"w.retry": "再試一次",
 
 	// ── Identity ────────────────────────────────────────────────────────────
 	"w.posting_as": "以 {name} 的身分發佈",

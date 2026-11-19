@@ -205,6 +205,7 @@ export const EN = {
 	"w.manage.failed": "Could not load your subscriptions.",
 	"w.load_more": "Load older comments",
 	"w.load_more_failed": "Could not load more: {detail}",
+	"w.retry": "Try again",
 
 	// ── Identity ────────────────────────────────────────────────────────────
 	// The provider names themselves (GitHub, Google, X…) are proper nouns and

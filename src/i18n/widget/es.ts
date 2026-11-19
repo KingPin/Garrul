@@ -130,6 +130,7 @@ export const es = {
 	"w.subscribe.ratelimit": "Demasiadas solicitudes. Inténtalo más tarde.",
 	"w.load_more": "Cargar comentarios anteriores",
 	"w.load_more_failed": "No se pudieron cargar más: {detail}",
+	"w.retry": "Intentar de nuevo",
 
 	// ── Identity ────────────────────────────────────────────────────────────
 	"w.posting_as": "Publicas como {name}",

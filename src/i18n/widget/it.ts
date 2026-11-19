@@ -169,6 +169,7 @@ export const it = {
 	"w.manage.failed": "Impossibile caricare le tue iscrizioni.",
 	"w.load_more": "Carica i commenti precedenti",
 	"w.load_more_failed": "Impossibile caricarne altri: {detail}",
+	"w.retry": "Riprova",
 
 	// ── Identity ────────────────────────────────────────────────────────────
 	"w.posting_as": "Pubblichi come {name}",
