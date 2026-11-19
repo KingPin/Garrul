@@ -2700,7 +2700,11 @@ const buildComment = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	// hash already in the URL, which fires no hashchange, so it reveals here.
 	const permalink = el("a", "gr-permalink");
 	permalink.href = ctx.permalinkFor(n.id);
-	permalink.addEventListener("click", () => {
+	permalink.addEventListener("click", (e) => {
+		// A modified click opens a new tab or window; this page stays put.
+		if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) {
+			return;
+		}
 		const r = permalink.getRootNode();
 		if (permalink.hash === window.location.hash && r instanceof ShadowRoot) {
 			revealHashTarget(r, true);
@@ -3727,6 +3731,9 @@ const revealHashTarget = (root: ShadowRoot, again = false): boolean => {
 	// Scrolling alone only serves a sighted mouse user; move the caret too so
 	// keyboard and screen-reader users land on the comment (WCAG 2.4.3).
 	focusPostedComment(root, id);
+	// The link resolved: a "not available" left by an earlier miss is stale.
+	const box = permalinkStatus(root);
+	if (box?.textContent === s("w.permalink_missing")) clearStatus(box);
 	// Outline it for 2 s so the eye finds it once the scroll stops.
 	const article = target.querySelector<HTMLElement>(".gr-comment");
 	if (article) {
@@ -3745,6 +3752,14 @@ const revealHashTarget = (root: ShadowRoot, again = false): boolean => {
 };
 
 const targetTimers = new WeakMap<HTMLElement, ReturnType<typeof setTimeout>>();
+
+/**
+ * The composer's status box, the one live region a permalink notice may use.
+ * Not a bare `.gr-error`: Load more's failure box and inline form boxes share
+ * that class. A closed thread has no composer, so the notice is skipped there.
+ */
+const permalinkStatus = (root: ShadowRoot): HTMLElement | null =>
+	root.querySelector<HTMLElement>(".gr-form > .gr-error");
 
 /**
  * The thread node for comment `id`, or null. A target in a capped reply list
@@ -3801,15 +3816,21 @@ const seekHashTarget = async (root: ShadowRoot): Promise<void> => {
 		() => loadState.get(root)?.loadNext?.() ?? null,
 		MAX_SEEK_PAGES,
 	);
-	if (st) st.soughtHash = anchorId;
+	// Only while the hash is still this one: a reset (#top) that landed during
+	// the await must not be undone by this late write.
+	if (st && window.location.hash === `#${anchorId}`) st.soughtHash = anchorId;
 	if (found) return;
 	// The reader left the last revealed comment for one that is not here, so
 	// coming back to it is a fresh visit (see hashAction's "none").
 	if (st) st.revealedHash = null;
-	// A macrotask, for the same live-region reason as loadOnce's announce.
+	// A macrotask, for the same live-region reason as loadOnce's announce;
+	// skipped if the reader has already moved on to another hash.
+	const missed = window.location.hash;
 	setTimeout(() => {
-		const box = root.querySelector(".gr-error") as HTMLElement | null;
-		if (box) showStatus(box, s("w.permalink_missing"), "notice");
+		const box = permalinkStatus(root);
+		if (box && window.location.hash === missed) {
+			showStatus(box, s("w.permalink_missing"), "notice");
+		}
 	}, 0);
 };
 
