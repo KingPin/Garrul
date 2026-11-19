@@ -206,6 +206,14 @@ const apiJson = (base: string, path: string, body: unknown, method = "POST"): Pr
 		body: JSON.stringify(body),
 	});
 
+/**
+ * A 401, or the missing-name 400 for a widget that believes it is signed in:
+ * the session ended elsewhere. Any other 400 is the reader's to fix and keeps
+ * its own message.
+ */
+const sessionLost = (res: Response, json: { code?: string } | null, signedIn: boolean): boolean =>
+	res.status === 401 || (signedIn && res.status === 400 && json?.code === "name_required");
+
 // Mark a vote button with its state: set/unset data-mine to highlight it visually,
 // and set aria-pressed so screen readers know whether the user's vote is cast.
 const markVote = (btn: HTMLElement, on: boolean): void => {
@@ -2380,13 +2388,17 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 	// re-enable and focus once it arrives.
 	ta.disabled = true;
 	save.disabled = true;
+	let loaded = false;
 	fetch(
 		`${ctx.apiBase}/api/v1/comments/${encodeURIComponent(n.id)}/source`,
 		{ credentials: "include" },
 	)
 		.then((res) => (res.ok ? res.json() : null))
 		.then((data: { body_md?: string } | null) => {
-			if (data && typeof data.body_md === "string") ta.value = data.body_md;
+			if (data && typeof data.body_md === "string") {
+				ta.value = data.body_md;
+				loaded = true;
+			}
 		})
 		.catch(() => {})
 		.finally(() => {
@@ -2399,6 +2411,12 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 			// whole surface exists to prevent, so say so instead.
 			if (isExpired()) {
 				expire();
+				return;
+			}
+			// A blank, saveable editor would overwrite the comment with nothing.
+			if (!loaded) {
+				ta.placeholder = "";
+				showStatus(errBox, s("w.edit_load_failed"));
 				return;
 			}
 			ta.disabled = false;
@@ -2465,6 +2483,12 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 			// verdict — used to re-enable Save and say nothing, which reads as the
 			// button not working. The server's message is already localized.
 			const json = (await res.json().catch(() => null)) as { error?: string } | null;
+			if (sessionLost(res, null, true)) {
+				handOff();
+				ctx.revealAfterReload(null, s("w.session_expired"));
+				ctx.reload();
+				return;
+			}
 			showStatus(errBox, actionErrorMessage(null, json, s));
 			save.disabled = false;
 		} catch (err) {
@@ -2700,10 +2724,17 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 			});
 			const json = (await res.json().catch(() => null)) as {
 				error?: string;
+				code?: string;
 				comment?: { id?: string; status?: string };
 			} | null;
 			if (!res.ok) {
 				if (tsGate?.failed) return;
+				if (sessionLost(res, json, ctx.me != null)) {
+					handOff();
+					ctx.revealAfterReload(null, s("w.session_expired"));
+					ctx.reload();
+					return;
+				}
 				showStatus(errBox, actionErrorMessage(null, json, s));
 				submit.disabled = false;
 				// Single-use once siteverify has seen it: re-challenge, and make the
@@ -4758,8 +4789,7 @@ const loadOnce = async (
 				// can land in the time this task waited to run, and writing
 				// into whatever `statusEl` pointed at would be writing into a
 				// node root.replaceChildren() may have already destroyed.
-				const box = root.querySelector(".gr-error") as HTMLElement | null;
-				if (box) showStatus(box, announce, "notice");
+				writePageStatus(root, announce, "notice");
 			}, 0);
 		}
 	} else {
@@ -4982,11 +5012,18 @@ const submit = async (
 		});
 		const json = (await res.json().catch(() => null)) as {
 			error?: string;
+			code?: string;
 			comment?: { id?: string; status?: string };
 		} | null;
 		if (!res.ok) {
 			// A Turnstile error can arrive while this request is in flight.
 			if (ts?.gate.failed) return;
+			if (sessionLost(res, json, mountCtx.get(root)?.me != null)) {
+				handOff();
+				revealAfterReload(root, null, s("w.session_expired"));
+				await load(root, slug, apiBase, host);
+				return;
+			}
 			if (errEl) showStatus(errEl, actionErrorMessage(null, json, s));
 			if (submitBtn) submitBtn.disabled = false;
 			// The token is single-use once siteverify has seen it, so re-challenge

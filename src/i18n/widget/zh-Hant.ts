@@ -70,6 +70,8 @@ export const zhHant = {
 	"w.edit_left": "剩餘 {time}",
 	"w.edit_last_minute": "剩不到一分鐘",
 	"w.edit_expired": "留言的編輯期限已過。",
+	"w.edit_load_failed": "無法載入這則留言以供編輯。",
+	"w.session_expired": "你已登出。請重新登入，或以訪客身分發佈。",
 	"w.delete": "刪除",
 	"w.delete_confirm": "確定要刪除這則留言嗎？",
 	"w.report": "檢舉",

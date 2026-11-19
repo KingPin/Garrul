@@ -106,6 +106,8 @@ export const ja = {
 	"w.edit_left": "残り{time}",
 	"w.edit_last_minute": "残り1分未満",
 	"w.edit_expired": "編集できる時間が終了しました。",
+	"w.edit_load_failed": "このコメントを編集用に読み込めませんでした。",
+	"w.session_expired": "ログアウトされました。もう一度ログインするか、ゲストとして投稿してください。",
 	"w.delete": "削除",
 	"w.delete_confirm": "このコメントを削除しますか？",
 	"w.report": "報告",

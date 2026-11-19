@@ -101,6 +101,8 @@ export const it = {
 	"w.edit_left": "ancora {time}",
 	"w.edit_last_minute": "meno di un minuto rimasto",
 	"w.edit_expired": "Il tempo per modificare è scaduto.",
+	"w.edit_load_failed": "Impossibile caricare questo commento per la modifica.",
+	"w.session_expired": "Sei stato disconnesso. Accedi di nuovo o pubblica come ospite.",
 	"w.delete": "Elimina",
 	"w.delete_confirm": "Eliminare questo commento?",
 	"w.report": "Segnala",

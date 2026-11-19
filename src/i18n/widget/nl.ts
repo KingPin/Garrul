@@ -99,6 +99,8 @@ export const nl = {
 	"w.edit_left": "nog {time}",
 	"w.edit_last_minute": "minder dan een minuut over",
 	"w.edit_expired": "De bewerktermijn is verstreken.",
+	"w.edit_load_failed": "Deze reactie kon niet worden geladen om te bewerken.",
+	"w.session_expired": "Je bent uitgelogd. Log opnieuw in of plaats als gast.",
 	"w.delete": "Verwijderen",
 	"w.delete_confirm": "Deze reactie verwijderen?",
 	"w.report": "Melden",

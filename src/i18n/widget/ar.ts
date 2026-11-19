@@ -78,6 +78,8 @@ export const ar = {
 	"w.edit_left": "متبقٍ {time}",
 	"w.edit_last_minute": "أقل من دقيقة متبقية",
 	"w.edit_expired": "انتهت مهلة تعديل تعليقك.",
+	"w.edit_load_failed": "تعذّر تحميل هذا التعليق للتعديل.",
+	"w.session_expired": "انتهت جلستك. سجّل الدخول مرة أخرى أو انشر كضيف.",
 	"w.delete": "حذف",
 	"w.delete_confirm": "هل تريد حذف هذا التعليق؟",
 	"w.report": "إبلاغ",

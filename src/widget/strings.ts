@@ -123,6 +123,8 @@ export const EN = {
 	// still typing. Before this existed, Save stayed live and the PATCH it fired
 	// came back 403 with nothing on screen to say why.
 	"w.edit_expired": "Your edit window has closed.",
+	"w.edit_load_failed": "Could not load this comment for editing.",
+	"w.session_expired": "You were signed out. Sign in again or post as a guest.",
 	"w.delete": "Delete",
 	"w.delete_confirm": "Delete this comment?",
 	"w.report": "Report",

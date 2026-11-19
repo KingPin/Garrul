@@ -96,6 +96,8 @@ export const nb = {
 	"w.edit_left": "{time} igjen",
 	"w.edit_last_minute": "mindre enn ett minutt igjen",
 	"w.edit_expired": "Redigeringsvinduet er lukket.",
+	"w.edit_load_failed": "Kunne ikke laste denne kommentaren for redigering.",
+	"w.session_expired": "Du ble logget ut. Logg inn igjen eller publiser som gjest.",
 	"w.delete": "Slett",
 	"w.delete_confirm": "Slette denne kommentaren?",
 	"w.report": "Rapporter",

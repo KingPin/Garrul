@@ -79,6 +79,8 @@ export const es = {
 	"w.edit_left": { one: "queda {time}", other: "quedan {time}" },
 	"w.edit_last_minute": "queda menos de un minuto",
 	"w.edit_expired": "Tu plazo de edición ha terminado.",
+	"w.edit_load_failed": "No se pudo cargar este comentario para editarlo.",
+	"w.session_expired": "Se cerró tu sesión. Vuelve a iniciar sesión o publica como invitado.",
 	"w.delete": "Eliminar",
 	"w.delete_confirm": "¿Eliminar este comentario?",
 	"w.report": "Denunciar",

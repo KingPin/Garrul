@@ -112,6 +112,8 @@ export const pl = {
 	"w.edit_left": "pozostało {time}",
 	"w.edit_last_minute": "pozostało mniej niż minuta",
 	"w.edit_expired": "Czas na edycję minął.",
+	"w.edit_load_failed": "Nie można wczytać tego komentarza do edycji.",
+	"w.session_expired": "Zostałeś wylogowany. Zaloguj się ponownie lub opublikuj jako gość.",
 	"w.delete": "Usuń",
 	"w.delete_confirm": "Usunąć ten komentarz?",
 	"w.report": "Zgłoś",

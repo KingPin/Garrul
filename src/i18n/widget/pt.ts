@@ -119,6 +119,8 @@ export const pt = {
 	"w.edit_left": "mais {time}",
 	"w.edit_last_minute": "resta menos de um minuto",
 	"w.edit_expired": "O prazo de edição terminou.",
+	"w.edit_load_failed": "Não foi possível carregar este comentário para edição.",
+	"w.session_expired": "Você foi desconectado. Entre novamente ou publique como visitante.",
 	// "Apagar" over Brazilian "Excluir": idiomatic in both variants, where
 	// "Excluir" reads as "exclude" in European Portuguese.
 	"w.delete": "Apagar",

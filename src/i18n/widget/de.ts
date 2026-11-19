@@ -82,6 +82,8 @@ export const de = {
 	"w.edit_left": "noch {time}",
 	"w.edit_last_minute": "weniger als eine Minute übrig",
 	"w.edit_expired": "Der Bearbeitungszeitraum ist abgelaufen.",
+	"w.edit_load_failed": "Dieser Kommentar konnte nicht zum Bearbeiten geladen werden.",
+	"w.session_expired": "Die Sitzung wurde beendet. Erneut anmelden oder als Gast posten.",
 	"w.delete": "Löschen",
 	"w.delete_confirm": "Diesen Kommentar löschen?",
 	"w.report": "Melden",
