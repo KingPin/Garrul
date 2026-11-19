@@ -106,4 +106,64 @@ describe("widget stylesheet minification", () => {
 		expect(minified).not.toContain("`");
 		expect(minified).not.toContain("${");
 	});
+
+	it("the coarse-pointer block covers every listed selector", () => {
+		// Bodies of every `@media(pointer:coarse){...}` in the minified sheet.
+		const bodies: string[] = [];
+		for (let at = minified.indexOf("@media(pointer:coarse){"); at >= 0; ) {
+			const start = at + "@media(pointer:coarse){".length;
+			let depth = 1;
+			let i = start;
+			while (depth > 0 && i < minified.length) {
+				depth += minified[i] === "{" ? 1 : minified[i] === "}" ? -1 : 0;
+				i++;
+			}
+			bodies.push(minified.slice(start, i - 1));
+			at = minified.indexOf("@media(pointer:coarse){", i);
+		}
+		expect(bodies.length).toBeGreaterThan(0);
+		const rules = [...bodies.join("").matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({
+			sel: m[1]!.split(",").map((x) => x.trim()),
+			decl: m[2]!,
+		}));
+		const sels = (decl: string) =>
+			new Set(rules.filter((r) => r.decl.includes(decl)).flatMap((r) => r.sel));
+		const tall = sels("min-height:44px");
+		// Every control that is a <button> is covered by the bare `button` rule.
+		// button[class] outranks the single-class 24px floor rules.
+		expect(tall.has("button")).toBe(true);
+		expect(tall.has("button[class]")).toBe(true);
+		for (const s of ["select", ".gr-form .gr-notify"]) expect(tall.has(s)).toBe(true);
+		const wide = sels("min-width:44px");
+		expect(wide.has("button[class]")).toBe(true);
+		expect(sels("gap:8px").has(".gr-votes")).toBe(true);
+		expect(sels("font-size:max(16px,1em)").has("textarea")).toBe(true);
+		// Every control the brief lists is still emitted as a button-class rule
+		// in the base sheet, so the bare `button` rule really does reach it.
+		for (const c of [
+			"gr-reaction",
+			"gr-collapse",
+			"gr-showmore",
+			"gr-sort",
+			"gr-toolbar-btn",
+			"gr-tab",
+			"gr-submit",
+			"gr-loadmore",
+			"gr-subscribe-btn",
+		]) {
+			expect(minified).toContain(`.${c}`);
+		}
+	});
+
+	it("the 24px floor covers the subscribe, signed-in and low-score controls", () => {
+		const rule = source.match(/\.gr-actions button, \.gr-reaction[^{]*\{[^}]*min-height: 24px/s)?.[0] ?? "";
+		for (const c of [".gr-subscribe-manage", ".gr-signed button", ".gr-low-score", ".gr-subscribe-drop"]) {
+			expect(rule).toContain(c);
+		}
+	});
+
+	it("mirrors the collapse caret under RTL and underlines the permalink on touch", () => {
+		expect(minified).toContain(".gr-collapse:dir(rtl) .gr-caret");
+		expect(minified).toMatch(/@media\(hover:none\)\{\.gr-permalink\{text-decoration:underline/);
+	});
 });

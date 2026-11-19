@@ -2958,7 +2958,7 @@ const buildCollapseToggle = (
 		repliesEl.style.display = collapsed ? "none" : "";
 		// The disclosure triangle is a glyph, not a word, so it stays outside the
 		// string — the count and its noun do not.
-		btn.textContent = `${collapsed ? "▸" : "▾"} ${s("w.replies", { n: total })}`;
+		btn.replaceChildren(el("span", "gr-caret", collapsed ? "▸" : "▾"), ` ${s("w.replies", { n: total })}`);
 		btn.setAttribute("aria-expanded", String(!collapsed));
 	};
 	btn.addEventListener("click", () => {
