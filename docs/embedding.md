@@ -78,6 +78,29 @@ The iframe page posts content height to the parent via
 [`../examples/iframe/index.html`](../examples/iframe/index.html) for a
 ~10-line auto-resize listener.
 
+Comment permalinks (`#garrul-comment-<id>`) need two more lines of host
+script, both in that example. The iframe cannot read the host page's
+fragment, so copy it onto the iframe `src` on load and again on
+`hashchange` (a fragment-only change does not reload the frame):
+
+```js
+var PREFIX = "#garrul-comment-";
+if (location.hash.indexOf(PREFIX) === 0) src.hash = location.hash;
+f.src = src.toString();
+window.addEventListener("hashchange", function () {
+  if (location.hash.indexOf(PREFIX) !== 0) return;
+  var next = new URL(f.src);
+  next.hash = location.hash;
+  f.src = next.toString();
+});
+```
+
+The frame scrolls nothing itself, so it posts
+`{type:"garrul:scroll", top}` (to the `parent_origin` only) and the same
+listener scrolls the host page to it. Timestamp links open in the top
+window (the frame sets `<base target="_top">`); comment-body links keep
+`target="_blank"`.
+
 ## Reactions bar only
 
 For a page that wants a quick reaction row but no comment thread, set

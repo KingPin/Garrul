@@ -4,7 +4,7 @@
  * comment page, so what reaches the header is pinned here.
  */
 import { describe, expect, it } from "vitest";
-import { frameShellCsp, frameShellHeaders, readFrameEnv } from "../scripts/frame-shell";
+import { FRAME_SHELL_HTML, frameShellCsp, frameShellHeaders, readFrameEnv } from "../scripts/frame-shell";
 import worker from "../src/index";
 
 const toml = (vars: string) => `name = "garrul"\n[assets]\ndirectory = "./public"\n[vars]\n${vars}\n[[d1_databases]]\nbinding = "DB"\n`;
@@ -91,5 +91,11 @@ describe("frameShellCsp", () => {
 		}
 		// Carries the baked allowlist, so it expires with the page.
 		expect(blocks.get("/embed/frame.js")).toContain("Cache-Control: public, max-age=300");
+	});
+});
+
+describe("FRAME_SHELL_HTML", () => {
+	it("targets links at the top window", () => {
+		expect(FRAME_SHELL_HTML).toContain('<base target="_top">');
 	});
 });

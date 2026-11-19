@@ -54,6 +54,23 @@ describe("GET /embed/:slug", () => {
 		expect(body).toContain("/embed.js");
 	});
 
+	// Comment-body links keep their own target="_blank"; this only decides where
+	// the widget's own links (the timestamp permalink) navigate: the top window.
+	it("targets links at the top window", async () => {
+		const body = await (await fetchPage("/embed/hello")).text();
+		expect(body).toContain('<base target="_top">');
+	});
+
+	it("reports the permalink scroll to the parent", async () => {
+		const body = await (
+			await fetchPage("/embed/hello?parent_origin=https://blog.example.com", {
+				ALLOWED_ORIGINS: "https://blog.example.com",
+			})
+		).text();
+		expect(body).toContain("garrul:scroll");
+		expect(body).not.toContain('"*"');
+	});
+
 	it("rejects an over-long slug", async () => {
 		const res = await fetchPage(`/embed/${"x".repeat(201)}`);
 		expect(res.status).toBe(400);
@@ -297,6 +314,11 @@ describe("GET /embed/:slug", () => {
 });
 
 describe("GET /embed/?slug= (the static shell's URL, served by the Worker as fallback)", () => {
+	it("targets links at the top window", async () => {
+		const body = await (await fetchPage("/embed/?slug=hello")).text();
+		expect(body).toContain('<base target="_top">');
+	});
+
 	it("renders the same page as /embed/<slug>", async () => {
 		const q = "theme=dark&preset=soft&lang=de-AT&parent_origin=https%3A%2F%2Fblog.example.com";
 		const viaPath = await fetchPage(`/embed/my-post?${q}`);
