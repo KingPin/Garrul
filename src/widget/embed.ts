@@ -1011,10 +1011,10 @@ type TurnstileFrameListener = {
 	/** The challenge needs a human to act before a token can exist. */
 	onInteractive?: () => void;
 	/**
-	 * The network came back while the frame was not alive; it has been reloaded.
-	 * The caller undoes whatever it showed for the outage.
+	 * The network came back while the frame was not alive. Return true to reload
+	 * it (after undoing whatever was shown for the outage), false to leave it.
 	 */
-	onRecovered?: () => void;
+	onOnline?: () => boolean;
 };
 
 const mountTurnstileFrame = (
@@ -1121,8 +1121,7 @@ const mountTurnstileFrame = (
 		"online",
 		() => {
 			if (alive) return;
-			reload();
-			listener.onRecovered?.();
+			if (listener.onOnline?.() ?? true) reload();
 		},
 		{ signal: ac.signal },
 	);
@@ -2414,13 +2413,14 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 					onError: (code) => tsGate?.signal("error", code),
 					onReady: () => tsGate?.signal("ready"),
 					onInteractive: () => tsGate?.signal("interactive"),
-					onRecovered: () => {
-						const recovered = tsGate?.recover();
+					onOnline: () => {
+						// A permanent failure is a config verdict: no reload, no UI change.
+						if (tsGate?.failed && !tsGate.recover()) return false;
 						tsGate?.clear();
-						if (!recovered) return;
 						tsSlot.hidden = false;
-						submit.disabled = false;
+						if (!busyKeys.has(key)) submit.disabled = false;
 						clearStatus(errBox);
+						return true;
 					},
 				});
 			},
@@ -2580,7 +2580,9 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 			if (tsGate?.failed) return;
 			showStatus(errBox, String(err));
 			submit.disabled = false;
-			tsHandle?.reset(true);
+			// Only a network failure can have left the challenge re-armed into a dead
+			// connection; a server rejection keeps the cheap message reset.
+			tsHandle?.reset(err instanceof TypeError);
 			tsGate?.clear();
 		}
 	};
@@ -4444,14 +4446,16 @@ const loadOnce = async (
 					onError: (code) => gate.signal("error", code),
 					onReady: () => gate.signal("ready"),
 					onInteractive: () => gate.signal("interactive"),
-					onRecovered: () => {
-						const recovered = gate.recover();
+					onOnline: () => {
+						// A permanent failure is a config verdict: no reload, no UI change.
+						if (gate.failed && !gate.recover()) return false;
 						gate.clear();
-						if (!recovered) return;
 						tsBox.hidden = false;
-						if (submitBtn) submitBtn.disabled = false;
+						if (submitBtn && !busyKeys.has(draftKey(apiOrigin, slug, null)))
+							submitBtn.disabled = false;
 						const errEl = form.querySelector(".gr-error") as HTMLElement | null;
 						if (errEl) clearStatus(errEl);
+						return true;
 					},
 				});
 			},
@@ -4705,7 +4709,7 @@ const submit = async (
 		if (ts?.gate.failed) return;
 		if (errEl) showStatus(errEl, String(err));
 		if (submitBtn) submitBtn.disabled = false;
-		ts?.reset(true);
+		ts?.reset(err instanceof TypeError);
 		ts?.gate.clear();
 	}
 };

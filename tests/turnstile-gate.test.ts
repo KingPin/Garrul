@@ -525,6 +525,16 @@ describe("createTurnstileGate", () => {
 			});
 		});
 
+		it("a code-less error after a permanent one does not downgrade it", () => {
+			const { gate } = makeGate();
+			gate.arm();
+			gate.signal("error", PERMANENT_CODE);
+			gate.signal("error");
+			expect(gate.failedKind).toBe("permanent");
+			expect(gate.recover()).toBe(false);
+			expect(gate.failed).toBe(true);
+		});
+
 		it("recover() restores the retry budget", async () => {
 			const { gate, retries } = makeGate();
 			gate.arm();

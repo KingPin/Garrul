@@ -264,10 +264,12 @@ export const createTurnstileGate = (opts: {
 					failed = true;
 					// A code outside the retry list is Turnstile's own verdict. No
 					// code, or a retryable one past its budget, is an outage.
-					failedKind =
-						code && !RETRYABLE_TURNSTILE_ERROR.test(code)
-							? "permanent"
-							: "transient";
+					if (failedKind !== "permanent") {
+						failedKind =
+							code && !RETRYABLE_TURNSTILE_ERROR.test(code)
+								? "permanent"
+								: "transient";
+					}
 					settle({ ok: false, reason: "failed" });
 					if (!notifiedFailure) {
 						notifiedFailure = true;
