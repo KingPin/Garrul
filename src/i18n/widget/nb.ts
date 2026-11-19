@@ -163,6 +163,8 @@ export const nb = {
 	// and both buttons can be on screen together.
 	"w.sign_out": "Logg ut",
 	"w.signin_prompt": "Logg inn for å få et verifisert merke:",
+	"w.signin_popup_blocked": "Nettleseren blokkerte innloggingsvinduet. Tillat popup-vinduer for dette nettstedet, og prøv igjen.",
+	"w.signin_failed": "Innloggingen ble ikke fullført. Prøv igjen.",
 
 	// ── Load failures ───────────────────────────────────────────────────────
 	"w.err.transient":

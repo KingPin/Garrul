@@ -140,6 +140,8 @@ export const fr = {
 	"w.posting_as": "Vous publiez en tant que {name}",
 	"w.sign_out": "Se déconnecter",
 	"w.signin_prompt": "Connectez-vous pour obtenir un badge vérifié :",
+	"w.signin_popup_blocked": "Votre navigateur a bloqué la fenêtre de connexion. Autorisez les pop-ups pour ce site, puis réessayez.",
+	"w.signin_failed": "La connexion n'a pas abouti. Veuillez réessayer.",
 
 	// ── Load failures ───────────────────────────────────────────────────────
 	"w.err.transient":

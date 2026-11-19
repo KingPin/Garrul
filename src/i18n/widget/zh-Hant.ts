@@ -136,6 +136,8 @@ export const zhHant = {
 	"w.posting_as": "以 {name} 的身分發佈",
 	"w.sign_out": "登出",
 	"w.signin_prompt": "登入以取得已驗證標章：",
+	"w.signin_popup_blocked": "瀏覽器已封鎖登入視窗。請允許此網站顯示彈出視窗，然後再試一次。",
+	"w.signin_failed": "登入未完成，請再試一次。",
 
 	// ── Load failures ───────────────────────────────────────────────────────
 	"w.err.transient": "留言暫時無法使用，請幾分鐘後再回來查看。",

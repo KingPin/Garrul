@@ -138,6 +138,8 @@ export const es = {
 	"w.posting_as": "Publicas como {name}",
 	"w.sign_out": "Cerrar sesión",
 	"w.signin_prompt": "Inicia sesión para obtener una insignia de verificado:",
+	"w.signin_popup_blocked": "Tu navegador bloqueó la ventana de inicio de sesión. Permite las ventanas emergentes para este sitio y vuelve a intentarlo.",
+	"w.signin_failed": "El inicio de sesión no se completó. Inténtalo de nuevo.",
 
 	// ── Load failures ───────────────────────────────────────────────────────
 	"w.err.transient":

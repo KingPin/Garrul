@@ -186,6 +186,8 @@ export const pl = {
 	"w.posting_as": "Publikowanie jako {name}",
 	"w.sign_out": "Wyloguj",
 	"w.signin_prompt": "Zaloguj się, aby otrzymać odznakę weryfikacji:",
+	"w.signin_popup_blocked": "Przeglądarka zablokowała okno logowania. Zezwól na wyskakujące okna dla tej strony i spróbuj ponownie.",
+	"w.signin_failed": "Logowanie nie zostało ukończone. Spróbuj ponownie.",
 
 	// ── Load failures ───────────────────────────────────────────────────────
 	"w.err.transient":

@@ -215,6 +215,8 @@ export const EN = {
 	"w.posting_as": "Posting as {name}",
 	"w.sign_out": "Sign out",
 	"w.signin_prompt": "Sign in to get a verified badge:",
+	"w.signin_popup_blocked": "Your browser blocked the sign-in window. Allow pop-ups for this site, then try again.",
+	"w.signin_failed": "Sign-in did not complete. Please try again.",
 
 	// ── Load failures ───────────────────────────────────────────────────────
 	"w.err.transient":

@@ -177,6 +177,8 @@ export const it = {
 	"w.posting_as": "Pubblichi come {name}",
 	"w.sign_out": "Esci",
 	"w.signin_prompt": "Accedi per ottenere un badge di verifica:",
+	"w.signin_popup_blocked": "Il browser ha bloccato la finestra di accesso. Consenti i pop-up per questo sito, poi riprova.",
+	"w.signin_failed": "Accesso non completato. Riprova.",
 
 	// ── Load failures ───────────────────────────────────────────────────────
 	"w.err.transient":

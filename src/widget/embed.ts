@@ -3224,6 +3224,7 @@ const buildAuthBlock = (
 	providers: ReadonlyArray<OAuthProvider>,
 	onSignedIn: () => void,
 	onSignedOut: () => void,
+	onProblem: (message: string) => void,
 ): HTMLElement | null => {
 	if (me) {
 		const wrap = el("div", "gr-signed");
@@ -3262,7 +3263,7 @@ const buildAuthBlock = (
 	for (const p of providers) {
 		const btn = el("button", undefined, PROVIDER_LABELS[p]);
 		btn.type = "button";
-		btn.addEventListener("click", () => startOauth(p, apiBase, onSignedIn));
+		btn.addEventListener("click", () => startOauth(p, apiBase, onSignedIn, onProblem));
 		wrap.appendChild(btn);
 	}
 	return wrap;
@@ -3411,13 +3412,14 @@ const startOauth = (
 	provider: OAuthProvider,
 	apiBase: string,
 	onSuccess: () => void,
+	onProblem: (message: string) => void,
 ): void => {
 	const ret = encodeURIComponent(window.location.origin);
 	const url = `${apiBase}/api/v1/auth/${provider}/start?return=${ret}`;
 	// We intentionally do NOT pass `noopener` here: the OAuth callback page
 	// posts a `garrul:auth` message back via `window.opener.postMessage`, and
 	// `noopener` would null `window.opener` in the popup AND make this call
-	// return `null` (defeating the popup-blocked fallback below). Cross-origin
+	// return `null` (defeating the popup-blocked check below). Cross-origin
 	// `opener.location` writes are blocked by modern browsers for cross-origin
 	// popups, so the opener relationship is safe in practice.
 	const popup = window.open(
@@ -3455,14 +3457,17 @@ const startOauth = (
 		}
 		void apiJson(apiBase, "/api/v1/auth/session/exchange", { token: handoff })
 			.then((res) => {
-				if (!res.ok) return;
+				if (!res.ok) {
+					onProblem(s("w.signin_failed"));
+					return;
+				}
 				stopRecovery();
 				onSuccess();
 			})
 			// Leave the recovery watcher armed on a failed exchange: the popup
 			// already minted a session, and on a same-site embed its cookie is
 			// readable from here, so /auth/me can still rescue this.
-			.catch(() => {});
+			.catch(() => onProblem(s("w.signin_failed")));
 	};
 	// Second channel, for host pages that send `Cross-Origin-Opener-Policy:
 	// same-origin`. That header severs the popup's `window.opener`, so the
@@ -3489,10 +3494,12 @@ const startOauth = (
 	stopPreviousRecovery = stopRecovery;
 	window.addEventListener("message", handler);
 	if (!popup) {
-		// Popup blocked — fall back to top-level redirect. The browser will
-		// land back at /callback which sets the cookie + closes; the user
-		// then has to navigate back manually. Documented behavior.
-		window.location.href = url;
+		// Blocked: say so and stay put. A top-level redirect never returned the
+		// reader and set the cookie in the wrong partition. The provider button
+		// stays, so the next click is a fresh user gesture.
+		stopRecovery();
+		window.removeEventListener("message", handler);
+		onProblem(s("w.signin_popup_blocked"));
 	}
 };
 
@@ -4572,7 +4579,9 @@ const loadOnce = async (
 		revealAfterReload(root, null, undefined, ".gr-signed button, .gr-signin button, .gr-body-input");
 		reload();
 	};
-	const authBlock = buildAuthBlock(me, apiBase, providers, authReload, authReload);
+	const authBlock = buildAuthBlock(me, apiBase, providers, authReload, authReload, (m) =>
+		writePageStatus(root, m),
+	);
 	// The composer is always built (its submit/Turnstile wiring lives further
 	// down) but only mounted when comments are enabled. When disabled, existing
 	// comments stay visible (read-only) and we show a "closed" notice instead.

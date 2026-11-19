@@ -179,6 +179,8 @@ export const nl = {
 	// few lines up, and the two buttons can be on screen together.
 	"w.sign_out": "Uitloggen",
 	"w.signin_prompt": "Inloggen voor een verificatiebadge:",
+	"w.signin_popup_blocked": "Je browser heeft het inlogvenster geblokkeerd. Sta pop-ups toe voor deze site en probeer het opnieuw.",
+	"w.signin_failed": "Inloggen is niet voltooid. Probeer het opnieuw.",
 
 	// ── Load failures ───────────────────────────────────────────────────────
 	"w.err.transient":
