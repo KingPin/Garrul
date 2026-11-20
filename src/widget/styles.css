@@ -433,6 +433,9 @@ button:active:not([disabled]) { opacity: 0.75; }
 .gr-turnstile-frame {
 	border: 0;
 	width: 300px;
+	/* A reply nested a few levels deep has a content box under 300px on a 320px
+	   phone; without this the frame pushes the page wider than the viewport. */
+	max-width: 100%;
 	height: 70px;
 	display: block;
 	color-scheme: light dark;
@@ -964,7 +967,8 @@ button:active:not([disabled]) { opacity: 0.75; }
    — browsers center a button's content once it has a height — and the vote
    circle gets a min-width to stay round. Kept as one block, not spread across
    the base rules, so the whole floor is visible (and removable) in one place. */
-.gr-actions button, .gr-reaction, .gr-collapse, .gr-showmore, .gr-form .gr-notify {
+.gr-actions button, .gr-reaction, .gr-collapse, .gr-showmore, .gr-form .gr-notify,
+.gr-subscribe-manage, .gr-signed button, .gr-low-score, .gr-subscribe-drop {
 	min-height: 24px;
 }
 .gr-vote {
@@ -980,5 +984,26 @@ button:active:not([disabled]) { opacity: 0.75; }
    desktop layout stays as it is. */
 @media (pointer: coarse) {
 	.gr-actions { column-gap: 1.25rem; }
-	.gr-actions button { min-height: 44px; }
+	/* Every button, not a list of classes: the reply form's Post/Cancel are
+	   classless and a new control would otherwise ship under 44px. Covers
+	   .gr-actions button, .gr-reaction, .gr-collapse, .gr-showmore, the bell,
+	   tabs, toolbar, submit/cancel and Load more. button[class] is there to
+	   outrank the single-class 24px floor rules above (same specificity as
+	   .gr-vote and friends, later in the sheet). */
+	button, button[class], select, input:not([type="checkbox"]), .gr-form .gr-notify {
+		min-height: 44px;
+	}
+	/* Icon-sized and short-word buttons (vote, bell, Reply) also need the width. */
+	button, button[class] { min-width: 44px; }
+	/* Up and down votes sit side by side: keep a mis-tap from landing on the
+	   other one. */
+	.gr-votes, .gr-page-votes { gap: 8px; }
+	/* iOS Safari zooms the page when a field under 16px is focused. The
+	   !important beats the .9em set on the subscribe form's input. */
+	input, textarea, select { font-size: max(16px, 1em) !important; }
 }
+/* No hover on touch, so the permalink's hover-only underline never shows: keep
+   it visible so the timestamp reads as a link. */
+@media (hover: none) { .gr-permalink { text-decoration: underline; } }
+/* The collapse triangle points at the reading direction. */
+.gr-collapse:dir(rtl) .gr-caret { display: inline-block; transform: scaleX(-1); }

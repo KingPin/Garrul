@@ -495,6 +495,9 @@ const applyMarkdown = (ta: HTMLTextAreaElement, fmt: MdFormat): void => {
 	// no edits from any path, not just the ones that type.
 	if (ta.readOnly || ta.disabled) return;
 	const { selectionStart, selectionEnd, value } = ta;
+	let from: number;
+	let text: string;
+	let keep: [number, number];
 	if (fmt.linePrefix) {
 		const lineStart = value.lastIndexOf("\n", selectionStart - 1) + 1;
 		const block = value.slice(lineStart, selectionEnd);
@@ -502,24 +505,28 @@ const applyMarkdown = (ta: HTMLTextAreaElement, fmt: MdFormat): void => {
 			.split("\n")
 			.map((line) => fmt.linePrefix + line)
 			.join("\n");
-		ta.value = value.slice(0, lineStart) + prefixed + value.slice(selectionEnd);
-		ta.selectionStart = lineStart;
-		ta.selectionEnd = lineStart + prefixed.length;
+		from = lineStart;
+		text = prefixed;
+		keep = [lineStart, lineStart + prefixed.length];
 	} else {
 		const before = fmt.before ?? "";
 		const after = fmt.after ?? "";
 		const inner = value.slice(selectionStart, selectionEnd) || fmt.placeholder || "";
-		ta.value =
-			value.slice(0, selectionStart) +
-			before +
-			inner +
-			after +
-			value.slice(selectionEnd);
-		ta.selectionStart = selectionStart + before.length;
-		ta.selectionEnd = selectionStart + before.length + inner.length;
+		from = selectionStart;
+		text = before + inner + after;
+		keep = [selectionStart + before.length, selectionStart + before.length + inner.length];
 	}
 	ta.focus();
-	ta.dispatchEvent(new Event("input", { bubbles: true }));
+	ta.setSelectionRange(from, selectionEnd);
+	// execCommand is the only write the browser records on the undo stack, so
+	// Ctrl+Z can take a toolbar action back. Assigning `value` clears that stack.
+	// Where execCommand is unavailable or refuses, fall back to setRangeText.
+	if (!document.execCommand("insertText", false, text)) {
+		ta.setRangeText(text, from, selectionEnd, "end");
+		ta.dispatchEvent(new Event("input", { bubbles: true }));
+	}
+	ta.selectionStart = keep[0];
+	ta.selectionEnd = keep[1];
 };
 
 // Toolbar buttons, left to right. `label` is the visible glyph — untranslated,
@@ -630,6 +637,19 @@ const postOnce = (
 	const locked = [...form.querySelectorAll<HTMLButtonElement>(".gr-toolbar-btn")];
 	if (cancel) locked.push(cancel);
 	const lock = (on: boolean): void => {
+		// An expired editor stays closed: the settle after a refused save must not
+		// hand back a field the window has shut (expire() marks the form).
+		if (!on && form.hasAttribute("data-expired")) {
+			// Cancel is the only way out of a closed editor, so it comes back.
+			if (cancel) {
+				cancel.disabled = false;
+				// Save was disabled while focused. Chrome can still report it as the active
+				// element until focus fixup runs, so test for a disabled one too.
+				const active = (form.getRootNode() as Document | ShadowRoot).activeElement;
+				if (!active || (active as HTMLButtonElement).disabled) cancel.focus();
+			}
+			return;
+		}
 		if (ta) ta.readOnly = on;
 		for (const b of locked) b.disabled = on;
 	};
@@ -690,7 +710,7 @@ const buildWritePreview = (
 	const toolbar = buildToolbar(textarea);
 	// Every composer in the widget (top-level, reply, edit) is wrapped here, so
 	// this is the one place that has to grow the box while the author types.
-	// applyMarkdown re-fires `input`, so toolbar insertions size too.
+	// applyMarkdown fires `input` (execCommand does it itself), so toolbar insertions size too.
 	textarea.addEventListener("input", () => autoSize(textarea));
 	// One row under the box: what you can write on the left, how to send it on
 	// the right. The whole row hides together in Preview mode.
@@ -1639,6 +1659,9 @@ const buildSubscribeBell = (
 	// in the tree from mount and CSS collapses it while it is `:empty`, exactly as
 	// the composer's status box does.
 	const status = statusBox("gr-subscribe-status");
+	// Focusable so a successful subscribe can move focus here: the form it came
+	// from is hidden on the anonymous path, and focus would otherwise fall to <body>.
+	status.tabIndex = -1;
 
 	const say = (msg: string): void => {
 		status.textContent = msg;
@@ -1864,6 +1887,7 @@ const buildSubscribeBell = (
 				return;
 			}
 			say(body?.message ?? s("w.subscribe.done"));
+			status.focus();
 			if (managed) {
 				// Re-read rather than assume. The POST deliberately returns no
 				// subscription id (it would tell a caller who may not own the address
@@ -1889,6 +1913,7 @@ const buildSubscribeBell = (
 		emailInput.type = "email";
 		emailInput.required = true;
 		emailInput.placeholder = s("w.email_ph");
+		emailInput.setAttribute("aria-label", s("w.email_label"));
 		emailInput.autocomplete = "email";
 		submit = el("button", "gr-subscribe-submit", s("w.subscribe.submit"));
 		submit.type = "submit";
@@ -2374,7 +2399,15 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 	 * to notice, and re-showing the same string is a no-op.
 	 */
 	const expire = (): void => {
-		ta.disabled = true;
+		wrap.setAttribute("data-expired", "");
+		// Read-only, not disabled: a disabled field cannot be selected or copied,
+		// and the text is the only thing the author has left to take away.
+		ta.disabled = false;
+		ta.readOnly = true;
+		for (const b of wrap.querySelectorAll<HTMLButtonElement>(".gr-toolbar-btn")) b.disabled = true;
+		// Disabling the focused Save would drop focus to <body>, and Escape then reaches
+		// nothing. Cancel stays enabled, so it takes the focus instead.
+		if ((wrap.getRootNode() as Document | ShadowRoot).activeElement === save) cancel.focus();
 		save.disabled = true;
 		// An editor opened after expiry never gets its prefill, so the field is
 		// empty and the placeholder is the only thing in it — "Loading…", for a
@@ -2448,6 +2481,10 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 		return false;
 	}, countdownStartsIn(n.created_at, ctx.editWindowMs, Date.now()));
 
+	// Save comes back after a refused save, unless the window has closed meanwhile.
+	const reopenSave = (): void => {
+		if (!wrap.hasAttribute("data-expired")) save.disabled = false;
+	};
 	const post = async (handOff: () => void): Promise<void> => {
 		// The tick only re-reads the clock every 15 seconds, so a submit can land
 		// in the gap between the window closing and the tick noticing. Ask the
@@ -2502,10 +2539,10 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 				return;
 			}
 			showStatus(errBox, actionErrorMessage(null, json, s));
-			save.disabled = false;
+			reopenSave();
 		} catch (err) {
 			showStatus(errBox, actionErrorMessage(err, null, s));
-			save.disabled = false;
+			reopenSave();
 		}
 	};
 	wrap.addEventListener("submit", (e) => {
@@ -2958,7 +2995,9 @@ const buildCollapseToggle = (
 		repliesEl.style.display = collapsed ? "none" : "";
 		// The disclosure triangle is a glyph, not a word, so it stays outside the
 		// string — the count and its noun do not.
-		btn.textContent = `${collapsed ? "▸" : "▾"} ${s("w.replies", { n: total })}`;
+		const caret = el("span", "gr-caret", collapsed ? "▸" : "▾");
+		caret.setAttribute("aria-hidden", "true");
+		btn.replaceChildren(caret, ` ${s("w.replies", { n: total })}`);
 		btn.setAttribute("aria-expanded", String(!collapsed));
 	};
 	btn.addEventListener("click", () => {

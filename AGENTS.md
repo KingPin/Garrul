@@ -744,6 +744,11 @@ what you preview is byte-identical to what gets posted, with no
 client-side markdown library and no XSS divergence. The endpoint is
 public but rate-limited; no auth required.
 
+Toolbar actions (bold, italic, link, code, quote, list) insert through the
+browser's edit command, so they land on the textarea's undo stack and
+Ctrl/Cmd+Z reverts the last one. Assigning the field's value would clear
+that stack, which is why the widget does not do it.
+
 ### Editing your own comment (since v2.21.0)
 
 A signed-in author gets an **Edit** button on their own comment for
@@ -762,9 +767,11 @@ wired to the button with `aria-describedby`, so a screen reader announces the
 remaining time when the button takes focus rather than every fifteen seconds.
 
 At expiry the Edit button and its countdown are **removed from the row**
-without a reload. An editor already open is disabled in place: the field and
-Save go inert, "Your edit window has closed." appears in a polite live region,
-and Cancel stays enabled so the box can still be dismissed. This is a display
+without a reload. An editor already open is locked in place: the text stays
+selectable and copyable but becomes read-only, the formatting toolbar and Save
+are disabled, and "Your edit window has closed." appears in a polite live
+region. Cancel stays enabled, takes focus if Save was focused, and Escape
+closes the box. A refused save does not unlock an expired editor. This is a display
 of the server rule, not a second copy of it — `PATCH /api/v1/comments/:id`
 and `GET /api/v1/comments/:id/source` both still 403 past the window.
 
@@ -887,6 +894,23 @@ or screen-reader user does not land on the page body:
 - **Report** moves focus to Undo. **Undo** returns focus to Report. When the
   report is sent while focus is on that row, focus moves to the "Reported"
   text.
+- **Subscribe** from the anonymous email field moves focus to its status
+  message, because the form it was typed in is hidden on success. The email
+  field has an accessible label, not only a placeholder.
+
+### Touch screens and small displays
+
+On a touch device (`pointer: coarse`) every button is at least 44 × 44 px,
+every select and single-line text input is at least 44 px tall, and the up
+and down votes sit 8 px apart. Inputs, textareas and selects use at least
+16 px type, so iOS Safari does not zoom the page when one is focused. Everywhere else, small controls
+keep a 24 px minimum height.
+
+- On a device without hover, the timestamp permalink is underlined, because
+  the hover underline never appears there.
+- The thread collapse triangle mirrors in right-to-left locales.
+- The Turnstile frame shrinks to fit its container, so a reply nested deep
+  on a 320 px phone does not push the page wider than the screen.
 
 ### Composer sizing (since v2.0.3)
 
