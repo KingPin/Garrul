@@ -5279,8 +5279,13 @@ const submit = async (
 			// silent no-op for every signed-in reader.
 			const email = emailInput?.value.trim() ?? "";
 			if (email || !emailInput) {
+				// The composer may have been rebuilt (sort reload, reload fallback)
+				// before this settles; then errEl is detached and the page's own
+				// status box is the one the reader can see.
 				const say = (m: string): void => {
-					if (errEl && !ts?.gate.failed) showStatus(errEl, m, "notice");
+					if (ts?.gate.failed) return;
+					if (errEl?.isConnected) showStatus(errEl, m, "notice");
+					else writePageStatus(root, m, "notice");
 				};
 				void (async () => {
 					try {
