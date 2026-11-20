@@ -234,7 +234,7 @@ describe("PATCH /comments/:id — budget", () => {
 		expect(stored.body_md).toBe("revision 4");
 	});
 
-	it("403s an unauthenticated edit without reading the comment row", async () => {
+	it("401s an unauthenticated edit without reading the comment row", async () => {
 		// Session first, then budget, then the D1 lookup — so a caller with no
 		// cookie can't spend a read per request, and can't use the 404-vs-403
 		// difference to probe whether a comment id exists.
@@ -243,7 +243,11 @@ describe("PATCH /comments/:id — budget", () => {
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify({ body: "nope" }),
 		});
-		expect(missing.status).toBe(403);
+		expect(missing.status).toBe(401);
+	});
+
+	it("401s an unauthenticated delete", async () => {
+		expect((await request(`/${COMMENT}`, { method: "DELETE" })).status).toBe(401);
 	});
 });
 

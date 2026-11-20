@@ -106,6 +106,30 @@ export const subtreeHas = (node: ThreadLike, id: string): boolean =>
 	node.id === id || node.replies.some((r) => subtreeHas(r, id));
 
 /**
+ * True when comment `id` sits anywhere under `list`. The one lookup behind
+ * every "does this batch hold the permalink target?" question: the first
+ * render (keep the batch open) and a later hashchange (open it) both ask it.
+ */
+export const listHolds = (list: readonly ThreadLike[], id: string | null): boolean =>
+	id !== null && list.some((r) => subtreeHas(r, id));
+
+/**
+ * What a `hashchange` asks of the widget, given the anchor id last revealed.
+ *
+ * A hash that is not one of our comments ("reset") forgets the revealed and
+ * the sought record both: the seek skips a hash that matches either, so
+ * clearing just one would leave A -> #top -> A landing nowhere.
+ */
+export const hashAction = (
+	revealed: string | null,
+	hash: string,
+): "reveal" | "reset" | "none" => {
+	const id = commentIdFromHash(hash);
+	if (!id) return "reset";
+	return commentAnchorId(id) === revealed ? "none" : "reveal";
+};
+
+/**
  * Call `reveal()`; if false, call `next()` and retry, up to `maxPages` calls of
  * `next`. Stops early when `next()` returns null (no more pages) or resolves
  * false (fetch failed). Resolves whether the target was revealed.

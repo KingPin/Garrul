@@ -268,3 +268,55 @@ export const synthesizePosted = (
 		slot,
 	};
 };
+
+/**
+ * The node to redraw after a saved edit: the `PATCH` echo's body, edit time and
+ * status over the node already on screen, whose replies and counts the echo
+ * does not carry. The caller compares `status` to fall back to a reload when a
+ * spam re-check moved the comment to the queue.
+ */
+export const mergeEdited = (n: TreeNode, echo: PostedEcho): TreeNode => ({
+	...n,
+	body_html: echo.body_html,
+	edited_at: echo.edited_at,
+	status: echo.status,
+});
+
+/**
+ * What the in-place swaps need from the rendered tree. Generic over the element
+ * type so the node test pool can drive them without a DOM.
+ */
+export type SwapCtx<E> = {
+	/** A comment's `.gr-thread`, or null when it is not on screen. */
+	find: (id: string) => E | null;
+	/** The thread's own comment row (its replies are siblings of the row). */
+	row: (thread: E) => E | null;
+	build: (n: TreeNode, thread: boolean) => E;
+	/** Retire what lives inside `old` (draft savers), then put `next` in its
+	 *  place, or remove `old` when `next` is null. False, touching nothing,
+	 *  when `old` holds a form with a post in flight. */
+	swap: (old: E, next: E | null) => boolean;
+};
+
+/** Redraw comment `id` after an edit, keeping its replies. False: not on
+ *  screen, or a post in flight inside it. */
+export const replaceCommentInPlace = <E>(ctx: SwapCtx<E>, id: string, node: TreeNode): boolean => {
+	const thread = ctx.find(id);
+	const row = thread && ctx.row(thread);
+	return !!row && ctx.swap(row, ctx.build(node, false));
+};
+
+/**
+ * Swap thread `rootId` for the server's re-render after a delete, or remove it
+ * when the delete pruned it (`thread` null). The id is explicit so the null case
+ * still knows what to remove. False: not on screen, or a post in flight
+ * inside it.
+ */
+export const replaceThreadInPlace = <E>(
+	ctx: SwapCtx<E>,
+	rootId: string,
+	thread: TreeNode | null,
+): boolean => {
+	const el = ctx.find(rootId);
+	return !!el && ctx.swap(el, thread && ctx.build(thread, true));
+};

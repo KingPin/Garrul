@@ -119,6 +119,8 @@ export const pt = {
 	"w.edit_left": "mais {time}",
 	"w.edit_last_minute": "resta menos de um minuto",
 	"w.edit_expired": "O prazo de edição terminou.",
+	"w.edit_load_failed": "Não foi possível carregar este comentário para edição.",
+	"w.session_expired": "Você foi desconectado. Entre novamente ou publique como visitante.",
 	// "Apagar" over Brazilian "Excluir": idiomatic in both variants, where
 	// "Excluir" reads as "exclude" in European Portuguese.
 	"w.delete": "Apagar",
@@ -158,6 +160,7 @@ export const pt = {
 	},
 	"w.loading_comments": "Carregando comentários",
 	"w.permalink": "Link permanente para o comentário de @{name}, {time}",
+	"w.permalink_missing": "Este comentário não está disponível.",
 	"w.region": "Comentários",
 	// Impersonal, so the label does not have to gender the reader the way
 	// "Seja o primeiro a comentar" would.
@@ -185,22 +188,28 @@ export const pt = {
 	"w.unsubscribe.done": "Não chegarão mais e-mails sobre este tópico.",
 	"w.unsubscribe.failed": "Não foi possível cancelar a inscrição. Tente novamente.",
 	"w.unsubscribe.row": "Cancelar inscrição",
+	"w.unsubscribed": "Inscrição cancelada",
 	// Brazilian "Gerenciar", not European "Gerir" — see the header.
 	"w.manage": "Gerenciar inscrições",
 	"w.manage.empty": "Nenhum tópico seguido.",
 	"w.manage.failed": "Não foi possível carregar as inscrições.",
 	"w.load_more": "Carregar comentários anteriores",
 	"w.load_more_failed": "Não foi possível carregar mais: {detail}",
+	"w.retry": "Tentar novamente",
 
 	// ── Identity ────────────────────────────────────────────────────────────
 	"w.posting_as": "Publicando como {name}",
 	"w.sign_out": "Sair",
 	"w.signin_prompt": "Entre para receber um selo de verificado:",
+	"w.signin_popup_blocked": "Seu navegador bloqueou a janela de login. Permita pop-ups para este site e tente novamente.",
+	"w.signin_failed": "O login não foi concluído. Tente novamente.",
 
 	// ── Load failures ───────────────────────────────────────────────────────
 	"w.err.transient":
 		"Os comentários estão temporariamente indisponíveis. Tente novamente em alguns minutos.",
 	"w.err.generic": "Não foi possível carregar os comentários.",
+	"w.err.network": "Não foi possível conectar ao servidor. Verifique sua conexão e tente novamente.",
+	"w.err.action": "Algo deu errado. Tente novamente.",
 
 	// ── Attribution ─────────────────────────────────────────────────────────
 	// "Garrul" is a product name and stays untranslated inside {link}.

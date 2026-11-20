@@ -101,6 +101,8 @@ export const it = {
 	"w.edit_left": "ancora {time}",
 	"w.edit_last_minute": "meno di un minuto rimasto",
 	"w.edit_expired": "Il tempo per modificare è scaduto.",
+	"w.edit_load_failed": "Impossibile caricare questo commento per la modifica.",
+	"w.session_expired": "Sei stato disconnesso. Accedi di nuovo o pubblica come ospite.",
 	"w.delete": "Elimina",
 	"w.delete_confirm": "Eliminare questo commento?",
 	"w.report": "Segnala",
@@ -138,6 +140,7 @@ export const it = {
 	},
 	"w.loading_comments": "Caricamento dei commenti",
 	"w.permalink": "Permalink al commento di @{name}, {time}",
+	"w.permalink_missing": "Questo commento non è disponibile.",
 	"w.region": "Commenti",
 	"w.empty.open": "Scrivi il primo commento.",
 	"w.empty.closed": "Ancora nessun commento.",
@@ -163,21 +166,27 @@ export const it = {
 	"w.unsubscribe.done": "Non riceverai più email su questa discussione.",
 	"w.unsubscribe.failed": "Impossibile annullare l'iscrizione. Riprova.",
 	"w.unsubscribe.row": "Annulla iscrizione",
+	"w.unsubscribed": "Iscrizione annullata",
 	"w.manage": "Gestisci le iscrizioni",
 	"w.manage.empty": "Non segui nessuna discussione.",
 	"w.manage.failed": "Impossibile caricare le tue iscrizioni.",
 	"w.load_more": "Carica i commenti precedenti",
 	"w.load_more_failed": "Impossibile caricarne altri: {detail}",
+	"w.retry": "Riprova",
 
 	// ── Identity ────────────────────────────────────────────────────────────
 	"w.posting_as": "Pubblichi come {name}",
 	"w.sign_out": "Esci",
 	"w.signin_prompt": "Accedi per ottenere un badge di verifica:",
+	"w.signin_popup_blocked": "Il browser ha bloccato la finestra di accesso. Consenti i pop-up per questo sito, poi riprova.",
+	"w.signin_failed": "Accesso non completato. Riprova.",
 
 	// ── Load failures ───────────────────────────────────────────────────────
 	"w.err.transient":
 		"I commenti non sono temporaneamente disponibili. Riprova tra qualche minuto.",
 	"w.err.generic": "Impossibile caricare i commenti.",
+	"w.err.network": "Impossibile raggiungere il server. Controlla la connessione e riprova.",
+	"w.err.action": "Si è verificato un problema. Riprova.",
 
 	// ── Attribution ─────────────────────────────────────────────────────────
 	// "Garrul" is a product name and stays untranslated inside {link}.

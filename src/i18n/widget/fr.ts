@@ -81,6 +81,8 @@ export const fr = {
 	"w.edit_left": { one: "{time} restante", other: "{time} restantes" },
 	"w.edit_last_minute": "moins d'une minute restante",
 	"w.edit_expired": "Votre délai de modification est écoulé.",
+	"w.edit_load_failed": "Impossible de charger ce commentaire pour le modifier.",
+	"w.session_expired": "Votre session a été fermée. Reconnectez-vous ou publiez en tant qu'invité.",
 	"w.delete": "Supprimer",
 	"w.delete_confirm": "Supprimer ce commentaire ?",
 	"w.report": "Signaler",
@@ -114,6 +116,7 @@ export const fr = {
 		other: "Afficher {n} réponses de plus",
 	},
 	"w.loading_comments": "Chargement des commentaires",
+	"w.permalink_missing": "Ce commentaire n'est pas disponible.",
 	"w.empty.open": "Soyez la première personne à commenter.",
 	"w.empty.closed": "Aucun commentaire pour le moment.",
 	"w.closed.post": "Les commentaires sont fermés pour cet article.",
@@ -129,18 +132,24 @@ export const fr = {
 	"w.subscribe.done": "Vérifiez votre e-mail pour confirmer.",
 	"w.subscribe.failed": "Impossible de s'abonner. Veuillez réessayer.",
 	"w.subscribe.ratelimit": "Trop de requêtes. Veuillez réessayer plus tard.",
+	"w.unsubscribed": "Désabonné",
 	"w.load_more": "Charger les commentaires plus anciens",
 	"w.load_more_failed": "Impossible d'en charger davantage : {detail}",
+	"w.retry": "Réessayer",
 
 	// ── Identity ────────────────────────────────────────────────────────────
 	"w.posting_as": "Vous publiez en tant que {name}",
 	"w.sign_out": "Se déconnecter",
 	"w.signin_prompt": "Connectez-vous pour obtenir un badge vérifié :",
+	"w.signin_popup_blocked": "Votre navigateur a bloqué la fenêtre de connexion. Autorisez les pop-ups pour ce site, puis réessayez.",
+	"w.signin_failed": "La connexion n'a pas abouti. Veuillez réessayer.",
 
 	// ── Load failures ───────────────────────────────────────────────────────
 	"w.err.transient":
 		"Les commentaires sont temporairement indisponibles. Revenez dans quelques minutes.",
 	"w.err.generic": "Impossible de charger les commentaires.",
+	"w.err.network": "Impossible de joindre le serveur. Vérifiez votre connexion et réessayez.",
+	"w.err.action": "Une erreur s'est produite. Veuillez réessayer.",
 
 	// ── Attribution ─────────────────────────────────────────────────────────
 	// "Garrul" is a product name and stays untranslated inside {link}.

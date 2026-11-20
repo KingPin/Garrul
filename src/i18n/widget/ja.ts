@@ -106,6 +106,8 @@ export const ja = {
 	"w.edit_left": "残り{time}",
 	"w.edit_last_minute": "残り1分未満",
 	"w.edit_expired": "編集できる時間が終了しました。",
+	"w.edit_load_failed": "このコメントを編集用に読み込めませんでした。",
+	"w.session_expired": "ログアウトされました。もう一度ログインするか、ゲストとして投稿してください。",
 	"w.delete": "削除",
 	"w.delete_confirm": "このコメントを削除しますか？",
 	"w.report": "報告",
@@ -137,6 +139,7 @@ export const ja = {
 	"w.more_replies": { other: "さらに{n}件の返信を表示" },
 	"w.loading_comments": "コメントを読み込んでいます",
 	"w.permalink": "@{name}のコメントへのパーマリンク、{time}",
+	"w.permalink_missing": "このコメントは利用できません。",
 	"w.region": "コメント",
 	"w.empty.open": "最初のコメントを投稿してみてください。",
 	"w.empty.closed": "まだコメントはありません。",
@@ -160,21 +163,27 @@ export const ja = {
 	"w.unsubscribe.done": "このスレッドのメール通知を停止しました。",
 	"w.unsubscribe.failed": "解除できませんでした。もう一度お試しください。",
 	"w.unsubscribe.row": "解除",
+	"w.unsubscribed": "配信を停止しました",
 	"w.manage": "通知の管理",
 	"w.manage.empty": "フォロー中のスレッドはありません。",
 	"w.manage.failed": "登録中のスレッドを読み込めませんでした。",
 	"w.load_more": "以前のコメントを読み込む",
 	"w.load_more_failed": "追加で読み込めませんでした：{detail}",
+	"w.retry": "再試行",
 
 	// ── Identity ────────────────────────────────────────────────────────────
 	"w.posting_as": "{name}として投稿します",
 	"w.sign_out": "ログアウト",
 	"w.signin_prompt": "ログインすると確認済みバッジが付きます：",
+	"w.signin_popup_blocked": "ブラウザーがログインウィンドウをブロックしました。このサイトのポップアップを許可してから、もう一度お試しください。",
+	"w.signin_failed": "ログインが完了しませんでした。もう一度お試しください。",
 
 	// ── Load failures ───────────────────────────────────────────────────────
 	"w.err.transient":
 		"コメントは一時的に利用できません。数分後にもう一度ご覧ください。",
 	"w.err.generic": "コメントを読み込めませんでした。",
+	"w.err.network": "サーバーに接続できませんでした。通信環境を確認して、もう一度お試しください。",
+	"w.err.action": "問題が発生しました。もう一度お試しください。",
 
 	// ── Attribution ─────────────────────────────────────────────────────────
 	// "Garrul" is a product name and stays untranslated inside {link}.

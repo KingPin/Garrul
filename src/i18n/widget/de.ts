@@ -82,6 +82,8 @@ export const de = {
 	"w.edit_left": "noch {time}",
 	"w.edit_last_minute": "weniger als eine Minute übrig",
 	"w.edit_expired": "Der Bearbeitungszeitraum ist abgelaufen.",
+	"w.edit_load_failed": "Dieser Kommentar konnte nicht zum Bearbeiten geladen werden.",
+	"w.session_expired": "Die Sitzung wurde beendet. Erneut anmelden oder als Gast posten.",
 	"w.delete": "Löschen",
 	"w.delete_confirm": "Diesen Kommentar löschen?",
 	"w.report": "Melden",
@@ -115,6 +117,7 @@ export const de = {
 		other: "{n} weitere Antworten anzeigen",
 	},
 	"w.loading_comments": "Kommentare werden geladen",
+	"w.permalink_missing": "Dieser Kommentar ist nicht verfügbar.",
 	// Infinitive, not "Schreib" — the file's no-direct-address rule, and this
 	// was the one line that broke it with a du-imperative.
 	"w.empty.open": "Den ersten Kommentar schreiben.",
@@ -132,18 +135,24 @@ export const de = {
 	"w.subscribe.done": "Bitte bestätige die E-Mail, die wir dir geschickt haben.",
 	"w.subscribe.failed": "Abonnieren fehlgeschlagen. Bitte erneut versuchen.",
 	"w.subscribe.ratelimit": "Zu viele Anfragen. Bitte später erneut versuchen.",
+	"w.unsubscribed": "Abgemeldet",
 	"w.load_more": "Ältere Kommentare laden",
 	"w.load_more_failed": "Konnte nicht mehr laden: {detail}",
+	"w.retry": "Erneut versuchen",
 
 	// ── Identity ────────────────────────────────────────────────────────────
 	"w.posting_as": "Posten als {name}",
 	"w.sign_out": "Abmelden",
 	"w.signin_prompt": "Anmelden für ein Verifiziert-Abzeichen:",
+	"w.signin_popup_blocked": "Der Browser hat das Anmeldefenster blockiert. Pop-ups für diese Website erlauben und erneut versuchen.",
+	"w.signin_failed": "Die Anmeldung wurde nicht abgeschlossen. Bitte erneut versuchen.",
 
 	// ── Load failures ───────────────────────────────────────────────────────
 	"w.err.transient":
 		"Kommentare sind vorübergehend nicht verfügbar. Bitte in ein paar Minuten noch einmal vorbeischauen.",
 	"w.err.generic": "Kommentare konnten nicht geladen werden.",
+	"w.err.network": "Der Server ist nicht erreichbar. Verbindung prüfen und erneut versuchen.",
+	"w.err.action": "Etwas ist schiefgelaufen. Bitte erneut versuchen.",
 
 	// ── Attribution ─────────────────────────────────────────────────────────
 	// "Garrul" is a product name and stays untranslated inside {link}.

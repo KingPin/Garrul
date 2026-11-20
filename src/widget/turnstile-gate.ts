@@ -112,6 +112,14 @@ export interface TurnstileGate {
 	 * RETRYABLE_TURNSTILE_ERROR.
 	 */
 	signal(sig: TurnstileSignal, code?: string): void;
+	/** Why `failed` is set: a verdict a retry cannot fix, or an outage. */
+	readonly failedKind: "permanent" | "transient" | null;
+	/**
+	 * Undo a transient failure (the network came back and the caller reloaded
+	 * the frame). A permanent one is a config verdict and stays. Returns whether
+	 * it recovered, so the caller knows to restore its UI.
+	 */
+	recover(): boolean;
 	/** Forget the current token, so the next `wait()` really waits. */
 	clear(): void;
 	/** Arm if needed, then resolve as soon as a usable token exists. */
@@ -139,6 +147,7 @@ export const createTurnstileGate = (opts: {
 	let mounted = false;
 	let failed = false;
 	let notifiedFailure = false;
+	let failedKind: "permanent" | "transient" | null = null;
 	/**
 	 * One reset, per gate. A blip is indistinguishable from an outage after the
 	 * second identical error, and a visitor watching "retrying…" loop is worse
@@ -197,6 +206,9 @@ export const createTurnstileGate = (opts: {
 		get failed() {
 			return failed;
 		},
+		get failedKind() {
+			return failedKind;
+		},
 
 		token: (t) => {
 			if (disposed) return;
@@ -250,6 +262,14 @@ export const createTurnstileGate = (opts: {
 						return;
 					}
 					failed = true;
+					// A code outside the retry list is Turnstile's own verdict. No
+					// code, or a retryable one past its budget, is an outage.
+					if (failedKind !== "permanent") {
+						failedKind =
+							code && !RETRYABLE_TURNSTILE_ERROR.test(code)
+								? "permanent"
+								: "transient";
+					}
 					settle({ ok: false, reason: "failed" });
 					if (!notifiedFailure) {
 						notifiedFailure = true;
@@ -257,6 +277,18 @@ export const createTurnstileGate = (opts: {
 					}
 					return;
 			}
+		},
+
+		recover: () => {
+			if (disposed || !failed || failedKind !== "transient") return false;
+			failed = false;
+			failedKind = null;
+			notifiedFailure = false;
+			retriesLeft = 1;
+			alive = false;
+			held = "";
+			interactive = false;
+			return true;
 		},
 
 		clear: () => {

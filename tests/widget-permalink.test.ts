@@ -12,6 +12,8 @@ import {
 	commentAnchorId,
 	commentHref,
 	commentIdFromHash,
+	hashAction,
+	listHolds,
 	seekComment,
 	subtreeHas,
 } from "../src/widget/permalink";
@@ -173,4 +175,23 @@ describe("seekComment", () => {
 		expect(await seekComment(() => false, next, 10)).toBe(false);
 		expect(next).toHaveBeenCalledTimes(1);
 	});
+});
+
+describe("listHolds", () => {
+	const hidden = [{ id: "r4", replies: [] }, { id: "r5", replies: [{ id: "r5a", replies: [] }] }];
+	it("finds a hidden reply's descendant", () => expect(listHolds(hidden, "r5a")).toBe(true));
+	it("misses an id outside the list", () => expect(listHolds(hidden, "r1")).toBe(false));
+	it("is false with no target", () => expect(listHolds(hidden, null)).toBe(false));
+});
+
+describe("hashAction", () => {
+	const A = commentAnchorId("A");
+	it("reveals a different comment", () =>
+		expect(hashAction(A, `#${commentAnchorId("B")}`)).toBe("reveal"));
+	it("resets on a hash that is not a comment", () =>
+		expect(hashAction(A, "#top")).toBe("reset"));
+	it("does nothing for the comment already revealed", () =>
+		expect(hashAction(A, `#${A}`)).toBe("none"));
+	it("reveals when nothing was revealed yet", () =>
+		expect(hashAction(null, `#${A}`)).toBe("reveal"));
 });

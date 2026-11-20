@@ -31,6 +31,7 @@ import {
 	getPinnedThreadRef,
 	getPost,
 	getThreadCreatedAt,
+	getThreadRootId,
 	getUser,
 	getUserVotesOnComments,
 	insertComment,
@@ -567,7 +568,10 @@ comments.post("/", async (c) => {
 		const nameCheck = validName(body.name);
 		if (!nameCheck.ok) {
 			const args = nameCheck.max != null ? { max: nameCheck.max } : undefined;
-			return c.json({ error: t(nameCheck.key, args) }, 400);
+			// Only the empty-name refusal carries a code: a signed-in widget sends no
+			// name, so this 400 is how it learns its session is gone.
+			const code = nameCheck.key === "err.name.required" ? { code: "name_required" } : {};
+			return c.json({ error: t(nameCheck.key, args), ...code }, 400);
 		}
 
 		if (!body.turnstile_token) {
@@ -1037,6 +1041,61 @@ export type TreePageResult =
 	| { payload: ListPayload; store: Request | null };
 
 /**
+ * Render the given top-level threads as the list serves them: subtrees, authors,
+ * reactions, the viewer's votes, then `buildTree`. Threads come back in the
+ * builder's order (created_at ASC), and a thread pruned whole is simply absent.
+ *
+ * Shared by the list (via `buildTreePage`) and by DELETE, which answers with the
+ * deleted comment's re-rendered thread so the widget can swap it in place. One
+ * function is what keeps the two byte-identical.
+ */
+export const renderThreads = async (
+	env: Bindings,
+	rootIds: string[],
+	viewerId: string | null,
+	/** `show_deleted_placeholders`: keep every deleted comment as a placeholder
+	 *  (leaf deletions included) rather than pruning it. */
+	keepAllDeleted: boolean,
+): Promise<{ threads: TreeNode[]; truncated: boolean }> => {
+	const { rows, truncated } = await listCommentsForThreads(
+		env.DB,
+		rootIds,
+		viewerId,
+		keepAllDeleted,
+	);
+	const authors = await loadAuthors(env.DB, rows);
+
+	// Engagement is loaded for these threads only. `rows` is every comment
+	// listCommentsForThreads returned for them (top-level and replies), so ids
+	// here are exactly what buildTree will render.
+	const pageIds = rows.map((r) => r.id);
+	const reactionRows = await listReactionsForComments(env.DB, pageIds);
+	const mineSet = viewerId
+		? await listUserReactionsOnComments(env.DB, pageIds, viewerId)
+		: new Set<string>();
+	const reactionsById = new Map<string, ReactionCount[]>();
+	for (const r of reactionRows) {
+		const list = reactionsById.get(r.comment_id) ?? [];
+		list.push({
+			kind: r.kind,
+			count: r.count,
+			mine: mineSet.has(`${r.comment_id}|${r.kind}`),
+		});
+		reactionsById.set(r.comment_id, list);
+	}
+
+	const myVotes = viewerId
+		? await getUserVotesOnComments(env.DB, pageIds, viewerId)
+		: new Map<string, -1 | 1>();
+
+	const { threads } = buildTree(rows, authors, reactionsById, myVotes, {
+		keepAllDeleted,
+		viewerId,
+	});
+	return { threads, truncated };
+};
+
+/**
  * Build one page of the comment tree, including the edge-cache read and the
  * decision about whether the result may be written back.
  *
@@ -1168,13 +1227,11 @@ export const buildTreePage = async (
 	// When the operator opts in, keep every deleted comment as a placeholder
 	// (leaf deletions included) rather than pruning them. A toggle change is
 	// reflected for anonymous viewers within the tree-cache TTL.
-	const keepAllDeleted = flags.show_deleted_placeholders;
-
-	const { rows, truncated } = await listCommentsForThreads(
-		env.DB,
+	const { threads: allThreads, truncated } = await renderThreads(
+		env,
 		shownRefs.map((r) => r.id),
 		viewerId,
-		keepAllDeleted,
+		flags.show_deleted_placeholders,
 	);
 	if (truncated) {
 		log.warn("comments.page_truncated", {
@@ -1185,35 +1242,6 @@ export const buildTreePage = async (
 			scan_limit: TREE_SCAN_LIMIT,
 		});
 	}
-	const authors = await loadAuthors(env.DB, rows);
-
-	// Engagement is loaded for the comments on this page only. `rows` is every
-	// comment listCommentsForThreads returned for the page's threads (top-level
-	// and replies), so ids here are exactly what buildTree will render.
-	const pageIds = rows.map((r) => r.id);
-	const reactionRows = await listReactionsForComments(env.DB, pageIds);
-	const mineSet = session
-		? await listUserReactionsOnComments(env.DB, pageIds, session.user_id)
-		: new Set<string>();
-	const reactionsById = new Map<string, ReactionCount[]>();
-	for (const r of reactionRows) {
-		const list = reactionsById.get(r.comment_id) ?? [];
-		list.push({
-			kind: r.kind,
-			count: r.count,
-			mine: mineSet.has(`${r.comment_id}|${r.kind}`),
-		});
-		reactionsById.set(r.comment_id, list);
-	}
-
-	const myVotes = session
-		? await getUserVotesOnComments(env.DB, pageIds, session.user_id)
-		: new Map<string, -1 | 1>();
-
-	const { threads: allThreads } = buildTree(rows, authors, reactionsById, myVotes, {
-		keepAllDeleted,
-		viewerId,
-	});
 
 	// SQL already ordered and sliced the threads; restore that order over the
 	// builder's output, which always comes back created_at ASC. Replies stay
@@ -1326,7 +1354,9 @@ comments.get("/:id/source", async (c) => {
 	// guess at a 128-bit ULID.
 	const session = await readSession(c);
 	const sessionUserId = session?.user_id;
-	if (!sessionUserId) return c.json({ error: t("err.edit.not_author") }, 403);
+	// 401, not 403: a widget that still shows the reader signed in reads it as a
+	// session lost elsewhere and reloads, where a 403 reads as "not the author".
+	if (!sessionUserId) return c.json({ error: t("err.session.expired") }, 401);
 
 	const existing = await getComment(c.env.DB, id);
 	if (!existing) return c.json({ error: t("err.not_found") }, 404);
@@ -1359,7 +1389,9 @@ comments.patch("/:id", async (c) => {
 	// which leaked whether a given comment id exists.)
 	const session = await readSession(c);
 	const sessionUserId = session?.user_id;
-	if (!sessionUserId) return c.json({ error: t("err.edit.not_author") }, 403);
+	// 401, not 403: a widget that still shows the reader signed in reads it as a
+	// session lost elsewhere and reloads, where a 403 reads as "not the author".
+	if (!sessionUserId) return c.json({ error: t("err.session.expired") }, 401);
 
 	const rl = await checkRateLimit(c.req.url, `user:${sessionUserId}`, {
 		scope: "comment-mutate",
@@ -1490,9 +1522,7 @@ comments.delete("/:id", async (c) => {
 	// Same ordering as PATCH above: session, then budget, then the D1 read.
 	const session = await readSession(c);
 	const sessionUserId = session?.user_id;
-	if (!sessionUserId) {
-		return c.json({ error: t("err.delete.not_author") }, 403);
-	}
+	if (!sessionUserId) return c.json({ error: t("err.session.expired") }, 401);
 
 	const rl = await checkRateLimit(c.req.url, `user:${sessionUserId}`, {
 		scope: "comment-mutate",
@@ -1533,7 +1563,33 @@ comments.delete("/:id", async (c) => {
 		user_id: existing.user_id,
 		ts: Date.now(),
 	});
-	return c.json({ ok: true });
+
+	// Answer with the deleted comment's re-rendered thread, so the widget swaps
+	// that one thread in place instead of reloading page one. The widget cannot
+	// work the row's fate out itself: it hinges on the placeholder flag, on
+	// ancestry pruning and on rows the reader never sees. `thread: null` means
+	// the whole thread is pruned. Both fields are additive (older widgets read
+	// `ok` only), and an unresolvable root omits them, which the widget reads
+	// as "reload". So does a render that throws: the delete already happened, and
+	// a 5xx here would have the widget put the Delete button back on it.
+	try {
+		const rootId = await getThreadRootId(c.env.DB, id, MAX_REPLY_DEPTH);
+		if (!rootId) return c.json({ ok: true });
+		const { flags } = await loadSettings(c.env);
+		const { threads } = await renderThreads(
+			c.env,
+			[rootId],
+			sessionUserId,
+			flags.show_deleted_placeholders,
+		);
+		return c.json({ ok: true, root_id: rootId, thread: threads[0] ?? null });
+	} catch (err) {
+		log.warn("comment.delete_render_failed", {
+			comment_id: id,
+			error: err instanceof Error ? err.name : "unknown",
+		});
+		return c.json({ ok: true });
+	}
 });
 
 export { comments };

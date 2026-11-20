@@ -3973,6 +3973,33 @@ export const adminSpamThread = async (
 };
 
 /**
+ * The top-level ancestor of comment `id`, or null when there is none within
+ * `maxHops` steps up `parent_id` (missing row, or a malformed chain). The hop
+ * cap is what stops a parent cycle from looping; callers pass the reply-depth
+ * cap, which every stored chain satisfies.
+ */
+export const getThreadRootId = async (
+	db: D1Database,
+	id: string,
+	maxHops: number,
+): Promise<string | null> => {
+	const row = await db
+		.prepare(
+			`WITH RECURSIVE up(id, parent_id, hops) AS (
+			   SELECT id, parent_id, 0 FROM comments WHERE id = ?1
+			   UNION ALL
+			   SELECT c.id, c.parent_id, up.hops + 1
+			     FROM comments c JOIN up ON c.id = up.parent_id
+			    WHERE up.hops < ?2
+			 )
+			 SELECT id FROM up WHERE parent_id IS NULL LIMIT 1`,
+		)
+		.bind(id, maxHops)
+		.first<{ id: string }>();
+	return row?.id ?? null;
+};
+
+/**
  * A comment plus every descendant, any status, for the spam-thread cascade.
  * The LIMIT inside the CTE bounds the rows returned, so a caller that passes
  * cap + 1 learns "too big". It does not bound the read: SQLite keeps

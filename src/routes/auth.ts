@@ -7,8 +7,9 @@
  * The callback returns a tiny self-closing HTML page that postMessages
  * `{type: "garrul:auth", ok: true}` to window.opener and closes. The widget
  * (src/widget/embed.ts) listens for that message to refresh state without
- * a page reload. If the popup is blocked, the start route is also reachable
- * top-level, in which case the callback redirects to `state.return_origin`.
+ * a page reload. The widget does not navigate to the start route when the
+ * popup is blocked; it asks the reader to allow pop-ups. The callback always
+ * answers with that page and never redirects.
  */
 import { Hono } from "hono";
 import type { Bindings } from "../index";

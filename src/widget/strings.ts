@@ -123,6 +123,8 @@ export const EN = {
 	// still typing. Before this existed, Save stayed live and the PATCH it fired
 	// came back 403 with nothing on screen to say why.
 	"w.edit_expired": "Your edit window has closed.",
+	"w.edit_load_failed": "Could not load this comment for editing.",
+	"w.session_expired": "You were signed out. Sign in again or post as a guest.",
 	"w.delete": "Delete",
 	"w.delete_confirm": "Delete this comment?",
 	"w.report": "Report",
@@ -158,6 +160,7 @@ export const EN = {
 	"w.more_replies": { one: "Show {n} more reply", other: "Show {n} more replies" },
 	"w.loading_comments": "Loading comments",
 	"w.permalink": "Permalink to @{name}'s comment, {time}",
+	"w.permalink_missing": "That comment is not available.",
 	// Names the comments region for assistive tech. Never rendered visually —
 	// see `.gr-sr` — so it exists to give screen readers and rotor
 	// navigation a landmark, not to put a title on the operator's page.
@@ -199,11 +202,13 @@ export const EN = {
 	// Panel rows sit under a heading that already says what the list is, so the
 	// row button is a bare verb rather than repeating the thread title.
 	"w.unsubscribe.row": "Unsubscribe",
+	"w.unsubscribed": "Unsubscribed",
 	"w.manage": "Manage subscriptions",
 	"w.manage.empty": "You're not following any threads.",
 	"w.manage.failed": "Could not load your subscriptions.",
 	"w.load_more": "Load older comments",
 	"w.load_more_failed": "Could not load more: {detail}",
+	"w.retry": "Try again",
 
 	// ── Identity ────────────────────────────────────────────────────────────
 	// The provider names themselves (GitHub, Google, X…) are proper nouns and
@@ -211,11 +216,15 @@ export const EN = {
 	"w.posting_as": "Posting as {name}",
 	"w.sign_out": "Sign out",
 	"w.signin_prompt": "Sign in to get a verified badge:",
+	"w.signin_popup_blocked": "Your browser blocked the sign-in window. Allow pop-ups for this site, then try again.",
+	"w.signin_failed": "Sign-in did not complete. Please try again.",
 
 	// ── Load failures ───────────────────────────────────────────────────────
 	"w.err.transient":
 		"Comments are temporarily unavailable. Please check back in a few minutes.",
 	"w.err.generic": "Could not load comments.",
+	"w.err.network": "Could not reach the server. Check your connection and try again.",
+	"w.err.action": "Something went wrong. Please try again.",
 
 	// ── Attribution ─────────────────────────────────────────────────────────
 	// "Garrul" is the product name and is never translated; it renders inside

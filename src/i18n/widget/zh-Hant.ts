@@ -70,6 +70,8 @@ export const zhHant = {
 	"w.edit_left": "剩餘 {time}",
 	"w.edit_last_minute": "剩不到一分鐘",
 	"w.edit_expired": "留言的編輯期限已過。",
+	"w.edit_load_failed": "無法載入這則留言以供編輯。",
+	"w.session_expired": "你已登出。請重新登入，或以訪客身分發佈。",
 	"w.delete": "刪除",
 	"w.delete_confirm": "確定要刪除這則留言嗎？",
 	"w.report": "檢舉",
@@ -101,6 +103,7 @@ export const zhHant = {
 	"w.more_replies": { other: "顯示另外 {n} 則回覆" },
 	"w.loading_comments": "正在載入留言",
 	"w.permalink": "@{name} 的留言永久連結，{time}",
+	"w.permalink_missing": "這則留言無法使用。",
 	"w.region": "留言",
 	"w.empty.open": "來發表第一則留言吧。",
 	"w.empty.closed": "目前沒有留言。",
@@ -122,20 +125,26 @@ export const zhHant = {
 	"w.unsubscribe.done": "你將不再收到此討論串的電子郵件。",
 	"w.unsubscribe.failed": "無法取消訂閱，請再試一次。",
 	"w.unsubscribe.row": "取消訂閱",
+	"w.unsubscribed": "已取消訂閱",
 	"w.manage": "管理訂閱",
 	"w.manage.empty": "你尚未追蹤任何討論串。",
 	"w.manage.failed": "無法載入你的訂閱。",
 	"w.load_more": "載入較早的留言",
 	"w.load_more_failed": "無法載入更多留言：{detail}",
+	"w.retry": "再試一次",
 
 	// ── Identity ────────────────────────────────────────────────────────────
 	"w.posting_as": "以 {name} 的身分發佈",
 	"w.sign_out": "登出",
 	"w.signin_prompt": "登入以取得已驗證標章：",
+	"w.signin_popup_blocked": "瀏覽器已封鎖登入視窗。請允許此網站顯示彈出視窗，然後再試一次。",
+	"w.signin_failed": "登入未完成，請再試一次。",
 
 	// ── Load failures ───────────────────────────────────────────────────────
 	"w.err.transient": "留言暫時無法使用，請幾分鐘後再回來查看。",
 	"w.err.generic": "無法載入留言。",
+	"w.err.network": "無法連上伺服器，請檢查網路連線後再試一次。",
+	"w.err.action": "發生錯誤，請再試一次。",
 
 	// ── Attribution ─────────────────────────────────────────────────────────
 	"w.powered_by": "留言由 {link} 提供",

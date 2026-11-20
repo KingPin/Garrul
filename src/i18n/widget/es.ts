@@ -79,6 +79,8 @@ export const es = {
 	"w.edit_left": { one: "queda {time}", other: "quedan {time}" },
 	"w.edit_last_minute": "queda menos de un minuto",
 	"w.edit_expired": "Tu plazo de edición ha terminado.",
+	"w.edit_load_failed": "No se pudo cargar este comentario para editarlo.",
+	"w.session_expired": "Se cerró tu sesión. Vuelve a iniciar sesión o publica como invitado.",
 	"w.delete": "Eliminar",
 	"w.delete_confirm": "¿Eliminar este comentario?",
 	"w.report": "Denunciar",
@@ -112,6 +114,7 @@ export const es = {
 		other: "Mostrar {n} respuestas más",
 	},
 	"w.loading_comments": "Cargando comentarios",
+	"w.permalink_missing": "Este comentario no está disponible.",
 	"w.empty.open": "Sé la primera persona en comentar.",
 	"w.empty.closed": "Aún no hay comentarios.",
 	"w.closed.post": "Los comentarios están cerrados en esta entrada.",
@@ -127,18 +130,24 @@ export const es = {
 	"w.subscribe.done": "Revisa tu correo para confirmar.",
 	"w.subscribe.failed": "No se pudo suscribir. Inténtalo de nuevo.",
 	"w.subscribe.ratelimit": "Demasiadas solicitudes. Inténtalo más tarde.",
+	"w.unsubscribed": "Suscripción cancelada",
 	"w.load_more": "Cargar comentarios anteriores",
 	"w.load_more_failed": "No se pudieron cargar más: {detail}",
+	"w.retry": "Intentar de nuevo",
 
 	// ── Identity ────────────────────────────────────────────────────────────
 	"w.posting_as": "Publicas como {name}",
 	"w.sign_out": "Cerrar sesión",
 	"w.signin_prompt": "Inicia sesión para obtener una insignia de verificado:",
+	"w.signin_popup_blocked": "Tu navegador bloqueó la ventana de inicio de sesión. Permite las ventanas emergentes para este sitio y vuelve a intentarlo.",
+	"w.signin_failed": "El inicio de sesión no se completó. Inténtalo de nuevo.",
 
 	// ── Load failures ───────────────────────────────────────────────────────
 	"w.err.transient":
 		"Los comentarios no están disponibles temporalmente. Vuelve a intentarlo en unos minutos.",
 	"w.err.generic": "No se pudieron cargar los comentarios.",
+	"w.err.network": "No se pudo conectar con el servidor. Comprueba tu conexión e inténtalo de nuevo.",
+	"w.err.action": "Algo salió mal. Inténtalo de nuevo.",
 
 	// ── Attribution ─────────────────────────────────────────────────────────
 	// "Garrul" is a product name and stays untranslated inside {link}.

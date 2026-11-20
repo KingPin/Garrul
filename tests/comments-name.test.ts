@@ -180,3 +180,24 @@ describe("POST /comments — reserved names", () => {
 		expect(await (await withToken("Site Admin fan")).json()).not.toEqual({ error: RESERVED });
 	});
 });
+
+describe("POST /comments — machine code on the missing-name refusal", () => {
+	// The widget treats this exact 400 as a lost session when it believes it is
+	// signed in: a signed-out request with no name reaches it first.
+	it("marks a signed-out post with no name as name_required", async () => {
+		const res = await post({ slug: SLUG, body: "ordinary body" });
+		expect(res.status).toBe(400);
+		const json = (await res.json()) as { error?: string; code?: string };
+		expect(json.code).toBe("name_required");
+		expect(typeof json.error).toBe("string");
+	});
+
+	it("leaves other 400s without a code", async () => {
+		const tooLong = await post({ slug: SLUG, name: "Bob", body: "x".repeat(20_000) });
+		expect(tooLong.status).toBe(400);
+		expect(await tooLong.json()).not.toHaveProperty("code");
+		const noToken = await post({ slug: SLUG, name: "Bob", body: "ordinary body" });
+		expect(noToken.status).toBe(400);
+		expect(await noToken.json()).not.toHaveProperty("code");
+	});
+});

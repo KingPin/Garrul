@@ -99,6 +99,8 @@ export const nl = {
 	"w.edit_left": "nog {time}",
 	"w.edit_last_minute": "minder dan een minuut over",
 	"w.edit_expired": "De bewerktermijn is verstreken.",
+	"w.edit_load_failed": "Deze reactie kon niet worden geladen om te bewerken.",
+	"w.session_expired": "Je bent uitgelogd. Log opnieuw in of plaats als gast.",
 	"w.delete": "Verwijderen",
 	"w.delete_confirm": "Deze reactie verwijderen?",
 	"w.report": "Melden",
@@ -138,6 +140,7 @@ export const nl = {
 	},
 	"w.loading_comments": "Reacties laden",
 	"w.permalink": "Permalink naar de reactie van @{name}, {time}",
+	"w.permalink_missing": "Deze reactie is niet beschikbaar.",
 	"w.region": "Reacties",
 	// Infinitive, not the imperative "Wees de eerste" — the no-direct-address
 	// rule, and this is a label rather than an instruction.
@@ -163,11 +166,13 @@ export const nl = {
 	"w.unsubscribe.done": "Je krijgt geen e-mail meer over deze discussie.",
 	"w.unsubscribe.failed": "Afmelden is mislukt. Probeer het opnieuw.",
 	"w.unsubscribe.row": "Afmelden",
+	"w.unsubscribed": "Afgemeld",
 	"w.manage": "Abonnementen beheren",
 	"w.manage.empty": "Je volgt nog geen discussies.",
 	"w.manage.failed": "De abonnementen konden niet worden geladen.",
 	"w.load_more": "Oudere reacties laden",
 	"w.load_more_failed": "Er kon niet meer worden geladen: {detail}",
+	"w.retry": "Opnieuw proberen",
 
 	// ── Identity ────────────────────────────────────────────────────────────
 	"w.posting_as": "Plaatsen als {name}",
@@ -175,11 +180,15 @@ export const nl = {
 	// few lines up, and the two buttons can be on screen together.
 	"w.sign_out": "Uitloggen",
 	"w.signin_prompt": "Inloggen voor een verificatiebadge:",
+	"w.signin_popup_blocked": "Je browser heeft het inlogvenster geblokkeerd. Sta pop-ups toe voor deze site en probeer het opnieuw.",
+	"w.signin_failed": "Inloggen is niet voltooid. Probeer het opnieuw.",
 
 	// ── Load failures ───────────────────────────────────────────────────────
 	"w.err.transient":
 		"Reacties zijn tijdelijk niet beschikbaar. Kom over een paar minuten terug.",
 	"w.err.generic": "De reacties konden niet worden geladen.",
+	"w.err.network": "De server kon niet worden bereikt. Controleer je verbinding en probeer het opnieuw.",
+	"w.err.action": "Er ging iets mis. Probeer het opnieuw.",
 
 	// ── Attribution ─────────────────────────────────────────────────────────
 	// "Garrul" is a product name and stays untranslated inside {link}.

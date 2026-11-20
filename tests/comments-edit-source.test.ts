@@ -134,10 +134,10 @@ describe("GET /comments/:id/source", () => {
 		expect(res.status).toBe(403);
 	});
 
-	it("403s for anonymous viewers", async () => {
+	it("401s for anonymous viewers, so a stale widget reads a lost session", async () => {
 		const env = mkEnv(mkComment(Date.now() - 60_000));
 		const res = await getSource(env);
-		expect(res.status).toBe(403);
+		expect(res.status).toBe(401);
 	});
 
 	it("403s once the edit window has expired", async () => {
@@ -152,16 +152,16 @@ describe("GET /comments/:id/source", () => {
 		expect(res.status).toBe(404);
 	});
 
-	it("403s an anonymous caller whether or not the comment exists", async () => {
+	it("401s an anonymous caller whether or not the comment exists", async () => {
 		// The existence oracle: the lookup used to run before the session check,
 		// so an unauthenticated prober got 404 for an unknown id and 403 for a
-		// real one. Both must now answer 403, and neither may spend a D1 read.
+		// real one. Both must now answer the same 401, and neither may spend a D1 read.
 		const presentSql: string[] = [];
 		const absentSql: string[] = [];
 		const present = mkEnv(mkComment(Date.now() - 60_000), presentSql);
 		const absent = mkEnv(null, absentSql);
-		expect((await getSource(present)).status).toBe(403);
-		expect((await getSource(absent)).status).toBe(403);
+		expect((await getSource(present)).status).toBe(401);
+		expect((await getSource(absent)).status).toBe(401);
 		expect(presentSql).toEqual([]);
 		expect(absentSql).toEqual([]);
 	});

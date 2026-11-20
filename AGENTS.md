@@ -177,7 +177,16 @@ heuristic is on (`SPAM_FORM_TS_SECRET` set and `SPAM_HONEYPOT_MIN_MS`
 above `0`), `/api/v1/comments/form-token` is one more request, made on the
 reader's first composer focus (or when a reply form opens, or at mount when
 a saved draft is restored); the minimum-elapsed-time clock starts at that
-mint. The Workers free tier allows 100,000 requests/day, so the ceiling is
+mint. A long-open tab refreshes the token in the background once it is
+about 50 minutes old (the server rejects tokens older than 60), so after
+that first focus it makes roughly one extra form-token request per 50
+minutes (only while the tab is visible: the timer skips a hidden tab, and
+the tab becoming visible calls the refresh check). Two other requests are
+automatic and start without a reader action: a retryable Turnstile error
+reloads the frame (one `/embed/turnstile-frame` request, at most once per
+gate), and a mount that failed and rendered the error box retries once when
+the browser fires `online` (one more mount payload, then it is spent). The
+Workers free tier allows 100,000 requests/day, so the ceiling is
 roughly **100k pageviews/day** minus the readers who focus the composer —
 up from ~25k at the four requests a default install used to make, and
 ~16k with page reactions/votes and subscriptions on.
@@ -198,14 +207,16 @@ When the endpoint answers a 404 — what a Worker without the route
 returns — the widget silently falls back to exactly the pre-v2.15.0
 call sequence. So does a 200 whose body carries no comment tree, and a
 request that never lands. The 404 is remembered per API base, so a
-reader on such a Worker probes once and every later reload — editing,
-deleting, changing sort — goes straight to the legacy calls. Posting has
+reader on such a Worker probes once and every later reload — changing
+sort, or a fallback below — goes straight to the legacy calls. Posting has
 left that list in the normal case: since v2.20.0 a successful post
 renders from its own `201` and reloads nothing on either path. It still
 falls back to a reload when that echo cannot be rendered where it
 belongs — an old or malformed payload, or a parent no longer on screen
 (§4, *Posting a comment*) — so budget one request per comment and a
-second only on those paths.
+second only on those paths. Editing and deleting left it too: both swap
+the one comment or thread in place from their own response (§4,
+*Editing your own comment* and *Deleting your own comment*).
 
 Any **other** non-2xx does not fall back: it surfaces as an error, the
 same one a failed `/api/v1/comments` would render. The fallback is only
@@ -218,7 +229,11 @@ precisely when neither can afford it.
 `/api/v1/comments/form-token` is deliberately **not** folded in, which
 is why the form token is a separate request (made on first composer focus,
 a reply-form open, or at mount when a saved draft is restored) when the
-timing heuristic is on. Its signed timestamp feeds the anti-spam minimum-elapsed-time
+timing heuristic is on. A failed mint is not cached: it is retried on the
+next composer focus, `online` event, or the tab becoming visible, and a
+submit mints one only when no usable token exists. After a failed mint,
+focus and visible leave the endpoint alone for 30 seconds (an `online` event
+retries at once), so a failing endpoint is not asked again on every focus. Its signed timestamp feeds the anti-spam minimum-elapsed-time
 heuristic, and baking one into a shared payload would hand every reader
 the same start time. When the heuristic is off (no `SPAM_FORM_TS_SECRET`
 or `SPAM_HONEYPOT_MIN_MS` is `0`) the config payload carries
@@ -226,6 +241,21 @@ or `SPAM_HONEYPOT_MIN_MS` is `0`) the config payload carries
 (since v2.27.0); before that the route 404'd and the 404 still cost a
 request. A widget that sees no `form_token_enabled` field at all (older
 server) keeps requesting the token.
+
+**Failures stay visible and in place.** Action errors (vote, reaction,
+page reactions and votes, delete, edit) are the translated, reader-facing
+text, never the raw exception or status: a 5xx or an unreachable backend reads
+as a transient problem, anything else as a plain failure. A failed vote,
+reaction or delete shows its message in a status box beside that comment's
+action row; a failed page reaction or vote shows it beside the page
+engagement bar. A reload that fails (sort change, sign-in, a post that
+fell back to a reload) keeps the tree on screen and writes the message to the
+page status box; a composer a post had handed to that reload is unlocked
+again (its text cleared if the post landed, kept if the session had ended).
+Only a mount with nothing on screen is replaced by the error box, and that box
+has a "Try again" button. The button, or the browser's `online` event, retries
+the mount once; a failed retry draws a fresh box and arms a fresh retry, so an
+edge that keeps refusing is asked once per reader action, never in a loop.
 
 ### Lazy-loading (recommended for read-heavy hosts)
 
@@ -241,7 +271,12 @@ Turnstile is **not** in that list. The anti-spam iframe
 (`/embed/turnstile-frame`, which in turn pulls Cloudflare's `api.js` and
 its challenge platform) mounts only when the visitor first focuses the
 comment box, so a reader who never comments never downloads it. Expect
-those requests to appear on first focus rather than on page load.
+those requests to appear on first focus rather than on page load. If the
+network drops, the frame reloads itself when it comes back (an extra
+`/embed/turnstile-frame` request) so posting works without a page reload;
+a server rejection (4xx/5xx) does not reload it. A Turnstile error that
+Cloudflare marks retryable also reloads the frame, once per gate; a second
+one shows the sticky failure message.
 
 **Default to deferring the script load via `IntersectionObserver`**
 when the comments section is below the fold. Replace the
@@ -528,9 +563,22 @@ is why they are tried first.
 
 The widget reveals the target on mount and on `hashchange`: it pages
 forward (at most 10 extra `/api/v1/comments` requests) until the comment
-renders. Capped "Show N more replies" batches holding the target are
-opened at render time (mount or reload); a later `hashchange` opens
-collapsed branches only.
+renders. A capped "Show N more replies" batch holding the target is
+opened, on mount, on reload, or on a later `hashchange`, and a collapsed
+branch holding it opens too. A `hashchange` that lands during a load
+(mount, reload, sort change or Load more) is handled once that load has
+rendered. A seek that starts during a Load more waits for that page
+instead of giving up. Going from a comment to `#top` and back to it
+reveals it again, and a click on a comment's own timestamp re-reveals it
+when its link is already in the URL.
+
+The revealed comment gets a 2-second outline (class `gr-target`) so the
+eye finds it once the scroll stops. If the target is still missing after
+the page cap, the composer's status box shows "That comment is not
+available." A closed thread has no composer, so the widget makes a page status box
+(`.gr-page-status`) at the top of the thread and writes it there. The same
+box takes any other page-level message once the composer's Turnstile gate has
+failed, so the sticky anti-spam failure text is never replaced. The notice clears when a later link resolves.
 
 The link is a plain `<a href>` — no clipboard-copy JavaScript shim —
 so right-click-copy, middle-click, and Cmd/Ctrl-click all work the way
@@ -607,6 +655,17 @@ Subscriptions are **thread-scoped** and unique per `(post_slug, email)`,
 so a subscriber hears about every new comment on the post, not only direct
 replies.
 
+The composer checkbox disables its email field while unticked, so an
+invalid address left in the field cannot block a post. The subscribe
+request follows a successful post and never delays it. After a post with
+the box ticked:
+
+- a reader with no address in the session sees the server's "Check your
+  email to confirm." message, and the bell stays unlit;
+- a signed-in reader with a provider-verified address has no email field.
+  The bell re-reads the server's state and shows subscribed or awaiting
+  confirmation.
+
 #### Unsubscribing (since v2.11.0)
 
 There are two bells, and which one a reader gets is a security decision.
@@ -625,6 +684,24 @@ There are two bells, and which one a reader gets is a security decision.
   address follows with a per-row unsubscribe. There is no oracle here
   because the only address in play is one the session already proved it
   owns.
+
+Unsubscribing a row in the manage panel is delayed. The row's button
+becomes "Unsubscribed · Undo" for 5 seconds. Undo sends nothing and
+restores the button. When the 5 seconds end, or the page is left, the
+unsubscribe is sent. If it fails, the row comes back with an error. The
+Undo state survives a panel redraw while its window is open. When the
+unsubscribed thread is the one the bell shows, the bell updates once the
+unsubscribe succeeds. A redraw during the window leaves the old bell to send
+the request; its result reaches the row the new bell drew, and an Undo clicked
+after the request went out is retired instead of restoring the button. The
+bell's own cancel of a thread also cancels that thread's open row, so one
+unsubscribe sends one DELETE.
+
+Limit: the unsubscribe sent when the page is left is a credentialed `DELETE`
+with `keepalive`. Unlike Report's simple `POST`, it needs a CORS preflight,
+and browsers differ on whether a preflighted `keepalive` request still leaves
+the page. An unsubscribe pending at that moment can be lost; the thread then
+stays subscribed. The method and the API do not change for this.
 
 The endpoints behind the second bell are `GET /api/v1/subscribe/mine`
 (the list), `GET /api/v1/subscribe/mine?post_slug=` (one thread's state:
@@ -696,6 +773,23 @@ honestly:
 
 So posting costs one request in the ordinary case and two in those.
 
+**Refusals carry a localized `error`; one also carries a `code`.** A
+signed-out `POST /api/v1/comments` with no `name` answers
+`400 {"error": "<localized>", "code": "name_required"}`. `error` is
+unchanged and `code` is additive. It is the first refusal such a request
+reaches, so a widget that believes it is signed in (and so sends no name)
+treats it, like a `401`, as a session lost in another tab: it reloads
+with the draft kept and shows the sign-in-again notice. No other `400`
+(body length, Turnstile, parent checks, a name that is too long or
+reserved) carries a `code`.
+
+`PATCH` and `DELETE /api/v1/comments/:id` and `GET
+/api/v1/comments/:id/source` answer a caller with **no session** `401`
+(`"Your session expired…"`), checked before any rate limit or D1 read. A
+signed-in caller who is not the author still gets `403`. So an editor or
+a Delete from a session lost in another tab reloads with the sign-in-again
+notice instead of reading as "not your comment".
+
 ### Markdown preview (since v1.10.0)
 
 The composer (and the reply/edit forms) include a **Write | Preview** tab
@@ -709,6 +803,11 @@ Preview renders server-side via `POST /api/v1/preview` `{body}` →
 what you preview is byte-identical to what gets posted, with no
 client-side markdown library and no XSS divergence. The endpoint is
 public but rate-limited; no auth required.
+
+Toolbar actions (bold, italic, link, code, quote, list) insert through the
+browser's edit command, so they land on the textarea's undo stack and
+Ctrl/Cmd+Z reverts the last one. Assigning the field's value would clear
+that stack, which is why the widget does not do it.
 
 ### Editing your own comment (since v2.21.0)
 
@@ -728,9 +827,11 @@ wired to the button with `aria-describedby`, so a screen reader announces the
 remaining time when the button takes focus rather than every fifteen seconds.
 
 At expiry the Edit button and its countdown are **removed from the row**
-without a reload. An editor already open is disabled in place: the field and
-Save go inert, "Your edit window has closed." appears in a polite live region,
-and Cancel stays enabled so the box can still be dismissed. This is a display
+without a reload. An editor already open is locked in place: the text stays
+selectable and copyable but becomes read-only, the formatting toolbar and Save
+are disabled, and "Your edit window has closed." appears in a polite live
+region. Cancel stays enabled, takes focus if Save was focused, and Escape
+closes the box. A refused save does not unlock an expired editor. This is a display
 of the server rule, not a second copy of it — `PATCH /api/v1/comments/:id`
 and `GET /api/v1/comments/:id/source` both still 403 past the window.
 
@@ -747,6 +848,15 @@ Two caveats worth knowing:
   verdict — now renders in that same box. Before v2.21.0 the editor had no
   status surface at all and those failures silently re-enabled Save.
 
+A saved edit **updates the comment in place**: the widget redraws that one
+comment from the `PATCH` echo (`{ comment }`), keeps its replies, and focuses
+it. Scroll position, loaded pages and open forms elsewhere stay as they were;
+before, every save reloaded page one. An echo whose `status` differs from what
+the reader saw (a spam re-check sent the edit to the queue), or a comment no
+longer on screen, falls back to the old reload. So does a reply to that comment
+that is still posting. A reply form left open on the comment reopens after the
+redraw with its text, restored from the saved draft.
+
 ### Deleting your own comment (since v2.9.0)
 
 Delete asks for confirmation **in place**: the button becomes
@@ -755,13 +865,30 @@ Cancel, and `Escape` backs out. Before v2.9.0 this was `window.confirm()`,
 which is suppressed entirely in some webviews and in cross-origin iframes
 without user activation — where the button appeared to do nothing.
 
+`DELETE /api/v1/comments/:id` answers
+`{ ok: true, root_id, thread }`: the id of the deleted comment's top-level
+thread, and that thread re-rendered exactly as `GET /api/v1/comments` would
+now serve it to this viewer (placeholders, pruning and hidden rows included).
+`thread` is `null` when the whole thread is pruned. The widget swaps that one
+thread in place — or removes it on `null` and focuses the next thread — so a
+delete no longer resets the reader to page one. Both fields are additive:
+a response without `thread` (a Worker older than the widget, a root that
+cannot be resolved, or a render that failed after the delete went through)
+makes the widget reload as before, and older widgets read `ok` only. The
+widget also reloads when the delete would empty the page, or when a reply
+inside the thread is still posting. Reply forms open in the thread reopen with
+their text if their comment survives. The tree cache is busted exactly as
+before.
+
 ### Reporting a comment
 
 Any reader can report a visible comment that is not their own, signed in
 or not. The widget holds the report for 5 seconds and shows "Reported,
 thanks · Undo". Undo cancels it and no request is sent. When the timer
 ends, or the reader leaves the page first, the widget sends one
-`POST /api/v1/comments/:id/report` (with `keepalive`). On touch screens
+`POST /api/v1/comments/:id/report` (with `keepalive`). The Undo window
+survives any re-render (a sort change, a reload, or an in-place edit or
+delete), so the row keeps its Undo until the timer ends. On touch screens
 (`pointer: coarse`) the comment action buttons are 44 px tall.
 
 ### Removed comments and their replies (since v2.37.0)
@@ -795,14 +922,55 @@ Inside any composer — top-level, reply, or edit:
 
 | Keys                 | Does                                            |
 | -------------------- | ----------------------------------------------- |
-| `Cmd`/`Ctrl` + `Enter` | Posts the form you are in.                    |
-| `Escape`             | Closes a reply or edit box. A reply keeps its draft and reopens with it; an edit discards its changes. The top-level composer has nothing to back out to and ignores it. |
+| `Cmd`/`Ctrl` + `Enter` | Posts the form you are in. A held key (auto-repeat) never submits again. |
+| `Escape`             | Closes a reply or edit box. A reply keeps its draft and reopens with it; an edit keeps its text as a draft and restores it when reopened, if it differs from the saved comment. The top-level composer has nothing to back out to and ignores it. It also does nothing while a post is sending. |
 
 Bound on the form, so they work from the name and email fields too, not
 just the textarea. Both are suppressed while an IME composition is
 active. `Escape` does not propagate to the host page — closing a reply
 box will not also close a lightbox or drawer you have open around it.
 The hint under the box is hidden on touch devices.
+
+A composer sends one POST per submit. While a post is in flight the
+textarea is read-only and the toolbar and the reply/edit Cancel button
+are disabled, so nothing typed mid-post is lost and a repeat submit is
+dropped.
+
+### Keyboard focus after an action
+
+After each action the widget moves focus to a live control, so a keyboard
+or screen-reader user does not land on the page body:
+
+- **Cancel or `Escape` in a reply box** returns focus to that comment's
+  Reply button. **Cancel or `Escape` in an edit box** returns focus to its
+  Edit button.
+- **Opening Reply** focuses the reply textarea. Only the reader's own click
+  does this. A form the widget reopens after a re-render does not take focus.
+- **Load more** moves focus to the first newly loaded comment, but only when
+  the button had focus. A permalink seek keeps its own target.
+- **A sort change** returns focus to the sort select.
+- **Sign in or sign out** moves focus to the first control in the sign-in
+  block, or to the composer when that block has none.
+- **Report** moves focus to Undo. **Undo** returns focus to Report. When the
+  report is sent while focus is on that row, focus moves to the "Reported"
+  text.
+- **Subscribe** from the anonymous email field moves focus to its status
+  message, because the form it was typed in is hidden on success. The email
+  field has an accessible label, not only a placeholder.
+
+### Touch screens and small displays
+
+On a touch device (`pointer: coarse`) every button is at least 44 × 44 px,
+every select and single-line text input is at least 44 px tall, and the up
+and down votes sit 8 px apart. Inputs, textareas and selects use at least
+16 px type, so iOS Safari does not zoom the page when one is focused. Everywhere else, small controls
+keep a 24 px minimum height.
+
+- On a device without hover, the timestamp permalink is underlined, because
+  the hover underline never appears there.
+- The thread collapse triangle mirrors in right-to-left locales.
+- The Turnstile frame shrinks to fit its container, so a reply nested deep
+  on a 320 px phone does not push the page wider than the screen.
 
 ### Composer sizing (since v2.0.3)
 
@@ -1128,12 +1296,15 @@ What an end user sees when signing in from the embedded widget:
    `window.opener` (the embedding page), then closes itself. The widget
    refreshes its UI without a full page reload.
 
-**Popup-blocked fallback:** if Safari ITP (or a popup blocker) prevents
-the popup from opening, the same `/start` URL is reachable as a
-top-level navigation. The callback then redirects the user back to
-`state.return_origin` (validated against the operator's
-`ALLOWED_ORIGINS` allowlist). This is expected behavior — don't try to
-"fix" it by removing the popup or the redirect fallback.
+**Popup-blocked:** if Safari ITP or a popup blocker prevents the popup
+from opening, the widget does not navigate the page. It shows "Your
+browser blocked the sign-in window. Allow pop-ups for this site, then try
+again." The provider buttons stay in place, so the reader allows pop-ups
+and clicks again. The widget never falls back to a top-level navigation
+to `/start`: that path never returned the reader to the embedding page
+with the session in the embed's cookie partition. If the popup finishes
+but the session handoff then fails, the widget shows "Sign-in did not
+complete. Please try again."
 
 **COOP on the host page:** if the embedding page sends
 `Cross-Origin-Opener-Policy: same-origin`, the browser puts the
@@ -1307,10 +1478,11 @@ the list. Include both prod and any preview/staging origins separately.
 ### Safari ITP / popup blocked
 
 The OAuth sign-in flow opens a popup; under Safari Intelligent Tracking
-Prevention the popup may be blocked, in which case the widget falls
-back to a top-level redirect (see §7). The user lands at the callback
-page, which closes — they may need to navigate back manually. Expected
-behavior.
+Prevention the popup may be blocked. The widget then shows "Your browser
+blocked the sign-in window. Allow pop-ups for this site, then try again."
+and stays on the page (see §7). The reader allows pop-ups for the site
+and clicks the provider again. Expected behavior; the host page needs no
+change.
 
 ### Signed in, but the widget doesn't notice until reload
 
@@ -1394,9 +1566,13 @@ both `data-api` and the `<script src>`.
   it through `new URL(...)` and uses the origin verbatim for CORS-cred
   requests; mixed-content or scheme-relative values will fail.
 - Don't assume comment drafts survive a `data-api` change. Draft
-  autosave keys are `garrul:draft:<api origin>:<slug>[:<parent>]` (since
+  autosave keys are `garrul:draft:<api origin>:<slug>[:<parent>]`, or `...:<slug>:edit:<comment id>` for an edit box (since
   v2.27.0), so a draft belongs to one Worker origin. Pre-v2.27.0 drafts
   (`garrul:draft:<slug>`) are adopted once on the next mount.
+  Drafts are flushed on every teardown (re-render) and on `pagehide`. A
+  successful post removes only its own draft, never another tab's. When
+  `localStorage` is blocked or full, drafts fall back to memory and live
+  only for the page lifetime.
   Anonymous commenter details follow the same rule: after an accepted
   post the widget saves `{name, email}` under `garrul:author:<api origin>`
   and prefills the name field (and the hidden notify email field, box left
