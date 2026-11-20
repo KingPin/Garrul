@@ -4237,6 +4237,7 @@ const onHashChange = (root: ShadowRoot): void => {
 	if (act === "reset") {
 		st.revealedHash = null;
 		st.soughtHash = null;
+		st.hashDuringLoad = false;
 	} else if (act === "reveal") {
 		if (st.running) st.hashDuringLoad = true;
 		else void seekHashTarget(root);
@@ -4970,11 +4971,13 @@ const loadOnce = async (
 	// already read.
 	const hashFollowed = loadSt?.hashDuringLoad === true;
 	if (loadSt) loadSt.hashDuringLoad = false;
-	// A hash followed during the load is newer than the reveal it queued behind.
-	const pending = hashFollowed ? undefined : pendingReveal.get(root);
+	const pending = pendingReveal.get(root);
 	pendingReveal.delete(root);
 	if (pending) {
-		let revealed = pending.id != null && focusPostedComment(root, pending.id);
+		// A hash followed during the load is newer than the reveal it queued
+		// behind: it wins focus, but the announcement is still owed.
+		let revealed =
+			hashFollowed || (pending.id != null && focusPostedComment(root, pending.id));
 		if (!revealed && pending.id == null && pending.focus) {
 			const target = root.querySelector<HTMLElement>(pending.focus);
 			target?.focus();
@@ -5020,6 +5023,7 @@ const loadOnce = async (
 				writePageStatus(root, announce, "notice");
 			}, 0);
 		}
+		if (hashFollowed) void seekHashTarget(root);
 	} else {
 		void seekHashTarget(root);
 	}
