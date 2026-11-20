@@ -53,6 +53,7 @@ import {
 	flushAllDrafts,
 	legacyDraftKey,
 } from "./drafts";
+import { fireAllPending, type Pending, pendingFor, schedulePending } from "./pending-action";
 import { authorKey, readAuthor, rememberAuthor } from "./author";
 import { createTurnstileGate, type TurnstileGate } from "./turnstile-gate";
 import { makeS, type StringTable, type WidgetKey } from "./strings";
@@ -67,10 +68,14 @@ import {
 // from the DOM-free test pool — see the module header.
 import {
 	type PostedEcho,
+	type SwapCtx,
 	type TreeAuthor,
 	type TreeNode,
+	mergeEdited,
 	prependAnchor,
 	readPostedEcho,
+	replaceCommentInPlace,
+	replaceThreadInPlace,
 	synthesizePosted,
 	topLevelPlacement,
 } from "./comment-node";
@@ -78,9 +83,10 @@ import {
 	commentAnchorId,
 	commentHref,
 	commentIdFromHash,
+	hashAction,
+	listHolds,
 	MAX_SEEK_PAGES,
 	seekComment,
-	subtreeHas,
 } from "./permalink";
 import {
 	type EditWindowState,
@@ -1990,16 +1996,21 @@ const buildActions = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): HTMLEleme
 	// survives only as the fallback for edge-cached payloads that predate the field.
 	const canReply = n.can_reply ?? n.depth < 4;
 	if (ctx.acceptingComments && canReply && n.status !== "deleted") {
-		const replyBtn = el("button", undefined, s("w.reply"));
+		// The class is how an in-place swap reopens a reply form (see swapCtx).
+		const replyBtn = el("button", "gr-reply-btn", s("w.reply"));
 		replyBtn.type = "button";
-		replyBtn.addEventListener("click", () => {
+		replyBtn.addEventListener("click", (e) => {
 			// Editor forms share the `gr-reply-form` class (and styling) but tag
 			// themselves with `data-mode="edit"` — narrow the guard so an open
 			// editor doesn't silently swallow Reply clicks.
 			if (main.querySelector('.gr-reply-form:not([data-mode="edit"])')) {
 				return;
 			}
-			main.appendChild(buildReplyForm(n, ctx));
+			const form = buildReplyForm(n, ctx);
+			main.appendChild(form);
+			// Only a reader's own click moves focus: swapCtx reopens forms with a
+			// synthetic .click(), which must not pull focus off what they are on.
+			if (e.isTrusted) form.querySelector("textarea")?.focus();
 		});
 		row.appendChild(replyBtn);
 	}
@@ -2063,10 +2074,34 @@ const buildActions = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): HTMLEleme
 						{ method: "DELETE" },
 					);
 					if (res.ok) {
-						// Focus only, no announcement: the row usually survives as a
-						// tombstone, and landing focus on the updated comment is the
-						// confirmation for assistive tech. If it doesn't survive, the
-						// status-box fallback in loadOnce catches it.
+						// The server answers with the re-rendered thread (null: pruned
+						// whole), so only that thread changes and the reader keeps
+						// their place. No `thread` key is a Worker older than this
+						// widget: reload as before.
+						const json = (await res.json().catch(() => ({}))) as {
+							root_id?: string;
+							thread?: TreeNode | null;
+						};
+						const next = ctx.root.getElementById(
+							commentAnchorId(json.root_id ?? ""),
+						)?.nextElementSibling;
+						// Removing the page's only thread would leave a bare list with no
+						// "no comments yet": reload for that one.
+						if (
+							json.root_id &&
+							json.thread !== undefined &&
+							(json.thread ||
+								ctx.root.querySelectorAll(".gr-list > .gr-thread").length > 1) &&
+							replaceThreadInPlace(swapCtx(ctx), json.root_id, json.thread)
+						) {
+							// Focus only, no announcement: landing on the tombstone (or
+							// what is left of the thread) is the confirmation for
+							// assistive tech. A thread that went away hands focus to the
+							// next thread's first control.
+							if (!focusPostedComment(ctx.root, n.id) && !focusPostedComment(ctx.root, json.root_id))
+								next?.querySelector<HTMLElement>("button, a[href]")?.focus();
+							return;
+						}
 						ctx.revealAfterReload(n.id);
 						ctx.reload();
 						return;
@@ -2092,10 +2127,13 @@ const buildActions = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): HTMLEleme
 	if (n.status !== "deleted" && !isOwnComment) {
 		const reportBtn = el("button", "gr-report", s("w.report"));
 		reportBtn.type = "button";
-		reportBtn.addEventListener("click", () => {
-			// Report is delayed REPORT_UNDO_MS so a misclick can be taken back
-			// with no request sent. Leaving the page sends it at once (keepalive)
-			// so a deliberate report is not lost.
+		const key = `report:${n.id}`;
+		// Report is delayed REPORT_UNDO_MS so a misclick can be taken back
+		// with no request sent. The timer lives in the pending registry, not in
+		// this closure, so a re-render that rebuilds this row redraws the same
+		// "Reported · Undo" state (see the pendingFor check below). Leaving the
+		// page sends it at once (keepalive) so a deliberate report is not lost.
+		const showReported = (pending: Pending): HTMLElement => {
 			const done = el("span", "gr-reported", `${s("w.reported")} \u00b7 `);
 			const undoBtn = el("button", undefined, s("w.undo"));
 			undoBtn.type = "button";
@@ -2105,68 +2143,80 @@ const buildActions = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): HTMLEleme
 			said.hidden = true;
 			undoBtn.setAttribute("aria-describedby", said.id);
 			done.append(said, undoBtn);
-			reportBtn.replaceWith(done);
-			undoBtn.focus();
-			// One of timer / pagehide / Undo wins; each removes the others.
-			const cancel = (): void => {
-				clearTimeout(timer);
-				window.removeEventListener("pagehide", send);
-			};
-			const send = async (): Promise<void> => {
-				cancel();
-				// The report is on its way: retire Undo now so it cannot restore Report
-				// while the POST is in flight. Keep focus on a live node.
-				const hadFocus = (undoBtn.getRootNode() as Document | ShadowRoot).activeElement === undoBtn;
+			undoBtn.addEventListener("click", () => {
+				pending.cancel();
+				// A no-op after the report was sent: Undo is retired by then.
+				if (done.isConnected) {
+					done.replaceWith(reportBtn);
+					reportBtn.focus();
+				}
+			});
+			return done;
+		};
+		// The settled result must land on the row on screen now, not on the
+		// node this closure was built with (a re-render may have replaced it).
+		const liveReported = (): HTMLElement | null =>
+			ctx.root
+				.getElementById(commentAnchorId(n.id))
+				?.querySelector<HTMLElement>(":scope > .gr-comment .gr-reported") ?? null;
+		const send = async (): Promise<void> => {
+			// The report is on its way: retire Undo now so it cannot restore Report
+			// while the POST is in flight. Keep focus on a live node.
+			const done0 = liveReported();
+			if (done0) {
+				const hadFocus = (done0.getRootNode() as Document | ShadowRoot).activeElement === done0.querySelector("button");
 				// Drops Undo, its description and the separator in one go.
-				done.textContent = s("w.reported");
+				done0.textContent = s("w.reported");
 				if (hadFocus) {
-					done.tabIndex = -1;
-					done.focus();
+					done0.tabIndex = -1;
+					done0.focus();
 				}
-				let ok = false;
-				try {
-					// The endpoint returns 200 for both new and duplicate reports and
-					// never discloses which (anti-enumeration), so a 2xx is the only
-					// success signal we get. fetch does NOT reject on a 4xx/5xx, so
-					// inspect res.ok explicitly.
-					const res = await apiFetch(
-						ctx.apiBase,
-						`/api/v1/comments/${encodeURIComponent(n.id)}/report`,
-						{
-							method: "POST",
-							// No headers or body: that keeps this a CORS "simple request", so
-							// the pagehide flush needs no preflight. A missing body means
-							// reason=null server-side.
-							keepalive: true,
-						},
-					);
-					ok = res.ok;
-				} catch {
-					// Network failure: fall through to the retry path below.
-				}
-				// On success the non-interactive "Reported" span stays, so a reader
-				// can't report-bomb one comment from the UI. (Server-side dedup +
-				// rate-limit are the real guard; this is just UX.)
-				if (!ok) {
-					// A real refusal (429, 4xx/5xx, dropped network): don't claim
-					// success; restore the button so the reader can retry.
-					// A report pending when a re-render detaches this node and whose
-					// POST then fails is lost silently; server dedup and rate-limit
-					// are the real guard.
+			}
+			let ok = false;
+			try {
+				// The endpoint returns 200 for both new and duplicate reports and
+				// never discloses which (anti-enumeration), so a 2xx is the only
+				// success signal we get. fetch does NOT reject on a 4xx/5xx, so
+				// inspect res.ok explicitly.
+				const res = await apiFetch(ctx.apiBase, `/api/v1/comments/${encodeURIComponent(n.id)}/report`, {
+					method: "POST",
+					// No headers or body: that keeps this a CORS "simple request", so
+					// the pagehide flush needs no preflight. A missing body means
+					// reason=null server-side.
+					keepalive: true,
+				});
+				ok = res.ok;
+			} catch {
+				// Network failure: fall through to the retry path below.
+			}
+			// On success the non-interactive "Reported" span stays, so a reader
+			// can't report-bomb one comment from the UI. (Server-side dedup +
+			// rate-limit are the real guard; this is just UX.)
+			if (!ok) {
+				// A real refusal (429, 4xx/5xx, dropped network): don't claim
+				// success; restore the button so the reader can retry. If the row
+				// is gone (a re-render without it) the failure is lost silently;
+				// server dedup and rate-limit are the real guard.
+				const done = liveReported();
+				if (done) {
 					const hadFocusNow = (done.getRootNode() as Document | ShadowRoot).activeElement === done;
 					done.replaceWith(reportBtn);
 					if (hadFocusNow) reportBtn.focus();
 				}
-			};
-			const timer = setTimeout(send, REPORT_UNDO_MS);
-			window.addEventListener("pagehide", send);
-			undoBtn.addEventListener("click", () => {
-				cancel();
-				done.replaceWith(reportBtn);
-				reportBtn.focus();
-			});
+			}
+		};
+		reportBtn.addEventListener("click", () => {
+			const done = showReported(schedulePending(key, send, REPORT_UNDO_MS));
+			reportBtn.replaceWith(done);
+			(done.lastElementChild as HTMLElement).focus();
 		});
-		row.appendChild(reportBtn);
+		const pending = pendingFor(key);
+		if (pending) {
+			// Rebuilt while a report is in its Undo window: no focus grab.
+			row.appendChild(showReported(pending));
+		} else {
+			row.appendChild(reportBtn);
+		}
 	}
 
 	return row;
@@ -2193,7 +2243,10 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 	// One dismissal path for the button and for Escape. An abandoned edit keeps
 	// nothing: the original body is still on the node, and the box was never a
 	// draft surface (attachDraft is only on the reply and top-level composers).
-	const dismiss = (): void => wrap.remove();
+	const dismiss = (): void => {
+		wrap.remove();
+		main.querySelector<HTMLElement>(".gr-edit-window button")?.focus();
+	};
 	cancel.addEventListener("click", dismiss);
 	const key = draftKey(ctx.apiOrigin, ctx.slug, `edit:${n.id}`);
 	bindComposerKeys(wrap, key, dismiss);
@@ -2305,6 +2358,21 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 				// assistive tech read the edited body, which is itself the
 				// confirmation, and it adds no new string to a bundle under a
 				// hard size budget.
+				//
+				// Redraw just this comment from the echo, so the reader keeps their
+				// place. Not a hand-off: the form leaves with the old row, and
+				// postOnce frees the key when this returns. A status change (a spam
+				// re-check sent it to the queue) reloads, as does a missing row.
+				const echo = readPostedEcho(
+					((await res.json().catch(() => null)) as { comment?: unknown } | null)?.comment,
+				);
+				if (
+					echo?.status === n.status &&
+					replaceCommentInPlace(swapCtx(ctx, key), n.id, mergeEdited(n, echo))
+				) {
+					focusPostedComment(ctx.root, n.id);
+					return;
+				}
 				handOff();
 				ctx.revealAfterReload(n.id);
 				ctx.reload();
@@ -2466,9 +2534,16 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 		tsHandle?.destroy();
 		wrap.remove();
 	};
+	const parentReplyBtn = (): HTMLElement | null =>
+		ctx.root
+			.getElementById(commentAnchorId(parent.id))
+			?.querySelector<HTMLElement>(":scope > .gr-comment .gr-reply-btn") ??
+		null;
 	const cancelReply = (): void => {
 		draft.flush();
 		dismiss();
+		// The form (and the focus in it) is gone: hand focus back to the opener.
+		parentReplyBtn()?.focus();
 	};
 	cancel.addEventListener("click", cancelReply);
 	bindComposerKeys(wrap, key, cancelReply);
@@ -2635,9 +2710,20 @@ const buildComment = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	// The timestamp is the permalink, the way Reddit/HN/Disqus do it — a plain
 	// anchor, so right-click-copy, middle-click and Cmd-click all work natively
 	// and we spend no bytes on a clipboard shim. Clicking it is handled by the
-	// existing hash-scroll at the bottom of this file.
+	// existing hash-scroll at the bottom of this file — except a click on the
+	// hash already in the URL, which fires no hashchange, so it reveals here.
 	const permalink = el("a", "gr-permalink");
 	permalink.href = ctx.permalinkFor(n.id);
+	permalink.addEventListener("click", (e) => {
+		// A modified click opens a new tab or window; this page stays put.
+		if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) {
+			return;
+		}
+		const r = permalink.getRootNode();
+		if (permalink.hash === window.location.hash && r instanceof ShadowRoot) {
+			revealHashTarget(r, true);
+		}
+	});
 	// The visible label is relative ("6 minutes ago"), which collides across
 	// comments on an active thread and says nothing about where the link goes —
 	// a links-list reads as a column of bare durations. The name carries the
@@ -2781,6 +2867,8 @@ type ReplyMount = {
 };
 
 const replyMounts = new WeakMap<HTMLElement, ReplyMount>();
+/** Each capped list's "Show N more" button -> the replies it still hides. */
+const hiddenReplies = new WeakMap<HTMLElement, TreeNode[]>();
 
 /**
  * The reply list for `n`, mounting the container and its toggle on first use.
@@ -2801,11 +2889,10 @@ const replyMountFor = (
 	// Per-comment collapse toggle; auto-collapsed when this node is nested
 	// at/deeper than the configured depth (0 = never auto-collapse).
 	// A branch holding the permalink target never starts collapsed.
-	const target = commentIdFromHash(window.location.hash);
 	const startCollapsed =
 		ctx.autoCollapseDepth > 0 &&
 		n.depth >= ctx.autoCollapseDepth &&
-		!(target && n.replies.some((r) => subtreeHas(r, target)));
+		!listHolds(n.replies, commentIdFromHash(window.location.hash));
 	const toggle = buildCollapseToggle(
 		container,
 		countDescendants(n),
@@ -2834,10 +2921,10 @@ const renderReplyList = (
 	const limit = ctx.repliesPerThread;
 	// A permalink target past the cap shows every reply: the target must be in
 	// the DOM, and splitting the list around it would hide its siblings oddly.
-	const target = commentIdFromHash(window.location.hash);
-	const showAll =
-		target !== null &&
-		replies.slice(limit).some((r) => subtreeHas(r, target));
+	const showAll = listHolds(
+		replies.slice(limit),
+		commentIdFromHash(window.location.hash),
+	);
 	const initial =
 		limit > 0 && replies.length > limit && !showAll ? limit : replies.length;
 	for (let i = 0; i < initial; i++) {
@@ -2848,6 +2935,8 @@ const renderReplyList = (
 		const more = el("button", "gr-showmore") as HTMLButtonElement;
 		more.type = "button";
 		more.textContent = s("w.more_replies", { n: hidden.length });
+		// A hash that arrives after this render opens the batch (findHashTarget).
+		hiddenReplies.set(more, hidden);
 		more.addEventListener("click", () => {
 			// Same arbitration as `appendThreads`, on the reply side: this batch was
 			// captured when the list rendered, and `insertPostedNode` can have put
@@ -2886,6 +2975,41 @@ const buildThread = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	}
 	return wrap;
 };
+
+/**
+ * The DOM side of the in-place swaps in comment-node.ts.
+ *
+ * A form inside `old` with a post in flight refuses the swap, so the caller
+ * falls back to the reload (loadOnce waits posts out); `ownKey` exempts the
+ * edit doing the swap. Otherwise the draft savers inside flush and retire — what
+ * loadOnce's `disposeAllDrafts` does for the whole tree — and each reply form
+ * that was open reopens on its comment, if it is still there and repliable,
+ * restoring its text from that draft.
+ */
+const swapCtx = (ctx: WidgetCtx, ownKey?: string): SwapCtx<HTMLElement> => ({
+	find: (id) => ctx.root.getElementById(commentAnchorId(id)),
+	row: (thread) => thread.querySelector(":scope > .gr-comment"),
+	build: (n, thread) => (thread ? buildThread : buildComment)(n, ctx),
+	swap: (old, next) => {
+		const forms = [...old.querySelectorAll<HTMLElement>(".gr-reply-form")].map((f) => {
+			const id = f.closest<HTMLElement>(".gr-comment")?.dataset.id ?? "";
+			const edit = f.dataset.mode === "edit";
+			return { id, edit, key: draftKey(ctx.apiOrigin, ctx.slug, edit ? `edit:${id}` : id) };
+		});
+		if (forms.some((f) => f.key !== ownKey && busyKeys.has(f.key))) return false;
+		for (const ta of old.querySelectorAll("textarea")) draftOf.get(ta)?.dispose();
+		if (next) old.replaceWith(next);
+		else old.remove();
+		for (const f of forms) {
+			if (f.edit) continue;
+			ctx.root
+				.getElementById(commentAnchorId(f.id))
+				?.querySelector<HTMLElement>(":scope > .gr-comment .gr-reply-btn")
+				?.click();
+		}
+		return true;
+	},
+});
 
 // Mirror of src/lib/oauth.ts ProviderId. The widget is bundled separately
 // (no server imports) so the union is duplicated here. The server's
@@ -3480,7 +3604,7 @@ const load = async (
 		// finds it already there), so piggybacking here gets "exactly one
 		// listener per mount" for free, with no second WeakSet just to
 		// remember whether one was already bound.
-		window.addEventListener("hashchange", () => void seekHashTarget(root));
+		window.addEventListener("hashchange", () => onHashChange(root));
 	}
 	if (st.running) {
 		st.queued = true;
@@ -3520,7 +3644,12 @@ const setSort = (root: ShadowRoot, sort: SortKey): void => {
 // whichever render happened to run first. A WeakMap already keyed by root
 // does this for free: whichever loadOnce runs last reads-and-deletes
 // whatever is there, with no separate flag needed to track who "owns" it.
-type PendingReveal = { id: string | null; announce?: string };
+type PendingReveal = {
+	id: string | null;
+	announce?: string;
+	/** Selector inside the new tree to focus when there is no `id` to reveal. */
+	focus?: string;
+};
 const pendingReveal = new WeakMap<ShadowRoot, PendingReveal>();
 
 /**
@@ -3533,11 +3662,16 @@ const revealAfterReload = (
 	root: ShadowRoot,
 	id: string | null,
 	announce?: string,
+	focus?: string,
 ): void => {
 	// Built conditionally rather than `{ id, announce }`: exactOptionalPropertyTypes
 	// treats an explicit `announce: undefined` as different from the key being
 	// absent, and PendingReveal's `announce?` means the latter.
-	pendingReveal.set(root, announce !== undefined ? { id, announce } : { id });
+	pendingReveal.set(root, {
+		id,
+		...(announce !== undefined ? { announce } : {}),
+		...(focus !== undefined ? { focus } : {}),
+	});
 };
 
 /**
@@ -3587,13 +3721,15 @@ const focusPostedComment = (root: ShadowRoot, id: string): boolean => {
  * revealed anything, so loadOnce's arbitration can fall through when it
  * didn't.
  */
-const revealHashTarget = (root: ShadowRoot): boolean => {
+const revealHashTarget = (root: ShadowRoot, again = false): boolean => {
 	const id = commentIdFromHash(window.location.hash);
 	if (!id) return false;
 	const anchorId = commentAnchorId(id);
 	const st = loadState.get(root);
-	if (st?.revealedHash === anchorId) return false;
-	const target = root.getElementById(anchorId);
+	// `again`: the reader clicked the timestamp of the comment already in the
+	// URL — a fresh request to see it, not a reload re-running the reveal.
+	if (!again && st?.revealedHash === anchorId) return false;
+	const target = findHashTarget(root, id);
 	if (!target) return false;
 	// A target inside an auto-collapsed branch is in the DOM but display:none,
 	// so scroll and focus would do nothing. Open each branch that holds it.
@@ -3619,6 +3755,19 @@ const revealHashTarget = (root: ShadowRoot): boolean => {
 	// Scrolling alone only serves a sighted mouse user; move the caret too so
 	// keyboard and screen-reader users land on the comment (WCAG 2.4.3).
 	focusPostedComment(root, id);
+	// The link resolved: a "not available" left by an earlier miss is stale.
+	const box = permalinkStatus(root);
+	if (box?.textContent === s("w.permalink_missing")) clearStatus(box);
+	// Outline it for 2 s so the eye finds it once the scroll stops.
+	const article = target.querySelector<HTMLElement>(".gr-comment");
+	if (article) {
+		clearTimeout(targetTimers.get(article));
+		article.classList.add("gr-target");
+		targetTimers.set(
+			article,
+			setTimeout(() => article.classList.remove("gr-target"), 2000),
+		);
+	}
 	// Record only on success: a hash pointing at a comment that hasn't
 	// rendered yet (paged thread, or a reload still in flight) must not count
 	// as revealed, so a reload that renders it can still catch it.
@@ -3626,19 +3775,49 @@ const revealHashTarget = (root: ShadowRoot): boolean => {
 	return true;
 };
 
+const targetTimers = new WeakMap<HTMLElement, ReturnType<typeof setTimeout>>();
+
+/**
+ * The composer's status box, the one live region a permalink notice may use.
+ * Not a bare `.gr-error`: Load more's failure box and inline form boxes share
+ * that class. A closed thread has no composer, so the notice is skipped there.
+ */
+const permalinkStatus = (root: ShadowRoot): HTMLElement | null =>
+	root.querySelector<HTMLElement>(".gr-form > .gr-error");
+
+/**
+ * The thread node for comment `id`, or null. A target in a capped reply list
+ * that rendered before the hash pointed at it sits behind "Show N more": open
+ * that batch (its replies render with the current hash, so any capped list
+ * nested inside opens too). Collapsed branches are opened by the caller.
+ */
+const findHashTarget = (root: ShadowRoot, id: string): HTMLElement | null => {
+	const anchorId = commentAnchorId(id);
+	if (!root.getElementById(anchorId)) {
+		for (const b of root.querySelectorAll<HTMLElement>(".gr-showmore")) {
+			if (listHolds(hiddenReplies.get(b) ?? [], id)) {
+				b.click();
+				break;
+			}
+		}
+	}
+	return root.getElementById(anchorId);
+};
+
 /**
  * Page forward (at most MAX_SEEK_PAGES) until the hash target is in the DOM,
- * then reveal it. A target in a collapsed or capped reply list is already
- * rendered open (see replyMountFor / renderReplyList), so only top-level
- * paging is needed here. An unknown id costs at most MAX_SEEK_PAGES requests.
+ * then reveal it. A capped reply list is opened by findHashTarget and a
+ * collapsed branch by revealHashTarget, so only top-level paging is needed
+ * here. An unknown id
+ * costs at most MAX_SEEK_PAGES requests, then says so in the status box.
  */
 const seekHashTarget = async (root: ShadowRoot): Promise<void> => {
 	const startId = commentIdFromHash(window.location.hash);
 	if (!startId) return;
-	// No tree yet: a hashchange that lands while the first load is in flight
-	// has nothing to search and no pager to search with, so recording the hash
-	// as sought here would make the first render's own seek return early and
-	// leave the target unrevealed. That render seeks the current hash itself.
+	// No tree yet (onHashChange defers while a load runs; this also covers a
+	// first load that failed): nothing to search and no pager to search with,
+	// so recording the hash as sought here would make the next render's own
+	// seek return early and leave the target unrevealed.
 	if (!mountCtx.has(root)) return;
 	const anchorId = commentAnchorId(startId);
 	const st = loadState.get(root);
@@ -3646,7 +3825,7 @@ const seekHashTarget = async (root: ShadowRoot): Promise<void> => {
 	// change) must not page again for the same hash. A different hash differs
 	// here, so a hashchange still seeks.
 	if (st && (st.revealedHash === anchorId || st.soughtHash === anchorId)) return;
-	await seekComment(
+	const found = await seekComment(
 		() => {
 			// Re-read the hash on every call: a hashchange can land mid-seek, and
 			// revealHashTarget acts on the current hash, so this must check the
@@ -3654,14 +3833,46 @@ const seekHashTarget = async (root: ShadowRoot): Promise<void> => {
 			// fetch is in flight and relies on this loop to carry it.
 			const id = commentIdFromHash(window.location.hash);
 			if (!id) return true;
-			if (!root.getElementById(commentAnchorId(id))) return false;
+			if (!findHashTarget(root, id)) return false;
 			revealHashTarget(root);
 			return true;
 		},
 		() => loadState.get(root)?.loadNext?.() ?? null,
 		MAX_SEEK_PAGES,
 	);
-	if (st) st.soughtHash = anchorId;
+	// Only while the hash is still this one: a reset (#top) that landed during
+	// the await must not be undone by this late write.
+	if (st && window.location.hash === `#${anchorId}`) st.soughtHash = anchorId;
+	if (found) return;
+	// The reader left the last revealed comment for one that is not here, so
+	// coming back to it is a fresh visit (see hashAction's "none").
+	if (st) st.revealedHash = null;
+	// A macrotask, for the same live-region reason as loadOnce's announce;
+	// skipped if the reader has already moved on to another hash.
+	const missed = window.location.hash;
+	setTimeout(() => {
+		const box = permalinkStatus(root);
+		if (box && window.location.hash === missed) {
+			showStatus(box, s("w.permalink_missing"), "notice");
+		}
+	}, 0);
+};
+
+/**
+ * `hashchange`: act on a link the reader just followed. While a load runs,
+ * leave the hash to that load's post-render arbitration — a seek now would
+ * search a tree about to be torn down and could mark the hash sought unseen.
+ */
+const onHashChange = (root: ShadowRoot): void => {
+	const st = loadState.get(root);
+	if (!st) return;
+	const act = hashAction(st.revealedHash, window.location.hash);
+	if (act === "reset") {
+		st.revealedHash = null;
+		st.soughtHash = null;
+	} else if (act === "reveal" && !st.running) {
+		void seekHashTarget(root);
+	}
 };
 
 /** The order the rendered page is actually in; see `loadState`'s `sort`. */
@@ -4141,7 +4352,12 @@ const loadOnce = async (
 	if (pageReactionsEnabled || pageVotesEnabled) {
 		wrap.appendChild(buildPageEngagement(ctx));
 	}
-	const authBlock = buildAuthBlock(me, apiBase, providers, reload, reload);
+	// The block is rebuilt by the reload, so land on its first control after.
+	const authReload = (): void => {
+		revealAfterReload(root, null, undefined, ".gr-signed button, .gr-signin button, .gr-body-input");
+		reload();
+	};
+	const authBlock = buildAuthBlock(me, apiBase, providers, authReload, authReload);
 	// The composer is always built (its submit/Turnstile wiring lives further
 	// down) but only mounted when comments are enabled. When disabled, existing
 	// comments stay visible (read-only) and we show a "closed" notice instead.
@@ -4257,6 +4473,7 @@ const loadOnce = async (
 				const picked = opts.find(([value]) => value === sel.value);
 				if (!picked) return;
 				setSort(root, picked[0]);
+				revealAfterReload(root, null, undefined, ".gr-sort select");
 				reload();
 			});
 			bar.appendChild(sortWrap);
@@ -4280,12 +4497,18 @@ const loadOnce = async (
 		const more = el("button", "gr-loadmore", s("w.load_more"));
 		more.type = "button";
 		let cursor: string | null = data.next_cursor;
-		const loadNext = async (): Promise<boolean> => {
-			if (!cursor || more.disabled) return false;
+		let inflight: Promise<boolean> | null = null;
+		const fetchNext = async (): Promise<boolean> => {
+			if (!cursor) return false;
+			// Read before disabling: a disabled button gives up focus.
+			const hadFocus = root.activeElement === more;
 			more.disabled = true;
 			try {
 				const page = await fetchPage(apiBase, slug, cursor, activeSort);
 				appendThreads(list, page.threads, ctx);
+				const firstNew = page.threads[0];
+				// Only the reader's own Load more moves focus; a seek keeps its target.
+				if (hadFocus && firstNew) focusPostedComment(root, firstNew.id);
 				cursor = page.next_cursor;
 				if (cursor) {
 					more.disabled = false;
@@ -4305,6 +4528,13 @@ const loadOnce = async (
 				return false;
 			}
 		};
+		// One fetch at a time, shared: a seek that starts while the reader's own
+		// Load more is in flight awaits that page and then looks, instead of
+		// reading the busy button as "no more pages" and giving up unseen.
+		const loadNext = (): Promise<boolean> =>
+			(inflight ??= fetchNext().finally(() => {
+				inflight = null;
+			}));
 		more.addEventListener("click", () => void loadNext());
 		if (loadSt) loadSt.loadNext = loadNext;
 		wrap.appendChild(more);
@@ -4355,7 +4585,12 @@ const loadOnce = async (
 	const pending = pendingReveal.get(root);
 	pendingReveal.delete(root);
 	if (pending) {
-		const revealed = pending.id != null && focusPostedComment(root, pending.id);
+		let revealed = pending.id != null && focusPostedComment(root, pending.id);
+		if (!revealed && pending.id == null && pending.focus) {
+			const target = root.querySelector<HTMLElement>(pending.focus);
+			target?.focus();
+			revealed = !!target;
+		}
 		// Query from `root`, not `form`: buildForm always builds the composer,
 		// but it is only appended into `wrap` when accepting comments (see
 		// below), so a reload that closes the thread in the same round-trip as
@@ -4717,6 +4952,8 @@ const submit = async (
 // pagehide also fires on entering the bfcache; flush retires nothing, so the
 // restored page keeps saving.
 window.addEventListener("pagehide", flushAllDrafts);
+// Same for reports still in their Undo window: a deliberate Report is sent, not lost.
+window.addEventListener("pagehide", fireAllPending);
 
 // Runs now, at script-execution time — that is the whole point of it.
 reserveSpace();

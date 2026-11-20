@@ -123,6 +123,7 @@ export const ar = {
 	},
 	"w.loading_comments": "جارٍ تحميل التعليقات",
 	"w.permalink": "رابط تعليق @{name}، {time}",
+	"w.permalink_missing": "هذا التعليق غير متاح.",
 	"w.region": "التعليقات",
 	"w.empty.open": "كن أول من يعلّق.",
 	"w.empty.closed": "لا توجد تعليقات بعد.",

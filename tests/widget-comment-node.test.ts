@@ -18,9 +18,13 @@ import { describe, expect, it } from "vitest";
 import {
 	MAX_DEPTH,
 	type PostedEcho,
+	type SwapCtx,
 	type TreeNode,
+	mergeEdited,
 	readPostedEcho,
 	prependAnchor,
+	replaceCommentInPlace,
+	replaceThreadInPlace,
 	replySlot,
 	synthesizePosted,
 	topLevelPlacement,
@@ -294,5 +298,86 @@ describe("readPostedEcho", () => {
 	it("drops a deleted_by it does not recognize", () => {
 		expect(readPostedEcho(body({ deleted_by: "somebody" }))?.deleted_by).toBeNull();
 		expect(readPostedEcho(body({ deleted_by: "author" }))?.deleted_by).toBe("author");
+	});
+});
+
+describe("mergeEdited", () => {
+	it("keeps children and counts and takes the echo's body", () => {
+		const kid = parentAt(1);
+		const n: TreeNode = {
+			...parentAt(0),
+			id: "c1",
+			score_up: 3,
+			my_vote: 1,
+			reactions: [{ kind: "heart", count: 2, mine: true }],
+			replies: [kid],
+		};
+		const out = mergeEdited(
+			n,
+			echo({ id: "c1", body_html: "<p>new</p>", edited_at: 5, status: "approved" }),
+		);
+		expect(out.body_html).toBe("<p>new</p>");
+		expect(out.edited_at).toBe(5);
+		expect(out.status).toBe("approved");
+		expect(out.replies).toEqual([kid]);
+		expect(out.score_up).toBe(3);
+		expect(out.my_vote).toBe(1);
+		expect(out.reactions).toEqual(n.reactions);
+		expect(out.depth).toBe(n.depth);
+	});
+
+	it("takes the echo's status, so the caller can see a move to pending", () => {
+		expect(mergeEdited(parentAt(0), echo({ status: "pending" })).status).toBe("pending");
+	});
+});
+
+describe("in-place swaps", () => {
+	/** A fake page: thread "id" holds row "id/row"; swaps are logged. */
+	const page = (ids: string[], busy = false) => {
+		const log: string[] = [];
+		const ctx: SwapCtx<string> = {
+			find: (id) => (ids.includes(id) ? id : null),
+			row: (thread) => `${thread}/row`,
+			build: (n, thread) => `${thread ? "thread" : "row"}:${n.id}`,
+			swap: (old, next) => {
+				if (busy) return false;
+				log.push(`${old} -> ${next ?? "removed"}`);
+				return true;
+			},
+		};
+		return { ctx, log };
+	};
+	const node = (id: string): TreeNode => ({ ...parentAt(0), id });
+
+	it("replaceThreadInPlace with null removes the given root", () => {
+		const { ctx, log } = page(["a", "b"]);
+		expect(replaceThreadInPlace(ctx, "a", null)).toBe(true);
+		expect(log).toEqual(["a -> removed"]);
+	});
+
+	it("replaceThreadInPlace swaps the root for the new thread", () => {
+		const { ctx, log } = page(["a"]);
+		expect(replaceThreadInPlace(ctx, "a", node("a"))).toBe(true);
+		expect(log).toEqual(["a -> thread:a"]);
+	});
+
+	it("replaceCommentInPlace swaps the row only, so the replies stay", () => {
+		const { ctx, log } = page(["a"]);
+		expect(replaceCommentInPlace(ctx, "a", node("a"))).toBe(true);
+		expect(log).toEqual(["a/row -> row:a"]);
+	});
+
+	it("both answer false when the target is not on screen", () => {
+		const { ctx, log } = page([]);
+		expect(replaceThreadInPlace(ctx, "a", null)).toBe(false);
+		expect(replaceCommentInPlace(ctx, "a", node("a"))).toBe(false);
+		expect(log).toEqual([]);
+	});
+
+	it("both answer false when a post is in flight inside the target", () => {
+		const { ctx, log } = page(["a"], true);
+		expect(replaceThreadInPlace(ctx, "a", null)).toBe(false);
+		expect(replaceCommentInPlace(ctx, "a", node("a"))).toBe(false);
+		expect(log).toEqual([]);
 	});
 });

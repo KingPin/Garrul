@@ -138,6 +138,7 @@ export const nl = {
 	},
 	"w.loading_comments": "Reacties laden",
 	"w.permalink": "Permalink naar de reactie van @{name}, {time}",
+	"w.permalink_missing": "Deze reactie is niet beschikbaar.",
 	"w.region": "Reacties",
 	// Infinitive, not the imperative "Wees de eerste" — the no-direct-address
 	// rule, and this is a label rather than an instruction.

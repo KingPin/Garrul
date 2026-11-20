@@ -201,14 +201,16 @@ When the endpoint answers a 404 — what a Worker without the route
 returns — the widget silently falls back to exactly the pre-v2.15.0
 call sequence. So does a 200 whose body carries no comment tree, and a
 request that never lands. The 404 is remembered per API base, so a
-reader on such a Worker probes once and every later reload — editing,
-deleting, changing sort — goes straight to the legacy calls. Posting has
+reader on such a Worker probes once and every later reload — changing
+sort, or a fallback below — goes straight to the legacy calls. Posting has
 left that list in the normal case: since v2.20.0 a successful post
 renders from its own `201` and reloads nothing on either path. It still
 falls back to a reload when that echo cannot be rendered where it
 belongs — an old or malformed payload, or a parent no longer on screen
 (§4, *Posting a comment*) — so budget one request per comment and a
-second only on those paths.
+second only on those paths. Editing and deleting left it too: both swap
+the one comment or thread in place from their own response (§4,
+*Editing your own comment* and *Deleting your own comment*).
 
 Any **other** non-2xx does not fall back: it surfaces as an error, the
 same one a failed `/api/v1/comments` would render. The fallback is only
@@ -532,9 +534,20 @@ is why they are tried first.
 
 The widget reveals the target on mount and on `hashchange`: it pages
 forward (at most 10 extra `/api/v1/comments` requests) until the comment
-renders. Capped "Show N more replies" batches holding the target are
-opened at render time (mount or reload); a later `hashchange` opens
-collapsed branches only.
+renders. A capped "Show N more replies" batch holding the target is
+opened, on mount, on reload, or on a later `hashchange`, and a collapsed
+branch holding it opens too. A `hashchange` that lands during a load
+(mount, reload, sort change or Load more) is handled once that load has
+rendered. A seek that starts during a Load more waits for that page
+instead of giving up. Going from a comment to `#top` and back to it
+reveals it again, and a click on a comment's own timestamp re-reveals it
+when its link is already in the URL.
+
+The revealed comment gets a 2-second outline (class `gr-target`) so the
+eye finds it once the scroll stops. If the target is still missing after
+the page cap, the composer's status box shows "That comment is not
+available." A closed thread has no composer, so it shows nothing there.
+The notice clears when a later link resolves.
 
 The link is a plain `<a href>` — no clipboard-copy JavaScript shim —
 so right-click-copy, middle-click, and Cmd/Ctrl-click all work the way
@@ -751,6 +764,15 @@ Two caveats worth knowing:
   verdict — now renders in that same box. Before v2.21.0 the editor had no
   status surface at all and those failures silently re-enabled Save.
 
+A saved edit **updates the comment in place**: the widget redraws that one
+comment from the `PATCH` echo (`{ comment }`), keeps its replies, and focuses
+it. Scroll position, loaded pages and open forms elsewhere stay as they were;
+before, every save reloaded page one. An echo whose `status` differs from what
+the reader saw (a spam re-check sent the edit to the queue), or a comment no
+longer on screen, falls back to the old reload. So does a reply to that comment
+that is still posting. A reply form left open on the comment reopens after the
+redraw with its text, restored from the saved draft.
+
 ### Deleting your own comment (since v2.9.0)
 
 Delete asks for confirmation **in place**: the button becomes
@@ -759,13 +781,30 @@ Cancel, and `Escape` backs out. Before v2.9.0 this was `window.confirm()`,
 which is suppressed entirely in some webviews and in cross-origin iframes
 without user activation — where the button appeared to do nothing.
 
+`DELETE /api/v1/comments/:id` answers
+`{ ok: true, root_id, thread }`: the id of the deleted comment's top-level
+thread, and that thread re-rendered exactly as `GET /api/v1/comments` would
+now serve it to this viewer (placeholders, pruning and hidden rows included).
+`thread` is `null` when the whole thread is pruned. The widget swaps that one
+thread in place — or removes it on `null` and focuses the next thread — so a
+delete no longer resets the reader to page one. Both fields are additive:
+a response without `thread` (a Worker older than the widget, a root that
+cannot be resolved, or a render that failed after the delete went through)
+makes the widget reload as before, and older widgets read `ok` only. The
+widget also reloads when the delete would empty the page, or when a reply
+inside the thread is still posting. Reply forms open in the thread reopen with
+their text if their comment survives. The tree cache is busted exactly as
+before.
+
 ### Reporting a comment
 
 Any reader can report a visible comment that is not their own, signed in
 or not. The widget holds the report for 5 seconds and shows "Reported,
 thanks · Undo". Undo cancels it and no request is sent. When the timer
 ends, or the reader leaves the page first, the widget sends one
-`POST /api/v1/comments/:id/report` (with `keepalive`). On touch screens
+`POST /api/v1/comments/:id/report` (with `keepalive`). The Undo window
+survives any re-render (a sort change, a reload, or an in-place edit or
+delete), so the row keeps its Undo until the timer ends. On touch screens
 (`pointer: coarse`) the comment action buttons are 44 px tall.
 
 ### Removed comments and their replies (since v2.37.0)
@@ -812,6 +851,25 @@ A composer sends one POST per submit. While a post is in flight the
 textarea is read-only and the toolbar and the reply/edit Cancel button
 are disabled, so nothing typed mid-post is lost and a repeat submit is
 dropped.
+
+### Keyboard focus after an action
+
+After each action the widget moves focus to a live control, so a keyboard
+or screen-reader user does not land on the page body:
+
+- **Cancel or `Escape` in a reply box** returns focus to that comment's
+  Reply button. **Cancel or `Escape` in an edit box** returns focus to its
+  Edit button.
+- **Opening Reply** focuses the reply textarea. Only the reader's own click
+  does this. A form the widget reopens after a re-render does not take focus.
+- **Load more** moves focus to the first newly loaded comment, but only when
+  the button had focus. A permalink seek keeps its own target.
+- **A sort change** returns focus to the sort select.
+- **Sign in or sign out** moves focus to the first control in the sign-in
+  block, or to the composer when that block has none.
+- **Report** moves focus to Undo. **Undo** returns focus to Report. When the
+  report is sent while focus is on that row, focus moves to the "Reported"
+  text.
 
 ### Composer sizing (since v2.0.3)
 

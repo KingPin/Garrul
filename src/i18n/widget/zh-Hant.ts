@@ -101,6 +101,7 @@ export const zhHant = {
 	"w.more_replies": { other: "顯示另外 {n} 則回覆" },
 	"w.loading_comments": "正在載入留言",
 	"w.permalink": "@{name} 的留言永久連結，{time}",
+	"w.permalink_missing": "這則留言無法使用。",
 	"w.region": "留言",
 	"w.empty.open": "來發表第一則留言吧。",
 	"w.empty.closed": "目前沒有留言。",

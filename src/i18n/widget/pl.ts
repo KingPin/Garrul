@@ -151,6 +151,7 @@ export const pl = {
 	},
 	"w.loading_comments": "Wczytywanie komentarzy",
 	"w.permalink": "Bezpośredni odnośnik do komentarza @{name}, {time}",
+	"w.permalink_missing": "Ten komentarz jest niedostępny.",
 	"w.region": "Komentarze",
 	"w.empty.open": "Skomentuj jako pierwszy.",
 	"w.empty.closed": "Nie ma jeszcze komentarzy.",
