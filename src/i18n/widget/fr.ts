@@ -81,6 +81,8 @@ export const fr = {
 	"w.edit_left": { one: "{time} restante", other: "{time} restantes" },
 	"w.edit_last_minute": "moins d'une minute restante",
 	"w.edit_expired": "Votre délai de modification est écoulé.",
+	"w.edit_load_failed": "Impossible de charger ce commentaire pour le modifier.",
+	"w.session_expired": "Votre session a été fermée. Reconnectez-vous ou publiez en tant qu'invité.",
 	"w.delete": "Supprimer",
 	"w.delete_confirm": "Supprimer ce commentaire ?",
 	"w.report": "Signaler",
@@ -132,6 +134,7 @@ export const fr = {
 	"w.subscribe.ratelimit": "Trop de requêtes. Veuillez réessayer plus tard.",
 	"w.load_more": "Charger les commentaires plus anciens",
 	"w.load_more_failed": "Impossible d'en charger davantage : {detail}",
+	"w.retry": "Réessayer",
 
 	// ── Identity ────────────────────────────────────────────────────────────
 	"w.posting_as": "Vous publiez en tant que {name}",
@@ -142,6 +145,8 @@ export const fr = {
 	"w.err.transient":
 		"Les commentaires sont temporairement indisponibles. Revenez dans quelques minutes.",
 	"w.err.generic": "Impossible de charger les commentaires.",
+	"w.err.network": "Impossible de joindre le serveur. Vérifiez votre connexion et réessayez.",
+	"w.err.action": "Une erreur s'est produite. Veuillez réessayer.",
 
 	// ── Attribution ─────────────────────────────────────────────────────────
 	// "Garrul" is a product name and stays untranslated inside {link}.

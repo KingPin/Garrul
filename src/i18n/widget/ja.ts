@@ -106,6 +106,8 @@ export const ja = {
 	"w.edit_left": "残り{time}",
 	"w.edit_last_minute": "残り1分未満",
 	"w.edit_expired": "編集できる時間が終了しました。",
+	"w.edit_load_failed": "このコメントを編集用に読み込めませんでした。",
+	"w.session_expired": "ログアウトされました。もう一度ログインするか、ゲストとして投稿してください。",
 	"w.delete": "削除",
 	"w.delete_confirm": "このコメントを削除しますか？",
 	"w.report": "報告",
@@ -166,6 +168,7 @@ export const ja = {
 	"w.manage.failed": "登録中のスレッドを読み込めませんでした。",
 	"w.load_more": "以前のコメントを読み込む",
 	"w.load_more_failed": "追加で読み込めませんでした：{detail}",
+	"w.retry": "再試行",
 
 	// ── Identity ────────────────────────────────────────────────────────────
 	"w.posting_as": "{name}として投稿します",
@@ -176,6 +179,8 @@ export const ja = {
 	"w.err.transient":
 		"コメントは一時的に利用できません。数分後にもう一度ご覧ください。",
 	"w.err.generic": "コメントを読み込めませんでした。",
+	"w.err.network": "サーバーに接続できませんでした。通信環境を確認して、もう一度お試しください。",
+	"w.err.action": "問題が発生しました。もう一度お試しください。",
 
 	// ── Attribution ─────────────────────────────────────────────────────────
 	// "Garrul" is a product name and stays untranslated inside {link}.

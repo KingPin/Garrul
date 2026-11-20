@@ -123,6 +123,8 @@ export const EN = {
 	// still typing. Before this existed, Save stayed live and the PATCH it fired
 	// came back 403 with nothing on screen to say why.
 	"w.edit_expired": "Your edit window has closed.",
+	"w.edit_load_failed": "Could not load this comment for editing.",
+	"w.session_expired": "You were signed out. Sign in again or post as a guest.",
 	"w.delete": "Delete",
 	"w.delete_confirm": "Delete this comment?",
 	"w.report": "Report",
@@ -205,6 +207,7 @@ export const EN = {
 	"w.manage.failed": "Could not load your subscriptions.",
 	"w.load_more": "Load older comments",
 	"w.load_more_failed": "Could not load more: {detail}",
+	"w.retry": "Try again",
 
 	// ── Identity ────────────────────────────────────────────────────────────
 	// The provider names themselves (GitHub, Google, X…) are proper nouns and
@@ -217,6 +220,8 @@ export const EN = {
 	"w.err.transient":
 		"Comments are temporarily unavailable. Please check back in a few minutes.",
 	"w.err.generic": "Could not load comments.",
+	"w.err.network": "Could not reach the server. Check your connection and try again.",
+	"w.err.action": "Something went wrong. Please try again.",
 
 	// ── Attribution ─────────────────────────────────────────────────────────
 	// "Garrul" is the product name and is never translated; it renders inside

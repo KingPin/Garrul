@@ -119,6 +119,8 @@ export const pt = {
 	"w.edit_left": "mais {time}",
 	"w.edit_last_minute": "resta menos de um minuto",
 	"w.edit_expired": "O prazo de edição terminou.",
+	"w.edit_load_failed": "Não foi possível carregar este comentário para edição.",
+	"w.session_expired": "Você foi desconectado. Entre novamente ou publique como visitante.",
 	// "Apagar" over Brazilian "Excluir": idiomatic in both variants, where
 	// "Excluir" reads as "exclude" in European Portuguese.
 	"w.delete": "Apagar",
@@ -192,6 +194,7 @@ export const pt = {
 	"w.manage.failed": "Não foi possível carregar as inscrições.",
 	"w.load_more": "Carregar comentários anteriores",
 	"w.load_more_failed": "Não foi possível carregar mais: {detail}",
+	"w.retry": "Tentar novamente",
 
 	// ── Identity ────────────────────────────────────────────────────────────
 	"w.posting_as": "Publicando como {name}",
@@ -202,6 +205,8 @@ export const pt = {
 	"w.err.transient":
 		"Os comentários estão temporariamente indisponíveis. Tente novamente em alguns minutos.",
 	"w.err.generic": "Não foi possível carregar os comentários.",
+	"w.err.network": "Não foi possível conectar ao servidor. Verifique sua conexão e tente novamente.",
+	"w.err.action": "Algo deu errado. Tente novamente.",
 
 	// ── Attribution ─────────────────────────────────────────────────────────
 	// "Garrul" is a product name and stays untranslated inside {link}.

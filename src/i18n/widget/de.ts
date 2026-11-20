@@ -82,6 +82,8 @@ export const de = {
 	"w.edit_left": "noch {time}",
 	"w.edit_last_minute": "weniger als eine Minute übrig",
 	"w.edit_expired": "Der Bearbeitungszeitraum ist abgelaufen.",
+	"w.edit_load_failed": "Dieser Kommentar konnte nicht zum Bearbeiten geladen werden.",
+	"w.session_expired": "Die Sitzung wurde beendet. Erneut anmelden oder als Gast posten.",
 	"w.delete": "Löschen",
 	"w.delete_confirm": "Diesen Kommentar löschen?",
 	"w.report": "Melden",
@@ -135,6 +137,7 @@ export const de = {
 	"w.subscribe.ratelimit": "Zu viele Anfragen. Bitte später erneut versuchen.",
 	"w.load_more": "Ältere Kommentare laden",
 	"w.load_more_failed": "Konnte nicht mehr laden: {detail}",
+	"w.retry": "Erneut versuchen",
 
 	// ── Identity ────────────────────────────────────────────────────────────
 	"w.posting_as": "Posten als {name}",
@@ -145,6 +148,8 @@ export const de = {
 	"w.err.transient":
 		"Kommentare sind vorübergehend nicht verfügbar. Bitte in ein paar Minuten noch einmal vorbeischauen.",
 	"w.err.generic": "Kommentare konnten nicht geladen werden.",
+	"w.err.network": "Der Server ist nicht erreichbar. Verbindung prüfen und erneut versuchen.",
+	"w.err.action": "Etwas ist schiefgelaufen. Bitte erneut versuchen.",
 
 	// ── Attribution ─────────────────────────────────────────────────────────
 	// "Garrul" is a product name and stays untranslated inside {link}.

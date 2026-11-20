@@ -568,7 +568,10 @@ comments.post("/", async (c) => {
 		const nameCheck = validName(body.name);
 		if (!nameCheck.ok) {
 			const args = nameCheck.max != null ? { max: nameCheck.max } : undefined;
-			return c.json({ error: t(nameCheck.key, args) }, 400);
+			// Only the empty-name refusal carries a code: a signed-in widget sends no
+			// name, so this 400 is how it learns its session is gone.
+			const code = nameCheck.key === "err.name.required" ? { code: "name_required" } : {};
+			return c.json({ error: t(nameCheck.key, args), ...code }, 400);
 		}
 
 		if (!body.turnstile_token) {
@@ -1351,7 +1354,9 @@ comments.get("/:id/source", async (c) => {
 	// guess at a 128-bit ULID.
 	const session = await readSession(c);
 	const sessionUserId = session?.user_id;
-	if (!sessionUserId) return c.json({ error: t("err.edit.not_author") }, 403);
+	// 401, not 403: a widget that still shows the reader signed in reads it as a
+	// session lost elsewhere and reloads, where a 403 reads as "not the author".
+	if (!sessionUserId) return c.json({ error: t("err.session.expired") }, 401);
 
 	const existing = await getComment(c.env.DB, id);
 	if (!existing) return c.json({ error: t("err.not_found") }, 404);
@@ -1384,7 +1389,9 @@ comments.patch("/:id", async (c) => {
 	// which leaked whether a given comment id exists.)
 	const session = await readSession(c);
 	const sessionUserId = session?.user_id;
-	if (!sessionUserId) return c.json({ error: t("err.edit.not_author") }, 403);
+	// 401, not 403: a widget that still shows the reader signed in reads it as a
+	// session lost elsewhere and reloads, where a 403 reads as "not the author".
+	if (!sessionUserId) return c.json({ error: t("err.session.expired") }, 401);
 
 	const rl = await checkRateLimit(c.req.url, `user:${sessionUserId}`, {
 		scope: "comment-mutate",
@@ -1515,9 +1522,7 @@ comments.delete("/:id", async (c) => {
 	// Same ordering as PATCH above: session, then budget, then the D1 read.
 	const session = await readSession(c);
 	const sessionUserId = session?.user_id;
-	if (!sessionUserId) {
-		return c.json({ error: t("err.delete.not_author") }, 403);
-	}
+	if (!sessionUserId) return c.json({ error: t("err.session.expired") }, 401);
 
 	const rl = await checkRateLimit(c.req.url, `user:${sessionUserId}`, {
 		scope: "comment-mutate",

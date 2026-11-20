@@ -79,6 +79,8 @@ export const es = {
 	"w.edit_left": { one: "queda {time}", other: "quedan {time}" },
 	"w.edit_last_minute": "queda menos de un minuto",
 	"w.edit_expired": "Tu plazo de edición ha terminado.",
+	"w.edit_load_failed": "No se pudo cargar este comentario para editarlo.",
+	"w.session_expired": "Se cerró tu sesión. Vuelve a iniciar sesión o publica como invitado.",
 	"w.delete": "Eliminar",
 	"w.delete_confirm": "¿Eliminar este comentario?",
 	"w.report": "Denunciar",
@@ -130,6 +132,7 @@ export const es = {
 	"w.subscribe.ratelimit": "Demasiadas solicitudes. Inténtalo más tarde.",
 	"w.load_more": "Cargar comentarios anteriores",
 	"w.load_more_failed": "No se pudieron cargar más: {detail}",
+	"w.retry": "Intentar de nuevo",
 
 	// ── Identity ────────────────────────────────────────────────────────────
 	"w.posting_as": "Publicas como {name}",
@@ -140,6 +143,8 @@ export const es = {
 	"w.err.transient":
 		"Los comentarios no están disponibles temporalmente. Vuelve a intentarlo en unos minutos.",
 	"w.err.generic": "No se pudieron cargar los comentarios.",
+	"w.err.network": "No se pudo conectar con el servidor. Comprueba tu conexión e inténtalo de nuevo.",
+	"w.err.action": "Algo salió mal. Inténtalo de nuevo.",
 
 	// ── Attribution ─────────────────────────────────────────────────────────
 	// "Garrul" is a product name and stays untranslated inside {link}.

@@ -96,6 +96,8 @@ export const nb = {
 	"w.edit_left": "{time} igjen",
 	"w.edit_last_minute": "mindre enn ett minutt igjen",
 	"w.edit_expired": "Redigeringsvinduet er lukket.",
+	"w.edit_load_failed": "Kunne ikke laste denne kommentaren for redigering.",
+	"w.session_expired": "Du ble logget ut. Logg inn igjen eller publiser som gjest.",
 	"w.delete": "Slett",
 	"w.delete_confirm": "Slette denne kommentaren?",
 	"w.report": "Rapporter",
@@ -153,6 +155,7 @@ export const nb = {
 	"w.manage.failed": "Kunne ikke laste abonnementene dine.",
 	"w.load_more": "Last eldre kommentarer",
 	"w.load_more_failed": "Kunne ikke laste mer: {detail}",
+	"w.retry": "Prøv igjen",
 
 	// ── Identity ────────────────────────────────────────────────────────────
 	"w.posting_as": "Publiserer som {name}",
@@ -165,6 +168,8 @@ export const nb = {
 	"w.err.transient":
 		"Kommentarene er midlertidig utilgjengelige. Prøv igjen om noen minutter.",
 	"w.err.generic": "Kunne ikke laste kommentarene.",
+	"w.err.network": "Kunne ikke nå serveren. Sjekk tilkoblingen og prøv igjen.",
+	"w.err.action": "Noe gikk galt. Prøv igjen.",
 
 	// ── Attribution ─────────────────────────────────────────────────────────
 	// "Garrul" is a product name and stays untranslated inside {link}.

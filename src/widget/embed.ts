@@ -40,7 +40,7 @@
  * (docs/THEMING.md).
  */
 
-import { loadErrorMessage } from "./load-error";
+import { actionErrorMessage, HttpStatusError, loadErrorMessage } from "./load-error";
 import { watchForSignIn } from "./auth-recovery";
 import { autoSizeTextarea } from "./autosize";
 import {
@@ -206,6 +206,14 @@ const apiJson = (base: string, path: string, body: unknown, method = "POST"): Pr
 		body: JSON.stringify(body),
 	});
 
+/**
+ * A 401, or the missing-name 400 for a widget that believes it is signed in:
+ * the session ended elsewhere. Any other 400 is the reader's to fix and keeps
+ * its own message.
+ */
+const sessionLost = (res: Response, json: { code?: string } | null, signedIn: boolean): boolean =>
+	res.status === 401 || (signedIn && res.status === 400 && json?.code === "name_required");
+
 // Mark a vote button with its state: set/unset data-mine to highlight it visually,
 // and set aria-pressed so screen readers know whether the user's vote is cast.
 const markVote = (btn: HTMLElement, on: boolean): void => {
@@ -332,6 +340,49 @@ const showStatus = (
 const clearStatus = (box: HTMLElement): void => {
 	box.textContent = "";
 	box.classList.remove("is-notice");
+};
+
+/** Why an action did not go through (`fail`), or drop that message (`clear`). */
+type ActionStatus = {
+	fail: (err: unknown, body: { error?: string } | null) => void;
+	clear: () => void;
+};
+
+/**
+ * One error box for a row or bar. It is made on the first failure, appended to
+ * `host()`, and reused after that, so a row that never fails has no box at all.
+ */
+const lazyActionStatus = (
+	host: () => HTMLElement,
+	key?: "w.load_more_failed",
+): ActionStatus => {
+	let box: HTMLElement | null = null;
+	let text = "";
+	// The first message is written a tick after the box joins the tree: a live
+	// region that appears already filled is the case screen readers miss.
+	let flush: ReturnType<typeof setTimeout> | null = null;
+	return {
+		fail: (err, body) => {
+			const detail = actionErrorMessage(err, body, s);
+			text = key ? s(key, { detail }) : detail;
+			if (box) {
+				if (flush === null) showStatus(box, text);
+				return;
+			}
+			const made = statusBox("gr-error is-inline");
+			box = made;
+			host().appendChild(made);
+			flush = setTimeout(() => {
+				flush = null;
+				showStatus(made, text);
+			}, 0);
+		},
+		clear: () => {
+			if (flush !== null) clearTimeout(flush);
+			flush = null;
+			if (box) clearStatus(box);
+		},
+	};
 };
 
 /**
@@ -1159,7 +1210,7 @@ const reactionsByKind = (rs: ReactionCount[]): Map<string, ReactionCount> => {
 // rather than reloading the whole list: the vote endpoint does not bust
 // the tree cache by design, so a reload would just re-fetch the stale
 // counters until the next comment-write triggers invalidation.
-const buildVotes = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
+const buildVotes = (n: TreeNode, ctx: WidgetCtx, status: ActionStatus): HTMLElement => {
 	const wrap = el("div", "gr-votes");
 	const score = n.score_up - n.score_down;
 
@@ -1192,8 +1243,12 @@ const buildVotes = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 		down.disabled = true;
 		try {
 			const res = await apiJson(ctx.apiBase, "/api/v1/votes", { comment_id: n.id, value });
-			if (!res.ok) return;
+			if (!res.ok) {
+				status.fail(null, await res.json().catch(() => null));
+				return;
+			}
 			const body = (await res.json()) as VoteResponse;
+			status.clear();
 			// Mutate the node so a later re-render (Load more, reload) reflects
 			// the new state, and patch the DOM directly so the user sees the
 			// change without a full list reload.
@@ -1203,8 +1258,9 @@ const buildVotes = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 			scoreEl.textContent = String(body.score_up - body.score_down);
 			markVote(up, body.my_vote === 1);
 			markVote(down, body.my_vote === -1);
-		} catch {
-			// Network/parse failure: leave UI untouched; user can retry.
+		} catch (err) {
+			// Network/parse failure: the UI is left as it was; say why and let the user retry.
+			status.fail(err, null);
 		} finally {
 			up.disabled = false;
 			down.disabled = false;
@@ -1230,7 +1286,7 @@ const buildVotes = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 // the whole shadow tree, so the most frequent interaction in the widget was
 // also the most destructive one — it dropped scroll position and any open
 // composer with a half-typed draft in it.
-const buildReactions = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
+const buildReactions = (n: TreeNode, ctx: WidgetCtx, status: ActionStatus): HTMLElement => {
 	const wrap = el("div", "gr-reactions");
 	const cells = new Map<
 		string,
@@ -1290,7 +1346,10 @@ const buildReactions = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 					"/api/v1/reactions",
 					{ comment_id: n.id, kind },
 				);
-				if (!res.ok) return;
+				if (!res.ok) {
+					status.fail(null, await res.json().catch(() => null));
+					return;
+				}
 				const body = (await res.json()) as ReactionResponse;
 				// No counts to patch from means an API older than this bundle;
 				// fall back to the reload this used to do rather than merging
@@ -1313,8 +1372,10 @@ const buildReactions = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 					body.added,
 				);
 				paint();
-			} catch {
-				// Network/parse failure: leave the UI untouched; user can retry.
+				status.clear();
+			} catch (err) {
+				// Network/parse failure: the UI is left as it was; say why and let the user retry.
+				status.fail(err, null);
 			} finally {
 				btn.disabled = false;
 			}
@@ -1335,6 +1396,8 @@ const buildReactions = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
  */
 const buildPageEngagement = (ctx: WidgetCtx): HTMLElement => {
 	const wrap = el("div", "gr-page-engage");
+	// Reactions and votes share the bar's one error box.
+	const barStatus = lazyActionStatus(() => wrap);
 
 	// --- reactions ---
 	const reactCells = new Map<
@@ -1396,7 +1459,10 @@ const buildPageEngagement = (ctx: WidgetCtx): HTMLElement => {
 				"/api/v1/page-engagement/reactions",
 				{ slug: ctx.slug, kind },
 			);
-			if (!res.ok) return;
+			if (!res.ok) {
+				barStatus.fail(null, await res.json().catch(() => null));
+				return;
+			}
 			const body = (await res.json()) as {
 				added: boolean;
 				reactions: Record<string, number>;
@@ -1407,8 +1473,10 @@ const buildPageEngagement = (ctx: WidgetCtx): HTMLElement => {
 			if (body.added) cell.btn.dataset.mine = "1";
 			else delete cell.btn.dataset.mine;
 			cell.btn.setAttribute("aria-pressed", body.added ? "true" : "false");
-		} catch {
-			// leave UI as-is; user can retry
+			barStatus.clear();
+		} catch (err) {
+			// The UI is left as it was; say why and let the user retry.
+			barStatus.fail(err, null);
 		} finally {
 			cell.btn.disabled = false;
 		}
@@ -1441,10 +1509,15 @@ const buildPageEngagement = (ctx: WidgetCtx): HTMLElement => {
 				"/api/v1/page-engagement/votes",
 				{ slug: ctx.slug, value },
 			);
-			if (!res.ok) return;
+			if (!res.ok) {
+				barStatus.fail(null, await res.json().catch(() => null));
+				return;
+			}
 			setVote((await res.json()) as PageVoteState);
-		} catch {
-			// leave UI as-is
+			barStatus.clear();
+		} catch (err) {
+			// The UI is left as it was; say why and let the user retry.
+			barStatus.fail(err, null);
 		} finally {
 			up.disabled = false;
 			down.disabled = false;
@@ -1987,7 +2060,12 @@ const buildEditControl = (
 	return wrap;
 };
 
-const buildActions = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): HTMLElement => {
+const buildActions = (
+	n: TreeNode,
+	ctx: WidgetCtx,
+	main: HTMLElement,
+	status: ActionStatus,
+): HTMLElement => {
 	const row = el("div", "gr-actions");
 
 	// `can_reply` is server-computed from the real stored depth. Past the flatten
@@ -2067,6 +2145,11 @@ const buildActions = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): HTMLEleme
 			yes.addEventListener("click", async () => {
 				yes.disabled = true;
 				no.disabled = true;
+				let failure: unknown = null;
+				let failBody: { error?: string } | null = null;
+				// Set once the server has confirmed the delete. A throw after that
+				// is a render problem, not a failed delete: reload, never "failed".
+				let landed = false;
 				try {
 					const res = await apiFetch(
 						ctx.apiBase,
@@ -2074,6 +2157,7 @@ const buildActions = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): HTMLEleme
 						{ method: "DELETE" },
 					);
 					if (res.ok) {
+						landed = true;
 						// The server answers with the re-rendered thread (null: pruned
 						// whole), so only that thread changes and the reader keeps
 						// their place. No `thread` key is a Worker older than this
@@ -2106,13 +2190,25 @@ const buildActions = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): HTMLEleme
 						ctx.reload();
 						return;
 					}
-				} catch {
+					failBody = await res.json().catch(() => null);
+					if (sessionLost(res, null, true)) {
+						ctx.revealAfterReload(null, s("w.session_expired"));
+						ctx.reload();
+						return;
+					}
+				} catch (err) {
+					if (landed) {
+						ctx.reload();
+						return;
+					}
 					// Network failure — same handling as a refusal below.
+					failure = err;
 				}
 				// The delete did not happen, so do not leave the row looking like
 				// it is mid-flight. Back out to the button the reader started
-				// from; a second attempt is one click away.
+				// from; a second attempt is one click away. Say why beside it.
 				dismiss();
+				status.fail(failure, failBody);
 			});
 		});
 		row.appendChild(delBtn);
@@ -2297,13 +2393,24 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 	// re-enable and focus once it arrives.
 	ta.disabled = true;
 	save.disabled = true;
+	let loaded = false;
 	fetch(
 		`${ctx.apiBase}/api/v1/comments/${encodeURIComponent(n.id)}/source`,
 		{ credentials: "include" },
 	)
-		.then((res) => (res.ok ? res.json() : null))
+		.then((res) => {
+			// The session ended elsewhere: the editor would only fail on Save.
+			if (sessionLost(res, null, true)) {
+				ctx.revealAfterReload(null, s("w.session_expired"));
+				ctx.reload();
+			}
+			return res.ok ? res.json() : null;
+		})
 		.then((data: { body_md?: string } | null) => {
-			if (data && typeof data.body_md === "string") ta.value = data.body_md;
+			if (data && typeof data.body_md === "string") {
+				ta.value = data.body_md;
+				loaded = true;
+			}
 		})
 		.catch(() => {})
 		.finally(() => {
@@ -2316,6 +2423,12 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 			// whole surface exists to prevent, so say so instead.
 			if (isExpired()) {
 				expire();
+				return;
+			}
+			// A blank, saveable editor would overwrite the comment with nothing.
+			if (!loaded) {
+				ta.placeholder = "";
+				showStatus(errBox, s("w.edit_load_failed"));
 				return;
 			}
 			ta.disabled = false;
@@ -2381,11 +2494,17 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 			// Every other refusal — a 429, a body that failed validation, a spam
 			// verdict — used to re-enable Save and say nothing, which reads as the
 			// button not working. The server's message is already localized.
-			const json = (await res.json().catch(() => ({}))) as { error?: string };
-			showStatus(errBox, json.error ?? `HTTP ${res.status}`);
+			const json = (await res.json().catch(() => null)) as { error?: string } | null;
+			if (sessionLost(res, null, true)) {
+				handOff();
+				ctx.revealAfterReload(null, s("w.session_expired"));
+				ctx.reload();
+				return;
+			}
+			showStatus(errBox, actionErrorMessage(null, json, s));
 			save.disabled = false;
 		} catch (err) {
-			showStatus(errBox, String(err));
+			showStatus(errBox, actionErrorMessage(err, null, s));
 			save.disabled = false;
 		}
 	};
@@ -2615,13 +2734,20 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 				...asStaffField(wrap),
 				...postMetaFromDataset(ctx.host.dataset),
 			});
-			const json = (await res.json()) as {
+			const json = (await res.json().catch(() => null)) as {
 				error?: string;
+				code?: string;
 				comment?: { id?: string; status?: string };
-			};
+			} | null;
 			if (!res.ok) {
 				if (tsGate?.failed) return;
-				showStatus(errBox, json.error ?? `HTTP ${res.status}`);
+				if (sessionLost(res, json, ctx.me != null)) {
+					handOff();
+					ctx.revealAfterReload(null, s("w.session_expired"));
+					ctx.reload();
+					return;
+				}
+				showStatus(errBox, actionErrorMessage(null, json, s));
 				submit.disabled = false;
 				// Single-use once siteverify has seen it: re-challenge, and make the
 				// next wait actually wait instead of replaying the spent token.
@@ -2638,7 +2764,7 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 			// GET to read it back (see insertPostedNode). Pending replies take the
 			// same path as approved ones: `status` comes from the echo, so the
 			// "Pending approval" badge is drawn from the server's verdict either way.
-			const posted = readPostedEcho(json.comment);
+			const posted = readPostedEcho(json?.comment);
 			if (posted && insertPostedNode(ctx, posted, parent)) {
 				// The reload used to take this form down with the rest of the tree,
 				// gate and all. Nothing does now, so it dismisses itself.
@@ -2649,11 +2775,11 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 			// reload, and to the parent comment's id so focus still lands somewhere
 			// sensible on a response that omits the new comment's own.
 			handOff();
-			ctx.revealAfterReload(json.comment?.id ?? parent.id, s("w.posted"));
+			ctx.revealAfterReload(json?.comment?.id ?? parent.id, s("w.posted"));
 			ctx.reload();
 		} catch (err) {
 			if (tsGate?.failed) return;
-			showStatus(errBox, String(err));
+			showStatus(errBox, actionErrorMessage(err, null, s));
 			submit.disabled = false;
 			// Only a network failure can have left the challenge re-armed into a dead
 			// connection; a server rejection keeps the cheap message reset.
@@ -2787,11 +2913,14 @@ const buildComment = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 
 	// Votes/reactions only on public (approved) comments — a pending comment
 	// isn't visible to anyone but its author, so engagement is meaningless.
+	// One error box per row, in the actions row beside the control that failed.
+	const rowStatus = lazyActionStatus(() => actions);
 	if (n.status === "approved") {
-		if (ctx.votingEnabled) main.appendChild(buildVotes(n, ctx));
-		if (ctx.reactionsEnabled) main.appendChild(buildReactions(n, ctx));
+		if (ctx.votingEnabled) main.appendChild(buildVotes(n, ctx, rowStatus));
+		if (ctx.reactionsEnabled) main.appendChild(buildReactions(n, ctx, rowStatus));
 	}
-	main.appendChild(buildActions(n, ctx, main));
+	const actions = buildActions(n, ctx, main, rowStatus);
+	main.appendChild(actions);
 
 	row.appendChild(main);
 	return row;
@@ -3464,12 +3593,36 @@ const releaseSpace = (host: HTMLElement) => {
 	reservedHeight = false;
 };
 
-const renderError = (root: ShadowRoot, err: unknown) => {
+// One pending `online` retry per root, so repeated failures never stack them.
+const onlineRetry = new WeakMap<ShadowRoot, () => void>();
+
+const renderError = (root: ShadowRoot, err: unknown, retry: () => void) => {
+	mountCtx.delete(root);
 	root.replaceChildren();
 	const style = el("style");
 	style.textContent = STYLE_CSS;
 	const wrap = el("div", "gr-root");
 	wrap.appendChild(el("div", "gr-error", loadErrorMessage(err, s)));
+	const again = el("button", "gr-loadmore", s("w.retry"));
+	again.type = "button";
+	// Once per click or per reconnect, then it is spent: a failed retry renders a
+	// fresh error and arms a fresh one, so an edge that keeps refusing is asked
+	// once per reader action, never in a loop.
+	const prev = onlineRetry.get(root);
+	if (prev) window.removeEventListener("online", prev);
+	const go = (): void => {
+		window.removeEventListener("online", go);
+		onlineRetry.delete(root);
+		// A reconnect after something else already rendered the thread is a no-op.
+		if (!mountCtx.has(root)) retry();
+	};
+	onlineRetry.set(root, go);
+	window.addEventListener("online", go);
+	again.addEventListener("click", () => {
+		again.disabled = true;
+		go();
+	});
+	wrap.appendChild(again);
 	root.append(style, wrap);
 };
 
@@ -3483,7 +3636,7 @@ const fetchPage = async (
 	if (cursor) qs.set("before", cursor);
 	if (sort) qs.set("sort", sort);
 	const res = await apiFetch(apiBase, `/api/v1/comments?${qs.toString()}`);
-	if (!res.ok) throw new Error(`HTTP ${res.status}`);
+	if (!res.ok) throw new HttpStatusError(res.status);
 	return (await res.json()) as ListResponse;
 };
 
@@ -3778,12 +3931,28 @@ const revealHashTarget = (root: ShadowRoot, again = false): boolean => {
 const targetTimers = new WeakMap<HTMLElement, ReturnType<typeof setTimeout>>();
 
 /**
- * The composer's status box, the one live region a permalink notice may use.
- * Not a bare `.gr-error`: Load more's failure box and inline form boxes share
- * that class. A closed thread has no composer, so the notice is skipped there.
+ * The page-level status box: the composer's, or the one made below for a thread
+ * without a composer (closed). Not a bare `.gr-error`: Load more's failure box
+ * and inline row/form boxes share that class.
  */
 const permalinkStatus = (root: ShadowRoot): HTMLElement | null =>
-	root.querySelector<HTMLElement>(".gr-form > .gr-error");
+	root.querySelector<HTMLElement>(".gr-form > .gr-error, .gr-page-status");
+
+/** Write to the page status box, making it on first use (filled a tick later so screen readers announce it). */
+const writePageStatus = (
+	root: ShadowRoot,
+	message: string,
+	kind: "error" | "notice" = "error",
+): void => {
+	const box = permalinkStatus(root);
+	if (box) {
+		showStatus(box, message, kind);
+		return;
+	}
+	const made = statusBox("gr-error is-inline gr-page-status");
+	root.querySelector(".gr-root")?.prepend(made);
+	setTimeout(() => showStatus(made, message, kind), 0);
+};
 
 /**
  * The thread node for comment `id`, or null. A target in a capped reply list
@@ -3851,10 +4020,8 @@ const seekHashTarget = async (root: ShadowRoot): Promise<void> => {
 	// skipped if the reader has already moved on to another hash.
 	const missed = window.location.hash;
 	setTimeout(() => {
-		const box = permalinkStatus(root);
-		if (box && window.location.hash === missed) {
-			showStatus(box, s("w.permalink_missing"), "notice");
-		}
+		if (window.location.hash === missed)
+			writePageStatus(root, s("w.permalink_missing"), "notice");
 	}, 0);
 };
 
@@ -4098,6 +4265,21 @@ const loadOnce = async (
 	let autoCollapseDepth = 3;
 	let communityMinVotes = 5;
 	let communityCollapseRatio = 0;
+	// A reload that fails keeps the tree the reader is looking at and says so in
+	// its existing status box; only a mount with nothing on screen is replaced.
+	const loadFailed = (err: unknown): void => {
+		if (mountCtx.has(root)) {
+			// A reveal queued for the reload that just failed must not fire on the
+			// next unrelated one.
+			pendingReveal.delete(root);
+			writePageStatus(root, loadErrorMessage(err, s));
+			return;
+		}
+		// renderError replaces the shadow tree, so the composer this handle
+		// belongs to is about to vanish.
+		destroyTopComposerTurnstile();
+		renderError(root, err, () => void load(root, slug, apiBase, host));
+	};
 	// The mount request. `null` means this Worker cannot answer it, and every
 	// branch below then does exactly what it did before the endpoint existed. A
 	// throw means the edge answered and refused, where the fallback would only
@@ -4114,10 +4296,7 @@ const loadOnce = async (
 			reactionsOnly ? "engagement" : null,
 		);
 	} catch (err) {
-		// renderError replaces the shadow tree, so the composer this handle
-		// belongs to is about to vanish.
-		destroyTopComposerTurnstile();
-		renderError(root, err as Error);
+		loadFailed(err);
 		return;
 	}
 	try {
@@ -4291,10 +4470,7 @@ const loadOnce = async (
 			fetchPage(apiBase, slug, null, sort).catch((err: unknown) => err),
 		]);
 		if (dataResult instanceof Error) {
-			// renderError replaces the shadow tree, so the composer this handle
-			// belongs to is about to vanish.
-			destroyTopComposerTurnstile();
-			renderError(root, dataResult);
+			loadFailed(dataResult);
 			return;
 		}
 		me = meResult;
@@ -4496,6 +4672,7 @@ const loadOnce = async (
 	if (data.next_cursor) {
 		const more = el("button", "gr-loadmore", s("w.load_more"));
 		more.type = "button";
+		const moreStatus = lazyActionStatus(() => wrap, "w.load_more_failed");
 		let cursor: string | null = data.next_cursor;
 		let inflight: Promise<boolean> | null = null;
 		const fetchNext = async (): Promise<boolean> => {
@@ -4509,6 +4686,7 @@ const loadOnce = async (
 				const firstNew = page.threads[0];
 				// Only the reader's own Load more moves focus; a seek keeps its target.
 				if (hadFocus && firstNew) focusPostedComment(root, firstNew.id);
+				moreStatus.clear();
 				cursor = page.next_cursor;
 				if (cursor) {
 					more.disabled = false;
@@ -4519,12 +4697,7 @@ const loadOnce = async (
 				return true;
 			} catch (err) {
 				more.disabled = false;
-				const errBox = el(
-					"div",
-					"gr-error",
-					s("w.load_more_failed", { detail: String(err) }),
-				);
-				more.insertAdjacentElement("afterend", errBox);
+				moreStatus.fail(err, null);
 				return false;
 			}
 		};
@@ -4628,8 +4801,7 @@ const loadOnce = async (
 				// can land in the time this task waited to run, and writing
 				// into whatever `statusEl` pointed at would be writing into a
 				// node root.replaceChildren() may have already destroyed.
-				const box = root.querySelector(".gr-error") as HTMLElement | null;
-				if (box) showStatus(box, announce, "notice");
+				writePageStatus(root, announce, "notice");
 			}, 0);
 		}
 	} else {
@@ -4850,14 +5022,21 @@ const submit = async (
 			...asStaffField(form),
 			...postMetaFromDataset(host.dataset),
 		});
-		const json = (await res.json()) as {
+		const json = (await res.json().catch(() => null)) as {
 			error?: string;
+			code?: string;
 			comment?: { id?: string; status?: string };
-		};
+		} | null;
 		if (!res.ok) {
 			// A Turnstile error can arrive while this request is in flight.
 			if (ts?.gate.failed) return;
-			if (errEl) showStatus(errEl, json.error ?? `HTTP ${res.status}`);
+			if (sessionLost(res, json, mountCtx.get(root)?.me != null)) {
+				handOff();
+				revealAfterReload(root, null, s("w.session_expired"));
+				await load(root, slug, apiBase, host);
+				return;
+			}
+			if (errEl) showStatus(errEl, actionErrorMessage(null, json, s));
 			if (submitBtn) submitBtn.disabled = false;
 			// The token is single-use once siteverify has seen it, so re-challenge
 			// and make the next wait actually wait rather than replay it.
@@ -4903,7 +5082,7 @@ const submit = async (
 		// from the echo, so the "Pending approval" badge is the server's verdict
 		// either way, and a persistent badge stays the confirmation rather than a
 		// transient notice.
-		const posted = readPostedEcho(json.comment);
+		const posted = readPostedEcho(json?.comment);
 		const ctx = mountCtx.get(root);
 		if (posted && ctx && insertPostedNode(ctx, posted, null)) {
 			// The reload used to hand the composer back by rebuilding it. What is
@@ -4935,14 +5114,14 @@ const submit = async (
 		// follow-up — is the one that consumes it; see the arbitration at the
 		// tail of loadOnce.
 		handOff();
-		revealAfterReload(root, json.comment?.id ?? null, s("w.posted"));
+		revealAfterReload(root, json?.comment?.id ?? null, s("w.posted"));
 		await load(root, slug, apiBase, host);
 	} catch (err) {
 		// Same race, and the one that actually bit: a Turnstile error landing
-		// mid-submit had its message replaced by String(err) here, and the
+		// mid-submit had its message replaced by the raw exception text here, and the
 		// composer was handed back to the visitor with a dead anti-spam widget.
 		if (ts?.gate.failed) return;
-		if (errEl) showStatus(errEl, String(err));
+		if (errEl) showStatus(errEl, actionErrorMessage(err, null, s));
 		if (submitBtn) submitBtn.disabled = false;
 		ts?.reset(err instanceof TypeError);
 		ts?.gate.clear();

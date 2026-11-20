@@ -99,6 +99,8 @@ export const nl = {
 	"w.edit_left": "nog {time}",
 	"w.edit_last_minute": "minder dan een minuut over",
 	"w.edit_expired": "De bewerktermijn is verstreken.",
+	"w.edit_load_failed": "Deze reactie kon niet worden geladen om te bewerken.",
+	"w.session_expired": "Je bent uitgelogd. Log opnieuw in of plaats als gast.",
 	"w.delete": "Verwijderen",
 	"w.delete_confirm": "Deze reactie verwijderen?",
 	"w.report": "Melden",
@@ -169,6 +171,7 @@ export const nl = {
 	"w.manage.failed": "De abonnementen konden niet worden geladen.",
 	"w.load_more": "Oudere reacties laden",
 	"w.load_more_failed": "Er kon niet meer worden geladen: {detail}",
+	"w.retry": "Opnieuw proberen",
 
 	// ── Identity ────────────────────────────────────────────────────────────
 	"w.posting_as": "Plaatsen als {name}",
@@ -181,6 +184,8 @@ export const nl = {
 	"w.err.transient":
 		"Reacties zijn tijdelijk niet beschikbaar. Kom over een paar minuten terug.",
 	"w.err.generic": "De reacties konden niet worden geladen.",
+	"w.err.network": "De server kon niet worden bereikt. Controleer je verbinding en probeer het opnieuw.",
+	"w.err.action": "Er ging iets mis. Probeer het opnieuw.",
 
 	// ── Attribution ─────────────────────────────────────────────────────────
 	// "Garrul" is a product name and stays untranslated inside {link}.
