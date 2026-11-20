@@ -4441,8 +4441,9 @@ const loadOnce = async (
 	sort: SortKey | null,
 ) => {
 	// A reload redraws every thread, which a delete snapshot taken before it
-	// must not overwrite.
-	bumpMutation(root);
+	// must not overwrite; and a mutation that lands while this fetch is out
+	// makes what it fetched stale (checked before the tree is replaced).
+	const startSeq = bumpMutation(root);
 	// data-mode="reactions": the page engagement bar alone. Anything else is the
 	// full thread, so a typo degrades to the default widget rather than to nothing.
 	const reactionsOnly = host.dataset.mode === "reactions";
@@ -4724,8 +4725,9 @@ const loadOnce = async (
 	// Nor while a post is in flight: tearing down its composer abandons it
 	// mid-send and rebuilds the box with the posted text restored as a draft.
 	// What was fetched above predates that post, so once it settles fetch again,
-	// unless a reload already queued behind this one will.
-	if (inflight.size) {
+	// unless a reload already queued behind this one will. The same holds for a
+	// delete, post or edit that already landed in place while the fetch was out.
+	if (inflight.size || mutationSeq.get(root) !== startSeq) {
 		await Promise.allSettled(inflight);
 		if (!loadState.get(root)?.queued)
 			await loadOnce(root, slug, apiBase, host, activeSort);
