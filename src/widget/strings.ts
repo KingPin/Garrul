@@ -202,6 +202,7 @@ export const EN = {
 	// Panel rows sit under a heading that already says what the list is, so the
 	// row button is a bare verb rather than repeating the thread title.
 	"w.unsubscribe.row": "Unsubscribe",
+	"w.unsubscribed": "Unsubscribed",
 	"w.manage": "Manage subscriptions",
 	"w.manage.empty": "You're not following any threads.",
 	"w.manage.failed": "Could not load your subscriptions.",
@@ -215,6 +216,8 @@ export const EN = {
 	"w.posting_as": "Posting as {name}",
 	"w.sign_out": "Sign out",
 	"w.signin_prompt": "Sign in to get a verified badge:",
+	"w.signin_popup_blocked": "Your browser blocked the sign-in window. Allow pop-ups for this site, then try again.",
+	"w.signin_failed": "Sign-in did not complete. Please try again.",
 
 	// ── Load failures ───────────────────────────────────────────────────────
 	"w.err.transient":

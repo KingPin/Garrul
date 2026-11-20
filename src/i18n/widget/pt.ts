@@ -188,6 +188,7 @@ export const pt = {
 	"w.unsubscribe.done": "Não chegarão mais e-mails sobre este tópico.",
 	"w.unsubscribe.failed": "Não foi possível cancelar a inscrição. Tente novamente.",
 	"w.unsubscribe.row": "Cancelar inscrição",
+	"w.unsubscribed": "Inscrição cancelada",
 	// Brazilian "Gerenciar", not European "Gerir" — see the header.
 	"w.manage": "Gerenciar inscrições",
 	"w.manage.empty": "Nenhum tópico seguido.",
@@ -200,6 +201,8 @@ export const pt = {
 	"w.posting_as": "Publicando como {name}",
 	"w.sign_out": "Sair",
 	"w.signin_prompt": "Entre para receber um selo de verificado:",
+	"w.signin_popup_blocked": "Seu navegador bloqueou a janela de login. Permita pop-ups para este site e tente novamente.",
+	"w.signin_failed": "O login não foi concluído. Tente novamente.",
 
 	// ── Load failures ───────────────────────────────────────────────────────
 	"w.err.transient":

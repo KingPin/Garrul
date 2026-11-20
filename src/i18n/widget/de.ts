@@ -135,6 +135,7 @@ export const de = {
 	"w.subscribe.done": "Bitte bestätige die E-Mail, die wir dir geschickt haben.",
 	"w.subscribe.failed": "Abonnieren fehlgeschlagen. Bitte erneut versuchen.",
 	"w.subscribe.ratelimit": "Zu viele Anfragen. Bitte später erneut versuchen.",
+	"w.unsubscribed": "Abgemeldet",
 	"w.load_more": "Ältere Kommentare laden",
 	"w.load_more_failed": "Konnte nicht mehr laden: {detail}",
 	"w.retry": "Erneut versuchen",
@@ -143,6 +144,8 @@ export const de = {
 	"w.posting_as": "Posten als {name}",
 	"w.sign_out": "Abmelden",
 	"w.signin_prompt": "Anmelden für ein Verifiziert-Abzeichen:",
+	"w.signin_popup_blocked": "Der Browser hat das Anmeldefenster blockiert. Pop-ups für diese Website erlauben und erneut versuchen.",
+	"w.signin_failed": "Die Anmeldung wurde nicht abgeschlossen. Bitte erneut versuchen.",
 
 	// ── Load failures ───────────────────────────────────────────────────────
 	"w.err.transient":

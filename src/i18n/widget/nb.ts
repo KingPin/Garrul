@@ -150,6 +150,7 @@ export const nb = {
 	"w.unsubscribe.done": "Du får ikke flere e-poster om denne tråden.",
 	"w.unsubscribe.failed": "Kunne ikke melde av. Prøv igjen.",
 	"w.unsubscribe.row": "Meld av",
+	"w.unsubscribed": "Avmeldt",
 	"w.manage": "Administrer abonnementer",
 	"w.manage.empty": "Du følger ingen tråder.",
 	"w.manage.failed": "Kunne ikke laste abonnementene dine.",
@@ -163,6 +164,8 @@ export const nb = {
 	// and both buttons can be on screen together.
 	"w.sign_out": "Logg ut",
 	"w.signin_prompt": "Logg inn for å få et verifisert merke:",
+	"w.signin_popup_blocked": "Nettleseren blokkerte innloggingsvinduet. Tillat popup-vinduer for dette nettstedet, og prøv igjen.",
+	"w.signin_failed": "Innloggingen ble ikke fullført. Prøv igjen.",
 
 	// ── Load failures ───────────────────────────────────────────────────────
 	"w.err.transient":

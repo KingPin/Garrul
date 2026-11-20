@@ -175,6 +175,7 @@ export const pl = {
 	"w.unsubscribe.done": "Powiadomienia o tym wątku nie będą już wysyłane.",
 	"w.unsubscribe.failed": "Nie udało się anulować subskrypcji. Spróbuj ponownie.",
 	"w.unsubscribe.row": "Anuluj subskrypcję",
+	"w.unsubscribed": "Zrezygnowano z subskrypcji",
 	"w.manage": "Zarządzaj subskrypcjami",
 	"w.manage.empty": "Brak obserwowanych wątków.",
 	"w.manage.failed": "Nie udało się wczytać subskrypcji.",
@@ -186,6 +187,8 @@ export const pl = {
 	"w.posting_as": "Publikowanie jako {name}",
 	"w.sign_out": "Wyloguj",
 	"w.signin_prompt": "Zaloguj się, aby otrzymać odznakę weryfikacji:",
+	"w.signin_popup_blocked": "Przeglądarka zablokowała okno logowania. Zezwól na wyskakujące okna dla tej strony i spróbuj ponownie.",
+	"w.signin_failed": "Logowanie nie zostało ukończone. Spróbuj ponownie.",
 
 	// ── Load failures ───────────────────────────────────────────────────────
 	"w.err.transient":

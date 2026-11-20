@@ -624,6 +624,17 @@ Subscriptions are **thread-scoped** and unique per `(post_slug, email)`,
 so a subscriber hears about every new comment on the post, not only direct
 replies.
 
+The composer checkbox disables its email field while unticked, so an
+invalid address left in the field cannot block a post. The subscribe
+request follows a successful post and never delays it. After a post with
+the box ticked:
+
+- a reader with no address in the session sees the server's "Check your
+  email to confirm." message, and the bell stays unlit;
+- a signed-in reader with a provider-verified address has no email field.
+  The bell re-reads the server's state and shows subscribed or awaiting
+  confirmation.
+
 #### Unsubscribing (since v2.11.0)
 
 There are two bells, and which one a reader gets is a security decision.
@@ -642,6 +653,14 @@ There are two bells, and which one a reader gets is a security decision.
   address follows with a per-row unsubscribe. There is no oracle here
   because the only address in play is one the session already proved it
   owns.
+
+Unsubscribing a row in the manage panel is delayed. The row's button
+becomes "Unsubscribed · Undo" for 5 seconds. Undo sends nothing and
+restores the button. When the 5 seconds end, or the page is left, the
+unsubscribe is sent. If it fails, the row comes back with an error. The
+Undo state survives a panel redraw while its window is open. When the
+unsubscribed thread is the one the bell shows, the bell updates once the
+unsubscribe succeeds.
 
 The endpoints behind the second bell are `GET /api/v1/subscribe/mine`
 (the list), `GET /api/v1/subscribe/mine?post_slug=` (one thread's state:
@@ -1193,12 +1212,15 @@ What an end user sees when signing in from the embedded widget:
    `window.opener` (the embedding page), then closes itself. The widget
    refreshes its UI without a full page reload.
 
-**Popup-blocked fallback:** if Safari ITP (or a popup blocker) prevents
-the popup from opening, the same `/start` URL is reachable as a
-top-level navigation. The callback then redirects the user back to
-`state.return_origin` (validated against the operator's
-`ALLOWED_ORIGINS` allowlist). This is expected behavior — don't try to
-"fix" it by removing the popup or the redirect fallback.
+**Popup-blocked:** if Safari ITP or a popup blocker prevents the popup
+from opening, the widget does not navigate the page. It shows "Your
+browser blocked the sign-in window. Allow pop-ups for this site, then try
+again." The provider buttons stay in place, so the reader allows pop-ups
+and clicks again. The widget never falls back to a top-level navigation
+to `/start`: that path never returned the reader to the embedding page
+with the session in the embed's cookie partition. If the popup finishes
+but the session handoff then fails, the widget shows "Sign-in did not
+complete. Please try again."
 
 **COOP on the host page:** if the embedding page sends
 `Cross-Origin-Opener-Policy: same-origin`, the browser puts the
@@ -1372,10 +1394,11 @@ the list. Include both prod and any preview/staging origins separately.
 ### Safari ITP / popup blocked
 
 The OAuth sign-in flow opens a popup; under Safari Intelligent Tracking
-Prevention the popup may be blocked, in which case the widget falls
-back to a top-level redirect (see §7). The user lands at the callback
-page, which closes — they may need to navigate back manually. Expected
-behavior.
+Prevention the popup may be blocked. The widget then shows "Your browser
+blocked the sign-in window. Allow pop-ups for this site, then try again."
+and stays on the page (see §7). The reader allows pop-ups for the site
+and clicks the provider again. Expected behavior; the host page needs no
+change.
 
 ### Signed in, but the widget doesn't notice until reload
 

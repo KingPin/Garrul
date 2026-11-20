@@ -132,6 +132,7 @@ export const fr = {
 	"w.subscribe.done": "Vérifiez votre e-mail pour confirmer.",
 	"w.subscribe.failed": "Impossible de s'abonner. Veuillez réessayer.",
 	"w.subscribe.ratelimit": "Trop de requêtes. Veuillez réessayer plus tard.",
+	"w.unsubscribed": "Désabonné",
 	"w.load_more": "Charger les commentaires plus anciens",
 	"w.load_more_failed": "Impossible d'en charger davantage : {detail}",
 	"w.retry": "Réessayer",
@@ -140,6 +141,8 @@ export const fr = {
 	"w.posting_as": "Vous publiez en tant que {name}",
 	"w.sign_out": "Se déconnecter",
 	"w.signin_prompt": "Connectez-vous pour obtenir un badge vérifié :",
+	"w.signin_popup_blocked": "Votre navigateur a bloqué la fenêtre de connexion. Autorisez les pop-ups pour ce site, puis réessayez.",
+	"w.signin_failed": "La connexion n'a pas abouti. Veuillez réessayer.",
 
 	// ── Load failures ───────────────────────────────────────────────────────
 	"w.err.transient":

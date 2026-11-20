@@ -130,6 +130,7 @@ export const es = {
 	"w.subscribe.done": "Revisa tu correo para confirmar.",
 	"w.subscribe.failed": "No se pudo suscribir. Inténtalo de nuevo.",
 	"w.subscribe.ratelimit": "Demasiadas solicitudes. Inténtalo más tarde.",
+	"w.unsubscribed": "Suscripción cancelada",
 	"w.load_more": "Cargar comentarios anteriores",
 	"w.load_more_failed": "No se pudieron cargar más: {detail}",
 	"w.retry": "Intentar de nuevo",
@@ -138,6 +139,8 @@ export const es = {
 	"w.posting_as": "Publicas como {name}",
 	"w.sign_out": "Cerrar sesión",
 	"w.signin_prompt": "Inicia sesión para obtener una insignia de verificado:",
+	"w.signin_popup_blocked": "Tu navegador bloqueó la ventana de inicio de sesión. Permite las ventanas emergentes para este sitio y vuelve a intentarlo.",
+	"w.signin_failed": "El inicio de sesión no se completó. Inténtalo de nuevo.",
 
 	// ── Load failures ───────────────────────────────────────────────────────
 	"w.err.transient":

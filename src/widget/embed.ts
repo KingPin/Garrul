@@ -386,6 +386,55 @@ const lazyActionStatus = (
 };
 
 /**
+ * The "<label> \u00b7 Undo" mark that replaces a delayed action's button (Report,
+ * row Unsubscribe). `restore` is the button Undo brings back. A null `pending`
+ * draws the settled, Undo-less form (a rebuild while the request is in flight).
+ */
+const undoMark = (label: string, id: string, restore: HTMLElement, pending: Pending | null): HTMLElement => {
+	const done = el("span", "gr-reported", pending ? `${label} \u00b7 ` : label);
+	if (!pending) return done;
+	const undoBtn = el("button", undefined, s("w.undo"));
+	undoBtn.type = "button";
+	// Screen readers would otherwise announce only "Undo".
+	const said = el("span", undefined, label);
+	said.id = id;
+	said.hidden = true;
+	undoBtn.setAttribute("aria-describedby", id);
+	done.append(said, undoBtn);
+	undoBtn.addEventListener("click", () => {
+		pending.cancel();
+		// A no-op once the request went out: Undo is retired by then.
+		if (done.isConnected) {
+			done.replaceWith(restore);
+			restore.focus();
+		}
+	});
+	return done;
+};
+
+const markHasFocus = (mark: HTMLElement): boolean => {
+	const active = (mark.getRootNode() as Document | ShadowRoot).activeElement;
+	return active === mark || (active != null && active === mark.querySelector("button"));
+};
+
+/** The request is on its way: drop Undo, its description and the separator, keeping focus on a live node. */
+const retireUndo = (mark: HTMLElement, label: string): void => {
+	const hadFocus = markHasFocus(mark);
+	mark.textContent = label;
+	if (hadFocus) {
+		mark.tabIndex = -1;
+		mark.focus();
+	}
+};
+
+/** The request failed: put the button back, and focus with it if focus was on the mark. */
+const restoreFromMark = (mark: HTMLElement, restore: HTMLElement): void => {
+	const hadFocus = markHasFocus(mark);
+	mark.replaceWith(restore);
+	if (hadFocus) restore.focus();
+};
+
+/**
  * Parse a TRUSTED HTML chunk into a DocumentFragment. Use only for content
  * we control (style tag) or server-sanitized output (body_html, identicon SVG).
  */
@@ -770,6 +819,7 @@ const buildWritePreview = (
 		pane.hidden = true;
 	};
 
+	let previewSeq = 0;
 	const showPreview = async (): Promise<void> => {
 		previewTab.classList.add("gr-tab-active");
 		writeTab.classList.remove("gr-tab-active");
@@ -780,6 +830,9 @@ const buildWritePreview = (
 		toolbar.hidden = true;
 		writePanel.hidden = true;
 		pane.hidden = false;
+		// Every request takes a number; only the latest may write the pane, so a
+		// slow earlier response cannot overwrite a newer preview.
+		const seq = ++previewSeq;
 		const body = textarea.value.trim();
 		if (!body) {
 			pane.textContent = s("w.preview.empty");
@@ -790,10 +843,11 @@ const buildWritePreview = (
 			const res = await apiJson(apiBase, "/api/v1/preview", { body });
 			if (!res.ok) throw new Error(String(res.status));
 			const data = (await res.json()) as { html?: string };
+			if (seq !== previewSeq) return;
 			pane.textContent = "";
 			pane.appendChild(parseTrustedHtml(data.html ?? ""));
 		} catch {
-			pane.textContent = s("w.preview.failed");
+			if (seq === previewSeq) pane.textContent = s("w.preview.failed");
 		}
 	};
 
@@ -1634,6 +1688,8 @@ const buildPageEngagement = (ctx: WidgetCtx): HTMLElement => {
  * every click, and read back as never-subscribed no matter what. They get the
  * anonymous bell, which works.
  */
+const bellRefresh = new WeakMap<HTMLElement, () => Promise<void>>();
+
 const buildSubscribeBell = (
 	apiBase: string,
 	slug: string,
@@ -1791,6 +1847,41 @@ const buildSubscribeBell = (
 
 	type PanelRow = { id: string; post_slug: string; title: string | null };
 
+	// Row unsubscribes are delayed so a misclick can be taken back (the same
+	// pending registry Report uses). Their DELETE does not go through `cancel`:
+	// that one refuses while its shared flag is set, which would silently drop a
+	// second row maturing during a slow DELETE. In flight is tracked per id, and
+	// the settle hooks are looked up by id so a rebuilt panel gets the result.
+	const unsubbing = new Set<string>();
+	const rowUi = new Map<string, { sent(): void; fail(msg: string): void }>();
+	const sendUnsubscribe = async (id: string): Promise<void> => {
+		if (unsubbing.has(id)) return;
+		unsubbing.add(id);
+		rowUi.get(id)?.sent();
+		let failure: "w.subscribe.ratelimit" | "w.unsubscribe.failed" | null = null;
+		try {
+			const res = await apiFetch(apiBase, `/api/v1/subscribe/mine/${encodeURIComponent(id)}`, {
+				method: "DELETE",
+				// The pagehide flush must survive the page leaving.
+				keepalive: true,
+			});
+			if (!res.ok) failure = res.status === 429 ? "w.subscribe.ratelimit" : "w.unsubscribe.failed";
+		} catch {
+			failure = "w.unsubscribe.failed";
+		}
+		unsubbing.delete(id);
+		if (failure) {
+			rowUi.get(id)?.fail(s(failure));
+			return;
+		}
+		// The bell tracks this thread; a row unsubscribed from the panel may be it.
+		if (subId === id) {
+			subId = null;
+			pending = false;
+			renderBell();
+		}
+	};
+
 	const renderPanel = (rows: PanelRow[]): void => {
 		panel.textContent = "";
 		if (rows.length === 0) {
@@ -1800,24 +1891,37 @@ const buildSubscribeBell = (
 		const ul = el("ul", "gr-subscribe-list");
 		for (const row of rows) {
 			const li = el("li");
+			const key = `unsub:${row.id}`;
 			// `title` is null until the host page has told the server one, so the
 			// slug is the honest fallback — a row with no label is a row the reader
 			// cannot tell apart from the next one.
 			li.appendChild(el("span", "gr-subscribe-title", row.title || row.post_slug));
+			const errs = lazyActionStatus(() => li);
 			const drop = el("button", "gr-subscribe-drop", s("w.unsubscribe.row"));
 			drop.type = "button";
-			drop.addEventListener("click", () => {
-				drop.disabled = true;
-				void cancel(row.id).then((ok) => {
-					if (!ok) {
-						drop.disabled = false;
-						return;
-					}
-					li.remove();
-					if (!ul.firstChild) renderPanel([]);
-				});
+			let mark: HTMLElement | null = null;
+			const showUnsubscribed = (p: Pending | null): HTMLElement =>
+				(mark = undoMark(s("w.unsubscribed"), `gr-unsub-${row.id}`, drop, p));
+			rowUi.set(row.id, {
+				sent: () => {
+					if (mark?.isConnected) retireUndo(mark, s("w.unsubscribed"));
+				},
+				fail: (msg) => {
+					if (mark?.isConnected) restoreFromMark(mark, drop);
+					errs.fail(null, { error: msg });
+				},
 			});
-			li.appendChild(drop);
+			drop.addEventListener("click", () => {
+				errs.clear();
+				const done = showUnsubscribed(schedulePending(key, () => void sendUnsubscribe(row.id), REPORT_UNDO_MS));
+				drop.replaceWith(done);
+				(done.lastElementChild as HTMLElement).focus();
+			});
+			const live = pendingFor(key);
+			// Rebuilt mid-window or mid-DELETE: redraw the state, no focus grab.
+			if (live) li.appendChild(showUnsubscribed(live));
+			else if (unsubbing.has(row.id)) li.appendChild(showUnsubscribed(null));
+			else li.appendChild(drop);
 			ul.appendChild(li);
 		}
 		panel.appendChild(ul);
@@ -1950,6 +2054,14 @@ const buildSubscribeBell = (
 	});
 
 	renderBell();
+	// The composer's subscribe cannot know the id or pending-vs-confirmed; it
+	// asks the bell to re-read instead.
+	if (managed) {
+		bellRefresh.set(wrap, async () => {
+			await loadState();
+			invalidatePanel();
+		});
+	}
 	wrap.append(btn);
 	if (managed) wrap.append(manageBtn);
 	wrap.append(form, status);
@@ -2254,26 +2366,8 @@ const buildActions = (
 		// this closure, so a re-render that rebuilds this row redraws the same
 		// "Reported · Undo" state (see the pendingFor check below). Leaving the
 		// page sends it at once (keepalive) so a deliberate report is not lost.
-		const showReported = (pending: Pending): HTMLElement => {
-			const done = el("span", "gr-reported", `${s("w.reported")} \u00b7 `);
-			const undoBtn = el("button", undefined, s("w.undo"));
-			undoBtn.type = "button";
-			// Screen readers would otherwise announce only "Undo".
-			const said = el("span", undefined, s("w.reported"));
-			said.id = `gr-rep-${n.id}`;
-			said.hidden = true;
-			undoBtn.setAttribute("aria-describedby", said.id);
-			done.append(said, undoBtn);
-			undoBtn.addEventListener("click", () => {
-				pending.cancel();
-				// A no-op after the report was sent: Undo is retired by then.
-				if (done.isConnected) {
-					done.replaceWith(reportBtn);
-					reportBtn.focus();
-				}
-			});
-			return done;
-		};
+		const showReported = (pending: Pending): HTMLElement =>
+			undoMark(s("w.reported"), `gr-rep-${n.id}`, reportBtn, pending);
 		// The settled result must land on the row on screen now, not on the
 		// node this closure was built with (a re-render may have replaced it).
 		const liveReported = (): HTMLElement | null =>
@@ -2284,15 +2378,7 @@ const buildActions = (
 			// The report is on its way: retire Undo now so it cannot restore Report
 			// while the POST is in flight. Keep focus on a live node.
 			const done0 = liveReported();
-			if (done0) {
-				const hadFocus = (done0.getRootNode() as Document | ShadowRoot).activeElement === done0.querySelector("button");
-				// Drops Undo, its description and the separator in one go.
-				done0.textContent = s("w.reported");
-				if (hadFocus) {
-					done0.tabIndex = -1;
-					done0.focus();
-				}
-			}
+			if (done0) retireUndo(done0, s("w.reported"));
 			let ok = false;
 			try {
 				// The endpoint returns 200 for both new and duplicate reports and
@@ -2319,11 +2405,7 @@ const buildActions = (
 				// is gone (a re-render without it) the failure is lost silently;
 				// server dedup and rate-limit are the real guard.
 				const done = liveReported();
-				if (done) {
-					const hadFocusNow = (done.getRootNode() as Document | ShadowRoot).activeElement === done;
-					done.replaceWith(reportBtn);
-					if (hadFocusNow) reportBtn.focus();
-				}
+				if (done) restoreFromMark(done, reportBtn);
 			}
 		};
 		reportBtn.addEventListener("click", () => {
@@ -3224,6 +3306,7 @@ const buildAuthBlock = (
 	providers: ReadonlyArray<OAuthProvider>,
 	onSignedIn: () => void,
 	onSignedOut: () => void,
+	onProblem: (message: string) => void,
 ): HTMLElement | null => {
 	if (me) {
 		const wrap = el("div", "gr-signed");
@@ -3262,7 +3345,7 @@ const buildAuthBlock = (
 	for (const p of providers) {
 		const btn = el("button", undefined, PROVIDER_LABELS[p]);
 		btn.type = "button";
-		btn.addEventListener("click", () => startOauth(p, apiBase, onSignedIn));
+		btn.addEventListener("click", () => startOauth(p, apiBase, onSignedIn, onProblem));
 		wrap.appendChild(btn);
 	}
 	return wrap;
@@ -3362,9 +3445,13 @@ const buildForm = (
 			emailInput.setAttribute("aria-label", s("w.email_label"));
 			emailInput.autocomplete = "email";
 			emailInput.hidden = true;
+			// Disabled while unticked: a hidden field that fails native validation
+			// would otherwise block the post with no visible reason.
+			emailInput.disabled = true;
 			notifyCb.addEventListener("change", () => {
 				emailInput.hidden = !notifyCb.checked;
 				emailInput.required = notifyCb.checked;
+				emailInput.disabled = !notifyCb.checked;
 			});
 			card.appendChild(emailInput);
 		}
@@ -3411,13 +3498,14 @@ const startOauth = (
 	provider: OAuthProvider,
 	apiBase: string,
 	onSuccess: () => void,
+	onProblem: (message: string) => void,
 ): void => {
 	const ret = encodeURIComponent(window.location.origin);
 	const url = `${apiBase}/api/v1/auth/${provider}/start?return=${ret}`;
 	// We intentionally do NOT pass `noopener` here: the OAuth callback page
 	// posts a `garrul:auth` message back via `window.opener.postMessage`, and
 	// `noopener` would null `window.opener` in the popup AND make this call
-	// return `null` (defeating the popup-blocked fallback below). Cross-origin
+	// return `null` (defeating the popup-blocked check below). Cross-origin
 	// `opener.location` writes are blocked by modern browsers for cross-origin
 	// popups, so the opener relationship is safe in practice.
 	const popup = window.open(
@@ -3455,14 +3543,17 @@ const startOauth = (
 		}
 		void apiJson(apiBase, "/api/v1/auth/session/exchange", { token: handoff })
 			.then((res) => {
-				if (!res.ok) return;
+				if (!res.ok) {
+					onProblem(s("w.signin_failed"));
+					return;
+				}
 				stopRecovery();
 				onSuccess();
 			})
 			// Leave the recovery watcher armed on a failed exchange: the popup
 			// already minted a session, and on a same-site embed its cookie is
 			// readable from here, so /auth/me can still rescue this.
-			.catch(() => {});
+			.catch(() => onProblem(s("w.signin_failed")));
 	};
 	// Second channel, for host pages that send `Cross-Origin-Opener-Policy:
 	// same-origin`. That header severs the popup's `window.opener`, so the
@@ -3489,10 +3580,12 @@ const startOauth = (
 	stopPreviousRecovery = stopRecovery;
 	window.addEventListener("message", handler);
 	if (!popup) {
-		// Popup blocked — fall back to top-level redirect. The browser will
-		// land back at /callback which sets the cookie + closes; the user
-		// then has to navigate back manually. Documented behavior.
-		window.location.href = url;
+		// Blocked: say so and stay put. A top-level redirect never returned the
+		// reader and set the cookie in the wrong partition. The provider button
+		// stays, so the next click is a fresh user gesture.
+		stopRecovery();
+		window.removeEventListener("message", handler);
+		onProblem(s("w.signin_popup_blocked"));
 	}
 };
 
@@ -4572,7 +4665,9 @@ const loadOnce = async (
 		revealAfterReload(root, null, undefined, ".gr-signed button, .gr-signin button, .gr-body-input");
 		reload();
 	};
-	const authBlock = buildAuthBlock(me, apiBase, providers, authReload, authReload);
+	const authBlock = buildAuthBlock(me, apiBase, providers, authReload, authReload, (m) =>
+		writePageStatus(root, m),
+	);
 	// The composer is always built (its submit/Turnstile wiring lives further
 	// down) but only mounted when comments are enabled. When disabled, existing
 	// comments stay visible (read-only) and we show a "closed" notice instead.
@@ -5101,11 +5196,32 @@ const submit = async (
 			// silent no-op for every signed-in reader.
 			const email = emailInput?.value.trim() ?? "";
 			if (email || !emailInput) {
-				void apiJson(
-					apiBase,
-					"/api/v1/subscribe",
-					email ? { post_slug: slug, email } : { post_slug: slug },
-				).catch(() => {});
+				const say = (m: string): void => {
+					if (errEl && !ts?.gate.failed) showStatus(errEl, m, "notice");
+				};
+				void (async () => {
+					try {
+						const r = await apiJson(
+							apiBase,
+							"/api/v1/subscribe",
+							email ? { post_slug: slug, email } : { post_slug: slug },
+						);
+						// Never `error` here: it can be a machine code ("invalid_email").
+						if (!r.ok) {
+							say(r.status === 429 ? s("w.subscribe.ratelimit") : s("w.subscribe.failed"));
+							return;
+						}
+						const j = (await r.json().catch(() => null)) as { message?: string } | null;
+						say(j?.message ?? s("w.subscribe.done"));
+						// No email field = managed reader: let the bell re-read its state.
+						if (!emailInput) {
+							const bell = root.querySelector(".gr-subscribe") as HTMLElement | null;
+							await (bell && bellRefresh.get(bell))?.();
+						}
+					} catch {
+						say(s("w.subscribe.failed"));
+					}
+				})();
 			}
 		}
 		// The address is remembered only when the reader used it for notify.
