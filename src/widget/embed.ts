@@ -2312,6 +2312,8 @@ const buildActions = (
 				// Set once the server has confirmed the delete. A throw after that
 				// is a render problem, not a failed delete: reload, never "failed".
 				let landed = false;
+				const seq = (deleteSeq.get(ctx.root) ?? 0) + 1;
+				deleteSeq.set(ctx.root, seq);
 				try {
 					const res = await apiFetch(
 						ctx.apiBase,
@@ -2333,9 +2335,11 @@ const buildActions = (
 						)?.nextElementSibling;
 						// Removing the page's only thread would leave a bare list with no
 						// "no comments yet": reload for that one.
+						// A later delete started meanwhile: this snapshot may predate it.
 						if (
 							json.root_id &&
 							json.thread !== undefined &&
+							deleteSeq.get(ctx.root) === seq &&
 							(json.thread ||
 								ctx.root.querySelectorAll(".gr-list > .gr-thread").length > 1) &&
 							replaceThreadInPlace(swapCtx(ctx), json.root_id, json.thread)
@@ -3265,6 +3269,13 @@ const buildThread = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 	}
 	return wrap;
 };
+
+/**
+ * Deletes started per mount. A delete's thread snapshot is taken when the
+ * server handles it, so one that finishes after a later delete holds the
+ * older thread; applying it would bring the later comment back.
+ */
+const deleteSeq = new WeakMap<object, number>();
 
 /**
  * The DOM side of the in-place swaps in comment-node.ts.
