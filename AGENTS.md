@@ -177,7 +177,10 @@ heuristic is on (`SPAM_FORM_TS_SECRET` set and `SPAM_HONEYPOT_MIN_MS`
 above `0`), `/api/v1/comments/form-token` is one more request, made on the
 reader's first composer focus (or when a reply form opens, or at mount when
 a saved draft is restored); the minimum-elapsed-time clock starts at that
-mint. The Workers free tier allows 100,000 requests/day, so the ceiling is
+mint. A long-open tab refreshes the token in the background once it is
+about 50 minutes old (the server rejects tokens older than 60), so after
+that first focus it makes roughly one extra form-token request per 50
+minutes. The Workers free tier allows 100,000 requests/day, so the ceiling is
 roughly **100k pageviews/day** minus the readers who focus the composer —
 up from ~25k at the four requests a default install used to make, and
 ~16k with page reactions/votes and subscriptions on.
@@ -218,7 +221,9 @@ precisely when neither can afford it.
 `/api/v1/comments/form-token` is deliberately **not** folded in, which
 is why the form token is a separate request (made on first composer focus,
 a reply-form open, or at mount when a saved draft is restored) when the
-timing heuristic is on. Its signed timestamp feeds the anti-spam minimum-elapsed-time
+timing heuristic is on. A failed mint is not cached: it is retried on the
+next composer focus, `online` event, or the tab becoming visible, and a
+submit mints one only when no usable token exists. Its signed timestamp feeds the anti-spam minimum-elapsed-time
 heuristic, and baking one into a shared payload would hand every reader
 the same start time. When the heuristic is off (no `SPAM_FORM_TS_SECRET`
 or `SPAM_HONEYPOT_MIN_MS` is `0`) the config payload carries
@@ -241,7 +246,10 @@ Turnstile is **not** in that list. The anti-spam iframe
 (`/embed/turnstile-frame`, which in turn pulls Cloudflare's `api.js` and
 its challenge platform) mounts only when the visitor first focuses the
 comment box, so a reader who never comments never downloads it. Expect
-those requests to appear on first focus rather than on page load.
+those requests to appear on first focus rather than on page load. If the
+network drops, the frame reloads itself when it comes back (an extra
+`/embed/turnstile-frame` request) so posting works without a page reload;
+a server rejection (4xx/5xx) does not reload it.
 
 **Default to deferring the script load via `IntersectionObserver`**
 when the comments section is below the fold. Replace the
@@ -791,14 +799,19 @@ Inside any composer — top-level, reply, or edit:
 
 | Keys                 | Does                                            |
 | -------------------- | ----------------------------------------------- |
-| `Cmd`/`Ctrl` + `Enter` | Posts the form you are in.                    |
-| `Escape`             | Closes a reply or edit box. A reply keeps its draft and reopens with it; an edit discards its changes. The top-level composer has nothing to back out to and ignores it. |
+| `Cmd`/`Ctrl` + `Enter` | Posts the form you are in. A held key (auto-repeat) never submits again. |
+| `Escape`             | Closes a reply or edit box. A reply keeps its draft and reopens with it; an edit discards its changes. The top-level composer has nothing to back out to and ignores it. It also does nothing while a post is sending. |
 
 Bound on the form, so they work from the name and email fields too, not
 just the textarea. Both are suppressed while an IME composition is
 active. `Escape` does not propagate to the host page — closing a reply
 box will not also close a lightbox or drawer you have open around it.
 The hint under the box is hidden on touch devices.
+
+A composer sends one POST per submit. While a post is in flight the
+textarea is read-only and the toolbar and the reply/edit Cancel button
+are disabled, so nothing typed mid-post is lost and a repeat submit is
+dropped.
 
 ### Composer sizing (since v2.0.3)
 
@@ -1350,6 +1363,10 @@ both `data-api` and the `<script src>`.
   autosave keys are `garrul:draft:<api origin>:<slug>[:<parent>]` (since
   v2.27.0), so a draft belongs to one Worker origin. Pre-v2.27.0 drafts
   (`garrul:draft:<slug>`) are adopted once on the next mount.
+  Drafts are flushed on every teardown (re-render) and on `pagehide`. A
+  successful post removes only its own draft, never another tab's. When
+  `localStorage` is blocked or full, drafts fall back to memory and live
+  only for the page lifetime.
   Anonymous commenter details follow the same rule: after an accepted
   post the widget saves `{name, email}` under `garrul:author:<api origin>`
   and prefills the name field (and the hidden notify email field, box left

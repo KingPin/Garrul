@@ -54,36 +54,109 @@ export const adoptLegacyDraft = (
 	}
 };
 
+const mem = new Map<string, string>();
+
 /**
- * The debounced autosave behind one textarea. `schedule` on every input;
- * `flush` writes the pending value now (a reply Cancel, so reopening Reply
- * inside the debounce window restores what was typed); `drop` cancels the
- * pending write and removes the stored draft (a successful post, which must
- * not be re-saved by a timer that fires after it). Storage is fetched per
- * write because the `localStorage` getter itself can throw; every failure is
- * swallowed like the rest of this module.
+ * The one storage every draft read, write and removal goes through. Per
+ * operation it tries `localStorage`; if the getter or the operation throws
+ * (blocked storage, full quota), the value lives in a page-lifetime Map
+ * instead, so a draft still survives a cancel/reopen or a rebuild.
+ */
+const store: DraftStorage = {
+	getItem: (k) => {
+		if (mem.has(k)) return mem.get(k) ?? null;
+		try {
+			return localStorage.getItem(k);
+		} catch {
+			return null;
+		}
+	},
+	setItem: (k, v) => {
+		try {
+			localStorage.setItem(k, v);
+			mem.delete(k);
+		} catch {
+			mem.set(k, v);
+		}
+	},
+	removeItem: (k) => {
+		mem.delete(k);
+		try {
+			localStorage.removeItem(k);
+		} catch {
+			// Nothing to remove.
+		}
+	},
+};
+export const draftStorage = (): DraftStorage => store;
+
+export type DraftSaver = {
+	schedule: () => void;
+	flush: () => void;
+	dropIf: (sent: string) => void;
+	dispose: () => void;
+};
+
+const live = new Set<DraftSaver>();
+
+/** pagehide: flush every saver, retire none (bfcache restores the page as is). */
+export const flushAllDrafts = (): void => {
+	for (const d of live) d.flush();
+};
+
+/** Teardown: flush and retire every saver (the textareas are being detached). */
+export const disposeAllDrafts = (): void => {
+	for (const d of [...live]) d.dispose();
+	live.clear();
+};
+
+/**
+ * The debounced autosave behind one textarea. `schedule` on every input.
+ * The saver is dirty while a debounce timer is pending; `flush` writes only
+ * when dirty, so an untouched composer never erases another tab's draft.
+ * `lastWritten` is what this saver last put in storage (or found there at
+ * creation). `dropIf(sent)` (a successful post) cancels the timer and removes
+ * the stored draft only when it is the sent text or this saver's own
+ * obsolete save; anything else belongs to another tab. The saver keeps
+ * working afterwards (the top composer stays mounted). `dispose` flushes and
+ * retires it. Storage is fetched per call; every failure is swallowed.
  */
 export const draftSaver = (
 	storage: () => DraftStorage,
 	key: string,
 	read: () => string,
 	delayMs = 400,
-): { schedule: () => void; flush: () => void; drop: () => void } => {
+): DraftSaver => {
 	let timer: ReturnType<typeof setTimeout> | undefined;
+	let retired = false;
+	let lastWritten: string | null = null;
+	try {
+		lastWritten = storage().getItem(key);
+	} catch {
+		// Storage unavailable.
+	}
 	const cancel = (): void => {
 		if (timer !== undefined) clearTimeout(timer);
 		timer = undefined;
 	};
-	const write = (v: string | null): void => {
+	const write = (v: string): void => {
+		if (retired) return;
 		try {
-			if (v) storage().setItem(key, v.slice(0, DRAFT_MAX));
-			else storage().removeItem(key);
+			if (v) {
+				const c = v.slice(0, DRAFT_MAX);
+				storage().setItem(key, c);
+				lastWritten = c;
+			} else {
+				storage().removeItem(key);
+				lastWritten = null;
+			}
 		} catch {
 			// Quota/disabled: drop this save silently.
 		}
 	};
-	return {
+	const saver: DraftSaver = {
 		schedule: () => {
+			if (retired) return;
 			cancel();
 			timer = setTimeout(() => {
 				timer = undefined;
@@ -91,12 +164,27 @@ export const draftSaver = (
 			}, delayMs);
 		},
 		flush: () => {
+			if (timer === undefined) return;
 			cancel();
 			write(read());
 		},
-		drop: () => {
+		dropIf: (sent) => {
 			cancel();
-			write(null);
+			try {
+				const cur = storage().getItem(key);
+				if (cur !== null && (cur === sent.slice(0, DRAFT_MAX) || cur === lastWritten))
+					storage().removeItem(key);
+			} catch {
+				// Storage unavailable.
+			}
+			lastWritten = null;
+		},
+		dispose: () => {
+			saver.flush();
+			retired = true;
+			live.delete(saver);
 		},
 	};
+	live.add(saver);
+	return saver;
 };
