@@ -81,16 +81,22 @@ The iframe page posts content height to the parent via
 Comment permalinks (`#garrul-comment-<id>`) need two more lines of host
 script, both in that example. The iframe cannot read the host page's
 fragment, so copy it onto the iframe `src` on load and again on
-`hashchange` (a fragment-only change does not reload the frame):
+`hashchange` (a fragment-only change does not reload the frame). Also set
+`loading` to `"eager"`: a frame left lazy beyond the browser's threshold
+never loads, so the comment is never looked up:
 
 ```js
 var PREFIX = "#garrul-comment-";
-if (location.hash.indexOf(PREFIX) === 0) src.hash = location.hash;
+if (location.hash.indexOf(PREFIX) === 0) {
+  src.hash = location.hash;
+  f.loading = "eager"; // a lazy frame below the fold would never look it up
+}
 f.src = src.toString();
 window.addEventListener("hashchange", function () {
   if (location.hash.indexOf(PREFIX) !== 0) return;
   var next = new URL(f.src);
   next.hash = location.hash;
+  f.loading = "eager";
   f.src = next.toString();
 });
 ```

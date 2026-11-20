@@ -55,12 +55,18 @@
 			// forwarded into the frame as its fragment, on load and on later
 			// hash changes. A fragment-only change does not reload the frame.
 			var PREFIX = "#garrul-comment-";
-			if (location.hash.indexOf(PREFIX) === 0) src.hash = location.hash;
+			// A lazy frame below the fold stays unloaded, so the permalink would
+			// never be looked up: load it now.
+			if (location.hash.indexOf(PREFIX) === 0) {
+				src.hash = location.hash;
+				f.loading = "eager";
+			}
 			f.src = src.toString();
 			window.addEventListener("hashchange", function () {
 				if (location.hash.indexOf(PREFIX) !== 0) return;
 				var next = new URL(f.src);
 				next.hash = location.hash;
+				f.loading = "eager";
 				f.src = next.toString();
 			});
 
