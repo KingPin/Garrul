@@ -102,6 +102,19 @@ describe("createFormTokenCache", () => {
 		expect(await cache.token()).toBe("B");
 	});
 
+	it("a suspension that expires an unpromoted refresh mints again on trigger", async () => {
+		const { mint, cache } = make(["A", "B", "C"]);
+		cache.ensure();
+		await vi.advanceTimersByTimeAsync(50 * MIN); // the background refresh mints B
+		expect(mint).toHaveBeenCalledTimes(2);
+		vi.setSystemTime(Date.now() + 60 * MIN); // suspended before B was promoted
+		cache.ensure();
+		await vi.advanceTimersByTimeAsync(0);
+		expect(mint).toHaveBeenCalledTimes(3);
+		expect(await cache.token()).toBe("C");
+		expect(mint).toHaveBeenCalledTimes(3);
+	});
+
 	it("submit mints once when every mint failed, and disabled returns empty", async () => {
 		const { mint, cache } = make([null, "S"]);
 		cache.ensure();

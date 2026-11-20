@@ -1,5 +1,6 @@
 import {
 	FORM_TOKEN_MATURE_MS,
+	FORM_TOKEN_MAX_MS,
 	type FormTokenSlot,
 	pickFormToken,
 } from "./boot";
@@ -61,6 +62,11 @@ export const createFormTokenCache = (
 			current = next;
 			next = null;
 		}
+		// An expired slot is dead weight: a kept `next` blocks every refresh below
+		// and leaves the submit to mint a token too young to pass the timing check.
+		const t = now();
+		if (next && t - next.mintedAt >= FORM_TOKEN_MAX_MS) next = null;
+		if (current && t - current.mintedAt >= FORM_TOKEN_MAX_MS) current = null;
 		if (!current && !next) void fetchInto("current");
 		else if (current && !next && now() - current.mintedAt >= REFRESH_MS) void fetchInto("next");
 		schedule();
