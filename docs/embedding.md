@@ -92,18 +92,26 @@ if (location.hash.indexOf(PREFIX) === 0) {
   f.loading = "eager"; // a lazy frame below the fold would never look it up
 }
 f.src = src.toString();
-// Any other hash goes in as an empty fragment, so a later return to the
-// same comment is a change the frame sees. Keep the "#": a src with no
-// fragment at all would reload the frame.
+var sent = src.hash; // the fragment the frame holds
+var loaded = false;
+f.addEventListener("load", function () { loaded = true; });
 window.addEventListener("hashchange", function () {
+  var isComment = location.hash.indexOf(PREFIX) === 0;
+  // Another anchor on the page is none of the frame's business, unless it
+  // leaves a comment: the frame then gets an empty fragment, so a later
+  // return to that comment is a change it sees.
+  if (!isComment && !sent) return;
+  sent = isComment ? location.hash : "";
   var next = new URL(f.src);
-  if (location.hash.indexOf(PREFIX) === 0) {
-    next.hash = location.hash;
-    f.loading = "eager";
-  } else {
-    next.hash = "#";
+  next.hash = sent || "#"; // no fragment at all would reload the frame
+  if (!loaded) {
+    if (isComment) f.loading = "eager";
+    f.src = next.toString();
+    return;
   }
-  if (next.toString() !== f.src) f.src = next.toString();
+  // replace(), not a src change: once the frame has loaded, a src change
+  // adds a history entry of its own, and Back would undo that instead.
+  f.contentWindow.location.replace(next.toString());
 });
 ```
 
