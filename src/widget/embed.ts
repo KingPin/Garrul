@@ -2191,6 +2191,11 @@ const buildActions = (
 						return;
 					}
 					failBody = await res.json().catch(() => null);
+					if (sessionLost(res, null, true)) {
+						ctx.revealAfterReload(null, s("w.session_expired"));
+						ctx.reload();
+						return;
+					}
 				} catch (err) {
 					if (landed) {
 						ctx.reload();
@@ -2393,7 +2398,14 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 		`${ctx.apiBase}/api/v1/comments/${encodeURIComponent(n.id)}/source`,
 		{ credentials: "include" },
 	)
-		.then((res) => (res.ok ? res.json() : null))
+		.then((res) => {
+			// The session ended elsewhere: the editor would only fail on Save.
+			if (sessionLost(res, null, true)) {
+				ctx.revealAfterReload(null, s("w.session_expired"));
+				ctx.reload();
+			}
+			return res.ok ? res.json() : null;
+		})
 		.then((data: { body_md?: string } | null) => {
 			if (data && typeof data.body_md === "string") {
 				ta.value = data.body_md;
