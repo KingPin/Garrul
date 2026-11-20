@@ -62,12 +62,18 @@
 				f.loading = "eager";
 			}
 			f.src = src.toString();
+			// Any other hash goes in as an empty fragment, so a later return to
+			// the same comment is a change the frame sees. Keep the "#": a src
+			// with no fragment at all would reload the frame.
 			window.addEventListener("hashchange", function () {
-				if (location.hash.indexOf(PREFIX) !== 0) return;
 				var next = new URL(f.src);
-				next.hash = location.hash;
-				f.loading = "eager";
-				f.src = next.toString();
+				if (location.hash.indexOf(PREFIX) === 0) {
+					next.hash = location.hash;
+					f.loading = "eager";
+				} else {
+					next.hash = "#";
+				}
+				if (next.toString() !== f.src) f.src = next.toString();
 			});
 
 			// Auto-resize the iframe to match the inner widget's content height.
