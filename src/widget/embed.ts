@@ -402,8 +402,13 @@ const undoMark = (label: string, id: string, restore: HTMLElement, pending: Pend
 	undoBtn.setAttribute("aria-describedby", id);
 	done.append(said, undoBtn);
 	undoBtn.addEventListener("click", () => {
+		// The request already went out (a rebuild kept this mark past its window):
+		// Undo undoes nothing, so retire it instead of restoring the button.
+		if (pending.settled) {
+			if (done.isConnected) retireUndo(done, label);
+			return;
+		}
 		pending.cancel();
-		// A no-op once the request went out: Undo is retired by then.
 		if (done.isConnected) {
 			done.replaceWith(restore);
 			restore.focus();
@@ -411,6 +416,11 @@ const undoMark = (label: string, id: string, restore: HTMLElement, pending: Pend
 	});
 	return done;
 };
+
+// Per-row settle hooks, by subscription id. Module-level because a reload
+// rebuilds the bell during a row's Undo window: the old bell's DELETE must reach
+// the row the new bell drew.
+const unsubRowUi = new Map<string, { sent(): void; fail(msg: string): void }>();
 
 const markHasFocus = (mark: HTMLElement): boolean => {
 	const active = (mark.getRootNode() as Document | ShadowRoot).activeElement;
@@ -661,6 +671,10 @@ const bindComposerKeys = (
 // the posts themselves: loadOnce waits them out before tearing the tree down.
 const busyKeys = new Set<string>();
 const inflight = new Set<Promise<void>>();
+// Handed-off forms, locked until the reload replaces them. A reload that fails
+// keeps the tree (and so these forms): loadFailed unlocks them, loadOnce's
+// teardown drops them.
+const heldForms = new Set<() => void>();
 
 /**
  * Run `run` as the one post for composer `key`; a submit while it runs is
@@ -678,7 +692,7 @@ const inflight = new Set<Promise<void>>();
 const postOnce = (
 	form: HTMLFormElement,
 	key: string,
-	run: (handOff: () => void) => Promise<void>,
+	run: (handOff: (restore?: () => void) => void) => Promise<void>,
 	cancel?: HTMLButtonElement,
 ): void => {
 	const ta = form.querySelector("textarea");
@@ -714,9 +728,19 @@ const postOnce = (
 	busyKeys.add(key);
 	inflight.add(p);
 	lock(true);
-	void run(() => {
+	// `restore` undoes what a post that landed consumed (the sent text), for a
+	// reload that fails and so leaves this form on screen. Not passed when the
+	// post did not land: the reader keeps the text.
+	void run((restore) => {
 		handedOff = true;
 		leave();
+		heldForms.add(() => {
+			restore?.();
+			lock(false);
+			if (!form.hasAttribute("data-expired"))
+				for (const b of form.querySelectorAll<HTMLButtonElement>("button[type=submit]"))
+					b.disabled = false;
+		});
 	}).finally(() => {
 		leave();
 		busyKeys.delete(key);
@@ -1034,7 +1058,7 @@ const formToken = createFormTokenCache(async () => {
 	} catch {
 		return null;
 	}
-}, Date.now);
+}, Date.now, () => document.hidden);
 /**
  * Apply the config's answer for this mount. `loadOnce` runs on every reload,
  * so the flag can flip between mounts on one page. A flip from disabled back
@@ -1051,12 +1075,12 @@ const getFormToken = (apiBase: string): Promise<string> => {
 };
 // Retry a failed mint, or refresh an old token, when the network returns or a
 // suspended tab wakes (its timers did not run). Once per document, like pagehide.
-const retryFormToken = (): void => {
-	if (formTokenBase) formToken.ensure();
+const retryFormToken = (force: boolean): void => {
+	if (formTokenBase) formToken.ensure(force);
 };
-window.addEventListener("online", retryFormToken);
+window.addEventListener("online", () => retryFormToken(true));
 document.addEventListener("visibilitychange", () => {
-	if (document.visibilityState === "visible") retryFormToken();
+	if (document.visibilityState === "visible") retryFormToken(false);
 });
 
 /**
@@ -1689,6 +1713,10 @@ const buildPageEngagement = (ctx: WidgetCtx): HTMLElement => {
  * anonymous bell, which works.
  */
 const bellRefresh = new WeakMap<HTMLElement, () => Promise<void>>();
+// The managed bell last built for a thread. A delayed unsubscribe can settle
+// after a reload replaced the bell that scheduled it; the result belongs on
+// the one on screen now.
+const liveBell = new Map<string, HTMLElement>();
 
 const buildSubscribeBell = (
 	apiBase: string,
@@ -1829,6 +1857,8 @@ const buildSubscribeBell = (
 				return false;
 			}
 			say(s("w.unsubscribe.done"));
+			// An open row for this thread must not send the same DELETE again.
+			pendingFor(`unsub:${id}`)?.cancel();
 			// The bell tracks this thread; a row cancelled from the panel may be it.
 			if (subId === id) {
 				subId = null;
@@ -1853,11 +1883,10 @@ const buildSubscribeBell = (
 	// second row maturing during a slow DELETE. In flight is tracked per id, and
 	// the settle hooks are looked up by id so a rebuilt panel gets the result.
 	const unsubbing = new Set<string>();
-	const rowUi = new Map<string, { sent(): void; fail(msg: string): void }>();
 	const sendUnsubscribe = async (id: string): Promise<void> => {
 		if (unsubbing.has(id)) return;
 		unsubbing.add(id);
-		rowUi.get(id)?.sent();
+		unsubRowUi.get(id)?.sent();
 		let failure: "w.subscribe.ratelimit" | "w.unsubscribe.failed" | null = null;
 		try {
 			const res = await apiFetch(apiBase, `/api/v1/subscribe/mine/${encodeURIComponent(id)}`, {
@@ -1871,7 +1900,7 @@ const buildSubscribeBell = (
 		}
 		unsubbing.delete(id);
 		if (failure) {
-			rowUi.get(id)?.fail(s(failure));
+			unsubRowUi.get(id)?.fail(s(failure));
 			return;
 		}
 		// The bell tracks this thread; a row unsubscribed from the panel may be it.
@@ -1880,6 +1909,9 @@ const buildSubscribeBell = (
 			pending = false;
 			renderBell();
 		}
+		// This bell was replaced while the Undo window ran: refresh the mounted one.
+		const mounted = liveBell.get(`${apiBase}\n${slug}`);
+		if (!wrap.isConnected && mounted && mounted !== wrap) void bellRefresh.get(mounted)?.();
 	};
 
 	const renderPanel = (rows: PanelRow[]): void => {
@@ -1902,7 +1934,7 @@ const buildSubscribeBell = (
 			let mark: HTMLElement | null = null;
 			const showUnsubscribed = (p: Pending | null): HTMLElement =>
 				(mark = undoMark(s("w.unsubscribed"), `gr-unsub-${row.id}`, drop, p));
-			rowUi.set(row.id, {
+			unsubRowUi.set(row.id, {
 				sent: () => {
 					if (mark?.isConnected) retireUndo(mark, s("w.unsubscribed"));
 				},
@@ -2057,6 +2089,7 @@ const buildSubscribeBell = (
 	// The composer's subscribe cannot know the id or pending-vs-confirmed; it
 	// asks the bell to re-read instead.
 	if (managed) {
+		liveBell.set(`${apiBase}\n${slug}`, wrap);
 		bellRefresh.set(wrap, async () => {
 			await loadState();
 			invalidatePanel();
@@ -2287,6 +2320,7 @@ const buildActions = (
 				// Set once the server has confirmed the delete. A throw after that
 				// is a render problem, not a failed delete: reload, never "failed".
 				let landed = false;
+				const seq = bumpMutation(ctx.root);
 				try {
 					const res = await apiFetch(
 						ctx.apiBase,
@@ -2308,9 +2342,11 @@ const buildActions = (
 						)?.nextElementSibling;
 						// Removing the page's only thread would leave a bare list with no
 						// "no comments yet": reload for that one.
+						// A later delete, post or edit meanwhile: this snapshot may predate it.
 						if (
 							json.root_id &&
 							json.thread !== undefined &&
+							mutationSeq.get(ctx.root) === seq &&
 							(json.thread ||
 								ctx.root.querySelectorAll(".gr-list > .gr-thread").length > 1) &&
 							replaceThreadInPlace(swapCtx(ctx), json.root_id, json.thread)
@@ -2443,10 +2479,12 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 	save.type = "submit";
 	const cancel = el("button", undefined, s("w.cancel"));
 	cancel.type = "button";
-	// One dismissal path for the button and for Escape. An abandoned edit keeps
-	// nothing: the original body is still on the node, and the box was never a
-	// draft surface (attachDraft is only on the reply and top-level composers).
+	// One dismissal path for the button and for Escape. The rewrite is kept as a
+	// draft (attached once the prefill lands) and flushed here, because the
+	// debounced save may not have run and a reopened editor reads storage at once.
+	let draft: DraftSaver | null = null;
 	const dismiss = (): void => {
+		draft?.flush();
 		wrap.remove();
 		main.querySelector<HTMLElement>(".gr-edit-window button")?.focus();
 	};
@@ -2546,6 +2584,11 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 				showStatus(errBox, s("w.edit_load_failed"));
 				return;
 			}
+			// Attach only now: a saver on the still-empty field could write "" over a
+			// real draft. A stored draft that differs from the fetched source wins.
+			const saved = draftStorage().getItem(key);
+			if (saved && saved !== ta.value) ta.value = saved;
+			draft = attachDraft(ta, key, legacyDraftKey(ctx.slug, `edit:${n.id}`));
 			ta.disabled = false;
 			save.disabled = false;
 			ta.placeholder = s("w.edit_ph");
@@ -2578,14 +2621,17 @@ const openEditor = (n: TreeNode, ctx: WidgetCtx, main: HTMLElement): void => {
 		}
 		save.disabled = true;
 		clearStatus(errBox);
+		const sent = ta.value;
 		try {
 			const res = await apiJson(
 				ctx.apiBase,
 				`/api/v1/comments/${encodeURIComponent(n.id)}`,
-				{ body: ta.value },
+				{ body: sent },
 				"PATCH",
 			);
 			if (res.ok) {
+				bumpMutation(ctx.root);
+				draft?.dropIf(sent);
 				// Focus only, no announcement: focusing the article makes
 				// assistive tech read the edited body, which is itself the
 				// confirmation, and it adds no new string to a bundle under a
@@ -2794,7 +2840,7 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 		submit.disabled = false;
 	};
 
-	const post = async (handOff: () => void): Promise<void> => {
+	const post = async (handOff: (restore?: () => void) => void): Promise<void> => {
 		submit.disabled = true;
 		if (!tsGate?.failed) clearStatus(errBox);
 
@@ -2893,7 +2939,13 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 			// Echo unusable, or the parent is no longer on screen. Fall back to the
 			// reload, and to the parent comment's id so focus still lands somewhere
 			// sensible on a response that omits the new comment's own.
-			handOff();
+			handOff(() => {
+				ta.value = "";
+				ta.dispatchEvent(new Event("input"));
+				draft.dropIf("");
+				tsHandle?.reset();
+				tsGate?.clear();
+			});
 			ctx.revealAfterReload(json?.comment?.id ?? parent.id, s("w.posted"));
 			ctx.reload();
 		} catch (err) {
@@ -3224,6 +3276,19 @@ const buildThread = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 		renderReplyList(replyMountFor(wrap, n, ctx).container, n.replies, ctx);
 	}
 	return wrap;
+};
+
+/**
+ * Thread mutations (delete, post, edit) seen per mount. A delete's thread
+ * snapshot is taken when the server handles it, so one that finishes after a
+ * later mutation lands holds the older thread: applying it would bring back a
+ * deleted comment, drop a new reply or revert an edit.
+ */
+const mutationSeq = new WeakMap<object, number>();
+const bumpMutation = (root: object): number => {
+	const seq = (mutationSeq.get(root) ?? 0) + 1;
+	mutationSeq.set(root, seq);
+	return seq;
 };
 
 /**
@@ -3859,6 +3924,10 @@ const loadState = new WeakMap<
 		// reload must not re-page for a hash already sought: an unknown or
 		// deleted id would otherwise cost MAX_SEEK_PAGES requests per reload.
 		soughtHash: string | null;
+		// A hash was followed while a load ran. It is newer reader intent than
+		// any queued reveal, so the render (or a failed reload that keeps the
+		// tree) seeks it instead.
+		hashDuringLoad: boolean;
 	}
 >();
 
@@ -3877,6 +3946,7 @@ const load = async (
 			revealedHash: null,
 			loadNext: null,
 			soughtHash: null,
+			hashDuringLoad: false,
 		};
 		loadState.set(root, st);
 		// Wire the permalink reveal to same-document fragment navigations here
@@ -4076,7 +4146,11 @@ const writePageStatus = (
 	message: string,
 	kind: "error" | "notice" = "error",
 ): void => {
-	const box = permalinkStatus(root);
+	// A failed anti-spam gate owns the composer's box with a sticky message that
+	// explains the disabled Submit: page messages go to their own box then.
+	const box = topComposerTurnstile?.gate.failed
+		? root.querySelector<HTMLElement>(".gr-page-status")
+		: permalinkStatus(root);
 	if (box) {
 		showStatus(box, message, kind);
 		return;
@@ -4169,8 +4243,10 @@ const onHashChange = (root: ShadowRoot): void => {
 	if (act === "reset") {
 		st.revealedHash = null;
 		st.soughtHash = null;
-	} else if (act === "reveal" && !st.running) {
-		void seekHashTarget(root);
+		st.hashDuringLoad = false;
+	} else if (act === "reveal") {
+		if (st.running) st.hashDuringLoad = true;
+		else void seekHashTarget(root);
 	}
 };
 
@@ -4251,6 +4327,7 @@ const insertPostedNode = (
 	echo: PostedEcho,
 	parent: TreeNode | null,
 ): boolean => {
+	bumpMutation(ctx.root);
 	const list = ctx.root.querySelector(".gr-list");
 	if (!list) return false;
 
@@ -4363,6 +4440,10 @@ const loadOnce = async (
 	host: HTMLElement,
 	sort: SortKey | null,
 ) => {
+	// A reload redraws every thread, which a delete snapshot taken before it
+	// must not overwrite; and a mutation that lands while this fetch is out
+	// makes what it fetched stale (checked before the tree is replaced).
+	const startSeq = bumpMutation(root);
 	// data-mode="reactions": the page engagement bar alone. Anything else is the
 	// full thread, so a typo degrades to the default widget rather than to nothing.
 	const reactionsOnly = host.dataset.mode === "reactions";
@@ -4404,7 +4485,16 @@ const loadOnce = async (
 			// A reveal queued for the reload that just failed must not fire on the
 			// next unrelated one.
 			pendingReveal.delete(root);
+			// The forms a post handed off to this reload stay on screen: give them back.
+			const held = [...heldForms];
+			heldForms.clear();
+			for (const unlock of held) unlock();
 			writePageStatus(root, loadErrorMessage(err, s));
+			const st = loadState.get(root);
+			if (st?.hashDuringLoad) {
+				st.hashDuringLoad = false;
+				void seekHashTarget(root);
+			}
 			return;
 		}
 		// renderError replaces the shadow tree, so the composer this handle
@@ -4635,13 +4725,15 @@ const loadOnce = async (
 	// Nor while a post is in flight: tearing down its composer abandons it
 	// mid-send and rebuilds the box with the posted text restored as a draft.
 	// What was fetched above predates that post, so once it settles fetch again,
-	// unless a reload already queued behind this one will.
-	if (inflight.size) {
+	// unless a reload already queued behind this one will. The same holds for a
+	// delete, post or edit that already landed in place while the fetch was out.
+	if (inflight.size || mutationSeq.get(root) !== startSeq) {
 		await Promise.allSettled(inflight);
 		if (!loadState.get(root)?.queued)
 			await loadOnce(root, slug, apiBase, host, activeSort);
 		return;
 	}
+	heldForms.clear();
 	destroyTopComposerTurnstile();
 	// The textareas are about to be detached: save what is pending, retire the
 	// savers so a stale timer cannot re-save text from a dead field.
@@ -4808,7 +4900,7 @@ const loadOnce = async (
 		more.type = "button";
 		const moreStatus = lazyActionStatus(() => wrap, "w.load_more_failed");
 		let cursor: string | null = data.next_cursor;
-		let inflight: Promise<boolean> | null = null;
+		let pageFetch: Promise<boolean> | null = null;
 		const fetchNext = async (): Promise<boolean> => {
 			if (!cursor) return false;
 			// Read before disabling: a disabled button gives up focus.
@@ -4839,8 +4931,8 @@ const loadOnce = async (
 		// Load more is in flight awaits that page and then looks, instead of
 		// reading the busy button as "no more pages" and giving up unseen.
 		const loadNext = (): Promise<boolean> =>
-			(inflight ??= fetchNext().finally(() => {
-				inflight = null;
+			(pageFetch ??= fetchNext().finally(() => {
+				pageFetch = null;
 			}));
 		more.addEventListener("click", () => void loadNext());
 		if (loadSt) loadSt.loadNext = loadNext;
@@ -4889,10 +4981,15 @@ const loadOnce = async (
 	// sees, and deleting the entry here means that last render is always the
 	// one that consumes it, never a stale one an earlier, superseded render
 	// already read.
+	const hashFollowed = loadSt?.hashDuringLoad === true;
+	if (loadSt) loadSt.hashDuringLoad = false;
 	const pending = pendingReveal.get(root);
 	pendingReveal.delete(root);
 	if (pending) {
-		let revealed = pending.id != null && focusPostedComment(root, pending.id);
+		// A hash followed during the load is newer than the reveal it queued
+		// behind: it wins focus, but the announcement is still owed.
+		let revealed =
+			hashFollowed || (pending.id != null && focusPostedComment(root, pending.id));
 		if (!revealed && pending.id == null && pending.focus) {
 			const target = root.querySelector<HTMLElement>(pending.focus);
 			target?.focus();
@@ -4938,6 +5035,7 @@ const loadOnce = async (
 				writePageStatus(root, announce, "notice");
 			}, 0);
 		}
+		if (hashFollowed) void seekHashTarget(root);
 	} else {
 		void seekHashTarget(root);
 	}
@@ -4995,7 +5093,8 @@ const loadOnce = async (
 						if (submitBtn && !busyKeys.has(draftKey(apiOrigin, slug, null)))
 							submitBtn.disabled = false;
 						const errEl = form.querySelector(".gr-error") as HTMLElement | null;
-						if (errEl) clearStatus(errEl);
+						// Only the failure text this gate wrote, not an unrelated message.
+						if (errEl?.textContent === s("w.ts.failed")) clearStatus(errEl);
 						return true;
 					},
 				});
@@ -5069,7 +5168,7 @@ const submit = async (
 	apiBase: string,
 	apiOrigin: string,
 	host: HTMLElement,
-	handOff: () => void,
+	handOff: (restore?: () => void) => void,
 ) => {
 	// Two things write to this box: submit failures, and Turnstile. Precedence:
 	// the "anti-spam check failed to load" message wins and is sticky. It means
@@ -5196,8 +5295,13 @@ const submit = async (
 			// silent no-op for every signed-in reader.
 			const email = emailInput?.value.trim() ?? "";
 			if (email || !emailInput) {
+				// The composer may have been rebuilt (sort reload, reload fallback)
+				// before this settles; then errEl is detached and the page's own
+				// status box is the one the reader can see.
 				const say = (m: string): void => {
-					if (errEl && !ts?.gate.failed) showStatus(errEl, m, "notice");
+					if (ts?.gate.failed) return;
+					if (errEl?.isConnected) showStatus(errEl, m, "notice");
+					else writePageStatus(root, m, "notice");
 				};
 				void (async () => {
 					try {
@@ -5239,23 +5343,28 @@ const submit = async (
 		// transient notice.
 		const posted = readPostedEcho(json?.comment);
 		const ctx = mountCtx.get(root);
-		if (posted && ctx && insertPostedNode(ctx, posted, null)) {
-			// The reload used to hand the composer back by rebuilding it. What is
-			// left to undo is what the post consumed: the text, the disabled
-			// button, and the Turnstile token — single-use once siteverify has seen
-			// it, so a composer holding a spent one can only produce a rejected post.
-			const bodyInput = form.querySelector(
-				".gr-body-input",
-			) as HTMLTextAreaElement | null;
+		// What the post consumed: the text, the disabled button, and the Turnstile
+		// token — single-use once siteverify has seen it, so a composer holding a
+		// spent one can only produce a rejected post.
+		const consumed = (): void => {
+			const bodyInput = form.querySelector(".gr-body-input") as HTMLTextAreaElement | null;
 			if (bodyInput) {
 				bodyInput.value = "";
 				// Re-fires what buildWritePreview listens for: shrinks the box back
 				// to its resting height and clears the character counter.
 				bodyInput.dispatchEvent(new Event("input"));
+				// That input scheduled a save of "". A key another tab wrote since is
+				// not ours to remove, so cancel it (dropIf keeps a foreign value).
+				draftOf.get(bodyInput)?.dropIf("");
 			}
 			if (submitBtn) submitBtn.disabled = false;
 			ts?.reset();
 			ts?.gate.clear();
+		};
+		if (posted && ctx && insertPostedNode(ctx, posted, null)) {
+			// The reload used to hand the composer back by rebuilding it. What is
+			// left to undo is what the post consumed.
+			consumed();
 			return;
 		}
 
@@ -5268,7 +5377,7 @@ const submit = async (
 		// loadOnce call actually renders last — this one, or the queued
 		// follow-up — is the one that consumes it; see the arbitration at the
 		// tail of loadOnce.
-		handOff();
+		handOff(consumed);
 		revealAfterReload(root, json?.comment?.id ?? null, s("w.posted"));
 		await load(root, slug, apiBase, host);
 	} catch (err) {

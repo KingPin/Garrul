@@ -33,6 +33,14 @@ describe("draftKey", () => {
 		);
 	});
 
+	it("keys an edit draft apart from the reply under the same comment", () => {
+		expect(draftKey("https://c.example", "post", "edit:01H")).toBe(
+			"garrul:draft:https://c.example:post:edit:01H",
+		);
+		expect(draftKey("https://c.example", "post", "edit:01H")).not.toBe(
+			draftKey("https://c.example", "post", "01H"),
+		);
+	});
 	it("differs across origins for the same slug", () => {
 		expect(draftKey("https://a.example", "post", null)).not.toBe(
 			draftKey("https://b.example", "post", null),
@@ -186,6 +194,18 @@ describe("draftSaver", () => {
 		saver.dropIf("hello");
 		vi.advanceTimersByTime(1000);
 		expect(store.dump()).toEqual({});
+	});
+
+	it("a post's own reset input does not erase another tab's draft", () => {
+		const { store, saver, type } = setup();
+		type("A");
+		store.setItem("k", "B");
+		saver.dropIf("A");
+		// The composer clears and fires input, scheduling a save of "".
+		type("");
+		saver.dropIf("");
+		vi.advanceTimersByTime(1000);
+		expect(store.dump()).toEqual({ k: "B" });
 	});
 
 	it("saver keeps saving after dropIf", () => {
