@@ -1713,6 +1713,10 @@ const buildPageEngagement = (ctx: WidgetCtx): HTMLElement => {
  * anonymous bell, which works.
  */
 const bellRefresh = new WeakMap<HTMLElement, () => Promise<void>>();
+// The managed bell last built for a thread. A delayed unsubscribe can settle
+// after a reload replaced the bell that scheduled it; the result belongs on
+// the one on screen now.
+const liveBell = new Map<string, HTMLElement>();
 
 const buildSubscribeBell = (
 	apiBase: string,
@@ -1905,6 +1909,9 @@ const buildSubscribeBell = (
 			pending = false;
 			renderBell();
 		}
+		// This bell was replaced while the Undo window ran: refresh the mounted one.
+		const mounted = liveBell.get(`${apiBase}\n${slug}`);
+		if (!wrap.isConnected && mounted && mounted !== wrap) void bellRefresh.get(mounted)?.();
 	};
 
 	const renderPanel = (rows: PanelRow[]): void => {
@@ -2082,6 +2089,7 @@ const buildSubscribeBell = (
 	// The composer's subscribe cannot know the id or pending-vs-confirmed; it
 	// asks the bell to re-read instead.
 	if (managed) {
+		liveBell.set(`${apiBase}\n${slug}`, wrap);
 		bellRefresh.set(wrap, async () => {
 			await loadState();
 			invalidatePanel();
