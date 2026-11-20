@@ -14,6 +14,16 @@ describe("publicBaseUrl", () => {
 		expect(publicBaseUrl({ PUBLIC_BASE_URL: "  https://x.test/ " })).toBe("https://x.test");
 	});
 
+	it("strips a trailing mix of slashes and whitespace", () => {
+		expect(publicBaseUrl({ PUBLIC_BASE_URL: "https://x.test/ / /\t" })).toBe("https://x.test");
+	});
+
+	it("stays linear on a long internal whitespace run", () => {
+		const start = performance.now();
+		publicBaseUrl({ PUBLIC_BASE_URL: `https://x.test${" ".repeat(100_000)}x` });
+		expect(performance.now() - start).toBeLessThan(100);
+	});
+
 	it("keeps a path prefix intact", () => {
 		expect(publicBaseUrl({ PUBLIC_BASE_URL: "https://x.test/garrul/" })).toBe(
 			"https://x.test/garrul",
