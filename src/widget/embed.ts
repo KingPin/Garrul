@@ -3918,6 +3918,10 @@ const loadState = new WeakMap<
 		// reload must not re-page for a hash already sought: an unknown or
 		// deleted id would otherwise cost MAX_SEEK_PAGES requests per reload.
 		soughtHash: string | null;
+		// A hash was followed while a load ran. It is newer reader intent than
+		// any queued reveal, so the render (or a failed reload that keeps the
+		// tree) seeks it instead.
+		hashDuringLoad: boolean;
 	}
 >();
 
@@ -3936,6 +3940,7 @@ const load = async (
 			revealedHash: null,
 			loadNext: null,
 			soughtHash: null,
+			hashDuringLoad: false,
 		};
 		loadState.set(root, st);
 		// Wire the permalink reveal to same-document fragment navigations here
@@ -4232,8 +4237,9 @@ const onHashChange = (root: ShadowRoot): void => {
 	if (act === "reset") {
 		st.revealedHash = null;
 		st.soughtHash = null;
-	} else if (act === "reveal" && !st.running) {
-		void seekHashTarget(root);
+	} else if (act === "reveal") {
+		if (st.running) st.hashDuringLoad = true;
+		else void seekHashTarget(root);
 	}
 };
 
@@ -4472,6 +4478,11 @@ const loadOnce = async (
 			heldForms.clear();
 			for (const unlock of held) unlock();
 			writePageStatus(root, loadErrorMessage(err, s));
+			const st = loadState.get(root);
+			if (st?.hashDuringLoad) {
+				st.hashDuringLoad = false;
+				void seekHashTarget(root);
+			}
 			return;
 		}
 		// renderError replaces the shadow tree, so the composer this handle
@@ -4957,7 +4968,10 @@ const loadOnce = async (
 	// sees, and deleting the entry here means that last render is always the
 	// one that consumes it, never a stale one an earlier, superseded render
 	// already read.
-	const pending = pendingReveal.get(root);
+	const hashFollowed = loadSt?.hashDuringLoad === true;
+	if (loadSt) loadSt.hashDuringLoad = false;
+	// A hash followed during the load is newer than the reveal it queued behind.
+	const pending = hashFollowed ? undefined : pendingReveal.get(root);
 	pendingReveal.delete(root);
 	if (pending) {
 		let revealed = pending.id != null && focusPostedComment(root, pending.id);
