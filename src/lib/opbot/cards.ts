@@ -5,6 +5,7 @@ import {
 	getUser,
 } from "../../db/queries";
 import type { Bindings } from "../../index";
+import { publicBaseUrl } from "../public-base";
 import type { OpAction } from "./codec";
 
 export type OpButton = {
@@ -88,6 +89,7 @@ export const renderQueueCard = async (
 		countOpenReportsByComment(env.DB, [comment.id]),
 	]);
 	const openReports = counts[comment.id] ?? 0;
+	const base = publicBaseUrl(env);
 	return {
 		title: "Pending comment",
 		lines: [
@@ -95,8 +97,8 @@ export const renderQueueCard = async (
 			`On: ${comment.post_slug} · ${relativeAge(comment.created_at, Date.now())} ago`,
 		],
 		snippet: ellipsize(comment.body_md, 200),
-		...(env.PUBLIC_BASE_URL && {
-			adminUrl: `${env.PUBLIC_BASE_URL.replace(/\/$/, "")}/admin/comments/${encodeURIComponent(comment.id)}`,
+		...(base && {
+			adminUrl: `${base}/admin/comments/${encodeURIComponent(comment.id)}`,
 		}),
 		commentId: comment.id,
 		buttons: buttonsFor(comment.status, { reported: openReports > 0, queue: true }),

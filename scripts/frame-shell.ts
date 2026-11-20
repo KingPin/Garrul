@@ -89,6 +89,7 @@ export const FRAME_SHELL_HTML = `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<base target="_top">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Comments</title>
 <style>

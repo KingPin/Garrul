@@ -52,5 +52,18 @@ if (!cfg) {
 		new MutationObserver(post).observe(document.body, { childList: true, subtree: true });
 		window.addEventListener("load", post);
 		setTimeout(post, 100);
+		// The frame is as tall as its content, so the widget's scrollIntoView on
+		// a permalink target moves nothing: the host page does the scrolling.
+		// Report the target's offset (after the final height, so the host can
+		// reach it).
+		const scrollIntoView = Element.prototype.scrollIntoView;
+		Element.prototype.scrollIntoView = function (...args) {
+			scrollIntoView.apply(this, args);
+			post();
+			window.parent.postMessage(
+				{ type: "garrul:scroll", top: this.getBoundingClientRect().top + window.scrollY },
+				parentOrigin,
+			);
+		};
 	}
 }

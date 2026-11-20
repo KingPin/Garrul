@@ -78,6 +78,70 @@ The iframe page posts content height to the parent via
 [`../examples/iframe/index.html`](../examples/iframe/index.html) for a
 ~10-line auto-resize listener.
 
+Comment permalinks (`#garrul-comment-<id>`) need two more lines of host
+script, both in that example. The iframe cannot read the host page's
+fragment, so copy it onto the iframe `src` on load and again on
+`hashchange` (a fragment-only change does not reload the frame). Also set
+`loading` to `"eager"`: a frame left lazy beyond the browser's threshold
+never loads, so the comment is never looked up:
+
+```js
+var PREFIX = "#garrul-comment-";
+if (location.hash.indexOf(PREFIX) === 0) {
+  src.hash = location.hash;
+  f.loading = "eager"; // a lazy frame below the fold would never look it up
+}
+f.src = src.toString();
+var sent = src.hash; // the fragment the frame holds
+var loaded = false;
+f.addEventListener("load", function () { loaded = true; });
+window.addEventListener("hashchange", function () {
+  var isComment = location.hash.indexOf(PREFIX) === 0;
+  // Another anchor on the page is none of the frame's business, unless it
+  // leaves a comment: the frame then gets an empty fragment, so a later
+  // return to that comment is a change it sees.
+  if (!isComment && !sent) return;
+  sent = isComment ? location.hash : "";
+  var next = new URL(f.src);
+  next.hash = sent || "#"; // no fragment at all would reload the frame
+  if (!loaded) {
+    if (isComment) f.loading = "eager";
+    f.src = next.toString();
+    return;
+  }
+  // replace(), not a src change: once the frame has loaded, a src change
+  // adds a history entry of its own, and Back would undo that instead.
+  f.contentWindow.location.replace(next.toString());
+});
+```
+
+The listener below handles both messages. It accepts only the frame's own
+window and origin, and only finite numbers:
+
+```js
+var apiOrigin = new URL(f.src).origin;
+window.addEventListener("message", function (e) {
+  if (e.origin !== apiOrigin || e.source !== f.contentWindow) return;
+  var data = e.data;
+  if (!data) return;
+  if (data.type === "garrul:scroll" && Number.isFinite(data.top)) {
+    // Permalink target: bring it into the host page's viewport.
+    var y = f.getBoundingClientRect().top + window.scrollY + data.top;
+    window.scrollTo(0, Math.max(0, y - window.innerHeight / 3));
+    return;
+  }
+  if (data.type !== "garrul:height") return;
+  if (!Number.isFinite(data.height)) return;
+  f.style.height = data.height + "px";
+});
+```
+
+The frame scrolls nothing itself, so it posts
+`{type:"garrul:scroll", top}` (to the `parent_origin` only) and the same
+listener scrolls the host page to it. Timestamp links open in the top
+window (the frame sets `<base target="_top">`); comment-body links keep
+`target="_blank"`.
+
 ## Reactions bar only
 
 For a page that wants a quick reaction row but no comment thread, set

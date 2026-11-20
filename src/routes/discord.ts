@@ -55,6 +55,7 @@ import {
 	replyRefusalText,
 } from "../lib/opbot/reply";
 import { readComment, readQueue, readStats, readUser, relativeAge } from "../lib/opbot/readouts";
+import { publicBaseUrl } from "../lib/public-base";
 import { checkRateLimit } from "../lib/ratelimit";
 import { loadDiscordSettings } from "../lib/settings";
 import { escapeDiscordMentions } from "../lib/webhook-adapters";
@@ -537,10 +538,10 @@ const handleLink = async (ctx: Ctx, i: DiscordInteraction, guildId: string, uid:
 	return ephemeral(`Linked to ${escapeDiscordMentions(user.name)}.`);
 };
 
-const adminUrl = (env: Bindings, id: string): string | null =>
-	env.PUBLIC_BASE_URL
-		? `${env.PUBLIC_BASE_URL.replace(/\/$/, "")}/admin/comments/${encodeURIComponent(id)}`
-		: null;
+const adminUrl = (env: Bindings, id: string): string | null => {
+	const base = publicBaseUrl(env);
+	return base ? `${base}/admin/comments/${encodeURIComponent(id)}` : null;
+};
 
 const handleCommand = async (ctx: Ctx, i: DiscordInteraction, actor: OpActor): Promise<Reply> => {
 	const { env } = ctx;

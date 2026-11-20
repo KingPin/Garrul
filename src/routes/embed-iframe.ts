@@ -395,6 +395,7 @@ const renderShell = (c: Context<{ Bindings: Bindings }>, slug: string) => {
 <html lang="${escapeAttr(docLang)}">
 <head>
 <meta charset="utf-8">
+<base target="_top">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Comments</title>
 <style>
@@ -433,6 +434,18 @@ const renderShell = (c: Context<{ Bindings: Bindings }>, slug: string) => {
   mo.observe(document.body, { childList: true, subtree: true });
   window.addEventListener("load", post);
   setTimeout(post, 100);
+  // The frame is as tall as its content, so the widget's scrollIntoView on a
+  // permalink target moves nothing: the host page does the scrolling. Report
+  // the target's offset (after the final height, so the host can reach it).
+  var scrollIntoView = Element.prototype.scrollIntoView;
+  Element.prototype.scrollIntoView = function () {
+    scrollIntoView.apply(this, arguments);
+    post();
+    window.parent.postMessage(
+      { type: "garrul:scroll", top: this.getBoundingClientRect().top + window.scrollY },
+      parentOrigin
+    );
+  };
 })();
 </script>
 </body>

@@ -11,6 +11,7 @@ import type { Bindings } from "../index";
 import { discordApi, discordEnabled } from "./discord";
 import { log } from "./log";
 import { collectDigest, relativeAge } from "./opbot/readouts";
+import { publicBaseUrl } from "./public-base";
 import { loadDiscordSettings } from "./settings";
 
 // settings key holding the epoch-ms of the last digest post attempt.
@@ -20,7 +21,7 @@ const INTERVAL_MS = 23 * 3600 * 1000;
 
 const renderDigest = async (env: Bindings, now: number): Promise<string> => {
 	const d = await collectDigest(env, now);
-	const base = env.PUBLIC_BASE_URL ? env.PUBLIC_BASE_URL.replace(/\/$/, "") : null;
+	const base = publicBaseUrl(env);
 
 	const lines: string[] = ["**Garrul daily digest**"];
 	lines.push(

@@ -22,6 +22,7 @@ import { getSetting, listTelegramDigestLinks, setSetting } from "../db/queries";
 import type { Bindings } from "../index";
 import { log } from "./log";
 import { collectDigest, relativeAge } from "./opbot/readouts";
+import { publicBaseUrl } from "./public-base";
 import { sendMessage } from "./telegram";
 
 type DigestEnv = {
@@ -47,8 +48,7 @@ const escapeTg = (s: string): string =>
 		.replace(/"/g, "&quot;")
 		.replace(/'/g, "&#39;");
 
-const adminBase = (env: DigestEnv): string | null =>
-	env.PUBLIC_BASE_URL ? env.PUBLIC_BASE_URL.replace(/\/$/, "") : null;
+const adminBase = (env: DigestEnv): string | null => publicBaseUrl(env);
 
 const renderDigest = async (env: DigestEnv, now: number): Promise<string> => {
 	const d = await collectDigest(env as Bindings, now);

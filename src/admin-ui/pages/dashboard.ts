@@ -15,6 +15,7 @@ import type {
 	ResolvedTexts,
 } from "../../lib/settings";
 import { identiconSvg } from "../../lib/identicon";
+import { publicBaseUrl } from "../../lib/public-base";
 import { barChartSvg } from "../charts";
 import { escapeHtml } from "../escape";
 
@@ -121,8 +122,7 @@ const byHostPanel = (rows: CommentsByHostRow[]): string => {
 // fresh dev instance) we fall back to a clearly-placeholder host so the
 // snippet still reads correctly and the operator knows what to replace.
 const embedOrigin = (env: Bindings): string => {
-	const raw = (env.PUBLIC_BASE_URL || "").trim().replace(/\/+$/, "");
-	return raw || "https://comments.example.com";
+	return publicBaseUrl(env) ?? "https://comments.example.com";
 };
 
 const embedCard = (env: Bindings): string => {
