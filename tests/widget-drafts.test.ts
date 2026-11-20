@@ -196,6 +196,18 @@ describe("draftSaver", () => {
 		expect(store.dump()).toEqual({});
 	});
 
+	it("a post's own reset input does not erase another tab's draft", () => {
+		const { store, saver, type } = setup();
+		type("A");
+		store.setItem("k", "B");
+		saver.dropIf("A");
+		// The composer clears and fires input, scheduling a save of "".
+		type("");
+		saver.dropIf("");
+		vi.advanceTimersByTime(1000);
+		expect(store.dump()).toEqual({ k: "B" });
+	});
+
 	it("saver keeps saving after dropIf", () => {
 		const { store, saver, type } = setup();
 		type("hello");

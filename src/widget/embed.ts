@@ -2930,6 +2930,7 @@ const buildReplyForm = (parent: TreeNode, ctx: WidgetCtx): HTMLElement => {
 			handOff(() => {
 				ta.value = "";
 				ta.dispatchEvent(new Event("input"));
+				draft.dropIf("");
 				tsHandle?.reset();
 				tsGate?.clear();
 			});
@@ -5298,6 +5299,9 @@ const submit = async (
 				// Re-fires what buildWritePreview listens for: shrinks the box back
 				// to its resting height and clears the character counter.
 				bodyInput.dispatchEvent(new Event("input"));
+				// That input scheduled a save of "". A key another tab wrote since is
+				// not ours to remove, so cancel it (dropIf keeps a foreign value).
+				draftOf.get(bodyInput)?.dropIf("");
 			}
 			if (submitBtn) submitBtn.disabled = false;
 			ts?.reset();
