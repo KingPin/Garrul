@@ -41,7 +41,7 @@
  */
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
 	loadLocal,
 	fetchRemote,
@@ -860,7 +860,7 @@ export const main = async (
 	console.log(`[upgrade] Upgraded ${local.version} → ${target.version}`);
 };
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
 	main().catch((err) => {
 		console.error("[upgrade] failed:", err);
 		process.exit(1);
