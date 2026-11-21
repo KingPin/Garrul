@@ -13,6 +13,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { wranglerCommand } from "./node-cli";
 import {
 	OWNER_PROVIDER,
 	OWNER_PROVIDER_ID,
@@ -128,8 +129,7 @@ export const databaseName = (toml: string): string => {
 
 const d1 = (db: string, local: boolean, sql: string): unknown[] => {
 	const r = spawnSync(
-		"npx",
-		["wrangler", "d1", "execute", db, local ? "--local" : "--remote", "--json", "--command", sql],
+		...wranglerCommand(["d1", "execute", db, local ? "--local" : "--remote", "--json", "--command", sql]),
 		{ encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
 	);
 	if (r.error) throw r.error;

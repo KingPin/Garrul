@@ -25,8 +25,13 @@ const NOT_AUTH =
 const exits = (status: number, stdout = "", stderr = "") =>
 	spawnSync.mockReturnValueOnce({ status, stdout, stderr, error: undefined });
 
-const lastArgs = (): string[] =>
-	(spawnSync.mock.calls.at(-1) as [string, string[]])[1];
+// wrangler runs as `node <entry> …` (scripts/node-cli.ts); drop the entry.
+const lastArgs = (): string[] => {
+	const [cmd, [entry, ...args]] = spawnSync.mock.calls.at(-1) as [string, string[]];
+	expect(cmd).toBe(process.execPath);
+	expect(entry).toMatch(/wrangler.js$/);
+	return ["wrangler", ...args];
+};
 
 beforeEach(() => {
 	spawnSync.mockReset();

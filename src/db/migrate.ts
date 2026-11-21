@@ -25,6 +25,7 @@ import { execFileSync } from "node:child_process";
 import { readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { wranglerCommand } from "../../scripts/node-cli";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const MIGRATIONS_DIR = join(__dirname, "migrations");
@@ -33,7 +34,7 @@ const DB_BINDING = "DB";
 const remoteFlag = process.argv.includes("--remote") ? "--remote" : "--local";
 
 const wrangler = (args: string[]): string =>
-	execFileSync("wrangler", args, {
+	execFileSync(...wranglerCommand(args), {
 		encoding: "utf8",
 		stdio: ["ignore", "pipe", "pipe"],
 	});
