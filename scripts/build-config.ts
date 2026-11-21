@@ -38,7 +38,7 @@
  */
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
 	CONFIG_REGISTRY,
 	SECRETS,
@@ -684,7 +684,7 @@ export {
 	checkMustEditVars,
 };
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
 	try {
 		main();
 	} catch (err) {

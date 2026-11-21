@@ -5,10 +5,13 @@
  *
  * All subprocesses use spawnSync with shell:false (the default), so values
  * passed in the args array can't break out into shell metacharacters.
+ * wrangler and npm run via their JS entry points (scripts/node-cli.ts), which
+ * is what makes that work on Windows, where both are only .cmd shims.
  */
 import { spawnSync } from "node:child_process";
 import { readFileSync, appendFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import { npmCommand, wranglerCommand } from "../node-cli";
 import { parseTomlVars } from "./toml-vars";
 import type { TomlVars } from "./toml-vars";
 
@@ -51,8 +54,7 @@ const run = (cmd: string, args: string[], opts: RunOpts = {}): string => {
 	return typeof r.stdout === "string" ? r.stdout : "";
 };
 
-const wrangler = (args: string[], opts: RunOpts = {}): string =>
-	run("npx", ["wrangler", ...args], opts);
+const wrangler = (args: string[], opts: RunOpts = {}): string => run(...wranglerCommand(args), opts);
 
 /** Terminal colour codes: wrangler colours its error output even when piped. */
 const ANSI_RE = /\x1b\[[0-9;]*[A-Za-z]/g;
@@ -350,7 +352,7 @@ export const executeD1File = (database: string, file: string): void => {
 export const npmRun = (script: string, extraArgs: string[] = []): void => {
 	const args = ["run", script];
 	if (extraArgs.length > 0) args.push("--", ...extraArgs);
-	run("npm", args, { inheritStdio: true });
+	run(...npmCommand(args), { inheritStdio: true });
 };
 
 /**
@@ -362,7 +364,7 @@ export const npmRun = (script: string, extraArgs: string[] = []): void => {
 export const npmCi = (repoRoot: string): void => {
 	const lockfile = join(repoRoot, "package-lock.json");
 	const sub = existsSync(lockfile) ? "ci" : "install";
-	run("npm", [sub], { inheritStdio: true });
+	run(...npmCommand([sub]), { inheritStdio: true });
 };
 
 /**
@@ -381,7 +383,7 @@ export const appendUpgradeLog = (
 
 export const wranglerVersion = (): string | null => {
 	try {
-		return run("npx", ["wrangler", "--version"]).trim();
+		return wrangler(["--version"]).trim();
 	} catch {
 		return null;
 	}
