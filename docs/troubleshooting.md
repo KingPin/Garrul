@@ -78,16 +78,21 @@ the new version actually introduces.
 The upgrade reads the installed version from this checkout's
 `release-manifest.json`, not from the live Worker. If you ran `git pull`
 or checked out the new tag first, the checkout already claims the new
-version and the run stops before it deploys anything. Check out the tag
-you last deployed and re-run:
+version and the run stops before it deploys anything. Tell it which
+version the Worker is running:
 
 ```bash
-git checkout vX.Y.Z   # the version the Worker is running
-npm run upgrade
+npm run upgrade -- --from vX.Y.Z   # the version the Worker is running
 ```
 
-Upgrades tag each deploy with its release version, so a later version of
-the script can read the live version instead.
+`--from` reads that release's manifest from GitHub, so the plan still
+sees the renderer bumps, migrations and new settings since then. Don't
+`git checkout` the old tag instead: that also brings back the old
+upgrade script, without any fixes made since (on Windows, releases before
+the shell-free launcher fail preflight with "wrangler not found").
+
+Upgrades tag each deploy with its release version (`workers/tag`), so a
+later version of the script can read the live version instead.
 
 ### `npm run upgrade` fails with "GitHub releases/latest returned 403"
 

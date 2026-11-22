@@ -421,6 +421,7 @@ Useful flags:
 | ----------------------- | ------------------------------------------------------------- |
 | `--dry-run`             | Print the plan only. No git, wrangler, or deploy side effects. |
 | `--version vX.Y.Z`      | Target a specific tag instead of "latest release."            |
+| `--from vX.Y.Z`         | The version the Worker runs, when this checkout is already newer (after a `git pull`). |
 | `--yes`                 | Non-interactive (CI). Refuses if any secret is missing — they need a value you must type. |
 | `--allow-dirty`         | Proceed even if `git status` is non-empty.                    |
 | `--skip-migrations`     | Skip `npm run migrate -- --remote`.                           |

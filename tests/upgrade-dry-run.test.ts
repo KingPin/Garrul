@@ -447,8 +447,33 @@ describe("upgrade dry-run", () => {
 		const output = logSpy.mock.calls.map((c: unknown[]) => c.join(" ")).join("\n");
 		expect(output).toMatch(/already on 1\.2\.0; nothing to do/);
 		expect(output).toMatch(/not the live Worker/);
-		expect(output).toMatch(/git checkout v<version you last deployed>/);
+		expect(output).toMatch(/npm run upgrade -- --from v<version you last deployed>/);
 		expect(fetchTargetManifest).not.toHaveBeenCalled();
+	});
+
+	it("--from plans from the deployed release's manifest, not the pulled checkout (#243)", async () => {
+		const deployed = loadLocal(); // 1.0.0
+		loadLocal.mockClear();
+		const pulled = vi.fn(() => structuredClone(fakeTargetManifest)); // checkout already on 1.2.0
+		const byTag = vi.fn(async (_o: string, _r: string, tag: string): Promise<Manifest> =>
+			tag === "v1.0.0" ? structuredClone(deployed) : structuredClone(fakeTargetManifest),
+		);
+
+		await main(["--dry-run", "--from", "1.0.0"], {
+			wrangler: wranglerMock,
+			git: gitMock,
+			fetchLatest,
+			fetchReleases,
+			fetchTargetManifest: byTag,
+			loadLocal: pulled,
+		});
+
+		const output = logSpy.mock.calls.map((c: unknown[]) => c.join(" ")).join("\n");
+		expect(byTag).toHaveBeenCalledWith(expect.any(String), expect.any(String), "v1.0.0");
+		expect(pulled).not.toHaveBeenCalled();
+		expect(output).not.toMatch(/nothing to do/);
+		expect(output).toMatch(/v1\.0\.0 → v1\.2\.0/);
+		expect(output).toMatch(/dry-run; no changes applied/);
 	});
 
 	it("tags the deploy with the target release (#243)", async () => {
@@ -583,6 +608,25 @@ describe("upgrade refuses to plan against a deployment it cannot read", () => {
 		expect(joined(stdoutSpy)).toMatch(/npm run upgrade/);
 		expect(wranglerMock.checkAuth).not.toHaveBeenCalled();
 		expect(fetchLatest).not.toHaveBeenCalled();
+	});
+
+	it("stops when the --from release has no readable manifest", async () => {
+		const byTag = vi.fn(async (_o: string, _r: string, tag: string): Promise<Manifest> => {
+			if (tag === "v0.9.0") throw new Error("404 Not Found");
+			return structuredClone(fakeTargetManifest);
+		});
+
+		await expect(main(["--dry-run", "--from", "v0.9.0"], { ...deps(), fetchTargetManifest: byTag })).rejects.toThrow(
+			/process\.exit\(1\)/,
+		);
+
+		expect(joined(stdoutSpy)).toMatch(/could not read the v0\.9\.0 manifest: 404 Not Found/);
+		expect(gitMock.checkout).not.toHaveBeenCalled();
+	});
+
+	it("rejects a --from that is not a version", async () => {
+		await expect(main(["--dry-run", "--from", "latest"], deps())).rejects.toThrow(/process\.exit\(1\)/);
+		expect(joined(stdoutSpy)).toMatch(/bad --from: latest/);
 	});
 
 	it("stops in preflight when npm resolves but does not run, before any change", async () => {
