@@ -3,7 +3,8 @@
  * `npm run migrate` / `npm run upgrade` work on Windows, where wrangler and
  * npm are only .cmd shims that Node will not spawn without a shell.
  */
-import { existsSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { npmCommand, wranglerCommand, wranglerEntry } from "../scripts/node-cli";
@@ -24,6 +25,21 @@ describe("wranglerCommand", () => {
 	it("resolves to a file that exists", () => {
 		expect(basename(wranglerEntry())).toBe("wrangler.js");
 		expect(existsSync(wranglerEntry())).toBe(true);
+	});
+});
+
+describe("wranglerEntry", () => {
+	it("re-reads package.json on every call, so an in-process npm ci is seen", () => {
+		const dir = mkdtempSync(join(tmpdir(), "garrul-wrangler-"));
+		try {
+			const pkg = join(dir, "package.json");
+			writeFileSync(pkg, JSON.stringify({ bin: { wrangler: "bin/old.js" } }));
+			expect(wranglerEntry(pkg)).toBe(join(dir, "bin/old.js"));
+			writeFileSync(pkg, JSON.stringify({ bin: { wrangler: "bin/new.js" } }));
+			expect(wranglerEntry(pkg)).toBe(join(dir, "bin/new.js"));
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
 	});
 });
 

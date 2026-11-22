@@ -11,7 +11,7 @@
  *
  * Node-only. Never import this from the Worker bundle.
  */
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 
@@ -21,9 +21,9 @@ const require = createRequire(import.meta.url);
 export type Command = [cmd: string, args: string[]];
 
 /** Absolute path of the installed wrangler's JS entry point. */
-export const wranglerEntry = (): string => {
-	const pkgPath = require.resolve("wrangler/package.json");
-	const { bin } = require(pkgPath) as { bin: string | Record<string, string> };
+export const wranglerEntry = (pkgPath: string = require.resolve("wrangler/package.json")): string => {
+	// readFileSync, not require(): require caches, so an in-process `npm ci` would not be seen.
+	const { bin } = JSON.parse(readFileSync(pkgPath, "utf8")) as { bin: string | Record<string, string> };
 	const rel = typeof bin === "string" ? bin : bin.wrangler;
 	if (!rel) throw new Error("installed wrangler package declares no `wrangler` bin");
 	return join(dirname(pkgPath), rel);
