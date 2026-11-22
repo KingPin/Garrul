@@ -2184,6 +2184,7 @@ npm run upgrade               # interactive: print plan, ask, apply
 npm run upgrade -- --dry-run  # print plan, change nothing
 npm run upgrade -- --yes      # non-interactive (CI)
 npm run upgrade -- --version v0.2.0   # target a specific tag
+npm run upgrade -- --from v0.1.0      # checkout already pulled past the live Worker
 ```
 
 The 12 steps (each prints `→ name… OK`):
