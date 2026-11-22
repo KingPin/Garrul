@@ -97,6 +97,7 @@ const makeWranglerMock = (): typeof wranglerModule => ({
 		"0002_notifications.sql",
 	]),
 	wranglerVersion: vi.fn(() => "wrangler 4.0.0"),
+	npmWorks: vi.fn(() => null),
 	createKvNamespace: vi.fn(),
 	createD1Database: vi.fn(),
 	putSecret: vi.fn(),
@@ -543,6 +544,19 @@ describe("upgrade refuses to plan against a deployment it cannot read", () => {
 		expect(joined(stdoutSpy)).toMatch(/npm run upgrade/);
 		expect(wranglerMock.checkAuth).not.toHaveBeenCalled();
 		expect(fetchLatest).not.toHaveBeenCalled();
+	});
+
+	it("stops in preflight when npm resolves but does not run, before any change", async () => {
+		const npmCmd = vi.fn((): [string, string[]] => ["npm", ["--version"]]);
+		vi.mocked(wranglerMock.npmWorks).mockReturnValue("spawnSync npm ENOENT");
+
+		await expect(main(["--dry-run"], { ...deps(), npmCommand: npmCmd })).rejects.toThrow(/process\.exit\(1\)/);
+
+		expect(wranglerMock.npmWorks).toHaveBeenCalledWith(["npm", ["--version"]]);
+		expect(joined(stdoutSpy)).toMatch(/npm --version failed: spawnSync npm ENOENT/);
+		expect(wranglerMock.checkAuth).not.toHaveBeenCalled();
+		expect(fetchLatest).not.toHaveBeenCalled();
+		expect(gitMock.checkout).not.toHaveBeenCalled();
 	});
 
 	it("names the wrangler failure when whoami itself cannot run", async () => {

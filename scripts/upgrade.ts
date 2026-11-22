@@ -713,12 +713,17 @@ export const main = async (
 		stepFail("wrangler not found — run `npm install` first");
 		process.exit(1);
 	}
-	// npmCi runs after the checkout has changed the tree; a launcher that
-	// cannot resolve npm must stop the run here, before any change.
+	// npmCi runs after the checkout has changed the tree; an npm that cannot
+	// be resolved, or resolves but does not run, must stop the run here.
+	let npmFailure: string | null;
 	try {
-		resolveNpm(["--version"]);
+		const failure = wrangler.npmWorks(resolveNpm(["--version"]));
+		npmFailure = failure && `npm --version failed: ${failure}`;
 	} catch (err) {
-		stepFail((err as Error).message);
+		npmFailure = (err as Error).message;
+	}
+	if (npmFailure) {
+		stepFail(npmFailure);
 		process.exit(1);
 	}
 	if (!flags.allowDirty && !git.isClean(REPO_ROOT)) {

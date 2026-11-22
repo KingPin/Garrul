@@ -13,6 +13,7 @@ vi.mock("node:child_process", () => ({ spawnSync: (...a: unknown[]) => spawnSync
 import {
 	checkAuth,
 	listSecrets,
+	npmWorks,
 	queryAppliedMigrations,
 	describeFailure,
 	SubprocessError,
@@ -203,5 +204,36 @@ describe("describeFailure", () => {
 	it("SubprocessError's message carries stdout when stderr is empty", () => {
 		const e = new SubprocessError("npx", ["wrangler", "d1"], 1, '{"error":{"text":"boom"}}', "");
 		expect(e.message).toMatch(/npx wrangler d1 exited with 1: \{"error"/);
+	});
+});
+
+// #253: preflight must launch npm, not only resolve a command for it.
+describe("npmWorks", () => {
+	const cmd: [string, string[]] = ["npm", ["--version"]];
+
+	it("is null when npm --version exits 0", () => {
+		exits(0, "11.0.0\n");
+		expect(npmWorks(cmd)).toBeNull();
+		expect(spawnSync.mock.calls.at(-1)?.slice(0, 2)).toEqual(cmd);
+	});
+
+	it("names a launch failure (no npm on PATH, stale npm_execpath)", () => {
+		spawnSync.mockReturnValueOnce({
+			status: null,
+			stdout: "",
+			stderr: "",
+			error: Object.assign(new Error("spawnSync npm ENOENT"), { code: "ENOENT" }),
+		});
+		expect(npmWorks(cmd)).toMatch(/ENOENT/);
+	});
+
+	it("names a nonzero exit", () => {
+		exits(1, "", "Error: Cannot find module '/gone/npm-cli.js'");
+		expect(npmWorks(cmd)).toMatch(/Cannot find module/);
+	});
+
+	it("treats a signal-killed process as a failure, not a success", () => {
+		spawnSync.mockReturnValueOnce({ status: null, signal: "SIGKILL", stdout: "", stderr: "", error: undefined });
+		expect(npmWorks(cmd)).toMatch(/killed by SIGKILL/);
 	});
 });
