@@ -629,6 +629,21 @@ describe("upgrade refuses to plan against a deployment it cannot read", () => {
 		expect(joined(stdoutSpy)).toMatch(/bad --from: latest/);
 	});
 
+	it("keeps the release tag in the retry command when the deploy fails", async () => {
+		vi.mocked(wranglerMock.listSecrets).mockReturnValue(["JWT_SECRET", "NEW_SECRET"]);
+		vi.mocked(wranglerMock.npmRun).mockImplementation((script: string) => {
+			if (script === "deploy") throw new Error("deploy exploded");
+		});
+		const readLocal = vi
+			.fn()
+			.mockReturnValueOnce(loadLocal())
+			.mockReturnValue(structuredClone(fakeTargetManifest));
+
+		await expect(main(["--yes"], { ...deps(), loadLocal: readLocal })).rejects.toThrow(/process\.exit\(2\)/);
+
+		expect(joined(errSpy)).toMatch(/npm run deploy -- --tag v1\.2\.0/);
+	});
+
 	it("stops in preflight when npm resolves but does not run, before any change", async () => {
 		const npmCmd = vi.fn((): [string, string[]] => ["npm", ["--version"]]);
 		vi.mocked(wranglerMock.npmWorks).mockReturnValue("spawnSync npm ENOENT");

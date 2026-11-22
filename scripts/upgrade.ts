@@ -643,7 +643,7 @@ const applyPlan = async (
 			console.error(
 				"!! Migrations may have applied but the deploy did not.\n" +
 					"!! The previous Worker is still serving traffic.\n" +
-					"!! Re-run `npm run deploy` after fixing, or `wrangler rollback`\n" +
+					`!! Re-run \`npm run deploy -- --tag ${targetTag}\` after fixing, or \`wrangler rollback\`\n` +
 					"!! to roll back to the prior deployment. Do NOT manually revert\n" +
 					"!! the database — migrations are additive and forward-only.",
 			);

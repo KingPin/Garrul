@@ -2343,7 +2343,7 @@ attached file, if you care about the difference.
   against the repository before continuing.
 - **Migrate succeeds, deploy fails** → exit code **2**. Migrations are
   forward-only and already applied; the previous Worker is still
-  serving traffic. Fix the deploy and re-run `npm run deploy`, or
+  serving traffic. Fix the deploy and re-run `npm run deploy -- --tag vX.Y.Z`, or
   `wrangler rollback` to the prior deployment. Do **not** hand-revert
   the schema — Garrul migrations are additive.
 - **Deploy succeeds, rerender fails** → warn only; the instance keeps
