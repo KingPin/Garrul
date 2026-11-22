@@ -2184,12 +2184,13 @@ npm run upgrade               # interactive: print plan, ask, apply
 npm run upgrade -- --dry-run  # print plan, change nothing
 npm run upgrade -- --yes      # non-interactive (CI)
 npm run upgrade -- --version v0.2.0   # target a specific tag
+npm run upgrade -- --from v0.1.0      # checkout already pulled past the live Worker
 ```
 
 The 12 steps (each prints `→ name… OK`):
 
 1. **Preflight** — `wrangler --version` ≥ 4, clean working tree (unless `--allow-dirty`), and a Cloudflare login (`wrangler whoami`; note it exits 0 even when logged out, so the output is checked). A logged-out wrangler stops the run here with the fix printed (`npx wrangler login`, or `CLOUDFLARE_API_TOKEN` for CI) and nothing is fetched or changed
-2. **Resolve target** — `--version vX.Y.Z` or GitHub latest release; exit 0 if already there. The release lookups (latest release, then one releases-list request for the notes) are the run's only GitHub API calls and share the 60 req/hr unauthenticated cap with everything else on the operator's IP; a 403 with the counter at zero is reported as a rate limit with its reset time. Optional `GITHUB_TOKEN` (or `GH_TOKEN`, as `gh` exports) is sent as a Bearer token and raises the cap; neither is required
+2. **Resolve target** — `--version vX.Y.Z` or GitHub latest release; exit 0 if already there. "Installed" is this checkout's `release-manifest.json`; after a `git pull` it already claims the new version, so pass `--from vX.Y.Z` (the version the Worker runs) and the run reads that release's manifest from GitHub instead. The release lookups (latest release, then one releases-list request for the notes) are the run's only GitHub API calls and share the 60 req/hr unauthenticated cap with everything else on the operator's IP; a 403 with the counter at zero is reported as a rate limit with its reset time. Optional `GITHUB_TOKEN` (or `GH_TOKEN`, as `gh` exports) is sent as a Bearer token and raises the cap; neither is required
 3. **Fetch manifests** — local from disk, remote from `raw.githubusercontent.com`; refuses if `target.minPreviousVersion > current`
 4. **Drift detection** (read-only): secrets via `wrangler secret list`; `[vars]`, KV and D1 by parsing `wrangler.toml`; migrations via `SELECT name FROM _migrations`; renderer via `CURRENT_RENDERER_VERSION` vs `target.renderer.version`. Also compares each `[vars]` *value* against the placeholder the target ships — see *Unedited placeholders* below. If either live read fails (expired token, wrong `name`/`account_id`/`database_id`, network), the run stops and prints wrangler's error rather than planning against an empty deployment; the one read failure treated as "zero applied" is a D1 database with no `_migrations` table, which is a genuine fresh install. As a second guard, a plan on a configured install that lists *every* migration pending and *every* required secret missing is flagged as a likely misread before the confirm prompt
 5. **Print plan** grouped as config drift / migrations / breaking changes, preceded by the release notes for every release since the installed version: the newest three bodies in full, older releases as one title line each (up to 20, then a link to the releases page), 100 lines at most. A failed notes fetch is skipped, never fatal; if only the releases list fails, the target's own notes still print
@@ -2200,7 +2201,7 @@ The 12 steps (each prints `→ name… OK`):
 8. **`npm ci`**
 9. **Apply infra drift** — create missing KV/D1 and append blocks to `wrangler.toml`; prompt for missing secrets via `wrangler secret put NAME`. Missing required `[vars]` block auto-apply: they must be added to `wrangler.toml` by hand
 10. **Migrate** (`npm run migrate -- --remote`) — idempotent, forward-only
-11. **Deploy** (`npm run deploy`)
+11. **Deploy** (`npm run deploy -- --tag vX.Y.Z`; the tag is stored on the Worker version so a later upgrade can read what is live)
 12. **Post-deploy** — for each migration applied in step 10 that has an idempotent `src/db/post-deploy/<same name>.sql`, run it (`wrangler d1 execute DB --remote --file …`) so state the old Worker left stale between steps 10 and 11 is recounted; optional rerender; append a line to `.garrul-upgrade-log.json` (gitignored, operator-local)
 
 v2.38: migration 0030 adds paging and retention indexes; run `npm run migrate`.
@@ -2343,7 +2344,7 @@ attached file, if you care about the difference.
   against the repository before continuing.
 - **Migrate succeeds, deploy fails** → exit code **2**. Migrations are
   forward-only and already applied; the previous Worker is still
-  serving traffic. Fix the deploy and re-run `npm run deploy`, or
+  serving traffic. Fix the deploy and re-run `npm run deploy -- --tag vX.Y.Z`, or
   `wrangler rollback` to the prior deployment. Do **not** hand-revert
   the schema — Garrul migrations are additive.
 - **Deploy succeeds, rerender fails** → warn only; the instance keeps

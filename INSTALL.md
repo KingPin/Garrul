@@ -421,6 +421,7 @@ Useful flags:
 | ----------------------- | ------------------------------------------------------------- |
 | `--dry-run`             | Print the plan only. No git, wrangler, or deploy side effects. |
 | `--version vX.Y.Z`      | Target a specific tag instead of "latest release."            |
+| `--from vX.Y.Z`         | The version the Worker runs, when this checkout is already newer (after a `git pull`). |
 | `--yes`                 | Non-interactive (CI). Refuses if any secret is missing — they need a value you must type. |
 | `--allow-dirty`         | Proceed even if `git status` is non-empty.                    |
 | `--skip-migrations`     | Skip `npm run migrate -- --remote`.                           |
@@ -447,7 +448,7 @@ git fetch --tags
 git checkout vX.Y.Z
 npm ci
 npm run migrate -- --remote   # only if new migrations landed
-npm run deploy
+npm run deploy -- --tag vX.Y.Z
 npm run rerender -- --remote  # only if the renderer version bumped
 ```
 
@@ -455,7 +456,7 @@ npm run rerender -- --remote  # only if the renderer version bumped
 
 - Migration applied, deploy failed → migrations are forward-only and
   already committed; the previous Worker keeps serving traffic. Fix
-  the deploy issue and re-run `npm run deploy`, or
+  the deploy issue and re-run `npm run deploy -- --tag vX.Y.Z`, or
   `wrangler rollback` to the prior deployment. Do **not** hand-revert
   the schema — Garrul migrations are additive.
 - Missing secret with `--yes` → the orchestrator refuses, because a

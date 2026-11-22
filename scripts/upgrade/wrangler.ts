@@ -12,6 +12,7 @@ import { spawnSync } from "node:child_process";
 import { readFileSync, appendFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { npmCommand, wranglerCommand } from "../node-cli";
+import type { Command } from "../node-cli";
 import { parseTomlVars } from "./toml-vars";
 import type { TomlVars } from "./toml-vars";
 
@@ -42,6 +43,8 @@ const run = (cmd: string, args: string[], opts: RunOpts = {}): string => {
 		...(opts.cwd ? { cwd: opts.cwd } : {}),
 	});
 	if (r.error) throw r.error;
+	// A signal leaves status null; without this a killed deploy reads as success.
+	if (r.signal) throw new Error(`${cmd} ${args.join(" ")} was killed by ${r.signal}`);
 	if (typeof r.status === "number" && r.status !== 0) {
 		throw new SubprocessError(
 			cmd,
@@ -379,6 +382,20 @@ export const appendUpgradeLog = (
 	// appendFileSync creates the file when it is missing, so no exists-check —
 	// the check/write pair was also a TOCTOU race (CodeQL js/file-system-race).
 	appendFileSync(path, line);
+};
+
+/**
+ * Runs a resolved `npm --version` command: null when it exits 0, else why it
+ * didn't. Resolving proves nothing on its own: a stale `npm_execpath` or no
+ * npm on PATH only fails once something launches it.
+ */
+export const npmWorks = ([cmd, args]: Command): string | null => {
+	try {
+		run(cmd, args);
+		return null;
+	} catch (err) {
+		return describeFailure(err);
+	}
 };
 
 export const wranglerVersion = (): string | null => {

@@ -28,6 +28,8 @@
  *   --dry-run            Print the plan and exit; no side effects.
  *   --yes                Skip confirmations. Missing secrets become hard errors.
  *   --version vX.Y.Z     Target a specific tag (defaults to latest release).
+ *   --from vX.Y.Z        The version the Worker runs, when this checkout is
+ *                        already newer (e.g. after a `git pull`).
  *   --allow-dirty        Skip the clean-tree precondition.
  *   --skip-migrations    Don't run `npm run migrate`.
  *   --skip-deploy        Don't run `npm run deploy`.
@@ -89,32 +91,34 @@ type Flags = {
 	dryRun: boolean;
 	yes: boolean;
 	version: string | null;
+	from: string | null;
 	allowDirty: boolean;
 	skipMigrations: boolean;
 	skipDeploy: boolean;
 	rerender: boolean;
 };
 
+const flagValue = (argv: string[], name: string): string | null => {
+	const i = argv.indexOf(name);
+	if (i < 0) return null;
+	const next = argv[i + 1];
+	if (next === undefined || next.startsWith("--")) {
+		throw new Error(`${name} requires a tag argument, e.g. ${name} v0.2.0`);
+	}
+	return next;
+};
+
 const parseFlags = (argv: string[]): Flags => {
 	const flags: Flags = {
 		dryRun: argv.includes("--dry-run"),
 		yes: argv.includes("--yes"),
-		version: null,
+		version: flagValue(argv, "--version"),
+		from: flagValue(argv, "--from"),
 		allowDirty: argv.includes("--allow-dirty"),
 		skipMigrations: argv.includes("--skip-migrations"),
 		skipDeploy: argv.includes("--skip-deploy"),
 		rerender: argv.includes("--rerender"),
 	};
-	const vIdx = argv.indexOf("--version");
-	if (vIdx >= 0) {
-		const next = vIdx + 1 < argv.length ? argv[vIdx + 1] : undefined;
-		if (next === undefined || next.startsWith("--")) {
-			throw new Error(
-				"--version requires a tag argument, e.g. --version v0.2.0",
-			);
-		}
-		flags.version = next;
-	}
 	return flags;
 };
 
@@ -629,7 +633,9 @@ const applyPlan = async (
 	if (!flags.skipDeploy) {
 		step("Deploying Worker…");
 		try {
-			wrangler.npmRun("deploy");
+			// The tag lands on the Worker version as `workers/tag`, so a later
+			// upgrade can read what is live instead of trusting the checkout (#243).
+			wrangler.npmRun("deploy", ["--tag", targetTag]);
 			stepOk();
 		} catch (err) {
 			stepFail(`deploy failed: ${(err as Error).message}`);
@@ -637,7 +643,7 @@ const applyPlan = async (
 			console.error(
 				"!! Migrations may have applied but the deploy did not.\n" +
 					"!! The previous Worker is still serving traffic.\n" +
-					"!! Re-run `npm run deploy` after fixing, or `wrangler rollback`\n" +
+					`!! Re-run \`npm run deploy -- --tag ${targetTag}\` after fixing, or \`wrangler rollback\`\n` +
 					"!! to roll back to the prior deployment. Do NOT manually revert\n" +
 					"!! the database — migrations are additive and forward-only.",
 			);
@@ -713,12 +719,17 @@ export const main = async (
 		stepFail("wrangler not found — run `npm install` first");
 		process.exit(1);
 	}
-	// npmCi runs after the checkout has changed the tree; a launcher that
-	// cannot resolve npm must stop the run here, before any change.
+	// npmCi runs after the checkout has changed the tree; an npm that cannot
+	// be resolved, or resolves but does not run, must stop the run here.
+	let npmFailure: string | null;
 	try {
-		resolveNpm(["--version"]);
+		const failure = wrangler.npmWorks(resolveNpm(["--version"]));
+		npmFailure = failure && `npm --version failed: ${failure}`;
 	} catch (err) {
-		stepFail((err as Error).message);
+		npmFailure = (err as Error).message;
+	}
+	if (npmFailure) {
+		stepFail(npmFailure);
 		process.exit(1);
 	}
 	if (!flags.allowDirty && !git.isClean(REPO_ROOT)) {
@@ -748,12 +759,30 @@ export const main = async (
 
 	step("Resolving target version…");
 	const remote = git.parseRemote(REPO_ROOT);
-	const local =
-		readLocal(REPO_ROOT) ??
-		(() => {
-			console.warn("\n[upgrade] no local release-manifest.json; deriving from source");
-			return buildManifest();
-		})();
+	let local: Manifest;
+	if (flags.from) {
+		// The checkout is already newer than the Worker, so read what the
+		// deployed release shipped instead (#243). Its renderer version and
+		// addedIn baselines drive the plan, not just the version string.
+		if (!parseSemver(flags.from)) {
+			stepFail(`bad --from: ${flags.from}`);
+			process.exit(1);
+		}
+		const fromTag = flags.from.startsWith("v") ? flags.from : `v${flags.from}`;
+		try {
+			local = await fetchTargetManifest(remote.owner, remote.repo, fromTag);
+		} catch (err) {
+			stepFail(`could not read the ${fromTag} manifest: ${(err as Error).message}`);
+			process.exit(1);
+		}
+	} else {
+		local =
+			readLocal(REPO_ROOT) ??
+			(() => {
+				console.warn("\n[upgrade] no local release-manifest.json; deriving from source");
+				return buildManifest();
+			})();
+	}
 
 	let targetTag: string;
 	// Kept so a failed releases-list fetch can still show the target's notes.
@@ -773,6 +802,13 @@ export const main = async (
 	const targetVersion = targetTag.replace(/^v/, "");
 	if (compareSemver(targetVersion, local.version) === 0) {
 		console.log(`[upgrade] already on ${local.version}; nothing to do`);
+		// The installed version comes from this checkout, not the live Worker,
+		// so a `git pull` before upgrading lands here with nothing deployed.
+		console.log(
+			"[upgrade] (Read from this checkout's release-manifest.json, not the live Worker.\n" +
+				"[upgrade]  If you pulled or checked out a newer tag first, re-run with\n" +
+				"[upgrade]  `npm run upgrade -- --from v<version you last deployed>`.)",
+		);
 		return;
 	}
 	if (!isNewer(targetVersion, local.version)) {

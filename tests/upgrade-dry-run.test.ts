@@ -97,6 +97,7 @@ const makeWranglerMock = (): typeof wranglerModule => ({
 		"0002_notifications.sql",
 	]),
 	wranglerVersion: vi.fn(() => "wrangler 4.0.0"),
+	npmWorks: vi.fn(() => null),
 	createKvNamespace: vi.fn(),
 	createD1Database: vi.fn(),
 	putSecret: vi.fn(),
@@ -433,6 +434,70 @@ describe("upgrade dry-run", () => {
 		expect(output).toMatch(/no GitHub release published/);
 	});
 
+	it("says where 'nothing to do' came from, so a pulled checkout is recoverable (#243)", async () => {
+		await main([], {
+			wrangler: wranglerMock,
+			git: gitMock,
+			fetchLatest,
+			fetchReleases,
+			fetchTargetManifest,
+			loadLocal: () => structuredClone(fakeTargetManifest),
+		});
+
+		const output = logSpy.mock.calls.map((c: unknown[]) => c.join(" ")).join("\n");
+		expect(output).toMatch(/already on 1\.2\.0; nothing to do/);
+		expect(output).toMatch(/not the live Worker/);
+		expect(output).toMatch(/npm run upgrade -- --from v<version you last deployed>/);
+		expect(fetchTargetManifest).not.toHaveBeenCalled();
+	});
+
+	it("--from plans from the deployed release's manifest, not the pulled checkout (#243)", async () => {
+		const deployed = loadLocal(); // 1.0.0
+		loadLocal.mockClear();
+		const pulled = vi.fn(() => structuredClone(fakeTargetManifest)); // checkout already on 1.2.0
+		const byTag = vi.fn(async (_o: string, _r: string, tag: string): Promise<Manifest> =>
+			tag === "v1.0.0" ? structuredClone(deployed) : structuredClone(fakeTargetManifest),
+		);
+
+		await main(["--dry-run", "--from", "1.0.0"], {
+			wrangler: wranglerMock,
+			git: gitMock,
+			fetchLatest,
+			fetchReleases,
+			fetchTargetManifest: byTag,
+			loadLocal: pulled,
+		});
+
+		const output = logSpy.mock.calls.map((c: unknown[]) => c.join(" ")).join("\n");
+		expect(byTag).toHaveBeenCalledWith(expect.any(String), expect.any(String), "v1.0.0");
+		expect(pulled).not.toHaveBeenCalled();
+		expect(output).not.toMatch(/nothing to do/);
+		expect(output).toMatch(/v1\.0\.0 → v1\.2\.0/);
+		expect(output).toMatch(/dry-run; no changes applied/);
+	});
+
+	it("tags the deploy with the target release (#243)", async () => {
+		// Every required secret present, so --yes does not refuse.
+		vi.mocked(wranglerMock.listSecrets).mockReturnValue(["JWT_SECRET", "NEW_SECRET"]);
+		const local = loadLocal();
+		const readLocal = vi
+			.fn()
+			.mockReturnValueOnce(local) // installed version, before the checkout
+			.mockReturnValue(structuredClone(fakeTargetManifest)); // the checked-out tag
+
+		await main(["--yes"], {
+			wrangler: wranglerMock,
+			git: gitMock,
+			fetchLatest,
+			fetchReleases,
+			fetchTargetManifest,
+			loadLocal: readLocal,
+		});
+
+		expect(gitMock.checkout).toHaveBeenCalledWith("v1.2.0", expect.any(String));
+		expect(wranglerMock.npmRun).toHaveBeenCalledWith("deploy", ["--tag", "v1.2.0"]);
+	});
+
 	it("hard-errors when --version is passed without an argument", async () => {
 		await expect(
 			main(["--dry-run", "--version"], {
@@ -543,6 +608,53 @@ describe("upgrade refuses to plan against a deployment it cannot read", () => {
 		expect(joined(stdoutSpy)).toMatch(/npm run upgrade/);
 		expect(wranglerMock.checkAuth).not.toHaveBeenCalled();
 		expect(fetchLatest).not.toHaveBeenCalled();
+	});
+
+	it("stops when the --from release has no readable manifest", async () => {
+		const byTag = vi.fn(async (_o: string, _r: string, tag: string): Promise<Manifest> => {
+			if (tag === "v0.9.0") throw new Error("404 Not Found");
+			return structuredClone(fakeTargetManifest);
+		});
+
+		await expect(main(["--dry-run", "--from", "v0.9.0"], { ...deps(), fetchTargetManifest: byTag })).rejects.toThrow(
+			/process\.exit\(1\)/,
+		);
+
+		expect(joined(stdoutSpy)).toMatch(/could not read the v0\.9\.0 manifest: 404 Not Found/);
+		expect(gitMock.checkout).not.toHaveBeenCalled();
+	});
+
+	it("rejects a --from that is not a version", async () => {
+		await expect(main(["--dry-run", "--from", "latest"], deps())).rejects.toThrow(/process\.exit\(1\)/);
+		expect(joined(stdoutSpy)).toMatch(/bad --from: latest/);
+	});
+
+	it("keeps the release tag in the retry command when the deploy fails", async () => {
+		vi.mocked(wranglerMock.listSecrets).mockReturnValue(["JWT_SECRET", "NEW_SECRET"]);
+		vi.mocked(wranglerMock.npmRun).mockImplementation((script: string) => {
+			if (script === "deploy") throw new Error("deploy exploded");
+		});
+		const readLocal = vi
+			.fn()
+			.mockReturnValueOnce(loadLocal())
+			.mockReturnValue(structuredClone(fakeTargetManifest));
+
+		await expect(main(["--yes"], { ...deps(), loadLocal: readLocal })).rejects.toThrow(/process\.exit\(2\)/);
+
+		expect(joined(errSpy)).toMatch(/npm run deploy -- --tag v1\.2\.0/);
+	});
+
+	it("stops in preflight when npm resolves but does not run, before any change", async () => {
+		const npmCmd = vi.fn((): [string, string[]] => ["npm", ["--version"]]);
+		vi.mocked(wranglerMock.npmWorks).mockReturnValue("spawnSync npm ENOENT");
+
+		await expect(main(["--dry-run"], { ...deps(), npmCommand: npmCmd })).rejects.toThrow(/process\.exit\(1\)/);
+
+		expect(wranglerMock.npmWorks).toHaveBeenCalledWith(["npm", ["--version"]]);
+		expect(joined(stdoutSpy)).toMatch(/npm --version failed: spawnSync npm ENOENT/);
+		expect(wranglerMock.checkAuth).not.toHaveBeenCalled();
+		expect(fetchLatest).not.toHaveBeenCalled();
+		expect(gitMock.checkout).not.toHaveBeenCalled();
 	});
 
 	it("names the wrangler failure when whoami itself cannot run", async () => {
