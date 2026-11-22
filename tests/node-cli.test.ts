@@ -4,7 +4,7 @@
  * npm are only .cmd shims that Node will not spawn without a shell.
  */
 import { existsSync } from "node:fs";
-import { basename } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { npmCommand, wranglerCommand, wranglerEntry } from "../scripts/node-cli";
 
@@ -33,10 +33,43 @@ describe("npmCommand", () => {
 		expect(npmCommand(["ci"])).toEqual([process.execPath, ["/opt/npm/bin/npm-cli.js", "ci"]]);
 	});
 
-	it("falls back to npm on PATH outside npm or under another package manager", () => {
+	const sibling = join("/opt/npm/bin", "npm-cli.js");
+	const beside = join(dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js");
+	const has = (...files: string[]) => ({ exists: (p: string) => files.includes(p) });
+
+	it("falls back to bare npm on non-Windows without a usable execpath", () => {
 		vi.stubEnv("npm_execpath", "");
-		expect(npmCommand(["ci"])).toEqual(["npm", ["ci"]]);
+		expect(npmCommand(["ci"], { platform: "linux" })).toEqual(["npm", ["ci"]]);
 		vi.stubEnv("npm_execpath", "/opt/pnpm/bin/pnpm.cjs");
-		expect(npmCommand(["run", "migrate"])).toEqual(["npm", ["run", "migrate"]]);
+		expect(npmCommand(["run", "migrate"], { platform: "linux" })).toEqual(["npm", ["run", "migrate"]]);
+	});
+
+	it("maps npx-cli.js to its sibling npm-cli.js when that file exists", () => {
+		vi.stubEnv("npm_execpath", "/opt/npm/bin/npx-cli.js");
+		const want = [process.execPath, [sibling, "ci"]];
+		expect(npmCommand(["ci"], { platform: "linux", ...has(sibling) })).toEqual(want);
+		expect(npmCommand(["ci"], { platform: "win32", ...has(sibling) })).toEqual(want);
+	});
+
+	it("on Windows finds npm beside node.exe", () => {
+		vi.stubEnv("npm_execpath", "/opt/pnpm/bin/pnpm.cjs");
+		expect(npmCommand(["ci"], { platform: "win32", ...has(beside) })).toEqual([process.execPath, [beside, "ci"]]);
+		vi.stubEnv("npm_execpath", "");
+		expect(npmCommand(["ci"], { platform: "win32", ...has(beside) })).toEqual([process.execPath, [beside, "ci"]]);
+	});
+
+	it("passes a path with spaces as one argv element", () => {
+		const spaced = "/opt/my npm/bin/npx-cli.js";
+		const sib = join("/opt/my npm/bin", "npm-cli.js");
+		vi.stubEnv("npm_execpath", spaced);
+		const [, argv] = npmCommand(["ci"], { platform: "win32", ...has(sib) });
+		expect(argv).toEqual([sib, "ci"]);
+	});
+
+	it("on Windows with no npm found, tells the operator to use npm run upgrade", () => {
+		vi.stubEnv("npm_execpath", "");
+		expect(() => npmCommand(["ci"], { platform: "win32", exists: () => false })).toThrow(
+			"Run this through `npm run upgrade` so npm sets `npm_execpath`.",
+		);
 	});
 });

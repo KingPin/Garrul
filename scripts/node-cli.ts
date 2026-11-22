@@ -11,6 +11,7 @@
  *
  * Node-only. Never import this from the Worker bundle.
  */
+import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 
@@ -33,13 +34,27 @@ export const wranglerCommand = (args: string[]): Command => [process.execPath, [
 
 /**
  * `npm <args>` without a shell. Under `npm run …`, npm exports its own
- * `npm-cli.js` as `npm_execpath`; run that with this Node. Anything else
- * (launched directly, or by another package manager whose execpath would
- * not understand `npm ci`) falls back to `npm` on PATH, which works
- * everywhere except Windows.
+ * `npm-cli.js` as `npm_execpath`; run that with this Node. Under `npx` the
+ * execpath is `npx-cli.js`, and `npm-cli.js` sits next to it. On Windows,
+ * direct launches work only with npm beside `node.exe`; all other layouts go
+ * through `npm run`. Elsewhere a bare `npm` on PATH works.
+ *
+ * `host` exists so tests can run any platform on Linux.
  */
-export const npmCommand = (args: string[]): Command => {
+export const npmCommand = (
+	args: string[],
+	host: { platform?: NodeJS.Platform; exists?: (path: string) => boolean } = {},
+): Command => {
+	const platform = host.platform ?? process.platform;
+	const exists = host.exists ?? existsSync;
 	const cli = process.env.npm_execpath;
 	if (cli && /npm-cli\.c?js$/.test(cli)) return [process.execPath, [cli, ...args]];
-	return ["npm", args];
+	if (cli && /npx-cli\.js$/.test(cli)) {
+		const sibling = join(dirname(cli), "npm-cli.js");
+		if (exists(sibling)) return [process.execPath, [sibling, ...args]];
+	}
+	if (platform !== "win32") return ["npm", args];
+	const beside = join(dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js");
+	if (exists(beside)) return [process.execPath, [beside, ...args]];
+	throw new Error("Run this through `npm run upgrade` so npm sets `npm_execpath`.");
 };

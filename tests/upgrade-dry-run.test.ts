@@ -532,6 +532,19 @@ describe("upgrade refuses to plan against a deployment it cannot read", () => {
 		expect(joined(logSpy)).not.toMatch(/Plan:/);
 	});
 
+	it("stops in preflight when npm cannot be launched, before any change", async () => {
+		const npmCmd = vi.fn(() => {
+			throw new Error("Run this through `npm run upgrade` so npm sets `npm_execpath`.");
+		});
+
+		await expect(main(["--dry-run"], { ...deps(), npmCommand: npmCmd })).rejects.toThrow(/process\.exit\(1\)/);
+
+		expect(npmCmd).toHaveBeenCalledWith(["--version"]);
+		expect(joined(stdoutSpy)).toMatch(/npm run upgrade/);
+		expect(wranglerMock.checkAuth).not.toHaveBeenCalled();
+		expect(fetchLatest).not.toHaveBeenCalled();
+	});
+
 	it("names the wrangler failure when whoami itself cannot run", async () => {
 		vi.mocked(wranglerMock.checkAuth).mockReturnValue({
 			ok: false,
