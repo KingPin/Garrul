@@ -629,7 +629,9 @@ const applyPlan = async (
 	if (!flags.skipDeploy) {
 		step("Deploying Worker…");
 		try {
-			wrangler.npmRun("deploy");
+			// The tag lands on the Worker version as `workers/tag`, so a later
+			// upgrade can read what is live instead of trusting the checkout (#243).
+			wrangler.npmRun("deploy", ["--tag", targetTag]);
 			stepOk();
 		} catch (err) {
 			stepFail(`deploy failed: ${(err as Error).message}`);
@@ -778,6 +780,13 @@ export const main = async (
 	const targetVersion = targetTag.replace(/^v/, "");
 	if (compareSemver(targetVersion, local.version) === 0) {
 		console.log(`[upgrade] already on ${local.version}; nothing to do`);
+		// The installed version comes from this checkout, not the live Worker,
+		// so a `git pull` before upgrading lands here with nothing deployed.
+		console.log(
+			"[upgrade] (Read from this checkout's release-manifest.json, not the live Worker.\n" +
+				"[upgrade]  If you pulled or checked out a newer tag first, run\n" +
+				"[upgrade]  `git checkout v<version you last deployed>` and re-run.)",
+		);
 		return;
 	}
 	if (!isNewer(targetVersion, local.version)) {

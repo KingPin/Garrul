@@ -434,6 +434,45 @@ describe("upgrade dry-run", () => {
 		expect(output).toMatch(/no GitHub release published/);
 	});
 
+	it("says where 'nothing to do' came from, so a pulled checkout is recoverable (#243)", async () => {
+		await main([], {
+			wrangler: wranglerMock,
+			git: gitMock,
+			fetchLatest,
+			fetchReleases,
+			fetchTargetManifest,
+			loadLocal: () => structuredClone(fakeTargetManifest),
+		});
+
+		const output = logSpy.mock.calls.map((c: unknown[]) => c.join(" ")).join("\n");
+		expect(output).toMatch(/already on 1\.2\.0; nothing to do/);
+		expect(output).toMatch(/not the live Worker/);
+		expect(output).toMatch(/git checkout v<version you last deployed>/);
+		expect(fetchTargetManifest).not.toHaveBeenCalled();
+	});
+
+	it("tags the deploy with the target release (#243)", async () => {
+		// Every required secret present, so --yes does not refuse.
+		vi.mocked(wranglerMock.listSecrets).mockReturnValue(["JWT_SECRET", "NEW_SECRET"]);
+		const local = loadLocal();
+		const readLocal = vi
+			.fn()
+			.mockReturnValueOnce(local) // installed version, before the checkout
+			.mockReturnValue(structuredClone(fakeTargetManifest)); // the checked-out tag
+
+		await main(["--yes"], {
+			wrangler: wranglerMock,
+			git: gitMock,
+			fetchLatest,
+			fetchReleases,
+			fetchTargetManifest,
+			loadLocal: readLocal,
+		});
+
+		expect(gitMock.checkout).toHaveBeenCalledWith("v1.2.0", expect.any(String));
+		expect(wranglerMock.npmRun).toHaveBeenCalledWith("deploy", ["--tag", "v1.2.0"]);
+	});
+
 	it("hard-errors when --version is passed without an argument", async () => {
 		await expect(
 			main(["--dry-run", "--version"], {
