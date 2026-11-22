@@ -16,6 +16,8 @@
  */
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+import { wranglerCommand } from "./node-cli";
 
 const API = "https://api.cloudflare.com/client/v4";
 // A DNS label: what the Cloudflare API accepts for a workers.dev subdomain.
@@ -117,7 +119,7 @@ const accountId = (): string | null => {
 };
 
 const wranglerToken = (): string => {
-	const out = execFileSync("wrangler", ["auth", "token", "--json"], {
+	const out = execFileSync(...wranglerCommand(["auth", "token", "--json"]), {
 		encoding: "utf8",
 		env: { ...process.env, NO_COLOR: "1" },
 		stdio: ["ignore", "pipe", "ignore"],
@@ -168,6 +170,6 @@ const main = async (): Promise<number> => {
 	return 64;
 };
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
 	process.exit(await main());
 }

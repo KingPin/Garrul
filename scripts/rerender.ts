@@ -17,6 +17,7 @@
  */
 import { execFileSync } from "node:child_process";
 
+import { wranglerCommand } from "./node-cli";
 import {
 	CURRENT_RENDERER_VERSION,
 	renderMarkdown,
@@ -42,7 +43,7 @@ type StaleRow = {
 };
 
 const wrangler = (args: string[]): string =>
-	execFileSync("wrangler", args, {
+	execFileSync(...wranglerCommand(args), {
 		encoding: "utf8",
 		stdio: ["ignore", "pipe", "pipe"],
 	});

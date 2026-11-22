@@ -7,7 +7,7 @@
  * The module runs on import, so each case re-imports it.
  */
 import { readdirSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { afterEach, describe, it, expect, vi } from "vitest";
 
 const execFileSync = vi.fn();
@@ -35,10 +35,15 @@ const run = async (argv: string[], applied: string[] | "garbage") => {
 	} finally {
 		process.argv = argvBefore;
 	}
-	const calls = execFileSync.mock.calls.map(([cmd, args]) => ({ cmd, args: args as string[] }));
+	// Every call is `node <wrangler entry> …` (scripts/node-cli.ts); strip the
+	// entry so the cases below read as plain wrangler argv.
+	const calls = execFileSync.mock.calls.map(([cmd, args]) => {
+		const [entry, ...rest] = args as string[];
+		return { cmd, entry, args: rest };
+	});
 	return {
 		calls,
-		appliedFiles: calls.filter((c) => c.args.includes("--file")).map((c) => c.args.at(-1)?.split("/").at(-1)),
+		appliedFiles: calls.filter((c) => c.args.includes("--file")).map((c) => basename(c.args.at(-1) ?? "")),
 		recorded: calls
 			.map((c) => c.args.at(-1) as string)
 			.filter((sql) => sql.startsWith("INSERT INTO _migrations"))
@@ -55,8 +60,10 @@ describe("migration runner", () => {
 		const { calls, appliedFiles, recorded } = await run([], FILES.slice(0, 3));
 		expect(appliedFiles).toEqual(FILES.slice(3));
 		expect(recorded).toEqual(FILES.slice(3));
-		for (const { cmd, args } of calls) {
-			expect(cmd).toBe("wrangler");
+		for (const { cmd, entry, args } of calls) {
+			// No PATH lookup and no shell, so it works where wrangler is a .cmd shim.
+			expect(cmd).toBe(process.execPath);
+			expect(basename(entry ?? "")).toBe("wrangler.js");
 			expect(args.slice(0, 4)).toEqual(["d1", "execute", "DB", "--local"]);
 		}
 	});

@@ -14,6 +14,7 @@
 import { execFileSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 
+import { wranglerCommand } from "./node-cli";
 import {
 	CURRENT_RENDERER_VERSION,
 	renderMarkdown,
@@ -30,7 +31,7 @@ const POST_TITLE = "Welcome to Garrul";
 const POST_URL = "https://garrul.com/welcome";
 
 const runWrangler = (args: string[]): string =>
-	execFileSync("wrangler", args, {
+	execFileSync(...wranglerCommand(args), {
 		encoding: "utf8",
 		stdio: ["ignore", "pipe", "pipe"],
 	});

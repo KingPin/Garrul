@@ -41,7 +41,7 @@
  */
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
 	loadLocal,
 	fetchRemote,
@@ -80,6 +80,7 @@ import { WranglerReadError } from "./upgrade/wrangler";
 import * as gitModule from "./upgrade/git";
 import { confirm } from "./upgrade/prompt";
 import { buildManifest } from "./upgrade/build-manifest";
+import { npmCommand } from "./node-cli";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, "..");
@@ -694,6 +695,7 @@ export const main = async (
 		fetchReleases?: typeof fetchReleases;
 		fetchTargetManifest?: typeof fetchRemote;
 		loadLocal?: typeof loadLocal;
+		npmCommand?: typeof npmCommand;
 	} = {},
 ): Promise<void> => {
 	const wrangler = deps.wrangler ?? wranglerModule;
@@ -702,12 +704,21 @@ export const main = async (
 	const fetchAllReleases = deps.fetchReleases ?? fetchReleases;
 	const fetchTargetManifest = deps.fetchTargetManifest ?? fetchRemote;
 	const readLocal = deps.loadLocal ?? loadLocal;
+	const resolveNpm = deps.npmCommand ?? npmCommand;
 	const flags = parseFlags(argv);
 
 	step("Preflight checks…");
 	const wv = wrangler.wranglerVersion();
 	if (!wv) {
 		stepFail("wrangler not found — run `npm install` first");
+		process.exit(1);
+	}
+	// npmCi runs after the checkout has changed the tree; a launcher that
+	// cannot resolve npm must stop the run here, before any change.
+	try {
+		resolveNpm(["--version"]);
+	} catch (err) {
+		stepFail((err as Error).message);
 		process.exit(1);
 	}
 	if (!flags.allowDirty && !git.isClean(REPO_ROOT)) {
@@ -860,7 +871,7 @@ export const main = async (
 	console.log(`[upgrade] Upgraded ${local.version} → ${target.version}`);
 };
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
 	main().catch((err) => {
 		console.error("[upgrade] failed:", err);
 		process.exit(1);

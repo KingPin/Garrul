@@ -19,6 +19,7 @@
 import { execFileSync } from "node:child_process";
 
 import { ImportTooLargeError } from "../src/lib/import/core";
+import { wranglerCommand } from "./node-cli";
 
 // The binding, not `database_name` — see the docblock in src/db/migrate.ts.
 const DB_BINDING = "DB";
@@ -257,8 +258,7 @@ export const wranglerD1 = (isRemote: boolean): D1Database => {
 	const remoteFlag = isRemote ? "--remote" : "--local";
 	const run = (sql: string): string =>
 		execFileSync(
-			"wrangler",
-			["d1", "execute", DB_BINDING, remoteFlag, "--command", sql],
+			...wranglerCommand(["d1", "execute", DB_BINDING, remoteFlag, "--command", sql]),
 			{ encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
 		);
 

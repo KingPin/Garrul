@@ -24,6 +24,8 @@
  * System prerequisites (deliberately no npm dependencies): /usr/bin/chromium,
  * ImageMagick (`compare`), python3. Ports 8787 (Worker) and 8080 (test pages)
  * must be free — the script refuses to start if either is taken.
+ *
+ * Linux only: it hardcodes /usr/bin/chromium and kills Unix process groups.
  */
 import {
 	type ChildProcess,

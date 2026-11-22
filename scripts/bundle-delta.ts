@@ -17,6 +17,8 @@
  *
  * When $GITHUB_STEP_SUMMARY is set the report is appended there too, so the
  * number lands on the PR's checks page instead of only in the log.
+ *
+ * Linux only: it runs tsx through npx and symlinks dependency directories.
  */
 import { execFileSync } from "node:child_process";
 import {
