@@ -156,6 +156,7 @@ export const buildConfigPayload = (
 		downvotes_enabled: flags.downvotes_enabled,
 		page_reactions_enabled: flags.page_reactions_enabled,
 		page_votes_enabled: flags.page_votes_enabled,
+		code_highlight_enabled: flags.code_highlight_enabled,
 		// Enabled kinds per surface, in render order. Always sent, even with the
 		// surface off, so the shape doesn't vary with a flag.
 		reaction_kinds: reactionKinds(texts, "comment_reaction_kinds"),

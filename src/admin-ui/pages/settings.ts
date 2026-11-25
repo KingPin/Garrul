@@ -122,6 +122,11 @@ const FLAG_META: { key: FlagKey; label: string; help: string }[] = [
 		label: "Show deleted-comment placeholders",
 		help: "Keep removed comments in the thread as a placeholder (\"[deleted]\" / \"[removed by a moderator]\") instead of dropping them. Replies are preserved either way.",
 	},
+	{
+		key: "code_highlight_enabled",
+		label: "Code highlighting",
+		help: "Color fenced code blocks that name a language (js, python, …) in the widget. The colors load as a separate file, only on pages that have such a block. Off leaves code plain; it takes effect on each reader's next page load, within about a minute. Cost: no Worker CPU; one cached script per reader with Static Assets.",
+	},
 ];
 
 // Moderation-tab flags. Split from FLAG_META so the Features tab stays a list
