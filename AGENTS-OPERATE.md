@@ -308,6 +308,8 @@ memo in the isolate that handled the save immediately; every other isolate
 picks the change up within 60 seconds, as does a `wrangler deploy` that edits
 a `[vars]` value.
 
+**Code highlighting** is panel-only too: `code_highlight_enabled` (Admin → Settings → Features, label "Code highlighting", default on, no env var). Turning it off stops the widget from loading `/embed-highlight.js`. A change reaches each reader on their next mount; the settings memo lags up to 60 seconds, and open tabs keep their state.
+
 ### Display & pagination: numeric settings (since v1.11.0)
 
 `COMMENTS_PER_PAGE`, `REPLIES_PER_THREAD`, and `AUTO_COLLAPSE_DEPTH` follow the
@@ -469,12 +471,12 @@ Rules:
   `GET /api/v1/auth/*/{start,callback}` bypass the gate because they're
   invoked without an `Origin` header (uptime probes + top-level OAuth).
 
-Five more surfaces are reachable without an `Origin` because they sit
+Six more surfaces are reachable without an `Origin` because they sit
 outside the `/api/*` gate entirely, not because of a carve-out:
 `GET /feed` (site-wide recent comments, Atom or `?format=json`),
 `GET /feed/:slug` (Atom), `GET /c/:id` (comment permalinks),
-`GET /embed/:slug` (the iframe variant) and `GET /embed.js` (the widget
-bundle). Each is meant to be fetched by readers, feed readers and
+`GET /embed/:slug` (the iframe variant), `GET /embed.js` (the widget
+bundle) and `GET /embed-highlight.js` (the lazy code highlighter). Each is meant to be fetched by readers, feed readers and
 crawlers, so none of them can require one.
 
 **Build-time fetchers get 403s.** A static-site generator that reads
@@ -1852,6 +1854,8 @@ each browser-cache miss is one billed request. Add the `[assets]` block from
 `/embed.js` loads no longer appear in `wrangler tail` or request logs because
 they never reach the Worker; that is expected, not a traffic loss.
 
+`/embed-highlight.js` follows the same rules. Static Assets serves it when `[assets]` is configured, and `public/_headers` gives it the same `Cache-Control` and `nosniff` headers as `/embed.js`. Without `[assets]`, each browser-cache miss is one request, and only on pages with tagged code blocks.
+
 The iframe embed's static page, `/embed/?slug=…`, works the same way and
 has one more input: `npm run build:embed` (run by `predeploy`) reads
 `ALLOWED_ORIGINS` from the top-level `[vars]` of `wrangler.toml` and writes
@@ -2322,12 +2326,14 @@ before you say yes.
 
 **Verifying a release asset by hand.** If you take `embed.js` from the
 release page rather than building it, each release attaches `SHA256SUMS`
-covering `embed.js`, `embed.js.map` and `release-manifest.json`:
+covering `embed.js`, `embed.js.map`, `embed-highlight.js` and `release-manifest.json`:
 
 ```bash
 # in a directory holding the downloaded assets and SHA256SUMS
 sha256sum -c SHA256SUMS
 ```
+
+If you take `embed.js` from the release page, also serve `embed-highlight.js` from the same origin as `embed.js`. Without it, tagged code blocks stay plain.
 
 That file is uploaded by the same publishing step that uploads the
 artifacts, so on its own it proves only internal consistency. The

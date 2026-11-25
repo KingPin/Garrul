@@ -14,5 +14,5 @@
 		"forceConsistentCasingInFileNames": true,
 		"noEmit": true
 	},
-	"include": ["src/widget/**/*"]
+	"include": ["src/widget/**/*", "tests/highlighter.test.ts", "tests/code-highlight.test.ts"]
 }

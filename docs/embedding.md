@@ -41,6 +41,8 @@ frame-src   ... https://comments.example.com;
 API, and `frame-src` lets the widget mount its same-origin iframe that
 hosts the Turnstile anti-spam challenge.
 
+Code highlighting adds one more script. `embed-highlight.js` loads from the same origin as `embed.js`, and only when the flag is on and a comment has a tagged code block. If your CSP pins the exact `/embed.js` path instead of the origin, allow `/embed-highlight.js` too. Otherwise tagged code stays plain and nothing else breaks.
+
 You do **not** need `*.cloudflare.com` in your CSP. The challenge frame is
 nested inside ours and governed by its CSP, not yours.
 

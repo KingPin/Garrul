@@ -61,6 +61,16 @@ Or in a stylesheet:
 | `--garrul-shadow`         | `0 1px 2px rgba(0,0,0,.06)`              | Box-shadow on raised surfaces         |
 | `--garrul-motion`         | `120ms`                                  | Duration of every hover/press/state transition. Set `0ms` to opt out; a reader's `prefers-reduced-motion` overrides it either way |
 | `--garrul-padding`        | `0`                                      | Inner padding of the widget root, as **one length** (e.g. `1rem`, `16px`). Default keeps it flush with host text; set it when you also set `--garrul-bg`. Shorthand (`1rem 2rem`) and percentages are unsupported: the narrow-screen Turnstile offset reuses the value inside `calc()` |
+| `--garrul-code-keyword`   | `#cf222e` light; `#ff7b72` dark         | Syntax color: keywords in fenced code blocks |
+| `--garrul-code-string`    | `#0a3069` light; `#a5d6ff` dark         | Syntax color: string literals |
+| `--garrul-code-comment`   | `#57606a` light; `#8b949e` dark         | Syntax color: comments |
+| `--garrul-code-number`    | `#0550ae` light; `#79c0ff` dark         | Syntax color: numeric literals |
+| `--garrul-code-title`     | `#8250df` light; `#d2a8ff` dark         | Syntax color: function and class names |
+| `--garrul-code-type`      | `#953800` light; `#ffa657` dark         | Syntax color: type names and built-in types |
+| `--garrul-code-attr`      | `#0550ae` light; `#79c0ff` dark         | Syntax color: attribute names |
+| `--garrul-code-tag`       | `#116329` light; `#7ee787` dark         | Syntax color: markup tags |
+
+The `--garrul-code-*` tokens color only fenced blocks that carry a language tag. Untagged blocks and blocks in an unknown language stay plain. The `code_highlight_enabled` flag turns highlighting off; see [`AGENTS-OPERATE.md`](../AGENTS-OPERATE.md). The light default applies unless the widget is dark. Under `prefers-color-scheme: dark`, or with `data-theme="dark"` on `#garrul`, the dark default applies.
 
 `--garrul-font` can only name fonts the host page already loads. `@font-face`
 cannot be declared inside the shadow root, so load the web font on your page
@@ -68,7 +78,7 @@ cannot be declared inside the shadow root, so load the web font on your page
 
 ## Presets
 
-If you want a different look and don't want to pick 21 colors, set
+If you want a different look and don't want to pick 21 colors (the eight `--garrul-code-*` syntax colors are optional, and their defaults meet WCAG AA contrast), set
 `data-preset` on the mount element:
 
 ```html

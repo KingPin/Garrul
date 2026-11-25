@@ -22,5 +22,5 @@
     "noEmit": true
   },
   "include": ["src/**/*", "tests/**/*", "scripts/**/*"],
-  "exclude": ["node_modules", "dist", ".wrangler", "src/widget"]
+  "exclude": ["node_modules", "dist", ".wrangler", "src/widget", "tests/highlighter.test.ts", "tests/code-highlight.test.ts"]
 }

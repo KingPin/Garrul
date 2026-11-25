@@ -37,6 +37,7 @@ export type FlagKey =
 	| "page_reactions_enabled"
 	| "page_votes_enabled"
 	| "show_deleted_placeholders"
+	| "code_highlight_enabled"
 	| "spam_first_comment_moderate"
 	| "spam_provider_enabled"
 	| "moderator_email_enabled"
@@ -119,6 +120,10 @@ const FLAGS: Record<FlagKey, { env?: keyof Bindings; default: boolean }> = {
 	// credentials stay deploy-time. Panel-only because SPAM_PROVIDER unset is
 	// already the env-side off switch. Default ON so an upgrade changes nothing.
 	spam_provider_enabled: { default: true },
+	// Client-side syntax colors for fenced code blocks. Panel-only: colors are a
+	// display choice with no deploy-time meaning. Default ON because it changes
+	// no stored data, and turning it off takes effect on the next mount.
+	code_highlight_enabled: { default: true },
 	// Email the operator when a comment lands in the queue or gets reported
 	// (src/lib/moderator-digest.ts). Default OFF for the usual upgrade reason,
 	// with an extra one behind it: this is *outbound mail*, so an install that

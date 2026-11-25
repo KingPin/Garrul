@@ -111,6 +111,7 @@ import {
 	formTokenWanted,
 	postMetaFromDataset,
 } from "./boot";
+import { highlightCode, setCodeHighlight } from "./code-highlight";
 import { createFormTokenCache } from "./form-token";
 // Generated from styles.css by scripts/build-styles.ts (gitignored, rebuilt by
 // build:assets). Edit styles.css, never the .gen file.
@@ -870,6 +871,7 @@ const buildWritePreview = (
 			if (seq !== previewSeq) return;
 			pane.textContent = "";
 			pane.appendChild(parseTrustedHtml(data.html ?? ""));
+			highlightCode(pane);
 		} catch {
 			if (seq === previewSeq) pane.textContent = s("w.preview.failed");
 		}
@@ -3057,6 +3059,7 @@ const buildComment = (n: TreeNode, ctx: WidgetCtx): HTMLElement => {
 		}
 		// body_html is sanitized by src/lib/markdown.ts before storage.
 		body.appendChild(parseTrustedHtml(n.body_html));
+		highlightCode(body);
 	}
 
 	main.append(meta, body);
@@ -4549,6 +4552,8 @@ const loadOnce = async (
 				if (cfg.rtl === true) host.dir = "rtl";
 			}
 			siteKey = cfg.turnstile_site_key ?? null;
+			// First call per page wins; the highlighter loads only when the flag is on.
+			setCodeHighlight(cfg.code_highlight_enabled === true ? (SCRIPT_ORIGIN ?? apiBase) : null);
 			// Absent on an older server, which is the same as off — that server
 			// won't demand a token from a signed-in post either.
 			turnstileAlways = cfg.turnstile_always === true;
