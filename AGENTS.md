@@ -82,9 +82,8 @@ CSP forbids third-party `<script src>`, the platform blocks custom
 inline scripts, or the integrator wants hard origin isolation.
 
 **Weight:** `embed.js` is a single self-contained bundle — no runtime
-dependencies, no framework, no second request for CSS or strings. It is
-currently ~15 KB gzipped, against a CI-enforced 30 KB ceiling; run
-`npm run size` for the live figure rather than trusting this sentence.
+dependencies, no framework, no second request for CSS or strings. A tagged code block adds one lazy request for `embed-highlight.js` (see Code highlighting below). The CI-enforced 30 KB gzipped ceiling applies to `embed.js`; run
+`npm run size` for the live figure.
 The script is `defer`red and the widget only mounts on
 `DOMContentLoaded`, so it never blocks rendering of the host page.
 
@@ -618,6 +617,14 @@ writing a comment. Both surfaces default **off** and are server-gated:
   counts as the bar atop that slug's thread. One `#garrul` per page, so a
   page carries either the bar or the thread (which already includes it).
   Iframe: `/embed/?slug=<slug>&mode=reactions`.
+
+### Code highlighting
+
+- Fenced code with a language tag (`pre > code.language-*`) is colored in the browser. The lazy highlighter is `/embed-highlight.js`.
+- The flag is `code_highlight_enabled`: panel-only (Admin → Settings → Features, label "Code highlighting"), default on, no env var. `/api/v1/config` and bootstrap's `config` carry it. A change takes effect on each reader's next mount (the settings memo lags up to 60 s). Open tabs keep their state.
+- `embed.js` loads `embed-highlight.js` from the same origin, with `?h=<content hash>`. It loads only when the flag is on and a rendered comment or preview holds a `pre > code.language-*` block. Blocks over 3,000 characters and untagged or unknown-language blocks stay plain.
+- The highlighter has its own 40 KB gzipped budget, checked by `npm run size` (`scripts/check-bundle-size.ts`).
+- Colors come from eight `--garrul-code-*` tokens (see `docs/THEMING.md`).
 
 ### Configurable reaction kinds (since v2.30.0)
 

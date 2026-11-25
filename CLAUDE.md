@@ -9,7 +9,7 @@ Self-hosted comment system on Cloudflare Workers + D1 + KV + Turnstile. Conventi
 - **Edge cache**: the comment-tree response cache and the rate limiter use the Cache API (`caches.default`) — `src/lib/response-cache.ts`, `src/lib/ratelimit.ts`. The `TREE_CACHE` / `RATE_LIMITS` KV namespaces are still bound for historical reasons only.
 - **Anti-spam**: Turnstile, plus `src/lib/spam/` (heuristics, blocklist, Akismet, Workers AI).
 - **Email**: Resend is the sole adapter (`src/lib/email.ts`). `EMAIL_PROVIDER` leaves room for more; none exist yet.
-- **Widget**: vanilla TypeScript, no framework, esbuild. Budget: `embed.js` ≤ 30 KB gzipped. CSS lives in `src/widget/styles.css` and is minified into `styles.gen.ts` at build time, so comments there are free.
+- **Widget**: vanilla TypeScript, no framework, esbuild. Budget: `embed.js` ≤ 30 KB gzipped. A second bundle, `embed-highlight.js` (the lazy code highlighter), has its own 40 KB gzipped budget and loads only for tagged code blocks. CSS lives in `src/widget/styles.css` and is minified into `styles.gen.ts` at build time, so comments there are free.
 - **Admin UI**: server-rendered HTML (Hono JSX) + Alpine.js. English-only by design, as is the Telegram bot.
 - **Tests**: Vitest, plain `node` pool. D1/KV are hand-rolled in-memory stubs in `tests/helpers/`, *not* Miniflare. `@cloudflare/vitest-pool-workers` is deliberately not a dependency until integration tests move to the Workers pool (see the header of `vitest.config.ts`).
 
