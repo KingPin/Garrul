@@ -15,6 +15,9 @@
  * Worker, which a bare Worker does not have; the cache and nosniff
  * headers match public/_headers.
  *
+ * GET /embed-highlight.js — the lazily loaded syntax highlighter, built by the
+ * same script. Locale-free too; the widget loads it on demand.
+ *
  * **This asset is locale-free and must stay that way.** The widget carries the
  * English table and fetches any other language from /api/v1/config at runtime,
  * precisely so this URL stays one shared edge object across every embed on
@@ -25,6 +28,7 @@
 import { Hono } from "hono";
 import type { Bindings } from "../index";
 import { EMBED_JS } from "../widget/embed.bundled";
+import { EMBED_HIGHLIGHT_JS } from "../widget/embed-highlight.bundled";
 
 const embed = new Hono<{ Bindings: Bindings }>();
 
@@ -33,6 +37,13 @@ embed.get("/embed.js", (c) => {
 	c.header("cache-control", "public, max-age=3600, s-maxage=86400");
 	c.header("x-content-type-options", "nosniff");
 	return c.body(EMBED_JS);
+});
+
+embed.get("/embed-highlight.js", (c) => {
+	c.header("content-type", "application/javascript; charset=utf-8");
+	c.header("cache-control", "public, max-age=3600, s-maxage=86400");
+	c.header("x-content-type-options", "nosniff");
+	return c.body(EMBED_HIGHLIGHT_JS);
 });
 
 export { embed };

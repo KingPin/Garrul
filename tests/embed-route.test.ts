@@ -27,4 +27,16 @@ describe("GET /embed.js (Worker fallback)", () => {
 		expect(res.headers.get("content-type")).toMatch(/^application\/javascript/);
 		expect(await res.text()).toBe(readFileSync(join(__dirname, "../dist/embed.js"), "utf8"));
 	});
+
+	it("serves the highlighter with the same headers as embed.js", async () => {
+		const res = await worker.fetch(new Request("https://comments.test/embed-highlight.js"), env as never, {
+			waitUntil() {},
+			passThroughOnException() {},
+		} as never);
+		expect(res.status).toBe(200);
+		expect(res.headers.get("cache-control")).toBe("public, max-age=3600, s-maxage=86400");
+		expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+		expect(res.headers.get("content-type")).toMatch(/^application\/javascript/);
+		expect(await res.text()).toBe(readFileSync(join(__dirname, "../dist/embed-highlight.js"), "utf8"));
+	});
 });
