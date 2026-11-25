@@ -65,7 +65,7 @@ jobs:
           # Basenames, so the entries match the asset filenames on the release
           # page and `sha256sum -c SHA256SUMS` works in a directory of
           # downloaded assets.
-          ( cd dist && sha256sum embed.js embed.js.map ) > SHA256SUMS
+          ( cd dist && sha256sum embed.js embed.js.map embed-highlight.js ) > SHA256SUMS
           sha256sum release-manifest.json >> SHA256SUMS
           echo "::group::SHA256SUMS (compare release assets against this)"
           cat SHA256SUMS
@@ -83,5 +83,6 @@ jobs:
           files: |
             dist/embed.js
             dist/embed.js.map
+            dist/embed-highlight.js
             release-manifest.json
             SHA256SUMS
