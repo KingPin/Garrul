@@ -8,12 +8,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 type Fn = (code: string, lang: string) => string | null;
 type Script = { src?: string; onload?: () => void; onerror?: () => void };
-type Block = { textContent: string; className: string; html?: string; replaceChildren(x: string): void };
+type Block = {
+	textContent: string;
+	className: string;
+	isConnected: boolean;
+	html?: string;
+	replaceChildren(x: string): void;
+};
 
 const block = (text: string, lang = "js"): Block => {
 	const b: Block = {
 		textContent: text,
 		className: `language-${lang}`,
+		isConnected: true,
 		replaceChildren: (x) => {
 			b.html = x;
 		},
@@ -122,5 +129,27 @@ describe("code-highlight loader", () => {
 		await settle();
 		expect(a.html).toBe("frag:a");
 		expect(b.html).toBeUndefined();
+	});
+
+	it("skips blocks detached while loading without spending the budget", async () => {
+		let clock = 0;
+		vi.spyOn(performance, "now").mockImplementation(() => clock);
+		const m = await load();
+		m.setCodeHighlight("https://c.example");
+		const old = block("old");
+		const fresh = block("fresh");
+		m.highlightCode(root([old]));
+		old.isConnected = false;
+		m.highlightCode(root([fresh]));
+		const fn = vi.fn<Fn>((code) => {
+			clock += 150;
+			return code;
+		});
+		win.__garrulHighlight = fn;
+		scripts[0]?.onload?.();
+		await settle();
+		expect(old.html).toBeUndefined();
+		expect(fresh.html).toBe("frag:fresh");
+		expect(fn).toHaveBeenCalledTimes(1);
 	});
 });

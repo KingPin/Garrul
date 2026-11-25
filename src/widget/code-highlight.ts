@@ -50,6 +50,9 @@ const run = async (blocks: Element[]): Promise<void> => {
 	for (const code of blocks) {
 		// One block per task so a long thread never blocks the main thread.
 		await new Promise((r) => setTimeout(r, 0));
+		// A re-render (sort, reload) can detach queued blocks while the script
+		// loads; they must not spend the budget the new tree needs.
+		if (!code.isConnected) continue;
 		if (spent >= BUDGET_MS) return;
 		const t0 = performance.now();
 		try {
