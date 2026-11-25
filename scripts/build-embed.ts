@@ -37,11 +37,15 @@ mkdirSync(OUT_DIR, { recursive: true });
 
 // The lazy highlighter bundle is built first: embed.js bakes in a hash of its
 // bytes so the widget can load a content-addressed URL. highlight.js carries no
-// license comment of its own and legalComments is "none", so the banner keeps
-// the BSD-3-Clause attribution.
+// license comment of its own and legalComments is "none", so the banner carries
+// its full BSD-3-Clause LICENSE: the clause for binary redistribution requires
+// the notice, conditions and disclaimer, not just the license name.
 const hlVersion = JSON.parse(
 	readFileSync(join(ROOT, "node_modules/highlight.js/package.json"), "utf8"),
 ).version;
+const hlLicense = readFileSync(join(ROOT, "node_modules/highlight.js/LICENSE"), "utf8")
+	.trim()
+	.replaceAll("*/", "* /");
 await build({
 	entryPoints: [join(ROOT, "src/widget/highlight-entry.ts")],
 	outfile: HL_FILE,
@@ -51,7 +55,7 @@ await build({
 	platform: "browser",
 	target: ["es2020"],
 	legalComments: "none",
-	banner: { js: `/*! highlight.js v${hlVersion} | BSD-3-Clause | git.io/hljslicense */` },
+	banner: { js: `/*! highlight.js v${hlVersion}\n\n${hlLicense}\n*/` },
 	logLevel: "info",
 });
 const hlJs = readFileSync(HL_FILE, "utf8");
