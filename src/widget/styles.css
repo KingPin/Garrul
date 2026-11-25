@@ -56,6 +56,16 @@
 	--gr-accent-hover: var(--garrul-accent-hover, #1d4ed8);
 	--gr-vote-active: var(--garrul-vote-active, var(--gr-badge-bg));
 	--gr-shadow: var(--garrul-shadow, 0 1px 2px rgba(0,0,0,.06));
+	/* Code syntax colors, one per hljs token group. Defaults are AA (4.5:1)
+	   on every surface of their mode; tests/code-colors.test.ts pins that. */
+	--gr-code-keyword: var(--garrul-code-keyword, #cf222e);
+	--gr-code-string: var(--garrul-code-string, #0a3069);
+	--gr-code-comment: var(--garrul-code-comment, #57606a);
+	--gr-code-number: var(--garrul-code-number, #0550ae);
+	--gr-code-title: var(--garrul-code-title, #8250df);
+	--gr-code-type: var(--garrul-code-type, #953800);
+	--gr-code-attr: var(--garrul-code-attr, #0550ae);
+	--gr-code-tag: var(--garrul-code-tag, #116329);
 	/* Duration for every state transition in the widget. Short on purpose:
 	   long enough to read as a transition, short enough that a fast clicker
 	   never waits on it. Set --garrul-motion: 0ms to opt out entirely; the
@@ -94,6 +104,14 @@
 		--gr-hover: var(--garrul-hover, #23282e);
 		--gr-accent-hover: var(--garrul-accent-hover, #2563eb);
 		--gr-shadow: var(--garrul-shadow, 0 1px 2px rgba(0,0,0,.5));
+		--gr-code-keyword: var(--garrul-code-keyword, #ff7b72);
+		--gr-code-string: var(--garrul-code-string, #a5d6ff);
+		--gr-code-comment: var(--garrul-code-comment, #8b949e);
+		--gr-code-number: var(--garrul-code-number, #79c0ff);
+		--gr-code-title: var(--garrul-code-title, #d2a8ff);
+		--gr-code-type: var(--garrul-code-type, #ffa657);
+		--gr-code-attr: var(--garrul-code-attr, #79c0ff);
+		--gr-code-tag: var(--garrul-code-tag, #7ee787);
 	}
 }
 :host([data-theme="dark"]) {
@@ -115,6 +133,14 @@
 	--gr-hover: var(--garrul-hover, #23282e);
 	--gr-accent-hover: var(--garrul-accent-hover, #2563eb);
 	--gr-shadow: var(--garrul-shadow, 0 1px 2px rgba(0,0,0,.5));
+	--gr-code-keyword: var(--garrul-code-keyword, #ff7b72);
+	--gr-code-string: var(--garrul-code-string, #a5d6ff);
+	--gr-code-comment: var(--garrul-code-comment, #8b949e);
+	--gr-code-number: var(--garrul-code-number, #79c0ff);
+	--gr-code-title: var(--garrul-code-title, #d2a8ff);
+	--gr-code-type: var(--garrul-code-type, #ffa657);
+	--gr-code-attr: var(--garrul-code-attr, #79c0ff);
+	--gr-code-tag: var(--garrul-code-tag, #7ee787);
 }
 /* The light half of the forced-theme pair. Almost every --gr-* token is
    already the :host default, so only two things need saying. `color-scheme:
@@ -595,6 +621,19 @@ button:active:not([disabled]) { opacity: 0.75; }
 	/* A long inline token (URL, hash) must break rather than widen the row. */
 	overflow-wrap: break-word;
 }
+/* Syntax colors for fenced code. Public overrides: --garrul-code-keyword,
+   --garrul-code-string, --garrul-code-comment, --garrul-code-number,
+   --garrul-code-title, --garrul-code-type, --garrul-code-attr, --garrul-code-tag.
+   Unscoped on purpose: only the highlighter emits hljs-* classes, and the
+   sanitizer strips every other class. */
+.hljs-keyword, .hljs-built_in, .hljs-literal, .hljs-selector-tag, .hljs-deletion { color: var(--gr-code-keyword); }
+.hljs-string, .hljs-regexp, .hljs-symbol { color: var(--gr-code-string); }
+.hljs-comment, .hljs-quote, .hljs-meta { color: var(--gr-code-comment); font-style: italic; }
+.hljs-number, .hljs-variable, .hljs-template-variable { color: var(--gr-code-number); }
+.hljs-title, .hljs-section, .hljs-selector-id, .hljs-selector-class { color: var(--gr-code-title); }
+.hljs-type, .hljs-params { color: var(--gr-code-type); }
+.hljs-attr, .hljs-attribute { color: var(--gr-code-attr); }
+.hljs-name, .hljs-tag, .hljs-addition { color: var(--gr-code-tag); }
 .gr-deleted { color: var(--gr-muted); font-style: italic; }
 /* The <del> marks the tombstone programmatically; the bracket text already
    carries it visually, so no strikethrough on top. */
