@@ -2,6 +2,7 @@
  * Lazy loader for the highlighter bundle. Imports nothing from highlighter.ts or
  * highlight-entry.ts on purpose: that would bundle highlight.js into embed.js.
  * The global `window.__garrulHighlight` is declared in highlight-entry.ts.
+ * highlighter.ts imports MAX_CODE_CHARS from here, never the other way round.
  */
 declare const __GARRUL_HL_HASH__: string;
 
@@ -11,6 +12,11 @@ let configured = false;
 let base: string | null = null;
 let loading: Promise<Fn | null> | null = null;
 const claimed = new WeakSet<Element>();
+
+// highlight.js time grows quadratically on some inputs. Blocks over the cap
+// stay plain, and are filtered here so a page with only oversized blocks never
+// downloads the highlighter.
+export const MAX_CODE_CHARS = 3000;
 
 /** First call per page wins; an open tab keeps the state it mounted with. */
 export const setCodeHighlight = (b: string | null): void => {
@@ -50,7 +56,7 @@ const run = async (blocks: Element[]): Promise<void> => {
 export const highlightCode = (root: ParentNode): void => {
 	if (base === null) return;
 	const blocks = [...root.querySelectorAll('pre > code[class^="language-"]')].filter(
-		(c) => !claimed.has(c),
+		(c) => !claimed.has(c) && (c.textContent ?? "").length <= MAX_CODE_CHARS,
 	);
 	if (!blocks.length) return;
 	for (const c of blocks) claimed.add(c);

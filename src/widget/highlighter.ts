@@ -30,6 +30,7 @@ import sql from "highlight.js/lib/languages/sql";
 import typescript from "highlight.js/lib/languages/typescript";
 import xml from "highlight.js/lib/languages/xml";
 import yaml from "highlight.js/lib/languages/yaml";
+import { MAX_CODE_CHARS } from "./code-highlight";
 
 hljs.registerLanguage("bash", bash);
 hljs.registerLanguage("c", c);
@@ -56,12 +57,8 @@ hljs.registerLanguage("typescript", typescript);
 hljs.registerLanguage("xml", xml);
 hljs.registerLanguage("yaml", yaml);
 
-// highlight.js time grows quadratically on some inputs: about 50 ms at 3,000
-// characters versus about 700 ms at 10,000. The cap stops a hostile comment
-// from stalling readers.
-export const MAX_CODE_CHARS = 3000;
-
 export const highlight = (code: string, lang: string): string | null => {
+	// The loader filters oversized blocks first; this guard keeps the contract.
 	if (code.length > MAX_CODE_CHARS) return null;
 	if (!hljs.getLanguage(lang)) return null;
 	return hljs.highlight(code, { language: lang, ignoreIllegals: true }).value;
