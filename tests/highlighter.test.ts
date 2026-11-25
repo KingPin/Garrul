@@ -41,10 +41,10 @@ describe("highlight", () => {
 		expect(highlight("x", "")).toBeNull();
 	});
 
-	it("returns null above 3000 characters", () => {
+	it("returns null above 2000 characters", () => {
 		const s = "foo bar baz qux ".repeat(200);
-		expect(highlight(s.slice(0, 3000), "cpp")).not.toBeNull();
-		expect(highlight(s.slice(0, 3001), "cpp")).toBeNull();
+		expect(highlight(s.slice(0, 2000), "cpp")).not.toBeNull();
+		expect(highlight(s.slice(0, 2001), "cpp")).toBeNull();
 	});
 
 	it("round-trips the text after stripping tags and decoding entities", () => {

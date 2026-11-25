@@ -622,7 +622,7 @@ writing a comment. Both surfaces default **off** and are server-gated:
 
 - Fenced code with a language tag (`pre > code.language-*`) is colored in the browser. The lazy highlighter is `/embed-highlight.js`.
 - The flag is `code_highlight_enabled`: panel-only (Admin → Settings → Features, label "Code highlighting"), default on, no env var. `/api/v1/config` and bootstrap's `config` carry it. A change takes effect on each reader's next mount (the settings memo lags up to 60 s). Open tabs keep their state.
-- `embed.js` loads `embed-highlight.js` from the same origin, with `?h=<content hash>`. It loads only when the flag is on and a rendered comment or preview holds a `pre > code.language-*` block. Blocks over 3,000 characters and untagged or unknown-language blocks stay plain.
+- `embed.js` loads `embed-highlight.js` from the same origin, with `?h=<content hash>`. It loads only when the flag is on and a rendered comment or preview holds a `pre > code.language-*` block. Blocks over 2,000 characters and untagged or unknown-language blocks stay plain, and so does every block after a page has spent 200 ms highlighting.
 - The highlighter has its own 40 KB gzipped budget, checked by `npm run size` (`scripts/check-bundle-size.ts`).
 - Colors come from eight `--garrul-code-*` tokens (see `docs/THEMING.md`).
 

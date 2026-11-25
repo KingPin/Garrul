@@ -13,10 +13,16 @@ let base: string | null = null;
 let loading: Promise<Fn | null> | null = null;
 const claimed = new WeakSet<Element>();
 
-// highlight.js time grows quadratically on some inputs. Blocks over the cap
-// stay plain, and are filtered here so a page with only oversized blocks never
-// downloads the highlighter.
-export const MAX_CODE_CHARS = 3000;
+// highlight.js time grows quadratically on some inputs: a crafted 2,000-char
+// Java block takes about 40 ms on a fast desktop, 80 ms at 3,000. Blocks over
+// the cap stay plain, and are filtered here so a page with only oversized
+// blocks never downloads the highlighter.
+export const MAX_CODE_CHARS = 2000;
+// Total highlighting time per page. One block can't be interrupted, but a
+// thread full of crafted blocks stops costing readers once this is spent;
+// the rest stay plain. Ordinary code costs well under 10 ms a block.
+const BUDGET_MS = 200;
+let spent = 0;
 
 /** First call per page wins; an open tab keeps the state it mounted with. */
 export const setCodeHighlight = (b: string | null): void => {
@@ -44,12 +50,15 @@ const run = async (blocks: Element[]): Promise<void> => {
 	for (const code of blocks) {
 		// One block per task so a long thread never blocks the main thread.
 		await new Promise((r) => setTimeout(r, 0));
+		if (spent >= BUDGET_MS) return;
+		const t0 = performance.now();
 		try {
 			const html = fn(code.textContent ?? "", code.className.slice("language-".length));
 			if (html != null) code.replaceChildren(document.createRange().createContextualFragment(html));
 		} catch {
 			// A failed block stays plain by design.
 		}
+		spent += performance.now() - t0;
 	}
 };
 
