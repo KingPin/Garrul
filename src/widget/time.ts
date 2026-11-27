@@ -57,6 +57,13 @@ const isoMinutes = (ts: number): string =>
 /** Machine-readable exact time for the `datetime` attribute. Always ISO. */
 export const isoTime = (ts: number): string => new Date(ts).toISOString();
 
+// One formatter per locale. Building an Intl formatter costs far more than
+// calling one, and a thread formats every timestamp in the same locale. A
+// constructor that throws on a bad locale never reaches the memo, so the ISO
+// fallback still applies on every call.
+let rtfMemo: [string, Intl.RelativeTimeFormat] | undefined;
+let dtfMemo: [string, Intl.DateTimeFormat] | undefined;
+
 /**
  * "2 hours ago", "yesterday", "last month" — localized by `Intl`, so no new
  * entries in the widget string table and no fifth translation to review.
@@ -71,7 +78,13 @@ export const relativeTime = (
 	// than render "in 3 seconds", which reads as a bug in the widget.
 	const elapsed = Math.max(0, now - ts);
 	try {
-		const rtf = new Intl.RelativeTimeFormat(locale, { numeric: "auto" });
+		if (rtfMemo?.[0] !== locale) {
+			rtfMemo = [
+				locale,
+				new Intl.RelativeTimeFormat(locale, { numeric: "auto" }),
+			];
+		}
+		const rtf = rtfMemo[1];
 		for (const [ms, unit] of UNITS) {
 			if (elapsed >= ms) return rtf.format(-Math.floor(elapsed / ms), unit);
 		}
@@ -92,10 +105,16 @@ export const relativeTime = (
  */
 export const absoluteTime = (ts: number, locale: string): string => {
 	try {
-		return new Intl.DateTimeFormat(locale, {
-			dateStyle: "medium",
-			timeStyle: "short",
-		}).format(ts);
+		if (dtfMemo?.[0] !== locale) {
+			dtfMemo = [
+				locale,
+				new Intl.DateTimeFormat(locale, {
+					dateStyle: "medium",
+					timeStyle: "short",
+				}),
+			];
+		}
+		return dtfMemo[1].format(ts);
 	} catch {
 		return isoMinutes(ts);
 	}
